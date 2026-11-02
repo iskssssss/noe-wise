@@ -554,6 +554,63 @@ describe('工作流布局保存与恢复', () => {
     expect(button('撤销').props('disabled')).toBe(true)
   })
 
+  it('新建工作流一次保存布局并进入测试配置', async () => {
+    routeParams.workflowId = ''
+    mocks.create.mockImplementation((workflowId: string, definition: Record<string, unknown>) =>
+      Promise.resolve({ ...value, workflowId, definition })
+    )
+    mocks.replace.mockImplementation(async (location: { path: string }) => {
+      routeParams.workflowId = location.path.split('/').at(-1)!
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    await button('保存并配置测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.snapshotSave).toHaveBeenCalledOnce()
+    expect(mocks.replace).toHaveBeenCalledOnce()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(true)
+  })
+
+  it('新建测试入口要求同时拥有创建和更新权限', async () => {
+    routeParams.workflowId = ''
+    const permissions = ref(['foundation.workflows.create'])
+    wrapper = mount(WorkflowDetailPage, {
+      attachTo: document.body,
+      global: { directives: { permission: createPermissionDirective(() => permissions) } }
+    })
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('保存并配置测试')
+    permissions.value = ['foundation.workflows.update']
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('保存并配置测试')
+    permissions.value = ['foundation.workflows.create', 'foundation.workflows.update']
+    await flushPromises()
+    expect(document.body.textContent).toContain('保存并配置测试')
+  })
+
+  it('新建测试布局失败后只补布局，不重复创建', async () => {
+    routeParams.workflowId = ''
+    mocks.create.mockImplementation((workflowId: string, definition: Record<string, unknown>) =>
+      Promise.resolve({ ...value, workflowId, definition })
+    )
+    mocks.snapshotSave.mockRejectedValueOnce(new Error('布局保存失败')).mockResolvedValueOnce({})
+    mocks.replace.mockImplementation(async (location: { path: string }) => {
+      routeParams.workflowId = location.path.split('/').at(-1)!
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    await button('保存并配置测试').trigger('click')
+    await flushPromises()
+    expect(mocks.replace).not.toHaveBeenCalled()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+    await button('保存并配置测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.snapshotSave).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(true)
+  })
+
   it('创建结果未知时锁定原标识，刷新和只读核对不重复创建', async () => {
     routeParams.workflowId = ''
     mocks.create.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '连接中断' }))
@@ -563,13 +620,15 @@ describe('工作流布局保存与恢复', () => {
       .findAllComponents(ElFormItem)
       .find((field) => field.props('label') === '业务标识')!
     const generated = idField.findComponent(ElInput).props('modelValue') as string
-    await button('保存草稿').trigger('click')
+    await button('保存并配置测试').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('创建结果尚未确认')
     expect(wrapper.text()).toContain('创建结果待核对')
     expect(wrapper.text()).not.toContain('新建草稿 · 尚未保存')
     expect(button('保存草稿').props('disabled')).toBe(true)
-    expect(button('测试').props('disabled')).toBe(true)
+    expect(button('保存并配置测试').props('disabled')).toBe(true)
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+    expect(mocks.replace).not.toHaveBeenCalled()
     expect(sessionStorage.getItem('noewise:workflow-create:workflow-test-session')).toBe(generated)
     wrapper.unmount()
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })

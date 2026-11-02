@@ -175,12 +175,10 @@ test('知识槽按类型读取当前发布版本并安装模板', async ({ page 
   expect(upstream, upstreamBody).toBe(200)
   await expect(page.getByRole('button', { name: '核对原安装结果' })).toBeEnabled()
   page.on('dialog', (dialog) => dialog.accept())
-  await page.reload()
-  await expect(page.getByText(command.request_id, { exact: false }).first()).toBeVisible()
   const lookup = page.waitForResponse(
     (response) => new URL(response.url()).pathname === '/api/v1/agents/install-template/result'
   )
-  await page.getByRole('button', { name: '核对原安装结果' }).click()
+  await page.reload()
   const response = await lookup
   expect(response.status()).toBe(200)
   const receipt = (await response.json()).data
@@ -251,7 +249,7 @@ test('智能体保存发布响应丢失后刷新并核对原回执', async ({ pa
   expect(posts).toBe(1)
 })
 
-test('新工作流从测试面板保存后继续配置测试', async ({ page }) => {
+test('新工作流一次保存并进入测试配置', async ({ page }) => {
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/workflows/create')}`)
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
   await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
@@ -290,17 +288,15 @@ test('新工作流从测试面板保存后继续配置测试', async ({ page }) 
   expect((await validation).status()).toBe(200)
   await expect(page).toHaveURL(/\/admin\/workflows\/create$/)
   expect(writes).toEqual(['/api/v1/builder/workflows/validate-content'])
-  await page.getByRole('button', { name: '测试', exact: true }).click()
-  const panel = page.getByRole('dialog', { name: '工作流测试' })
-  await expect(panel.getByText('请先保存工作流草稿，再配置测试。')).toBeVisible()
   const created = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === '/api/v1/builder/workflows' &&
       response.request().method() === 'POST'
   )
-  await panel.getByRole('button', { name: '先保存草稿' }).click()
+  await page.getByRole('button', { name: '保存并配置测试', exact: true }).click()
   expect((await created).status()).toBe(200)
   await expect(page).toHaveURL(/\/admin\/workflows\/test-from-editor$/)
+  const panel = page.getByRole('dialog', { name: '工作流测试' })
   await expect(panel.getByLabel('测试消息')).toBeVisible()
 })
 

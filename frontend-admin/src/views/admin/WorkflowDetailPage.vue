@@ -46,6 +46,13 @@
         @click="openInstall"
         >安装</ElButton
       ><ElButton
+        v-if="!route.params.workflowId"
+        v-permission.all="['foundation.workflows.create', 'foundation.workflows.update']"
+        :disabled="busy || readonly || loadingDraft || draftConflict || creationBlocked"
+        @click="saveForTest"
+        >保存并配置测试</ElButton
+      ><ElButton
+        v-else
         v-permission="['foundation.workflows.update']"
         :disabled="busy || readonly || loadingDraft || creationBlocked"
         @click="openTest"
@@ -1527,7 +1534,9 @@ async function save() {
 }
 async function saveForTest() {
   const result = await run(persistDraft)
-  if (result) await navigateSaved(result, false, true)
+  if (!result) return
+  await navigateSaved(result, false, true)
+  if (String(route.params.workflowId) === result.workflowId) testOpen.value = true
 }
 async function validate() {
   if (readonly.value || busy.value || draftConflict.value || creationBlocked.value) return

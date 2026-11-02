@@ -216,6 +216,77 @@ test('智能体试用刷新恢复当前会话，重新进入时开启新试用',
   expect(submissions).toBe(1)
 })
 
+test('新工作流一次操作保存并打开测试配置', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/workflows/create')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/workflows\/create$/)
+  const workflowId = `test-flow-${Date.now()}`
+  await page
+    .locator('.el-form-item')
+    .filter({ hasText: '业务标识' })
+    .locator('input')
+    .fill(workflowId)
+  await page
+    .locator('.el-form-item')
+    .filter({ hasText: '名称' })
+    .first()
+    .locator('input')
+    .fill('工作流测试流程')
+  let creates = 0
+  let testCreates = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/builder/workflows'
+    )
+      creates++
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/builder/workflows/test-sessions'
+    )
+      testCreates++
+  })
+  const saved = responseAt(page, '/api/v1/builder/workflows', 'POST')
+  const options = responseAt(page, '/api/v1/builder/workflows/test-sessions/options')
+  await page.getByRole('button', { name: '保存并配置测试', exact: true }).click()
+  const panel = page.getByRole('dialog', { name: '工作流测试' })
+  const savedDraft = await dataOf(await saved)
+  const optionResponse = await options
+  expect(optionResponse.status()).toBe(200)
+  expect(new URL(optionResponse.url()).searchParams.get('draftRevision')).toBe(
+    String(savedDraft.revision)
+  )
+  expect(new URL(optionResponse.url()).searchParams.get('workflowId')).toBe(workflowId)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await expect(page).toHaveURL(new RegExp(`/admin/workflows/${workflowId}$`))
+  await expect(panel.getByLabel('测试消息')).toBeVisible()
+  expect(creates).toBe(1)
+  expect(testCreates).toBe(0)
+  await page.screenshot({
+    path: join(evidence, 'workflow-test-entry-candidate.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(evidence, 'workflow-test-entry-candidate.json'),
+    JSON.stringify(
+      {
+        workflowId,
+        revision: savedDraft.revision,
+        actions: 1,
+        creates,
+        testCreates,
+        runtimeFixture: true
+      },
+      null,
+      2
+    )
+  )
+})
+
 test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto('/login?redirect=/admin/governance')
