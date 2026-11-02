@@ -13,6 +13,8 @@ const fixture = vi.hoisted(() => ({
   list: vi.fn(),
   rotate: vi.fn(),
   rotateWithReceipt: vi.fn(),
+  issueWithReceipt: vi.fn(),
+  issueResult: vi.fn(),
   rotationResult: vi.fn(),
   confirm: vi.fn(),
   webhooks: vi.fn(),
@@ -26,7 +28,9 @@ vi.mock('../api', () => ({
         list: fixture.list,
         rotate: fixture.rotate,
         rotateWithReceipt: fixture.rotateWithReceipt,
-        rotationResult: fixture.rotationResult
+        rotationResult: fixture.rotationResult,
+        issueWithReceipt: fixture.issueWithReceipt,
+        issueResult: fixture.issueResult
       },
       webhooks: { list: fixture.webhooks },
       auditLogs: fixture.audit
@@ -44,6 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
   fixture.rotationResult.mockResolvedValue(undefined)
+  fixture.issueResult.mockResolvedValue(undefined)
   fixture.auth.identityVersion++
   fixture.auth.user.permissions = ['foundation.service_principals.read']
   fixture.list.mockResolvedValue([])
@@ -276,6 +281,105 @@ describe('工作台内嵌凭证维护', () => {
         .attributes('disabled')
     ).toBeDefined()
     expect(fixture.rotateWithReceipt).not.toHaveBeenCalled()
+  })
+  it('原签发回执匹配后自动恢复，且不会再次签发', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.create'
+    ]
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem('skillforge.principal-issue:["10","member"]', request)
+    fixture.issueResult.mockResolvedValue({ request_id: request, principal_id: '11' })
+    const wrapper = await open()
+    await flushPromises()
+    expect(fixture.issueResult).toHaveBeenCalledWith(request)
+    expect(fixture.issueWithReceipt).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('skillforge.principal-issue:["10","member"]')).toBeNull()
+    expect(wrapper.text()).toContain('原签发已确认（服务身份 11）')
+  })
+  it('签发恢复后可从提示直接轮换对应身份', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.update'
+    ]
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem('skillforge.principal-issue:["10","member"]', request)
+    fixture.issueResult.mockResolvedValue({ request_id: request, principal_id: '11' })
+    fixture.list.mockResolvedValue([
+      {
+        id: 11,
+        principal_id: 'service-a',
+        integration_id: 'integration-a',
+        scopes: [],
+        status: 'active',
+        credential_version: 1
+      }
+    ])
+    fixture.rotateWithReceipt.mockImplementation(async (requestId: string) => ({
+      request_id: requestId,
+      principal_id: '11',
+      api_key: 'replacement-key',
+      signing_secret: 'replacement-secret'
+    }))
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('集成“integration-a”')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '轮换该身份凭据')!
+      .trigger('click')
+    await flushPromises()
+    expect(fixture.rotateWithReceipt).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('replacement-secret')
+    expect(wrapper.text()).not.toContain('首次凭据无法恢复')
+  })
+  it('未查到或不匹配的签发回执保持未知并禁止再次创建', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.create'
+    ]
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem('skillforge.principal-issue:["10","member"]', request)
+    fixture.issueResult.mockResolvedValue({ request_id: 'other', principal_id: '11' })
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('服务身份签发结果尚未确认')
+    expect(sessionStorage.getItem('skillforge.principal-issue:["10","member"]')).toBe(request)
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '创建服务身份')!
+        .attributes('disabled')
+    ).toBeDefined()
+    expect(fixture.issueWithReceipt).not.toHaveBeenCalled()
+  })
+  it('缺少读取权限时保留签发请求，不自动核对或再次创建', async () => {
+    fixture.auth.user.permissions = ['foundation.service_principals.create']
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem('skillforge.principal-issue:["10","member"]', request)
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前账号没有服务身份读取权限')
+    expect(fixture.issueResult).not.toHaveBeenCalled()
+    expect(fixture.issueWithReceipt).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('skillforge.principal-issue:["10","member"]')).toBe(request)
+  })
+  it('签发记录损坏时不允许创建新身份', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.create'
+    ]
+    sessionStorage.setItem('skillforge.principal-issue:["10","member"]', 'invalid')
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('无法读取签发操作记录')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '创建服务身份')!
+        .attributes('disabled')
+    ).toBeDefined()
+    expect(fixture.issueWithReceipt).not.toHaveBeenCalled()
   })
   it('只读本机构服务身份，不把工作台权限扩展到审计和Webhook', async () => {
     const wrapper = await open()

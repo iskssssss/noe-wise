@@ -2041,6 +2041,21 @@ export const api = {
   governance: {
     servicePrincipals: {
       list: () => get<ServicePrincipal[]>('/service-principals'),
+      issueWithReceipt: (requestId: string, data: { integration_id: string; scopes: string[] }) =>
+        post<{
+          request_id: string
+          principal_id: string
+          api_key?: string
+          signing_secret?: string
+        }>(
+          '/service-principals/issue-with-receipt',
+          { request_id: requestId, ...data },
+          { retryOnUnauthorized: false }
+        ),
+      issueResult: (requestId: string) =>
+        get<{ request_id: string; principal_id: string } | undefined>(
+          `/service-principals/issue-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+        ),
       issue: (data: { integration_id: string; scopes: string[] }) =>
         post<IssuedServicePrincipal>('/service-principals', data, { retryOnUnauthorized: false }),
       rotateWithReceipt: (requestId: string, id: number) =>

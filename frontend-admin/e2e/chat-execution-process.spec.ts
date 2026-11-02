@@ -138,7 +138,8 @@ test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
   await expect(page).toHaveURL(/\/admin\/governance$/)
   await page.getByRole('button', { name: '创建服务身份', exact: true }).click()
   const drawer = page.locator('.el-drawer').filter({ hasText: '签发服务身份' })
-  await drawer.getByLabel('集成标识').fill('browser-receipt-' + Date.now())
+  const integration = 'browser-receipt-' + Date.now()
+  await drawer.getByLabel('集成标识').fill(integration)
   await drawer
     .locator('.el-form-item')
     .filter({ hasText: '授权 Scope' })
@@ -169,7 +170,11 @@ test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
     await route.abort('failed')
     finishInterception()
   })
-  await page.getByRole('button', { name: '轮换', exact: true }).first().click()
+  await page
+    .getByRole('row')
+    .filter({ hasText: integration })
+    .getByRole('button', { name: '轮换', exact: true })
+    .click()
   await page.getByRole('button', { name: '轮换凭据', exact: true }).click()
   await expect(page.getByText('本次凭证轮换结果未知')).toBeVisible()
   expect(operations).toBe(1)
@@ -198,6 +203,76 @@ test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
     JSON.stringify(
       {
         request_id: originalRequest,
+        posted: operations,
+        recovery_status: receipt.status()
+      },
+      null,
+      2
+    )
+  )
+})
+
+test('服务身份签发响应中断后通过原回执恢复', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('button', { name: '创建服务身份', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '签发服务身份' })
+  await drawer.getByLabel('集成标识').fill('issue-recovery-' + Date.now())
+  await drawer
+    .locator('.el-form-item')
+    .filter({ hasText: '授权 Scope' })
+    .locator('.el-select')
+    .click()
+  await page.getByRole('option').filter({ hasText: 'sessions.read' }).first().click()
+  let operations = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/service-principals/issue-with-receipt'
+    )
+      operations++
+  })
+  let requestId = ''
+  let finishInterception!: () => void
+  const intercepted = new Promise<void>((resolve) => {
+    finishInterception = resolve
+  })
+  await page.route('**/api/v1/service-principals/issue-with-receipt', async (route) => {
+    requestId = String(route.request().postDataJSON().request_id)
+    const committed = await route.fetch()
+    expect(committed.status()).toBe(200)
+    await route.abort('failed')
+    finishInterception()
+  })
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('本次凭证签发结果未知')).toBeVisible()
+  await intercepted
+  expect(operations).toBe(1)
+  expect(requestId).toBeTruthy()
+  await page.unroute('**/api/v1/service-principals/issue-with-receipt')
+  page.on('dialog', (dialog) => void dialog.accept())
+  const receiptReady = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/service-principals/issue-with-receipt/result'
+  )
+  await page.reload()
+  const receipt = await receiptReady
+  expect(receipt.status()).toBe(200)
+  await expect(page.getByText('首次凭据无法恢复', { exact: false }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '轮换该身份凭据' })).toBeEnabled()
+  expect(operations).toBe(1)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({ path: join(evidence, 'principal-issue-recovered.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'principal-issue-receipt.json'),
+    JSON.stringify(
+      {
+        request_id: requestId,
         posted: operations,
         recovery_status: receipt.status()
       },

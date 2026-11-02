@@ -11,13 +11,48 @@
     /><ElAlert
       v-if="credentialUncertain"
       :title="
-        pendingRotation
-          ? '本次凭证轮换结果未知，请核对原轮换；确认前不能再次操作。'
-          : '本次凭证操作结果未知，请联系平台核对签发或变更审计；核实前不要重复操作。'
+        pendingIssue
+          ? '本次凭证签发结果未知，请核对原签发；确认前不能再次操作。'
+          : pendingRotation
+            ? '本次凭证轮换结果未知，请核对原轮换；确认前不能再次操作。'
+            : '本次凭证操作结果未知，请联系平台核对签发或变更审计；核实前不要重复操作。'
       "
       type="warning"
       :closable="false"
     />
+    <div v-if="issueRecovered" class="admin-field-help" role="status">
+      原签发已确认（{{
+        recoveredPrincipal
+          ? `集成“${recoveredPrincipal.integration_id}”`
+          : `服务身份 ${issueRecovered}`
+      }}），首次凭据无法恢复。
+      <ElButton
+        v-if="recoveredPrincipal"
+        v-permission="['foundation.service_principals.update']"
+        :disabled="busy || credentialUncertain"
+        @click="rotate(recoveredPrincipal)"
+        >轮换该身份凭据</ElButton
+      >
+      <span v-else>请刷新列表后轮换该身份。</span>
+    </div>
+    <div v-if="pendingIssue || issueStorageError" class="admin-card" role="status">
+      <p v-if="pendingIssue">
+        服务身份签发结果尚未确认，请求 ID：{{ pendingIssue }}。未查到回执不表示失败。
+      </p>
+      <p v-if="issueStorageError">{{ issueStorageError }}</p>
+      <p v-if="pendingIssue && !identity.allowed('foundation.service_principals.read')">
+        当前账号没有服务身份读取权限，请联系管理员授权后核对原签发。
+      </p>
+      <ElButton
+        v-if="pendingIssue && identity.allowed('foundation.service_principals.read')"
+        :disabled="busy"
+        @click="checkIssue()"
+        >核对原签发</ElButton
+      >
+      <ElButton v-if="issueStorageError && !pendingIssue" :disabled="busy" @click="loadIssue"
+        >重新读取签发记录</ElButton
+      >
+    </div>
     <p v-if="rotationRecovered" class="admin-field-help" role="status">
       原轮换已确认，但明文无法恢复。如需新凭据，请重新轮换。
     </p>
@@ -268,13 +303,18 @@
       :show-close="!busy && !credentialUncertain"
       class="admin-drawer"
       size="680px"
-      ><FeedbackNotice
-        v-if="error"
-        :title="error"
-        type="error"
-        :closable="false"
-        role="alert"
-      /><ElForm
+      ><FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
+      <div v-if="pendingIssue" role="status">
+        服务身份签发结果尚未确认，原请求 ID：{{ pendingIssue }}。
+        <ElButton
+          v-if="identity.allowed('foundation.service_principals.read')"
+          :disabled="busy"
+          @click="checkIssue()"
+          >核对原签发</ElButton
+        >
+        <span v-else>请联系管理员授权后核对原签发。</span>
+      </div>
+      <ElForm
         ref="formRef"
         :model="form"
         label-position="top"
@@ -496,7 +536,7 @@ onMounted(reload)
 const { busy, error, run } = useTask(),
   open = ref(false),
   secretOpen = ref(false),
-  issued = ref<IssuedServicePrincipal>(),
+  issued = ref<Pick<IssuedServicePrincipal, 'api_key' | 'signing_secret'>>(),
   form = reactive({
     integration_id: '',
     scopes: [] as string[],
@@ -505,12 +545,73 @@ const { busy, error, run } = useTask(),
     signing_secret: ''
   })
 const legacyUncertain = ref(false)
+const pendingIssue = ref<string>()
+const issueRecovered = ref('')
+const recoveredPrincipal = computed(() =>
+  principals.value.find((principal) => String(principal.id) === issueRecovered.value)
+)
+const issueStorageError = ref('')
+const issueStorageKey = `skillforge.principal-issue:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
+function loadIssue() {
+  if (!auth.user?.tenant_id || !auth.user?.sub) {
+    issueStorageError.value = '无法确认当前机构和成员，请重新登录。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(issueStorageKey)
+    if (
+      raw !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
+    )
+      throw Error('invalid')
+    pendingIssue.value = raw ?? undefined
+    issueStorageError.value = ''
+  } catch {
+    issueStorageError.value = '无法读取签发操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function saveIssue(value?: string) {
+  try {
+    if (value) sessionStorage.setItem(issueStorageKey, value)
+    else sessionStorage.removeItem(issueStorageKey)
+    pendingIssue.value = value
+    issueStorageError.value = ''
+    return true
+  } catch {
+    issueStorageError.value = '无法保存签发操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+async function checkIssue(automatic = false) {
+  const original = pendingIssue.value
+  if (!original || !identity.allowed('foundation.service_principals.read')) return
+  await run(async () => {
+    const receipt = await api.governance.servicePrincipals.issueResult(original)
+    if (!identity.current() || pendingIssue.value !== original) return
+    if (!receipt || receipt.request_id !== original || !/^\d+$/.test(receipt.principal_id)) {
+      if (!automatic) message.warning('尚未查到匹配的签发回执，结果仍未确认。')
+      return
+    }
+    if (!saveIssue()) return
+    issueRecovered.value = issued.value?.api_key ? '' : receipt.principal_id
+    if (open.value) open.value = false
+    if (issueRecovered.value)
+      message.warning('原签发已确认，首次凭据无法恢复；如需凭据，请轮换该身份。')
+    else message.success('原签发已确认')
+    await reload()
+  })
+}
 const rotationRecovered = ref(false)
 const pendingRotation = ref<{ requestId: string; principalId: string }>()
 const rotationStorageError = ref('')
 const rotationStorageKey = `skillforge.principal-rotation:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
 const credentialUncertain = computed(
-  () => legacyUncertain.value || !!pendingRotation.value || !!rotationStorageError.value
+  () =>
+    legacyUncertain.value ||
+    !!pendingIssue.value ||
+    !!issueStorageError.value ||
+    !!pendingRotation.value ||
+    !!rotationStorageError.value
 )
 function loadRotation() {
   if (!auth.user?.tenant_id || !auth.user?.sub) {
@@ -550,9 +651,14 @@ function saveRotation(value?: { requestId: string; principalId: string }) {
   }
 }
 onMounted(() => {
+  loadIssue()
   loadRotation()
-  if (pendingRotation.value && identity.allowed('foundation.service_principals.read'))
-    void checkRotation(true)
+  void (async () => {
+    if (pendingIssue.value && identity.allowed('foundation.service_principals.read'))
+      await checkIssue(true)
+    if (pendingRotation.value && identity.allowed('foundation.service_principals.read'))
+      await checkRotation(true)
+  })()
 })
 async function checkRotation(automatic = false) {
   const original = pendingRotation.value
@@ -639,15 +745,46 @@ async function create() {
         form.scopes.some((scope) => !scopeOptions.some((option) => option.id === scope))
       )
         throw Error('请填写集成标识并选择权限')
-      const result = await credentialCommand('foundation.service_principals.create', () =>
-        api.governance.servicePrincipals.issue({
+      if (credentialUncertain.value) throw Error('原凭证操作结果尚未核实，不能再次派发')
+      const requestId = crypto.randomUUID()
+      if (!saveIssue(requestId)) return
+      issueRecovered.value = ''
+      let result
+      try {
+        result = await api.governance.servicePrincipals.issueWithReceipt(requestId, {
           integration_id: form.integration_id,
           scopes: form.scopes
         })
-      )
-      identity.requirePermission('foundation.service_principals.create')
-      issued.value = result
-      secretOpen.value = true
+        identity.requirePermission('foundation.service_principals.create')
+        if (
+          !result ||
+          result.request_id !== requestId ||
+          !/^\d+$/.test(result.principal_id) ||
+          ((result.api_key !== undefined || result.signing_secret !== undefined) &&
+            (typeof result.api_key !== 'string' ||
+              !result.api_key.trim() ||
+              typeof result.signing_secret !== 'string' ||
+              !result.signing_secret.trim()))
+        )
+          throw Error('签发响应不完整，请核对原请求。')
+      } catch (reason) {
+        if (
+          identity.current() &&
+          reason instanceof HttpClientError &&
+          reason.code === 'PRINCIPAL_ISSUE_REJECTED'
+        )
+          saveIssue()
+        throw reason
+      }
+      const cleared = saveIssue()
+      if (result.api_key && result.signing_secret) {
+        issued.value = { api_key: result.api_key, signing_secret: result.signing_secret }
+        secretOpen.value = true
+      } else {
+        issueRecovered.value = result.principal_id
+        message.warning('原签发已确认，首次凭据无法恢复；如需凭据，请轮换该身份。')
+      }
+      if (!cleared) message.warning('原签发已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
     } else {
       if (!/^https?:\/\//.test(form.endpoint_url) || !form.signing_secret)
         throw Error('请填写有效回调地址和签名密钥')
@@ -660,7 +797,7 @@ async function create() {
     open.value = false
     form.signing_secret = ''
     await reload()
-    message.success(createdMessage)
+    if (tab.value !== 'principals' || !issueRecovered.value) message.success(createdMessage)
   })
 }
 async function rotate(row: ServicePrincipal) {
@@ -709,8 +846,8 @@ async function rotate(row: ServicePrincipal) {
     }
     const cleared = saveRotation()
     if (result.api_key && result.signing_secret) {
+      if (issueRecovered.value === String(row.id)) issueRecovered.value = ''
       issued.value = {
-        principal: row,
         api_key: result.api_key,
         signing_secret: result.signing_secret
       }

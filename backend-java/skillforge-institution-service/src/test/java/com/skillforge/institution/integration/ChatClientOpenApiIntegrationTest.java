@@ -379,6 +379,56 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void principalIssueReceiptCommitsOnceAndRejectsDifferentInputs() throws Exception {
+        String slug = "principal-issue-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "ChannelManagement123";
+        createTestTenantAdministrator(tenant, "issue-admin", password);
+        String jwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "issue-admin", "password", password), null).path("access_token").asText();
+        String requestId = UUID.randomUUID().toString();
+        String path = "/api/v1/service-principals/issue-with-receipt";
+        var command = Map.of("request_id", requestId, "integration_id", "receipt-test", "scopes", List.of("sessions.read"));
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var firstFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var secondFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var firstResponse = firstFuture.get(30, TimeUnit.SECONDS);
+        var secondResponse = secondFuture.get(30, TimeUnit.SECONDS);
+        assertEquals(200, firstResponse.statusCode()); assertEquals(200, secondResponse.statusCode());
+        var first = json.readTree(firstResponse.body()).path("data");
+        var second = json.readTree(secondResponse.body()).path("data");
+        assertEquals(first.path("principal_id"), second.path("principal_id"));
+        assertNotEquals(first.has("api_key"), second.has("api_key"));
+        var fresh = first.has("api_key") ? first : second;
+        String apiKey = fresh.path("api_key").asText(); String secret = fresh.path("signing_secret").asText();
+        assertFalse(apiKey.isBlank()); assertFalse(secret.isBlank());
+        var receipt = managementHttp("GET", path + "/result?request_id=" + requestId, null, jwt);
+        var replay = managementHttp("POST", path, command, jwt);
+        for (var result : List.of(receipt, replay)) {
+            assertEquals(requestId, result.path("request_id").asText());
+            assertEquals(first.path("principal_id"), result.path("principal_id"));
+            assertFalse(result.has("api_key")); assertFalse(result.has("signing_secret"));
+        }
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_service_principals WHERE tenant_id=? AND integration_id=? AND api_key_hash=?", Long.valueOf(tenant), "receipt-test", TokenHash.sha256Hex(apiKey)));
+        String stored = queryRows(jdbc, tenant, "SELECT * FROM nw_principal_issue_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString();
+        assertFalse(stored.contains(apiKey)); assertFalse(stored.contains(secret)); assertFalse(stored.contains("receipt-test"));
+        var conflict = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", requestId, "integration_id", "other", "scopes", List.of("sessions.read"))))).build();
+        assertEquals(409, http.send(conflict, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String rejectedId = UUID.randomUUID().toString();
+        var invalid = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", rejectedId, "integration_id", "receipt-test", "scopes", List.of("INVALID SCOPE"))))).build();
+        var rejected = http.send(invalid, HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, rejected.statusCode());
+        assertEquals("PRINCIPAL_ISSUE_REJECTED", json.readTree(rejected.body()).path("code").asText());
+        assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_principal_issue_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), rejectedId));
+    }
+
     @Test void principalRotationReceiptIsAtomicAndNeverReplaysSecret() throws Exception {
         String slug = "principal-receipt-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, slug);
