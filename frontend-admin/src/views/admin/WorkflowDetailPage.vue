@@ -98,7 +98,7 @@
     <section v-if="publicationPending || publicationStorageError" class="admin-card" role="status">
       <template v-if="publicationPending">
         保存并发布结果尚未确认，请求 ID：{{ publicationPending }}。未查到回执不代表操作失败。
-        <ElButton :disabled="busy" @click="checkPublication">核对原发布</ElButton>
+        <ElButton :disabled="busy" @click="checkPublication()">核对原发布</ElButton>
       </template>
       <template v-else>无法读取或保存发布请求记录，请恢复浏览器会话存储后重新进入。</template>
     </section>
@@ -938,16 +938,25 @@ const creationUnknown = ref(''),
 const creationBlocked = computed(() => !!creationUnknown.value || creationStorageError.value)
 const publicationPending = ref('')
 const publicationStorageError = ref(false)
+const publicationAutoCheck = ref<{ owner: string; id: string; requestId: string }>()
 const publicationBlocked = computed(
   () => !!publicationPending.value || publicationStorageError.value
 )
 const publicationKey = (owner: string, id: string) =>
   `noewise:workflow-publish:${JSON.stringify([owner, id])}`
+function publicationSession() {
+  try {
+    return getSessionId()
+  } catch {
+    return null
+  }
+}
 watch(
-  [() => route.params.workflowId, installOwner],
+  [() => route.params.workflowId, installOwner, () => auth.identityVersion, () => auth.sessionId],
   ([value, owner]) => {
     publicationPending.value = ''
     publicationStorageError.value = false
+    publicationAutoCheck.value = undefined
     const id = typeof value === 'string' ? value : ''
     if (!id) return
     if (!owner) {
@@ -962,6 +971,7 @@ watch(
       )
         throw Error('invalid')
       publicationPending.value = pending ?? ''
+      if (pending) publicationAutoCheck.value = { owner, id, requestId: pending }
     } catch {
       publicationStorageError.value = true
     }
@@ -1609,10 +1619,15 @@ async function acceptPublication(
   receipt: WorkflowSaveAndPublishReceipt | undefined,
   owner: string,
   id: string,
-  requestId: string
+  requestId: string,
+  session: string,
+  identity: number
 ) {
   if (
-    installDisposed ||
+    pageDisposed ||
+    publicationSession() !== session ||
+    auth.identityVersion !== identity ||
+    !auth.user?.permissions.includes('foundation.workflows.read') ||
     installOwner.value !== owner ||
     route.params.workflowId !== id ||
     publicationPending.value !== requestId
@@ -1652,7 +1667,10 @@ async function acceptPublication(
     }
     const fresh = await reload()
     if (
-      installDisposed ||
+      pageDisposed ||
+      publicationSession() !== session ||
+      auth.identityVersion !== identity ||
+      !auth.user?.permissions.includes('foundation.workflows.read') ||
       installOwner.value !== owner ||
       route.params.workflowId !== id ||
       publicationPending.value !== requestId
@@ -1672,6 +1690,7 @@ async function acceptPublication(
   }
   try {
     sessionStorage.removeItem(publicationKey(owner, id))
+    publicationStorageError.value = false
   } catch {
     publicationStorageError.value = true
     return
@@ -1699,20 +1718,80 @@ async function acceptPublication(
     message.error(`保存并发布未完成：${text}`)
   } else message.success('工作流已保存并发布')
 }
-async function checkPublication() {
+async function checkPublication(automatic = false) {
   const requestId = publicationPending.value,
     owner = installOwner.value,
-    id = String(route.params.workflowId ?? '')
-  if (!requestId || !owner || !id) return
-  await run(async () =>
-    acceptPublication(
-      await api.workflowDrafts.saveAndPublishResult(id, requestId),
-      owner,
-      id,
-      requestId
-    )
+    id = String(route.params.workflowId ?? ''),
+    session = publicationSession(),
+    identity = auth.identityVersion
+  if (
+    !requestId ||
+    !owner ||
+    !id ||
+    !session ||
+    !auth.user?.permissions.includes('foundation.workflows.read')
   )
+    return
+  await run(async () => {
+    try {
+      await acceptPublication(
+        await api.workflowDrafts.saveAndPublishResult(id, requestId),
+        owner,
+        id,
+        requestId,
+        session,
+        identity
+      )
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (
+        !pageDisposed &&
+        publicationSession() === session &&
+        auth.identityVersion === identity &&
+        !!auth.user?.permissions.includes('foundation.workflows.read') &&
+        installOwner.value === owner &&
+        route.params.workflowId === id &&
+        publicationPending.value === requestId
+      )
+        throw reason
+    }
+  })
+  if (
+    automatic &&
+    !pageDisposed &&
+    publicationSession() === session &&
+    auth.identityVersion === identity &&
+    installOwner.value === owner &&
+    route.params.workflowId === id &&
+    publicationPending.value === requestId &&
+    !auth.user?.permissions.includes('foundation.workflows.read')
+  )
+    publicationAutoCheck.value = { owner, id, requestId }
 }
+watch(
+  [
+    publicationAutoCheck,
+    busy,
+    loadingDraft,
+    () => draft.value?.workflowId,
+    () => auth.user?.permissions.includes('foundation.workflows.read')
+  ],
+  ([pending, active, loading, id, allowed]) => {
+    if (
+      !pending ||
+      active ||
+      loading ||
+      loadError.value ||
+      id !== pending.id ||
+      !publicationSession() ||
+      !allowed
+    )
+      return
+    publicationAutoCheck.value = undefined
+    void checkPublication(true)
+  },
+  { immediate: true }
+)
 async function publish() {
   if (busy.value || draftConflict.value || readonly.value) return
   await run(async () => {
@@ -1738,8 +1817,10 @@ async function publish() {
       }
       const owner = installOwner.value,
         id = draft.value.workflowId,
-        requestId = crypto.randomUUID()
-      if (!owner || !auth.user?.permissions.includes('foundation.workflows.read'))
+        requestId = crypto.randomUUID(),
+        session = publicationSession(),
+        identity = auth.identityVersion
+      if (!owner || !session || !auth.user?.permissions.includes('foundation.workflows.read'))
         throw Error('需要工作流读取权限才能核对发布结果')
       const definition = workflowDefinition(nodes.value, edges.value, { ...meta, name: id })
       const layout = Object.fromEntries(
@@ -1761,14 +1842,21 @@ async function publish() {
           layout,
           viewport: { ...viewport.value }
         })
-        await acceptPublication(result, owner, id, requestId)
+        await acceptPublication(result, owner, id, requestId, session, identity)
       } catch (reason) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        if (
+          pageDisposed ||
+          publicationSession() !== session ||
+          auth.identityVersion !== identity ||
+          installOwner.value !== owner ||
+          route.params.workflowId !== id ||
+          publicationPending.value !== requestId
+        )
+          return
         if (
           reason instanceof HttpClientError &&
-          reason.code === 'WORKFLOW_PUBLISH_PRE_DISPATCH_REJECTED' &&
-          installOwner.value === owner &&
-          route.params.workflowId === id &&
-          publicationPending.value === requestId
+          reason.code === 'WORKFLOW_PUBLISH_PRE_DISPATCH_REJECTED'
         ) {
           try {
             sessionStorage.removeItem(publicationKey(owner, id))

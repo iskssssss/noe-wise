@@ -3,15 +3,17 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ElButton, ElSelect, ElFormItem, ElInput } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import WorkflowDetailPage from './WorkflowDetailPage.vue'
 const testAuth = vi.hoisted(() => ({
   identityVersion: 1,
+  sessionId: 'workflow-test-session',
   user: { tenant_id: '7', sub: '8', permissions: ['foundation.workflows.read'] }
 }))
+const reactiveTestAuth = reactive(testAuth)
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => testAuth
+  useAuthStore: () => reactiveTestAuth
 }))
 import WorkflowGovernanceFields from '../../components/builder/WorkflowGovernanceFields.vue'
 import WorkflowScriptResources from '../../components/builder/WorkflowScriptResources.vue'
@@ -37,11 +39,13 @@ const mocks = vi.hoisted(() => ({
   versions: vi.fn(),
   deployments: vi.fn(),
   install: vi.fn(),
+  installReceipt: vi.fn(),
   listRevisions: vi.fn()
 }))
 const routeParams = vi.hoisted(() => ({ workflowId: 'flow' }))
+const reactiveRouteParams = reactive(routeParams)
 vi.mock('../../api', () => ({
-  getSessionId: () => 'workflow-test-session',
+  getSessionId: () => reactiveTestAuth.sessionId,
   api: {
     workflowDrafts: {
       get: mocks.get,
@@ -56,6 +60,7 @@ vi.mock('../../api', () => ({
       history: mocks.history,
       publicationDetail: mocks.publicationDetail,
       install: mocks.install,
+      installReceipt: mocks.installReceipt,
       installWithReceipt: async (requestId: string, id: string, ...args: unknown[]) => {
         const result = await mocks.install(id, ...args)
         return {
@@ -76,7 +81,7 @@ vi.mock('../../api', () => ({
   }
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: routeParams }),
+  useRoute: () => ({ params: reactiveRouteParams }),
   useRouter: () => ({ replace: mocks.replace, push: vi.fn() }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
@@ -138,7 +143,9 @@ function useConnectedGroup() {
 }
 beforeEach(() => {
   testAuth.identityVersion = 1
+  testAuth.sessionId = 'workflow-test-session'
   testAuth.user.sub = '8'
+  testAuth.user.permissions = ['foundation.workflows.read']
   vi.resetAllMocks()
   sessionStorage.clear()
   mocks.confirm.mockResolvedValue(true)
@@ -487,6 +494,376 @@ describe('工作流布局保存与恢复', () => {
     await button('核对原发布').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain(command.request_id)
+    expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
+  })
+
+  it('刷新后自动核对原发布并恢复已保存草稿，不重复发送发布', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    mocks.get.mockResolvedValue({ ...value, revision: 2, status: 'published' })
+    mocks.snapshotGet.mockResolvedValue({
+      workflowId: 'flow',
+      draftRevision: 2,
+      layout: {},
+      viewport: {}
+    })
+    mocks.saveAndPublishResult.mockResolvedValue({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'SUCCEEDED',
+      publication: {
+        workflow_id: 'flow',
+        draft_revision: 2,
+        definition_version_id: '11',
+        definition_version: 1,
+        capability_version_id: '12'
+      }
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledExactlyOnceWith('flow', requestId)
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '核对原发布')).toBe(
+      false
+    )
+  })
+
+  it.each([
+    ['未查到', undefined],
+    [
+      '处理中',
+      {
+        request_id: '11111111-1111-4111-8111-111111111111',
+        workflow_id: 'flow',
+        status: 'PROCESSING'
+      }
+    ],
+    [
+      '身份不匹配',
+      {
+        request_id: '22222222-2222-4222-8222-222222222222',
+        workflow_id: 'flow',
+        status: 'SUCCEEDED'
+      }
+    ]
+  ])('自动核对%s时保留原请求与手动核对', async (_label, receipt) => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    mocks.saveAndPublishResult.mockResolvedValue(receipt)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledExactlyOnceWith('flow', requestId)
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+    expect(button('核对原发布').props('disabled')).toBe(false)
+  })
+
+  it('读取权限缺失时不自动核对，保留原请求', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    testAuth.user.permissions = []
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+  })
+
+  it('恢复读取权限后自动核对原请求', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    testAuth.user.permissions = []
+    mocks.saveAndPublishResult.mockResolvedValue(undefined)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).not.toHaveBeenCalled()
+    reactiveTestAuth.user.permissions = ['foundation.workflows.read']
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledExactlyOnceWith('flow', requestId)
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+  })
+
+  it('回执在读取权限撤销后到达时保留原请求', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    let finish!: (receipt: unknown) => void
+    mocks.saveAndPublishResult.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    mocks.saveAndPublishResult.mockResolvedValue(undefined)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledTimes(1)
+    reactiveTestAuth.user.permissions = []
+    finish({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_code: 'CONFLICT',
+      error_detail: '原回执'
+    })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+    reactiveTestAuth.user.permissions = ['foundation.workflows.read']
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledTimes(2)
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+  })
+
+  it('回执后的草稿读取期间撤销权限时保留原请求', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    let finish!: (draft: typeof value) => void
+    mocks.get.mockResolvedValueOnce(value).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    mocks.saveAndPublishResult.mockResolvedValue({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'SUCCEEDED',
+      publication: {
+        workflow_id: 'flow',
+        draft_revision: 2,
+        definition_version_id: '11',
+        definition_version: 1,
+        capability_version_id: '12'
+      }
+    })
+    mocks.snapshotGet.mockResolvedValue({
+      workflowId: 'flow',
+      draftRevision: 2,
+      layout: {},
+      viewport: {}
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledTimes(2)
+    reactiveTestAuth.user.permissions = []
+    finish({ ...value, revision: 2, status: 'published' })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+  })
+
+  it('自动核对失败后保留原请求，仍可手动核对', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    mocks.saveAndPublishResult.mockRejectedValueOnce(new Error('读取失败')).mockResolvedValueOnce({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_code: 'VALIDATION_ERROR',
+      error_detail: '配置不合法'
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(
+      Array.from(document.body.querySelectorAll('.el-message__content')).at(-1)?.textContent
+    ).toContain('读取失败')
+    await button('核对原发布').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  })
+
+  it('自动核对后本地记录不能清除时继续阻止编辑', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    mocks.saveAndPublishResult.mockResolvedValue({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_code: 'VALIDATION_ERROR',
+      error_detail: '配置不合法'
+    })
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+      throw Error('unavailable')
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+    expect(button('核对原发布')).toBeDefined()
+    await button('核对原发布').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(false)
+  })
+
+  it('已有安装回执核对时等待其结束，再自动核对发布', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const installationId = '22222222-2222-4222-8222-222222222222'
+    const identity = JSON.stringify([JSON.stringify(['7', '8']), 'flow'])
+    sessionStorage.setItem(`noewise:workflow-publish:${identity}`, requestId)
+    sessionStorage.setItem(`noewise:workflow-install:${identity}`, installationId)
+    let finish!: (receipt: unknown) => void
+    mocks.installReceipt.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    mocks.saveAndPublishResult.mockResolvedValue(undefined)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.installReceipt).toHaveBeenCalledExactlyOnceWith('flow', installationId)
+    expect(mocks.saveAndPublishResult).not.toHaveBeenCalled()
+    finish(undefined)
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledExactlyOnceWith('flow', requestId)
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  })
+
+  it('自动核对期间重新登录同一主体，旧回执不能清除原请求', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    let finish!: (receipt: unknown) => void
+    mocks.saveAndPublishResult.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    mocks.saveAndPublishResult.mockResolvedValue(undefined)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledTimes(1)
+    reactiveTestAuth.sessionId = 'new-login-session'
+    reactiveTestAuth.identityVersion++
+    finish({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_code: 'CONFLICT',
+      error_detail: '原回执'
+    })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledTimes(2)
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  })
+
+  it('切换工作流后旧回执不能清除原请求或覆盖新草稿', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    let finish!: (receipt: unknown) => void
+    mocks.saveAndPublishResult.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    mocks.get.mockImplementation(async (id) => ({ ...value, workflowId: id }))
+    mocks.snapshotGet.mockImplementation(async (id) => ({
+      workflowId: id,
+      draftRevision: 1,
+      layout: {},
+      viewport: {}
+    }))
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledTimes(1)
+    reactiveRouteParams.workflowId = 'other-flow'
+    await flushPromises()
+    finish({
+      request_id: requestId,
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_code: 'CONFLICT',
+      error_detail: '原回执'
+    })
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+    expect((wrapper.vm as unknown as { draft: { workflowId: string } }).draft.workflowId).toBe(
+      'other-flow'
+    )
+    expect(wrapper.text()).not.toContain(requestId)
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  })
+
+  it('切换工作流后旧请求错误不会触发全局反馈', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    sessionStorage.setItem(key, requestId)
+    let reject!: (reason: unknown) => void
+    mocks.saveAndPublishResult.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail
+        })
+    )
+    mocks.get.mockImplementation(async (id) => ({ ...value, workflowId: id }))
+    mocks.snapshotGet.mockImplementation(async (id) => ({
+      workflowId: id,
+      draftRevision: 1,
+      layout: {},
+      viewport: {}
+    }))
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    reactiveRouteParams.workflowId = 'other-flow'
+    await flushPromises()
+    const staleError = new HttpClientError({ status: 503, userMessage: '旧请求失败' })
+    const claim = vi.spyOn(staleError, 'claimFeedback')
+    reject(staleError)
+    await flushPromises()
+    expect(claim).toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('旧请求失败')
+    expect(sessionStorage.getItem(key)).toBe(requestId)
+  })
+
+  it('发布请求在重新登录后才收到派发前拒绝时，不清除新会话的原记录', async () => {
+    useConnectedGroup()
+    let reject!: (reason: unknown) => void
+    mocks.saveAndPublish.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail
+        })
+    )
+    mocks.saveAndPublishResult.mockResolvedValue(undefined)
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    ;(wrapper.vm as unknown as { meta: { displayName: string } }).meta.displayName = '待发布'
+    await flushPromises()
+    await button('保存并发布').trigger('click')
+    await flushPromises()
+    const command = mocks.saveAndPublish.mock.calls[0]![0]
+    const key = `noewise:workflow-publish:${JSON.stringify([JSON.stringify(['7', '8']), 'flow'])}`
+    expect(sessionStorage.getItem(key)).toBe(command.request_id)
+    reactiveTestAuth.sessionId = 'new-login-session'
+    reactiveTestAuth.identityVersion++
+    reject(
+      new HttpClientError({
+        status: 422,
+        code: 'WORKFLOW_PUBLISH_PRE_DISPATCH_REJECTED',
+        userMessage: '发布未受理'
+      })
+    )
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(command.request_id)
+    expect(wrapper.findComponent(WorkflowCanvas).props('readonly')).toBe(true)
     expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
   })
 

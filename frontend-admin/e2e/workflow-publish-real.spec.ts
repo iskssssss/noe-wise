@@ -11,7 +11,7 @@ function required(name: string) {
 test('保存发布响应丢失后刷新核对原回执', async ({ page }) => {
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/workflows/browser-publish')}`)
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
-  await page.locator('input[autocomplete="username"]').fill('workflow-publish-admin')
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
   await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).toHaveURL(/\/admin\/workflows\/browser-publish$/)
@@ -21,7 +21,9 @@ test('保存发布响应丢失后刷新核对原回执', async ({ page }) => {
     .getByLabel('名称', { exact: true })
     .fill('浏览器组合发布')
   let posts = 0,
-    upstream = 0
+    upstream = 0,
+    lookups = 0,
+    manualChecks = 0
   page.on('request', (request) => {
     if (
       request.method() === 'POST' &&
@@ -50,14 +52,34 @@ test('保存发布响应丢失后刷新核对原回执', async ({ page }) => {
   const command = (await sent).postDataJSON()
   await expect.poll(() => upstream).toBe(200)
   await expect(page.getByRole('button', { name: '核对原发布' })).toBeEnabled()
+  await page.screenshot({ path: join(required('E2E_ARTIFACT_DIR'), 'publish-interrupted.png') })
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (
+      request.method() === 'GET' &&
+      url.pathname === '/api/v1/builder/workflows/save-and-publish/result'
+    ) {
+      expect(url.searchParams.get('workflow_id')).toBe('browser-publish')
+      expect(url.searchParams.get('request_id')).toBe(command.request_id)
+      lookups++
+    }
+  })
+  const lookup = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/v1/builder/workflows/save-and-publish/result' &&
+      url.searchParams.get('workflow_id') === 'browser-publish' &&
+      url.searchParams.get('request_id') === command.request_id
+    )
+  })
   page.on('dialog', (dialog) => dialog.accept())
   await page.reload()
-  await expect(page.getByText(command.request_id, { exact: false })).toBeVisible()
-  const lookup = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === '/api/v1/builder/workflows/save-and-publish/result'
-  )
-  await page.getByRole('button', { name: '核对原发布' }).click()
+  if (process.env.E2E_PUBLISH_RECOVERY_MODE === 'baseline') {
+    await expect(page.getByText(command.request_id, { exact: false })).toBeVisible()
+    expect(lookups).toBe(0)
+    await page.getByRole('button', { name: '核对原发布' }).click()
+    manualChecks++
+  }
   const response = await lookup
   expect(response.status()).toBe(200)
   const receipt = (await response.json()).data
@@ -65,8 +87,10 @@ test('保存发布响应丢失后刷新核对原回执', async ({ page }) => {
   expect(receipt.status).toBe('SUCCEEDED')
   await expect(page.getByRole('button', { name: '核对原发布' })).toHaveCount(0)
   expect(posts).toBe(1)
+  expect(lookups).toBe(1)
+  await page.screenshot({ path: join(required('E2E_ARTIFACT_DIR'), 'publish-recovered.png') })
   await writeFile(
     join(required('E2E_ARTIFACT_DIR'), 'workflow-publish.json'),
-    JSON.stringify({ command, receipt })
+    JSON.stringify({ command, receipt, posts, upstream, lookups, manualChecks })
   )
 })
