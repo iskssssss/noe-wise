@@ -150,10 +150,7 @@
         :disabled="
           busy || readOnly || !canCreate || usersTask.busy.value || sessionsTask.busy.value
         "
-        @click="
-          cancelSessionRestore()
-          userOpen = true
-        "
+        @click="openUserDialog"
         >新增用户</ElButton
       ><ElSelect
         v-described-by="formTipId + '-group-0'"
@@ -1047,6 +1044,10 @@ function cancelSessionRestore() {
 }
 function onRestoreSelectionVisible(visible: boolean) {
   if (visible) cancelSessionRestore()
+}
+function openUserDialog() {
+  cancelSessionRestore()
+  userOpen.value = true
 }
 watch(input, cancelSessionRestore, { flush: 'sync' })
 watch(() => auth.identityVersion, cancelSessionRestore, { flush: 'sync' })

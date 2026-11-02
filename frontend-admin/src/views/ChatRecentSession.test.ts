@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ElInput, ElSelect } from 'element-plus'
+import { ElDrawer, ElInput, ElSelect } from 'element-plus'
 import ChatPage from './ChatPage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -155,6 +155,32 @@ describe('最近会话只读恢复', () => {
     )
     await setup()
     expect(mocks.history).not.toHaveBeenCalled()
+  })
+  it('新增用户时打开抽屉并取消迟到的会话恢复', async () => {
+    let resolveHistory!: (value: ReturnType<typeof history>) => void
+    mocks.history.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve
+        })
+    )
+    sessionStorage.setItem(key, 'A')
+    await setup()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '新增用户')!
+      .trigger('click')
+    await flushPromises()
+    const drawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((item) => item.props('title') === '新增终端用户')!
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(document.body.textContent).toContain('用于识别终端用户')
+    resolveHistory(history('A'))
+    await flushPromises()
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(selected().props('modelValue')).toBe('')
+    expect(wrapper.text()).not.toContain('A历史')
   })
   it('迟到响应不覆盖用户输入', async () => {
     let resolveHistory!: (value: ReturnType<typeof history>) => void
