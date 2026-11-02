@@ -61,7 +61,8 @@ const mocks = vi.hoisted(() => ({
     'foundation.capabilities.create',
     'foundation.capabilities.publish'
   ],
-  push: vi.fn()
+  push: vi.fn(),
+  browserSession: 'knowledge-session'
 }))
 vi.mock('../../api/workflowOnboarding', () => ({
   workflowOnboardingApi: { result: mocks.workflowResult, submit: mocks.workflowSubmit }
@@ -74,6 +75,7 @@ vi.mock('../../api/tools', () => ({
   }
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.browserSession,
   api: {
     connectors: { instances: mocks.connectors, mcpTools: mocks.discover },
     agents: {
@@ -110,6 +112,7 @@ vi.mock('../../api', () => ({
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     identityVersion: 1,
+    sessionIdentity: 'knowledge-identity',
     user: {
       tenant_id: '1',
       sub: 'actor-1',
@@ -187,6 +190,7 @@ async function open(type: string) {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.browserSession = 'knowledge-session'
   mocks.requirementOptions.mockImplementation(async (type: string) =>
     type === 'SKILL' || type === 'WORKFLOW'
       ? [{ id: '10', name: '服务流程', versionId: '21', versionKey: '2' }]
@@ -2441,6 +2445,230 @@ describe('能力挂载关联一致性', () => {
       })
     )
     expect(mocks.push).toHaveBeenCalledWith('/admin/agents/installed-agent')
+  })
+  it('唯一活动知识库预选并只读核对一次；用户清除后刷新不重选', async () => {
+    mocks.bases.mockResolvedValue({
+      items: [
+        { id: 'kb-1', name: '帮助中心', status: 'active' },
+        { id: 'kb-old', name: '归档知识', status: 'archived' }
+      ]
+    })
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    const select = drawer.findComponent(EntitySelect)
+    expect(select.props('modelValue')).toBe('kb-1')
+    expect(document.body.textContent).toContain('已预选唯一活动知识库')
+    expect(mocks.mountOption).toHaveBeenCalledExactlyOnceWith('kb-1')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(button(drawer, '添加能力').props('disabled')).toBe(false)
+    select.vm.$emit('update:modelValue', '')
+    await flushPromises()
+    await button(drawer, '刷新知识库选项').trigger('click')
+    await flushPromises()
+    expect(select.props('modelValue')).toBe('')
+    expect(document.body.textContent).not.toContain('已预选唯一活动知识库')
+    expect(mocks.mountOption).toHaveBeenCalledTimes(1)
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['空目录', []],
+    ['仅归档', [{ id: 'kb-old', name: '旧库', status: 'archived' }]],
+    [
+      '多个活动库',
+      [
+        { id: 'kb-1', name: '一', status: 'active' },
+        { id: 'kb-2', name: '二', status: 'active' }
+      ]
+    ],
+    [
+      '存在未知状态',
+      [
+        { id: 'kb-1', name: '一', status: 'active' },
+        { id: 'kb-2', name: '二', status: 'unknown' }
+      ]
+    ]
+  ])('%s不自动选择或查询发布', async (_name, items) => {
+    mocks.bases.mockResolvedValue({ items })
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    expect(drawer.findComponent(EntitySelect).props('modelValue')).toBe('')
+    expect(mocks.mountOption).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it.each([
+    [
+      '尚未发布',
+      { active_revision_id: null, definition_id: null, version_id: null, version_key: null },
+      '该知识库尚未发布'
+    ],
+    [
+      '发布信息不一致',
+      {
+        active_revision_id: 'revision-2',
+        definition_id: null,
+        version_id: null,
+        version_key: null
+      },
+      '当前知识发布与能力目录不一致'
+    ]
+  ])('唯一活动库%s时仍禁止挂载并解释原因', async (_name, option, hint) => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    mocks.mountOption.mockResolvedValueOnce({ kb_id: 'kb-1', ...option })
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    expect(drawer.findComponent(EntitySelect).props('modelValue')).toBe('kb-1')
+    expect(document.body.textContent).toContain(hint)
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('唯一活动库已经挂载时显示原因且不重复挂载', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    mocks.get.mockResolvedValueOnce({
+      id: 'agent-1',
+      name: '客服',
+      model_config_id: 'model-1',
+      status: 'published',
+      mounts: [{ capabilityDefinitionId: '10', capabilityVersionId: '21' }],
+      execution_config: {},
+      delegation_config: { enabled: false, target_agent_ids: [] }
+    })
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    expect(document.body.textContent).toContain('该知识库已挂载')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('自动读取发布身份失败后可重新读取，不能提前挂载', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    mocks.mountOption.mockRejectedValueOnce(new Error('发布状态读取失败'))
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+    await button(drawer, '重试当前能力选项').trigger('click')
+    await flushPromises()
+    expect(mocks.mountOption).toHaveBeenCalledTimes(2)
+    expect(button(drawer, '添加能力').props('disabled')).toBe(false)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('自动读取在途时浏览器安全会话变化，不采纳旧发布身份', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    let resolveOption!: (value: unknown) => void
+    mocks.mountOption.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOption = resolve
+      })
+    )
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    expect(resolveOption).toBeTypeOf('function')
+    mocks.browserSession = 'another-session'
+    resolveOption({
+      kb_id: 'kb-1',
+      active_revision_id: 'revision-2',
+      definition_id: '10',
+      version_id: '21',
+      version_key: '2'
+    })
+    await flushPromises()
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('手动选择时旧会话的迟到发布身份不用于新上下文', async () => {
+    let resolveOption!: (value: unknown) => void
+    mocks.mountOption.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOption = resolve
+      })
+    )
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    drawer.findComponent(EntitySelect).vm.$emit('update:modelValue', 'kb-1')
+    await flushPromises()
+    mocks.browserSession = 'another-session'
+    resolveOption({
+      kb_id: 'kb-1',
+      active_revision_id: 'revision-2',
+      definition_id: '10',
+      version_id: '21',
+      version_key: '2'
+    })
+    await flushPromises()
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('刷新候选在途时切换安全会话，不采纳旧目录和发布状态', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    let resolveBases!: (value: unknown) => void
+    let resolveOption!: (value: unknown) => void
+    mocks.bases.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBases = resolve
+      })
+    )
+    mocks.mountOption.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOption = resolve
+      })
+    )
+    await button(drawer, '刷新知识库选项').trigger('click')
+    await flushPromises()
+    mocks.browserSession = 'another-session'
+    resolveBases({ items: [{ id: 'kb-old', name: '不应展示旧目录', status: 'active' }] })
+    resolveOption({
+      kb_id: 'kb-1',
+      active_revision_id: 'revision-old',
+      definition_id: '11',
+      version_id: '31',
+      version_key: 'old'
+    })
+    await flushPromises()
+    expect(drawer.findComponent(EntitySelect).props('options')).toEqual([
+      { id: 'kb-1', label: '帮助中心', description: '标识：kb-1' }
+    ])
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('自动读取在途时用户清除选择，迟到结果不重新选中或挂载', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    let resolveOption!: (value: unknown) => void
+    mocks.mountOption.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOption = resolve
+      })
+    )
+    const { drawer } = await open('KNOWLEDGE_SOURCE')
+    const select = drawer.findComponent(EntitySelect)
+    select.vm.$emit('update:modelValue', '')
+    await flushPromises()
+    resolveOption({
+      kb_id: 'kb-1',
+      active_revision_id: 'revision-2',
+      definition_id: '10',
+      version_id: '21',
+      version_key: '2'
+    })
+    await flushPromises()
+    expect(select.props('modelValue')).toBe('')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('重开知识挂载抽屉时自动选择计入初始快照，不误报未保存', async () => {
+    mocks.bases.mockResolvedValue({ items: [{ id: 'kb-1', name: '帮助中心', status: 'active' }] })
+    const { wrapper, drawer } = await open('KNOWLEDGE_SOURCE')
+    const confirm = vi
+      .spyOn(ElMessageBox, 'confirm')
+      .mockResolvedValue('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+    await button(drawer, '取消').trigger('click')
+    await flushPromises()
+    expect(drawer.props('modelValue')).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce()
+    await button(wrapper, '添加能力').trigger('click')
+    await flushPromises()
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(drawer.findComponent(EntitySelect).props('modelValue')).toBe('kb-1')
+    const leave = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leave)
+    expect(leave.defaultPrevented).toBe(false)
+    await button(drawer, '取消').trigger('click')
+    await flushPromises()
+    expect(drawer.props('modelValue')).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(mocks.create).not.toHaveBeenCalled()
   })
   it('知识库只绑定稳定身份并跟随当前发布，不提供固定历史修订', async () => {
     const { drawer } = await open('KNOWLEDGE_SOURCE')

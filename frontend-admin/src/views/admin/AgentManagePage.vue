@@ -605,12 +605,20 @@
               v-described-by="formTipId + '-field-10'"
               :aria-describedby="formTipId + '-field-10'"
               v-model="knowledgeBaseId"
+              @update:model-value="knowledgeSelectedByUser"
               :options="filteredKnowledgeBases"
               :filter-method="(query: string) => (knowledgeSearch = query)"
               placeholder="选择知识库"
             />
             <FieldTip :id="formTipId + '-field-10'">按名称、用途或标识查找知识库。</FieldTip>
           </ElFormItem>
+          <p
+            v-if="autoKnowledgeId && knowledgeBaseId === autoKnowledgeId"
+            class="admin-field-help"
+            role="status"
+          >
+            已预选唯一活动知识库，可按需修改；添加仍需确认。
+          </p>
           <p class="admin-field-help">绑定知识库身份，每轮聊天使用其当前发布修订。</p>
           <p
             v-if="mountOptionsState === 'ready' && !knowledgeBases.length"
@@ -1498,6 +1506,9 @@ const onboardingBusy = ref(false)
 const toolsRefreshRequired = ref(false)
 const workflowOptionsRefreshRequired = ref(false)
 const knowledgeUnpublished = ref(false)
+const autoKnowledgeId = ref('')
+const knowledgeTouched = ref(false)
+let assigningAutoKnowledge = false
 const pendingToolReceipt = ref<ToolOnboardingReceipt>()
 const availableTools = ref<AvailableTool[]>([])
 const mountOptionsState = ref<'loading' | 'ready' | 'failed'>('loading')
@@ -1614,21 +1625,74 @@ function applyKnowledgeOption(option: Awaited<ReturnType<typeof api.knowledge.mo
 async function readKnowledgeBase(kbId: string) {
   if (!kbId) return
   const owner = publicationOwner.value
+  const session = auth.sessionIdentity
+  const browserSession = getSessionId()
+  const current = () =>
+    !publicationDisposed &&
+    publicationOwner.value === owner &&
+    auth.sessionIdentity === session &&
+    getSessionId() === browserSession &&
+    mountOpen.value &&
+    mountType.value === 'KNOWLEDGE_SOURCE' &&
+    knowledgeBaseId.value === kbId
   await run(async () => {
-    const option = await api.knowledge.mountOption(kbId)
-    if (publicationOwner.value !== owner || knowledgeBaseId.value !== kbId) return
-    applyKnowledgeOption(option)
+    try {
+      const option = await api.knowledge.mountOption(kbId)
+      if (current()) applyKnowledgeOption(option)
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    }
   })
 }
-watch(knowledgeBaseId, (kbId) => {
-  if (mountType.value !== 'KNOWLEDGE_SOURCE') return
-  activeKnowledgeRevisionId.value = ''
-  knowledgeUnpublished.value = false
-  knowledgeVersion.value = undefined
-  versionId.value = undefined
-  definitionId.value = undefined
-  void readKnowledgeBase(kbId)
-})
+function knowledgeSelectedByUser() {
+  knowledgeTouched.value = true
+  autoKnowledgeId.value = ''
+}
+watch(
+  knowledgeBaseId,
+  (kbId) => {
+    if (mountType.value !== 'KNOWLEDGE_SOURCE') return
+    activeKnowledgeRevisionId.value = ''
+    knowledgeUnpublished.value = false
+    knowledgeVersion.value = undefined
+    versionId.value = undefined
+    definitionId.value = undefined
+    if (!assigningAutoKnowledge) void readKnowledgeBase(kbId)
+  },
+  { flush: 'sync' }
+)
+async function selectOnlyKnowledge(
+  bases: Awaited<ReturnType<typeof api.knowledge.listBases>>['items'],
+  current: () => boolean
+) {
+  if (knowledgeTouched.value || knowledgeBaseId.value) return
+  if (bases.some((base) => base.status !== 'active' && base.status !== 'archived')) return
+  const available = bases.filter((base) => base.status === 'active')
+  if (available.length !== 1) return
+  const kbId = available[0]!.id
+  assigningAutoKnowledge = true
+  try {
+    knowledgeBaseId.value = kbId
+  } finally {
+    assigningAutoKnowledge = false
+  }
+  autoKnowledgeId.value = kbId
+  try {
+    const option = await api.knowledge.mountOption(kbId)
+    if (current() && knowledgeBaseId.value === kbId && !knowledgeTouched.value)
+      applyKnowledgeOption(option)
+  } catch (cause) {
+    if (!current() || knowledgeBaseId.value !== kbId) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      throw 'cancel'
+    }
+    throw cause
+  }
+}
 async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW') {
   const [defs, options] = await Promise.all([
     api.capabilities.definitions(type, 'PUBLISHED'),
@@ -1652,9 +1716,21 @@ async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW') {
 }
 async function readMountOptions() {
   mountOptionsState.value = 'loading'
+  const owner = publicationOwner.value
+  const session = auth.sessionIdentity
+  const type = mountType.value
+  const browserSession = type === 'KNOWLEDGE_SOURCE' ? getSessionId() : undefined
+  const current = () =>
+    !publicationDisposed &&
+    publicationOwner.value === owner &&
+    auth.sessionIdentity === session &&
+    (browserSession === undefined || getSessionId() === browserSession) &&
+    mountType.value === type
   try {
     pendingToolReceipt.value = undefined
     autoToolId.value = undefined
+    autoKnowledgeId.value = ''
+    knowledgeTouched.value = false
     versionId.value = undefined
     definitionId.value = undefined
     knowledgeBaseId.value = ''
@@ -1670,14 +1746,16 @@ async function readMountOptions() {
     availableTools.value = []
     toolSearch.value = ''
     definitionSearch.value = ''
-    const type = mountType.value
     if (type === 'KNOWLEDGE_SOURCE') {
       const bases = await api.knowledge.listBases()
+      if (!current()) return
       knowledgeBases.value = bases.items.map((base) => ({
         id: base.id,
         label: base.name,
         description: [base.description, `标识：${base.id}`].filter(Boolean).join(' · ')
       }))
+      await selectOnlyKnowledge(bases.items, current)
+      if (!current()) return
       mountOptionsState.value = 'ready'
       return
     }
@@ -1730,6 +1808,10 @@ async function readMountOptions() {
     deployments.value = toolDeployments ?? []
     mountOptionsState.value = 'ready'
   } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      throw 'cancel'
+    }
     mountOptionsState.value = 'failed'
     throw cause
   }
@@ -1749,25 +1831,41 @@ async function refreshSkills() {
 }
 async function refreshKnowledgeBases() {
   const owner = publicationOwner.value
+  const session = auth.sessionIdentity
+  const browserSession = getSessionId()
   const selected = knowledgeBaseId.value
+  const current = () =>
+    !publicationDisposed &&
+    publicationOwner.value === owner &&
+    auth.sessionIdentity === session &&
+    getSessionId() === browserSession &&
+    mountOpen.value &&
+    mountType.value === 'KNOWLEDGE_SOURCE'
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((cause: unknown) => {
+      if (!current() || knowledgeBaseId.value !== selected) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    })
   await run(async () => {
     const [bases, option] = await Promise.all([
-      api.knowledge.listBases(),
-      selected ? api.knowledge.mountOption(selected) : undefined
+      guard(api.knowledge.listBases()),
+      selected ? guard(api.knowledge.mountOption(selected)) : undefined
     ])
-    if (
-      publicationOwner.value !== owner ||
-      !mountOpen.value ||
-      mountType.value !== 'KNOWLEDGE_SOURCE' ||
-      knowledgeBaseId.value !== selected
-    )
-      return
+    if (!current() || knowledgeBaseId.value !== selected) return
     knowledgeBases.value = bases.items.map((item) => ({
       id: item.id,
       label: item.name,
       description: [item.description, `标识：${item.id}`].filter(Boolean).join(' · ')
     }))
     if (option) applyKnowledgeOption(option)
+    else {
+      const wasClean = mountSnapshot() === mountSaved.value
+      await selectOnlyKnowledge(bases.items, current)
+      if (wasClean && current()) mountSaved.value = mountSnapshot()
+    }
   })
 }
 async function refreshAvailableTools() {
@@ -1863,6 +1961,9 @@ async function toggleWorkflowOnboarding() {
 }
 async function openMount() {
   if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  const owner = publicationOwner.value
+  const session = auth.sessionIdentity
+  const browserSession = mountType.value === 'KNOWLEDGE_SOURCE' ? getSessionId() : undefined
   await run(async () => {
     priority.value = 0
     onboardingOpen.value = false
@@ -1871,6 +1972,13 @@ async function openMount() {
     activation.value = 'ON_DEMAND'
     tokenBudget.value = 2000
     await readMountOptions()
+    if (
+      publicationDisposed ||
+      publicationOwner.value !== owner ||
+      auth.sessionIdentity !== session ||
+      (browserSession !== undefined && getSessionId() !== browserSession)
+    )
+      return
     mountSaved.value = mountSnapshot()
     mountOpen.value = true
   })

@@ -128,6 +128,7 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
+    exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
 }
@@ -305,6 +306,19 @@ tasks.register<Test>("workflowAgentSingleBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.WorkflowAgentSingleBrowserE2ETest.browserOnboardsSingleWorkflowAndRuntimeExecutesExactInstallation")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentKnowledgeSingleBrowserE2E") {
+    description = "验证唯一已发布知识库预选及真实检索"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.AgentKnowledgeSingleBrowserE2ETest.singlePublishedKnowledgeMountFeedsSameAgentRuntime")
     }
     outputs.upToDateWhen { false }
 }
