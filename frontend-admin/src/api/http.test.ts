@@ -348,6 +348,36 @@ it('团队组合发布遇到 401 不刷新令牌或重发原写请求', async ()
   expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/teams/save-and-publish')
 })
 
+it('智能体组合发布遇到 401 不刷新令牌或重发原写请求', async () => {
+  localStorage.setItem('skillforge.access_token', 'expired-access-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(apiResponse({}, 401))
+    .mockResolvedValueOnce(
+      apiResponse({ access_token: 'renewed', refresh_token: 'renewed-refresh' })
+    )
+    .mockResolvedValueOnce(apiResponse({ request_id: 'request-1' }))
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    api.agents.saveAndPublish({
+      agent_id: 'agent-1',
+      request_id: 'request-1',
+      payload: {
+        name: '智能体',
+        role_description: '',
+        system_prompt: '',
+        model_config_id: '',
+        execution_config: {},
+        delegation_config: { enabled: false, target_agent_ids: [] },
+        config: {}
+      }
+    })
+  ).rejects.toBeInstanceOf(HttpClientError)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/agents/save-and-publish')
+})
+
 describe('草稿 API 请求契约', () => {
   it('新建草稿使用后端约定的 workflow_id 字段', async () => {
     localStorage.setItem('skillforge.access_token', 'access-token')

@@ -17,13 +17,20 @@ const mocks = vi.hoisted(() => ({
   saveAndPublish: vi.fn(),
   result: vi.fn(),
   push: vi.fn(),
-  publications: vi.fn()
+  publications: vi.fn(),
+  browserSession: 'browser-session'
 }))
 vi.mock('../../stores/auth', async () => {
   const { reactive } = await import('vue')
   const state = reactive({
     identityVersion: 1,
-    user: { tenant_id: 'tenant-1', sub: 'actor-1', permissions: [] as string[] }
+    sessionIdentity: 'tenant-1:actor-1:server-session:browser-session:full',
+    user: {
+      tenant_id: 'tenant-1',
+      sub: 'actor-1',
+      session_id: 'server-session',
+      permissions: [] as string[]
+    }
   })
   return { useAuthStore: () => state }
 })
@@ -38,6 +45,7 @@ vi.mock('vue-router', async () => {
   }
 })
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.browserSession,
   api: {
     agents: {
       get: mocks.get,
@@ -81,6 +89,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
   useAuthStore().identityVersion = 1
+  useAuthStore().user!.session_id = 'server-session'
+  mocks.browserSession = 'browser-session'
   useAuthStore().user!.sub = 'actor-1'
   useAuthStore().user!.permissions = [
     'foundation.agents.read',
@@ -219,6 +229,171 @@ async function edit() {
   await nameInput().get('input').setValue('本次配置')
   await flushPromises()
 }
+function allowTrial() {
+  useAuthStore().user!.permissions.push(
+    'foundation.sessions.read',
+    'foundation.sessions.create',
+    'foundation.sessions.run'
+  )
+}
+it('明确保存发布并试用后，释放忙碌状态并进入同一智能体，不创建会话', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  mocks.push.mockImplementation(() => {
+    expect(button('保存草稿').attributes('disabled')).toBeUndefined()
+  })
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
+  expect(mocks.push).toHaveBeenCalledExactlyOnceWith({
+    path: '/admin/chat',
+    query: { agent_id: 'agent-1' }
+  })
+  expect(sessionStorage.length).toBe(0)
+})
+it('没有完整试用权限时不提供组合入口，普通发布保留', async () => {
+  await render()
+  await edit()
+  expect(button('保存发布并试用')).toBeUndefined()
+  expect(button('保存并发布').attributes('disabled')).toBeUndefined()
+})
+it('取消确认不发布也不进入试用', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  expect(mocks.push).not.toHaveBeenCalled()
+})
+it('发布结果未知时保留原请求，后续普通核对不自动进入试用', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  mocks.saveAndPublish.mockRejectedValueOnce(
+    new HttpClientError({ status: 0, userMessage: '结果未知' })
+  )
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand
+  expect(wrapper.text()).toContain(command.request_id)
+  expect(mocks.push).not.toHaveBeenCalled()
+  mocks.result.mockResolvedValueOnce(receipt(command))
+  await button('核对原操作').trigger('click')
+  await flushPromises()
+  expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
+  expect(mocks.push).not.toHaveBeenCalled()
+})
+it('发布收到 401 时保留原请求且不进入试用', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  mocks.saveAndPublish.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 401,
+      code: 'UNAUTHORIZED',
+      traceId: 'trace-401',
+      userMessage: '身份失效'
+    })
+  )
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand
+  expect(wrapper.text()).toContain(command.request_id)
+  expect(sessionStorage.getItem(sessionStorage.key(0)!)!).toContain(command.request_id)
+  expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
+  expect(mocks.push).not.toHaveBeenCalled()
+})
+it.each([
+  ['发布版本变化', { published_revision: 4 }],
+  ['对象身份变化', { id: 'agent-other' }],
+  ['已停用', { status: 'disabled' }]
+])('%s时保留发布结果且不自动试用', async (_reason, altered) => {
+  allowTrial()
+  await render()
+  await edit()
+  mocks.saveAndPublish.mockImplementationOnce(async (command: AgentSaveAndPublishCommand) => {
+    mocks.get.mockResolvedValue({
+      ...detail(),
+      ...command.payload,
+      published_revision: 3,
+      ...altered
+    })
+    return receipt(command)
+  })
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
+  expect(mocks.push).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('保存并发布已确认')
+})
+it('发布已确认但刷新失败时不导航或重复发布', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  mocks.saveAndPublish.mockImplementationOnce(async (command: AgentSaveAndPublishCommand) => {
+    mocks.get.mockRejectedValueOnce(new Error('读取失败'))
+    return receipt(command)
+  })
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
+  expect(mocks.push).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('当前显示内容尚未更新')
+})
+it('刷新在途时浏览器安全会话切换，不回填旧对象或自动跳转', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  let resolveDetail!: (value: unknown) => void
+  mocks.saveAndPublish.mockImplementationOnce(async (command: AgentSaveAndPublishCommand) => {
+    mocks.get.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDetail = resolve
+      })
+    )
+    return receipt(command)
+  })
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  expect(resolveDetail).toBeTypeOf('function')
+  mocks.browserSession = 'new-browser-session'
+  resolveDetail({
+    ...detail(),
+    name: '不应回填旧内容',
+    mounts: [{ capabilityVersionId: 'old-version' }],
+    published_revision: 3
+  })
+  await flushPromises()
+  expect(nameInput().props('modelValue')).toBe('本次配置')
+  expect(wrapper.text()).not.toContain('不应回填旧内容')
+  expect(wrapper.text()).toContain('能力挂载（0）')
+  expect(mocks.push).not.toHaveBeenCalled()
+})
+it('发布在途时失去试用权限不自动跳转', async () => {
+  allowTrial()
+  await render()
+  await edit()
+  let resolvePublish!: (value: unknown) => void
+  mocks.saveAndPublish.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolvePublish = resolve
+    })
+  )
+  await button('保存发布并试用').trigger('click')
+  await flushPromises()
+  const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand
+  useAuthStore().user!.permissions = useAuthStore().user!.permissions.filter(
+    (value) => value !== 'foundation.sessions.run'
+  )
+  mocks.get.mockResolvedValue({ ...detail(), ...command.payload, published_revision: 3 })
+  resolvePublish(receipt(command))
+  await flushPromises()
+  expect(mocks.push).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('保存并发布已确认')
+})
 async function startUnknown() {
   await render()
   await edit()

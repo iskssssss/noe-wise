@@ -32,6 +32,12 @@
         @click="dirty ? saveAndPublish() : publish()"
         >{{ dirty && canSaveAndPublish ? '保存并发布' : '发布' }}</ElButton
       ><ElButton
+        v-if="canPublishAndTrial"
+        :disabled="editingBlocked || refreshRequired || !agent || !dirty"
+        :loading="busy"
+        @click="saveAndPublish(true)"
+        >保存发布并试用</ElButton
+      ><ElButton
         v-permission="['foundation.agents.update']"
         :type="canSaveAndPublish ? undefined : 'primary'"
         :loading="busy"
@@ -822,6 +828,7 @@ import {
 import { confirm, message } from '@skillforge/shared/feedback'
 import {
   api,
+  getSessionId,
   type AgentDetail,
   type AgentSaveAndPublishCommand,
   type AgentSaveAndPublishReceipt,
@@ -847,6 +854,16 @@ const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const canSaveAndPublish = computed(
   () => can('foundation.agents.update') && can('foundation.agents.publish')
+)
+const canPublishAndTrial = computed(
+  () =>
+    canSaveAndPublish.value &&
+    [
+      'foundation.agents.read',
+      'foundation.sessions.read',
+      'foundation.sessions.create',
+      'foundation.sessions.run'
+    ].every(can)
 )
 const canOnboardWorkflow = computed(() =>
   ['foundation.agents.read', 'foundation.workflows.read', 'foundation.capabilities.read'].every(can)
@@ -880,13 +897,30 @@ const canOnboardTools = computed(() =>
 const router = useRouter()
 const route = useRoute(),
   id = computed(() => String(route.params.id))
+let publicationReadGuard: (() => boolean) | undefined
+let agentReadSerial = 0
 const {
   data: agent,
   loading,
   error: loadError,
   invalidate: invalidateAgent,
   reload
-} = useResource(() => api.agents.get(id.value))
+} = useResource(async () => {
+  const guard = publicationReadGuard
+  publicationReadGuard = undefined
+  const read = ++agentReadSerial
+  try {
+    const value = await api.agents.get(id.value)
+    if (guard && !guard() && read === agentReadSerial) invalidateAgent()
+    return value
+  } catch (reason) {
+    if (guard && !guard()) {
+      if (read === agentReadSerial) invalidateAgent()
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+    }
+    throw reason
+  }
+})
 const { busy, error, run } = useTask({
   handlesError: (reason) => {
     if (
@@ -1123,7 +1157,8 @@ function currentConfiguration(): AgentSaveAndPublishCommand['payload'] {
 async function acceptPublication(
   value: AgentSaveAndPublishReceipt,
   operation: NonNullable<typeof publicationOperation.value>,
-  owner: string
+  owner: string,
+  ownsSession?: () => boolean
 ) {
   if (
     !value ||
@@ -1137,30 +1172,46 @@ async function acceptPublication(
     !Number.isFinite(Date.parse(value.published_at))
   )
     throw Error('保存并发布回执不完整，请核对原操作')
+  if (ownsSession && !ownsSession()) return
   if (!clearPublicationOperation()) return
   publicationReceipt.value = value
   publicationCheck.value = ''
   if (operation.formSnapshot) saved.value = operation.formSnapshot
   refreshRequired.value = true
   if (agent.value) agent.value.has_draft_changes = false
-  const next = await reload()
-  if (publicationDisposed || owner !== publicationOwner.value) return
+  let next: AgentDetail | undefined
+  publicationReadGuard = ownsSession
+  try {
+    next = await reload()
+  } finally {
+    if (publicationReadGuard === ownsSession) publicationReadGuard = undefined
+  }
+  if (publicationDisposed || owner !== publicationOwner.value || (ownsSession && !ownsSession()))
+    return
   if (next) {
     fill(next)
     message.success(`智能体已保存并发布，修订 ${value.revision}`)
+    return next
   }
 }
 async function dispatchPublication(
   operation: NonNullable<typeof publicationOperation.value>,
   owner: string,
-  retry: boolean
+  retry: boolean,
+  ownsSession?: () => boolean
 ) {
   try {
     const value = await api.agents.saveAndPublish(operation.command!)
-    if (publicationDisposed || owner !== publicationOwner.value) return
-    await acceptPublication(value, operation, owner)
+    if (publicationDisposed || owner !== publicationOwner.value || (ownsSession && !ownsSession()))
+      return
+    const detail = await acceptPublication(value, operation, owner, ownsSession)
+    return detail ? { receipt: value, detail } : undefined
   } catch (cause) {
-    if (publicationDisposed || owner !== publicationOwner.value) {
+    if (
+      publicationDisposed ||
+      owner !== publicationOwner.value ||
+      (ownsSession && !ownsSession())
+    ) {
       if (cause instanceof HttpClientError) cause.claimFeedback()
       throw 'cancel'
     }
@@ -1168,6 +1219,7 @@ async function dispatchPublication(
       cause instanceof HttpClientError &&
       cause.status >= 400 &&
       cause.status < 500 &&
+      cause.status !== 401 &&
       cause.status !== 408 &&
       cause.code !== 'AGENT_SAVE_PUBLISH_REQUEST_CONFLICT' &&
       !!cause.code &&
@@ -1187,7 +1239,7 @@ async function validateConfiguration() {
   if (result) formRef.value?.scrollToField(result)
   return false
 }
-async function saveAndPublish() {
+async function saveAndPublish(trial = false) {
   if (
     !canSaveAndPublish.value ||
     !dirty.value ||
@@ -1196,19 +1248,49 @@ async function saveAndPublish() {
     publicationStorageError.value
   )
     return
+  if (
+    trial &&
+    (!canPublishAndTrial.value ||
+      !auth.sessionIdentity ||
+      !auth.user?.session_id ||
+      !getSessionId())
+  )
+    return
   const owner = publicationOwner.value
-  await run(async () => {
+  const browserSession = trial ? getSessionId() : null
+  const sessionIdentity = auth.sessionIdentity
+  const securitySession = auth.user?.session_id
+  const tenant = auth.user?.tenant_id
+  const subject = auth.user?.sub
+  const ownsSession = () =>
+    !!browserSession &&
+    !!sessionIdentity &&
+    !!securitySession &&
+    !!tenant &&
+    !!subject &&
+    auth.sessionIdentity === sessionIdentity &&
+    getSessionId() === browserSession &&
+    auth.user?.session_id === securitySession &&
+    auth.user?.tenant_id === tenant &&
+    auth.user?.sub === subject
+  const result = await run(async () => {
     if (!(await validateConfiguration())) return
     if (!form.name.trim()) throw Error('请输入名称')
     if (
       !(await confirm({
-        title: '保存并发布智能体',
-        confirmText: '保存并发布',
-        content: `保存“${form.name}”的本次配置并发布，同时采用已保存的能力挂载。已有会话下一轮聊天采用新配置，当前执行继续原配置。`
+        title: trial ? '保存发布并试用智能体' : '保存并发布智能体',
+        confirmText: trial ? '保存发布并试用' : '保存并发布',
+        content: `保存“${form.name}”的本次配置并发布，同时采用已保存的能力挂载。已有会话下一轮聊天采用新配置，当前执行继续原配置。${trial ? '发布确认后进入试用，消息仍需手动发送。' : ''}`
       }))
     )
       return
-    if (publicationDisposed || owner !== publicationOwner.value || !canSaveAndPublish.value) return
+    if (
+      publicationDisposed ||
+      owner !== publicationOwner.value ||
+      !canSaveAndPublish.value ||
+      (trial && (!canPublishAndTrial.value || !ownsSession()))
+    )
+      return
     const requestId = crypto.randomUUID()
     const operation = {
       requestId,
@@ -1236,8 +1318,29 @@ async function saveAndPublish() {
     publicationReceipt.value = undefined
     publicationOperation.value = operation
     publicationCheck.value = ''
-    await dispatchPublication(operation, owner, false)
+    return await dispatchPublication(operation, owner, false, trial ? ownsSession : undefined)
   })
+  if (
+    trial &&
+    result &&
+    !publicationDisposed &&
+    owner === publicationOwner.value &&
+    ownsSession()
+  ) {
+    if (
+      canPublishAndTrial.value &&
+      !publicationOperation.value &&
+      !publicationStorageError.value &&
+      !refreshRequired.value &&
+      !dirty.value &&
+      result.detail.id === id.value &&
+      result.detail.status === 'published' &&
+      result.detail.published_revision === result.receipt.revision &&
+      publicationReceipt.value === result.receipt
+    )
+      await router.push({ path: '/admin/chat', query: { agent_id: id.value } })
+    else message.warning('智能体已发布，但当前状态或试用权限已变化，请核对后进入试用。')
+  }
 }
 async function continuePublication() {
   if (!canSaveAndPublish.value || !publicationOperation.value?.command) return

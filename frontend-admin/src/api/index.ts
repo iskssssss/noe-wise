@@ -1187,7 +1187,9 @@ export const api = {
     update: (id: string, data: Record<string, unknown>) =>
       patch<AgentItemWire>(`/agents/update`, { agent_id: id, payload: data }).then(mapAgentItem),
     saveAndPublish: (command: AgentSaveAndPublishCommand) =>
-      post<AgentSaveAndPublishReceipt>('/agents/save-and-publish', command),
+      post<AgentSaveAndPublishReceipt>('/agents/save-and-publish', command, {
+        retryOnUnauthorized: false
+      }),
     saveAndPublishResult: (agentId: string, requestId: string) =>
       get<AgentSaveAndPublishReceipt | undefined>(
         `/agents/save-and-publish/result?agentId=${encodeURIComponent(agentId)}&requestId=${encodeURIComponent(requestId)}`
