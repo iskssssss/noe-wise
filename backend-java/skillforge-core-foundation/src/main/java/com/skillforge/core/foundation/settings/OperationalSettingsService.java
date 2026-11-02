@@ -62,6 +62,14 @@ public class OperationalSettingsService implements SmartInitializingSingleton {
         return new Snapshot(current.row().getRevision(), current.plainValues());
     }
 
+    /** 与当前分组指针更新串行化；必须由短事务调用，锁不跨外部调用。 */
+    @Transactional(propagation=Propagation.MANDATORY)
+    public Snapshot readLocked(String group) {
+        var definition=requireGroup(group);var head=mapper.lockCurrentForShare(definition.key());
+        var current=resolve(definition,head);
+        return new Snapshot(current.row().getRevision(),current.plainValues());
+    }
+
     /** 按精确版本读取不可变快照；已冻结任务不依赖当前指针或当前版本仍然可读。 */
     @Transactional
     public Snapshot readRevision(String group, long revision) {
@@ -221,7 +229,9 @@ public class OperationalSettingsService implements SmartInitializingSingleton {
     }
 
     private Resolved current(OperationalSettingsRegistry.GroupDefinition definition) {
-        OperationalSettingHeadRow head = mapper.selectCurrent(definition.key());
+        return resolve(definition,mapper.selectCurrent(definition.key()));
+    }
+    private Resolved resolve(OperationalSettingsRegistry.GroupDefinition definition,OperationalSettingHeadRow head) {
         if (head == null || head.getCurrentRevision() <= 0) {
             throw new IllegalStateException("运营配置当前版本不存在: " + definition.key());
         }

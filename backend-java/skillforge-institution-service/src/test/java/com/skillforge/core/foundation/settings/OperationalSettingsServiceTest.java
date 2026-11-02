@@ -270,6 +270,8 @@ class OperationalSettingsServiceTest {
         public OperationalSettingHeadRow selectCurrent(String groupKey) {
             return heads.get(groupKey);
         }
+        @Override
+        public OperationalSettingHeadRow lockCurrentForShare(String groupKey) { return heads.get(groupKey); }
 
         @Override
         public OperationalSettingVersionRow selectVersion(String groupKey, long revision) {

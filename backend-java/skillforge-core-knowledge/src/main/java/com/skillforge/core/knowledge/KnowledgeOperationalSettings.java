@@ -31,6 +31,10 @@ public class KnowledgeOperationalSettings {
     public String effectiveIndexingMode(String configured) {
         return resolveIndexingMode(configured,configured==null||configured.isBlank()?capture():null);
     }
+    /** 仅空列需锁定当前运营指针；调用方须处于业务短事务。 */
+    public String lockedIndexingMode(String configured) {
+        return configured==null||configured.isBlank()?settings.readLocked("knowledge").text("default_indexing_mode"):configured;
+    }
     static String resolveIndexingMode(String configured,Snapshot snapshot) {
         return configured==null||configured.isBlank()?snapshot.defaultIndexingMode():configured;
     }

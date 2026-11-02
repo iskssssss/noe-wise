@@ -620,6 +620,313 @@ class KnowledgeServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void defaultChangeStopsQueuedRebuildAndPreventsRetryUntilRestored() {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"排队后默认改变",null,"high_quality","hybrid",false);
+            var document=knowledgeService.uploadFile(tenantId,base.id(),"source",textFile("source.txt","隔离内容"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"default-queued",rebuilds.latest(tenantId,base.id()).baseRevision());
+            var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+            changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+            org.mockito.Mockito.clearInvocations(embeddingProvider);rebuilds.run(tenantId,job.jobId());
+            var failed=rebuilds.latest(tenantId,base.id());assertEquals("FAILED",failed.status());assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",failed.errorCode());assertFalse(failed.writeLocked());
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.never()).embedBatch(anyString(),anyString(),anyLong(),anyList());
+            assertEquals(document.sourceVersion(),queryValue(jdbc,tenantId,"select current_source_version from nw_knowledge_documents where id=?",String.class,document.documentId()));
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->rebuilds.retry(tenantId,base.id(),job.jobId(),failed.revision(),false));
+            assertEquals(409,rejected.getStatus().value());assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            changed=knowledgeSettings.update("knowledge",changed,quality,actor).revision();
+            assertEquals("QUEUED",rebuilds.retry(tenantId,base.id(),job.jobId(),failed.revision(),false).status());
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.never()).embedBatch(anyString(),anyString(),anyLong(),anyList());
+        } finally {TenantContext.clear();if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);}
+    }
+
+    @Test
+    void defaultChangePreventsReadyRebuildPublicationWithoutMovingOriginalPointers() {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"发布前默认改变",null,"high_quality","hybrid",false);
+            var document=knowledgeService.uploadFile(tenantId,base.id(),"source",textFile("source.txt","隔离内容"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"default-publish",rebuilds.latest(tenantId,base.id()).baseRevision());
+            when(embeddingProvider.embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList())).thenReturn(List.of(new float[768]));
+            rebuilds.run(tenantId,job.jobId());var ready=rebuilds.latest(tenantId,base.id());assertEquals("READY",ready.status());
+            var before=knowledgeService.getBase(tenantId,base.id());
+            var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+            changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->rebuilds.publish(tenantId,base.id(),job.jobId(),ready.revision(),ready.baseRevision(),policy()));
+            assertEquals(409,rejected.getStatus().value());assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            var stillReady=rebuilds.latest(tenantId,base.id());assertEquals("READY",stillReady.status());assertTrue(stillReady.writeLocked());
+            assertEquals(before.activeRevisionId(),knowledgeService.getBase(tenantId,base.id()).activeRevisionId());
+            assertEquals(document.sourceVersion(),queryValue(jdbc,tenantId,"select current_source_version from nw_knowledge_documents where id=?",String.class,document.documentId()));
+            changed=knowledgeSettings.update("knowledge",changed,quality,actor).revision();
+            assertEquals("PUBLISHED",rebuilds.publish(tenantId,base.id(),job.jobId(),ready.revision(),ready.baseRevision(),policy()).status());
+        } finally {TenantContext.clear();if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);}
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void defaultChangeDuringOriginalBatchDoesNotStartAnotherOrReplayUnknown(boolean unknown) throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"在途批次默认改变",null,"high_quality","hybrid",false);
+            knowledgeService.uploadFile(tenantId,base.id(),"one",textFile("one.txt","第一份隔离文档"));
+            knowledgeService.uploadFile(tenantId,base.id(),"two",textFile("two.txt","第二份隔离文档"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"inflight-mode",rebuilds.latest(tenantId,base.id()).baseRevision());
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            doAnswer(call->{entered.countDown();assertTrue(release.await(10,java.util.concurrent.TimeUnit.SECONDS));return unknown?null:List.of(new float[768]);})
+                    .when(embeddingProvider).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+            try(var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                var running=pool.submit(()->{TenantContext.setTenantId(tenantId);try{rebuilds.run(tenantId,job.jobId());}finally{TenantContext.clear();}});
+                try {
+                    assertTrue(entered.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                    var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+                    changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+                } finally {release.countDown();}
+                running.get(20,java.util.concurrent.TimeUnit.SECONDS);
+            }
+            var stopped=rebuilds.latest(tenantId,base.id());
+            assertEquals(unknown?"UNKNOWN":"FAILED",stopped.status());assertFalse(stopped.writeLocked());
+            assertEquals(unknown?"embedding_result_unknown":"KNOWLEDGE_REBUILD_MODE_CHANGED",stopped.errorCode());
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.times(1)).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+            assertEquals(1,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_batches where job_id=? and status=?",Integer.class,job.jobId(),unknown?"UNKNOWN":"READY"));
+            assertEquals(1,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_batches where job_id=? and status='PENDING'",Integer.class,job.jobId()));
+            rebuilds.run(tenantId,job.jobId());
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.times(1)).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->rebuilds.retry(tenantId,base.id(),job.jobId(),stopped.revision(),false));
+            assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            changed=knowledgeSettings.update("knowledge",changed,quality,actor).revision();
+            if(unknown)assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->rebuilds.retry(tenantId,base.id(),job.jobId(),stopped.revision(),false));
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.times(1)).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+        } finally {release.countDown();TenantContext.clear();if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);}
+    }
+
+    @Test
+    void finalInFlightBatchCanBecomeReadyButCannotPublishUnderChangedDefault() throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"末批期间默认改变",null,"high_quality","hybrid",false);
+            var document=knowledgeService.uploadFile(tenantId,base.id(),"one",textFile("one.txt","唯一隔离文档"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"final-inflight",rebuilds.latest(tenantId,base.id()).baseRevision());
+            var originalActive=knowledgeService.getBase(tenantId,base.id()).activeRevisionId();
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            doAnswer(call->{entered.countDown();assertTrue(release.await(10,java.util.concurrent.TimeUnit.SECONDS));return List.of(new float[768]);})
+                    .when(embeddingProvider).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+            try(var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                var running=pool.submit(()->{TenantContext.setTenantId(tenantId);try{rebuilds.run(tenantId,job.jobId());}finally{TenantContext.clear();}});
+                try {
+                    assertTrue(entered.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                    var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+                    changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+                } finally {release.countDown();}
+                running.get(20,java.util.concurrent.TimeUnit.SECONDS);
+            }
+            var ready=rebuilds.latest(tenantId,base.id());assertEquals("READY",ready.status());assertTrue(ready.writeLocked());
+            assertEquals(document.sourceVersion(),queryValue(jdbc,tenantId,"select current_source_version from nw_knowledge_documents where id=?",String.class,document.documentId()));
+            assertEquals(originalActive,knowledgeService.getBase(tenantId,base.id()).activeRevisionId());
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->rebuilds.publish(tenantId,base.id(),job.jobId(),ready.revision(),ready.baseRevision(),policy()));
+            assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            assertEquals("READY",rebuilds.latest(tenantId,base.id()).status());
+            rebuilds.run(tenantId,job.jobId());
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.times(1)).embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList());
+            changed=knowledgeSettings.update("knowledge",changed,quality,actor).revision();
+            assertEquals("PUBLISHED",rebuilds.publish(tenantId,base.id(),job.jobId(),ready.revision(),ready.baseRevision(),policy()).status());
+        } finally {release.countDown();TenantContext.clear();if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);}
+    }
+
+    @Test
+    void restrictedSettingsHeadShareLockSerializesDefaultChangeAndReleasesOnRollback() throws Exception {
+        long actor=SnowflakeIds.nextId();String role="knowledge_setting_lock_"+SnowflakeIds.nextId();
+        jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        jdbc.execute("CREATE ROLE "+role+" NOLOGIN NOSUPERUSER NOBYPASSRLS");
+        jdbc.execute("GRANT SELECT,UPDATE ON nw_platform_operational_setting_groups TO "+role);
+        jdbc.execute("GRANT SELECT ON nw_platform_operational_setting_versions TO "+role);
+        var original=knowledgeSettings.read("knowledge");var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        long changed=0;
+        try(var pool=java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var locking=pool.submit(()->new TransactionTemplate(transactionManager).execute(status->{
+                jdbc.execute("SET LOCAL ROLE "+role);
+                var snapshot=knowledgeSettings.readLocked("knowledge");entered.countDown();
+                try {assertTrue(release.await(10,java.util.concurrent.TimeUnit.SECONDS));}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException(interrupted);}
+                status.setRollbackOnly();return snapshot;
+            }));
+            try {
+                assertTrue(entered.await(10,java.util.concurrent.TimeUnit.SECONDS));
+                var next=new java.util.LinkedHashMap<>(original.values());next.put("default_indexing_mode","economical");
+                var changing=pool.submit(()->knowledgeSettings.update("knowledge",original.revision(),next,actor));
+                assertThrows(java.util.concurrent.TimeoutException.class,()->changing.get(500,java.util.concurrent.TimeUnit.MILLISECONDS));
+                release.countDown();assertEquals(original.revision(),locking.get(10,java.util.concurrent.TimeUnit.SECONDS).revision());
+                changed=changing.get(10,java.util.concurrent.TimeUnit.SECONDS).revision();
+            } finally {release.countDown();}
+        } finally {
+            if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);
+            jdbc.execute("DROP OWNED BY "+role);jdbc.execute("DROP ROLE "+role);
+        }
+    }
+
+    @Test
+    void createRollsBackIfDefaultChangesBeforeFinalModeLock() throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        long gateKey=SnowflakeIds.nextId();String function="knowledge_rebuild_gate_"+gateKey;String trigger="knowledge_rebuild_gate_"+gateKey;
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"创建期间默认改变",null,"high_quality","hybrid",false);
+            var document=knowledgeService.uploadFile(tenantId,base.id(),"one",textFile("one.txt","唯一隔离文档"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var before=rebuilds.latest(tenantId,base.id());
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            jdbc.execute("CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock("+gateKey+"); RETURN NEW; END $$");
+            jdbc.execute("CREATE TRIGGER "+trigger+" BEFORE INSERT ON nw_knowledge_rebuild_jobs FOR EACH ROW EXECUTE FUNCTION "+function+"()");
+            try(var gate=Objects.requireNonNull(jdbc.getDataSource()).getConnection();var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                gate.setAutoCommit(false);
+                int gatePid;
+                try(var statement=gate.createStatement();var rows=statement.executeQuery("SELECT pg_backend_pid(),pg_advisory_xact_lock("+gateKey+")")){rows.next();gatePid=rows.getInt(1);}
+                var running=pool.submit(()->{TenantContext.setTenantId(tenantId);try{return rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"create-switch",before.baseRevision());}finally{TenantContext.clear();}});
+                try {
+                    int blocked=0;
+                    for(int attempt=0;attempt<150&&blocked==0&&!running.isDone();attempt++) {
+                        blocked=jdbc.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)) AND query LIKE '%nw_knowledge_rebuild_jobs%'",Integer.class,gatePid);
+                        if(blocked==0)Thread.sleep(100);
+                    }
+                    if(running.isDone())running.get();
+                    assertEquals(1,blocked);
+                    var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+                    changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+                } finally {gate.commit();}
+                var failure=assertThrows(java.util.concurrent.ExecutionException.class,()->running.get(15,java.util.concurrent.TimeUnit.SECONDS));
+                var rejected=org.junit.jupiter.api.Assertions.assertInstanceOf(com.skillforge.core.shared.exception.ApiException.class,failure.getCause());
+                assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            }
+            assertEquals("IDLE",rebuilds.latest(tenantId,base.id()).status());
+            assertEquals(0,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_jobs where tenant_id=? and kb_id=?",Integer.class,Long.parseLong(tenantId),base.id()));
+            assertEquals(before.baseRevision(),rebuilds.latest(tenantId,base.id()).baseRevision());
+            assertEquals(document.sourceVersion(),queryValue(jdbc,tenantId,"select current_source_version from nw_knowledge_documents where id=?",String.class,document.documentId()));
+            org.mockito.Mockito.verifyNoInteractions(embeddingProvider);
+        } finally {
+            TenantContext.clear();
+            jdbc.execute("DROP TRIGGER IF EXISTS "+trigger+" ON nw_knowledge_rebuild_jobs");
+            jdbc.execute("DROP FUNCTION IF EXISTS "+function+"()");
+            if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);
+        }
+    }
+
+    @Test
+    void publicationRollsBackCatalogAndPointersIfDefaultChangesBeforeFinalModeLock() throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"发布期间默认改变",null,"high_quality","hybrid",false);
+            var document=knowledgeService.uploadFile(tenantId,base.id(),"one",textFile("one.txt","唯一隔离文档"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"publish-switch",rebuilds.latest(tenantId,base.id()).baseRevision());
+            when(embeddingProvider.embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList())).thenReturn(List.of(new float[768]));
+            rebuilds.run(tenantId,job.jobId());var ready=rebuilds.latest(tenantId,base.id());assertEquals("READY",ready.status());
+            var originalActive=knowledgeService.getBase(tenantId,base.id()).activeRevisionId();
+            var definitions=queryValue(jdbc,tenantId,"select count(*) from nw_capability_definitions where tenant_id=?",Integer.class,Long.parseLong(tenantId));
+            var versionsBefore=queryValue(jdbc,tenantId,"select count(*) from nw_capability_versions where tenant_id=?",Integer.class,Long.parseLong(tenantId));
+            doAnswer(call->{var result=call.callRealMethod();entered.countDown();assertTrue(release.await(10,java.util.concurrent.TimeUnit.SECONDS));return result;})
+                    .when(catalogPublication).publish(org.mockito.ArgumentMatchers.any());
+            try(var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                var publishing=pool.submit(()->{TenantContext.setTenantId(tenantId);try{return rebuilds.publish(tenantId,base.id(),job.jobId(),ready.revision(),ready.baseRevision(),policy());}finally{TenantContext.clear();}});
+                try {
+                    assertTrue(entered.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                    var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+                    changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+                } finally {release.countDown();}
+                var failure=assertThrows(java.util.concurrent.ExecutionException.class,()->publishing.get(15,java.util.concurrent.TimeUnit.SECONDS));
+                var rejected=org.junit.jupiter.api.Assertions.assertInstanceOf(com.skillforge.core.shared.exception.ApiException.class,failure.getCause());
+                assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            }
+            assertEquals("READY",rebuilds.latest(tenantId,base.id()).status());assertTrue(rebuilds.latest(tenantId,base.id()).writeLocked());
+            assertEquals(originalActive,knowledgeService.getBase(tenantId,base.id()).activeRevisionId());
+            assertEquals(document.sourceVersion(),queryValue(jdbc,tenantId,"select current_source_version from nw_knowledge_documents where id=?",String.class,document.documentId()));
+            assertEquals(definitions,queryValue(jdbc,tenantId,"select count(*) from nw_capability_definitions where tenant_id=?",Integer.class,Long.parseLong(tenantId)));
+            assertEquals(versionsBefore,queryValue(jdbc,tenantId,"select count(*) from nw_capability_versions where tenant_id=?",Integer.class,Long.parseLong(tenantId)));
+            assertEquals(1,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_batch_embeddings where tenant_id=?",Integer.class,Long.parseLong(tenantId)));
+        } finally {release.countDown();TenantContext.clear();if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);}
+    }
+
+    @Test
+    void retryRollsBackUnknownReceiptChangesIfDefaultChangesBeforeFinalModeLock() throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-mode-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changed=0;
+        long gateKey=SnowflakeIds.nextId();String function="knowledge_retry_gate_"+gateKey;String trigger="knowledge_retry_gate_"+gateKey;
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"重试期间默认改变",null,"high_quality","hybrid",false);
+            knowledgeService.uploadFile(tenantId,base.id(),"one",textFile("one.txt","唯一隔离文档"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var quality=new java.util.LinkedHashMap<>(original.values());quality.put("default_indexing_mode","high_quality");
+            changed=knowledgeSettings.update("knowledge",original.revision(),quality,actor).revision();
+            var model=rebuildModel(768);var job=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"retry-switch",rebuilds.latest(tenantId,base.id()).baseRevision());
+            when(embeddingProvider.embedBatch(anyString(),org.mockito.ArgumentMatchers.eq(model.id()),anyLong(),anyList())).thenReturn(null);
+            rebuilds.run(tenantId,job.jobId());var unknown=rebuilds.latest(tenantId,base.id());assertEquals("UNKNOWN",unknown.status());
+            var before=queryRows(jdbc,tenantId,"SELECT invocation_id,status,receipt_history::text AS receipt_history FROM nw_knowledge_rebuild_batches WHERE tenant_id=? AND job_id=?",Long.parseLong(tenantId),job.jobId());
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            jdbc.execute("CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='QUEUED' AND OLD.status='UNKNOWN' THEN PERFORM pg_advisory_xact_lock("+gateKey+"); END IF; RETURN NEW; END $$");
+            jdbc.execute("CREATE TRIGGER "+trigger+" BEFORE UPDATE ON nw_knowledge_rebuild_jobs FOR EACH ROW EXECUTE FUNCTION "+function+"()");
+            try(var gate=Objects.requireNonNull(jdbc.getDataSource()).getConnection();var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                gate.setAutoCommit(false);int gatePid;
+                try(var statement=gate.createStatement();var rows=statement.executeQuery("SELECT pg_backend_pid(),pg_advisory_xact_lock("+gateKey+")")){rows.next();gatePid=rows.getInt(1);}
+                var retry=pool.submit(()->{TenantContext.setTenantId(tenantId);try{return rebuilds.retry(tenantId,base.id(),job.jobId(),unknown.revision(),true);}finally{TenantContext.clear();}});
+                try {
+                    int blocked=0;
+                    for(int attempt=0;attempt<150&&blocked==0&&!retry.isDone();attempt++){
+                        blocked=jdbc.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)) AND query LIKE '%nw_knowledge_rebuild_jobs%'",Integer.class,gatePid);
+                        if(blocked==0)Thread.sleep(100);
+                    }
+                    if(retry.isDone())retry.get();assertEquals(1,blocked);
+                    var economic=new java.util.LinkedHashMap<>(original.values());economic.put("default_indexing_mode","economical");
+                    changed=knowledgeSettings.update("knowledge",changed,economic,actor).revision();
+                } finally {gate.commit();}
+                var failure=assertThrows(java.util.concurrent.ExecutionException.class,()->retry.get(15,java.util.concurrent.TimeUnit.SECONDS));
+                var rejected=org.junit.jupiter.api.Assertions.assertInstanceOf(com.skillforge.core.shared.exception.ApiException.class,failure.getCause());
+                assertEquals("KNOWLEDGE_REBUILD_MODE_CHANGED",rejected.getCode());
+            }
+            assertEquals("UNKNOWN",rebuilds.latest(tenantId,base.id()).status());
+            assertEquals(before,queryRows(jdbc,tenantId,"SELECT invocation_id,status,receipt_history::text AS receipt_history FROM nw_knowledge_rebuild_batches WHERE tenant_id=? AND job_id=?",Long.parseLong(tenantId),job.jobId()));
+            org.mockito.Mockito.verify(embeddingProvider,org.mockito.Mockito.never()).embedBatch(anyString(),anyString(),anyLong(),anyList());
+        } finally {
+            TenantContext.clear();jdbc.execute("DROP TRIGGER IF EXISTS "+trigger+" ON nw_knowledge_rebuild_jobs");jdbc.execute("DROP FUNCTION IF EXISTS "+function+"()");
+            if(changed!=0)knowledgeSettings.update("knowledge",changed,original.values(),actor);
+        }
+    }
+
+    @Test
     void wholeBaseRebuildFreezesWritesThenManuallySwitchesDimensionsAndKeepsPinnedOldModel() {
         float[] oldVector=new float[1536];oldVector[0]=1;whenEmbeddingIsAvailable(oldVector);
         try {

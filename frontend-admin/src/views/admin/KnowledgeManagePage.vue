@@ -496,6 +496,23 @@
         >
           当前索引方式无法确认，请重新读取知识库信息或联系管理员。
         </p>
+        <p
+          v-if="
+            rebuildModeConflict ||
+            (effectiveIndexingMode === 'economical' && rebuild?.status === 'READY')
+          "
+          role="status"
+          class="admin-field-help"
+        >
+          当前索引方式与向量重建不兼容，原任务已保留。请联系管理员恢复高质量索引后刷新重建进展，或取消重建。
+        </p>
+        <p
+          v-if="rebuild?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED'"
+          role="status"
+          class="admin-field-help"
+        >
+          任务因索引方式变化而停止；恢复高质量索引后可刷新进展并选择是否重试。
+        </p>
         <ElAlert
           v-if="rebuild?.write_locked"
           title="重建期间知识库写入已锁定。"
@@ -584,14 +601,23 @@
               rebuild?.status === 'UNKNOWN' ||
               rebuild?.status === 'CANCELLED'
             "
-            :disabled="busy"
+            :disabled="
+              busy ||
+              (rebuild?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED' &&
+                effectiveIndexingMode !== 'high_quality')
+            "
             @click="retryRebuild"
             >{{ rebuild?.status === 'CANCELLED' ? '继续重建' : '重试失败批次' }}</ElButton
           ><ElButton
             v-permission="['foundation.knowledge.publish']"
             v-if="rebuild?.status === 'READY'"
             type="primary"
-            :disabled="busy || publicationLocked"
+            :disabled="
+              busy ||
+              publicationLocked ||
+              rebuildModeConflict ||
+              effectiveIndexingMode !== 'high_quality'
+            "
             @click="publishRebuild"
             >发布重建结果</ElButton
           >
@@ -837,6 +863,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import {
   api,
   get,
+  getSessionId,
   post,
   type KnowledgeBaseDetail,
   type KnowledgeDocumentItem,
@@ -861,21 +888,41 @@ const documentTitleQuery = ref(''),
 const appliedDocumentFilters = ref({ titleQuery: '', status: '' })
 const documentFilterFailed = ref(false)
 const documentMutationRefresh = ref(false)
+let documentReadGeneration = 0
 const {
   data: documents,
   loading,
   error: loadError,
-  reload: loadDocuments
-} = useResource(() =>
-  api.knowledge.listDocuments(id.value, {
-    page: page.value,
-    page_size: pageSize.value,
-    ...(appliedDocumentFilters.value.titleQuery
-      ? { titleQuery: appliedDocumentFilters.value.titleQuery }
-      : {}),
-    ...(appliedDocumentFilters.value.status ? { status: appliedDocumentFilters.value.status } : {})
-  })
-)
+  reload: loadDocuments,
+  invalidate: invalidateDocuments
+} = useResource(async () => {
+  const generation = ++documentReadGeneration
+  const current = rebuildReadCurrent()
+  try {
+    const result = await api.knowledge.listDocuments(id.value, {
+      page: page.value,
+      page_size: pageSize.value,
+      ...(appliedDocumentFilters.value.titleQuery
+        ? { titleQuery: appliedDocumentFilters.value.titleQuery }
+        : {}),
+      ...(appliedDocumentFilters.value.status
+        ? { status: appliedDocumentFilters.value.status }
+        : {})
+    })
+    if (!current()) throw 'cancel'
+    return result
+  } catch (reason) {
+    if (!current()) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (generation === documentReadGeneration) {
+        documentReadGeneration++
+        invalidateDocuments()
+      }
+      throw 'cancel'
+    }
+    throw reason
+  }
+})
 const { busy, error, run } = useTask()
 const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
@@ -997,7 +1044,11 @@ async function findDocuments() {
     status: documentStatus.value
   }
   page.value = 1
-  if ((await loadDocuments()) === undefined) {
+  const request = loadDocuments()
+  const generation = documentReadGeneration
+  const result = await request
+  if (generation !== documentReadGeneration) return
+  if (result === undefined) {
     page.value = previous.page
     appliedDocumentFilters.value = previous.filters
     documentFilterFailed.value = true
@@ -1019,7 +1070,11 @@ async function changeDocumentPage(nextPage: number, nextSize = pageSize.value) {
   const previous = { page: page.value, size: pageSize.value }
   page.value = nextPage
   pageSize.value = nextSize
-  if ((await loadDocuments()) === undefined) {
+  const request = loadDocuments()
+  const generation = documentReadGeneration
+  const result = await request
+  if (generation !== documentReadGeneration) return
+  if (result === undefined) {
     page.value = previous.page
     pageSize.value = previous.size
   }
@@ -1040,6 +1095,7 @@ watch(activeTab, (tab) => {
 const revisions = ref<KnowledgeBaseRevision[]>([]),
   rebuild = ref<KnowledgeRebuild>(),
   rebuildRefresh = ref(false),
+  rebuildModeConflict = ref(false),
   rebuildApi = createKnowledgeRebuildApi({ get, post }),
   modelId = ref('')
 const currentRevision = computed(() =>
@@ -1055,24 +1111,39 @@ const policy = {
 async function load() {
   const target = id.value
   const identity = auth.identityVersion
+  const current = rebuildReadCurrent()
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((reason: unknown) => {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    })
   const loaded = await run(async () => {
     const [b, r, j] = await Promise.all([
-      api.knowledge.getBase(id.value),
-      api.knowledge.listRevisions(id.value),
-      rebuildApi.detail(id.value)
+      guard(api.knowledge.getBase(target)),
+      guard(api.knowledge.listRevisions(target)),
+      guard(rebuildApi.detail(target))
     ])
+    if (!current()) return false
     base.value = b
     revisions.value = r.items
     rebuild.value = j
     if (uploadRefresh.value) {
       await readUploadedDocuments()
+      if (!current()) return false
       if (!uploadRefresh.value) {
         rebuildRefresh.value = false
         documentMutationRefresh.value = false
       }
-    } else if ((await loadDocuments()) !== undefined) {
-      rebuildRefresh.value = false
-      documentMutationRefresh.value = false
+    } else {
+      const result = await loadDocuments()
+      if (!current()) return false
+      if (result !== undefined) {
+        rebuildRefresh.value = false
+        documentMutationRefresh.value = false
+      }
     }
     return true
   })
@@ -1125,25 +1196,53 @@ function retryInitialUpload() {
   }
   void load()
 }
+const pendingTargetLoad = ref(false)
+function loadCurrentTarget() {
+  if (!pendingTargetLoad.value || busy.value || !can('foundation.knowledge.read')) return
+  pendingTargetLoad.value = false
+  void load()
+}
 watch(
-  id,
+  [
+    id,
+    () => auth.identityVersion,
+    () => auth.sessionIdentity,
+    initialOwner,
+    () => can('foundation.knowledge.read')
+  ],
   () => {
+    documentReadGeneration++
+    invalidateDocuments()
+    documents.value = undefined
+    loadError.value = ''
+    base.value = undefined
+    revisions.value = []
+    rebuild.value = undefined
     page.value = 1
+    rebuildModeConflict.value = false
     documentTitleQuery.value = ''
     documentStatus.value = ''
     appliedDocumentFilters.value = { titleQuery: '', status: '' }
     documentFilterFailed.value = false
     documentMutationRefresh.value = false
-    void load()
+    pendingTargetLoad.value = true
+    loadCurrentTarget()
   },
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
+watch(busy, (working) => {
+  if (!working) loadCurrentTarget()
+})
 const uploadRefresh = ref(false)
 async function readUploadedDocuments() {
   const previous = { page: page.value, filters: appliedDocumentFilters.value }
   page.value = 1
   appliedDocumentFilters.value = { titleQuery: '', status: '' }
-  if ((await loadDocuments()) === undefined) {
+  const request = loadDocuments()
+  const generation = documentReadGeneration
+  const result = await request
+  if (generation !== documentReadGeneration) return
+  if (result === undefined) {
     page.value = previous.page
     appliedDocumentFilters.value = previous.filters
   } else {
@@ -1994,6 +2093,11 @@ async function cancelRebuild() {
     })
 }
 async function retryRebuild() {
+  if (
+    rebuild.value?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED' &&
+    effectiveIndexingMode.value !== 'high_quality'
+  )
+    return
   const costUnknown = (rebuild.value?.unknown_batches ?? 0) > 0
   if (
     costUnknown &&
@@ -2005,39 +2109,155 @@ async function retryRebuild() {
     }))
   )
     return
+  if (
+    rebuild.value?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED' &&
+    effectiveIndexingMode.value !== 'high_quality'
+  )
+    return
   await run(async () => {
     rebuild.value = await rebuildApi.retry(rebuild.value!, costUnknown)
     message.success('未完成批次的重试已提交，请查看重建进展')
   })
 }
-async function readPublishedRebuild() {
+function rebuildReadCurrent() {
+  const target = id.value,
+    owner = initialOwner.value,
+    identity = auth.identityVersion,
+    session = getSessionId(),
+    authSession = auth.sessionIdentity
+  return () =>
+    !disposed &&
+    id.value === target &&
+    initialOwner.value === owner &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    auth.sessionIdentity === authSession &&
+    can('foundation.knowledge.read')
+}
+async function readPublishedRebuild(current: () => boolean) {
+  const target = id.value
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((reason: unknown) => {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    })
   const [nextBase, nextRevisions] = await Promise.all([
-    api.knowledge.getBase(id.value),
-    api.knowledge.listRevisions(id.value)
+    guard(api.knowledge.getBase(target)),
+    guard(api.knowledge.listRevisions(target))
   ])
-  if ((await loadDocuments()) === undefined) return
+  if (!current()) return
+  const selectedPage = page.value
+  const selectedSize = pageSize.value
+  const selectedFilters = { ...appliedDocumentFilters.value }
+  const generation = ++documentReadGeneration
+  invalidateDocuments()
+  const currentDocuments = () =>
+    current() &&
+    generation === documentReadGeneration &&
+    page.value === selectedPage &&
+    pageSize.value === selectedSize &&
+    appliedDocumentFilters.value.titleQuery === selectedFilters.titleQuery &&
+    appliedDocumentFilters.value.status === selectedFilters.status
+  let nextDocuments: Awaited<ReturnType<typeof api.knowledge.listDocuments>>
+  try {
+    loadError.value = ''
+    nextDocuments = await api.knowledge.listDocuments(target, {
+      page: selectedPage,
+      page_size: selectedSize,
+      ...(selectedFilters.titleQuery ? { titleQuery: selectedFilters.titleQuery } : {}),
+      ...(selectedFilters.status ? { status: selectedFilters.status } : {})
+    })
+  } catch (reason) {
+    if (reason instanceof HttpClientError) reason.claimFeedback()
+    if (!currentDocuments()) return
+    loadError.value =
+      reason instanceof Error ? reason.message : '暂时无法确认操作结果，请先查看当前状态。'
+    return
+  }
+  if (!currentDocuments()) return
+  documents.value = nextDocuments
   base.value = nextBase
   revisions.value = nextRevisions.items
   rebuildRefresh.value = false
 }
 async function retryRebuildRefresh() {
-  await run(readPublishedRebuild)
+  const current = rebuildReadCurrent()
+  await run(() => readPublishedRebuild(current))
 }
 async function refreshRebuild() {
   await run(async () => {
     const previous = rebuild.value?.status
     const owner = initialOwner.value
-    rebuild.value = await rebuildApi.detail(id.value)
+    const target = id.value
+    const identity = auth.identityVersion
+    const session = getSessionId()
+    const authSession = auth.sessionIdentity
+    const current = () =>
+      !disposed &&
+      id.value === target &&
+      initialOwner.value === owner &&
+      auth.identityVersion === identity &&
+      getSessionId() === session &&
+      auth.sessionIdentity === authSession &&
+      can('foundation.knowledge.read')
+    const guard = <T,>(promise: Promise<T>) =>
+      promise.catch((reason: unknown) => {
+        if (!current()) {
+          if (reason instanceof HttpClientError) reason.claimFeedback()
+          throw 'cancel'
+        }
+        throw reason
+      })
+    const needsMode =
+      rebuildModeConflict.value ||
+      effectiveIndexingMode.value !== 'high_quality' ||
+      rebuild.value?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED'
+    const [job, freshBase] = await Promise.all([
+      guard(rebuildApi.detail(target)),
+      needsMode ? guard(api.knowledge.getBase(target)) : Promise.resolve(undefined)
+    ])
+    if (!current() || (needsMode && !can('foundation.knowledge.read'))) return
+    rebuild.value = job
+    if (freshBase) {
+      base.value = freshBase
+      if ((freshBase.effective_indexing_mode ?? freshBase.indexing_mode) === 'high_quality')
+        rebuildModeConflict.value = false
+    }
     if (previous !== 'PUBLISHED' && rebuild.value.status === 'PUBLISHED') {
       if (owner === initialOwner.value) notifyKnowledgePublished(owner)
       rebuildRefresh.value = true
-      await readPublishedRebuild()
+      await readPublishedRebuild(current)
     }
   })
 }
 async function publishRebuild() {
-  if (publicationLocked.value) return
+  if (
+    publicationLocked.value ||
+    rebuildModeConflict.value ||
+    effectiveIndexingMode.value !== 'high_quality'
+  )
+    return
   await run(async () => {
+    const readCurrent = rebuildReadCurrent()
+    const target = id.value
+    const owner = initialOwner.value
+    const identity = auth.identityVersion
+    const session = getSessionId()
+    const authSession = auth.sessionIdentity
+    const job = rebuild.value
+    const current = () =>
+      !disposed &&
+      id.value === target &&
+      initialOwner.value === owner &&
+      auth.identityVersion === identity &&
+      getSessionId() === session &&
+      auth.sessionIdentity === authSession &&
+      can('foundation.knowledge.read') &&
+      rebuild.value?.job_id === job?.job_id &&
+      rebuild.value?.revision === job?.revision
     if (
       !(await confirm({
         title: '发布重建结果',
@@ -2047,13 +2267,35 @@ async function publishRebuild() {
       }))
     )
       return
-    const owner = initialOwner.value
-    rebuild.value = await rebuildApi.publish(rebuild.value!, policy)
+    if (!current()) return
+    try {
+      const published = await rebuildApi.publish(job!, policy)
+      if (!current()) return
+      rebuild.value = published
+    } catch (reason) {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      if (!(reason instanceof HttpClientError) || reason.code !== 'KNOWLEDGE_REBUILD_MODE_CHANGED')
+        throw reason
+      reason.claimFeedback()
+      if (!current()) return
+      rebuildModeConflict.value = true
+      if (!can('foundation.knowledge.read')) return
+      try {
+        const freshBase = await api.knowledge.getBase(target)
+        if (current() && can('foundation.knowledge.read')) base.value = freshBase
+      } catch (readError) {
+        if (readError instanceof HttpClientError) readError.claimFeedback()
+      }
+      return
+    }
     if (owner === initialOwner.value && rebuild.value.status === 'PUBLISHED')
       notifyKnowledgePublished(owner)
     message.success('重建结果已发布')
     rebuildRefresh.value = true
-    await readPublishedRebuild()
+    await readPublishedRebuild(readCurrent)
   })
 }
 

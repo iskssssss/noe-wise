@@ -39,6 +39,10 @@
         FROM nw_platform_operational_setting_groups
         WHERE group_key = #{groupKey}
     </select>
+    <select id="lockCurrentForShare" resultMap="headRow" useCache="false" flushCache="true">
+        SELECT group_key, current_revision, updated_at, updated_by
+        FROM nw_platform_operational_setting_groups WHERE group_key = #{groupKey} FOR SHARE
+    </select>
 
     <select id="selectVersion" resultMap="versionRow">
         SELECT group_key, revision, values, created_at, actor_id

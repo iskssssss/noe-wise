@@ -16,6 +16,8 @@ public interface OperationalSettingsMapper {
     List<OperationalSettingVersionRow> selectVersions(@Param("heads") List<OperationalSettingHeadRow> heads);
 
     OperationalSettingHeadRow selectCurrent(@Param("groupKey") String groupKey);
+    /** 当前事务内共享锁阻止对应分组指针切换，锁在调用方事务结束时释放。 */
+    OperationalSettingHeadRow lockCurrentForShare(@Param("groupKey") String groupKey);
 
     OperationalSettingVersionRow selectVersion(
             @Param("groupKey") String groupKey, @Param("revision") long revision);

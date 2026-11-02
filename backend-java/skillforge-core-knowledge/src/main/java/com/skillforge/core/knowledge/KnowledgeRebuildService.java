@@ -93,7 +93,8 @@ public class KnowledgeRebuildService {
                     batch.setItemId(item.getId());batch.setBatchIndex(index);batch.setStatus("PENDING");batch.setInvocationId("knowledge-rebuild:"+job.getId()+":"+item.getId()+":"+index);batches.insert(batch);
                 }
             }
-            base.setRebuildJobId(job.getId());bases.updateById(base);return snapshot(job);
+            base.setRebuildJobId(job.getId());bases.updateById(base);
+            var result=snapshot(job);requireLockedQualityMode(base);return result;
         });
     }
 
@@ -121,6 +122,7 @@ public class KnowledgeRebuildService {
                 for(var batch:started){batch.setStatus("UNKNOWN");batch.setErrorCode("embedding_result_unknown");batches.updateById(batch);}
                 finish(job,base,"UNKNOWN","embedding_result_unknown");return null;
             }
+            if(!qualityMode(base)) {finish(job,base,"FAILED","KNOWLEDGE_REBUILD_MODE_CHANGED");return null;}
             return job;
         });
         if(claimed==null)return;
@@ -134,6 +136,8 @@ public class KnowledgeRebuildService {
                     boolean started=Boolean.TRUE.equals(tx.execute(status->{
                         KnowledgeRebuildJobDO current=owned(claimed);if(current==null)return false;
                         if(!"PENDING".equals(batch.getStatus()))throw conflict("knowledge_rebuild_batch_not_pending");
+                        KnowledgeBaseDO base=lockBase(tenant,current.getKbId());
+                        if(!qualityMode(base)) {finish(current,base,"FAILED","KNOWLEDGE_REBUILD_MODE_CHANGED");return false;}
                         target(current.getTargetModelId().toString(),current.getTargetModelRevision());
                         batch.setStatus("STARTED");batch.setErrorCode(null);batches.updateById(batch);renew(current);return true;
                     }));
@@ -194,6 +198,7 @@ public class KnowledgeRebuildService {
             long tenant=Long.parseLong(tenantId);KnowledgeBaseDO base=lockBase(tenant,kbId);KnowledgeRebuildJobDO job=command(tenant,kbId,jobId,expectedRevision);
             if(!Set.of("FAILED","UNKNOWN","CANCELLED").contains(job.getStatus()))throw conflict("knowledge_rebuild_not_retryable");
             if(base.getRebuildJobId()!=null)throw conflict("knowledge_rebuild_write_locked");assertUnchanged(job,base);
+            requireQualityMode(base);
             target(job.getTargetModelId().toString(),job.getTargetModelRevision());
             for(var batch:jobBatches(job))if(!"READY".equals(batch.getStatus())){
                 if("UNKNOWN".equals(batch.getStatus())&&!confirmUnknownCost)throw conflict("knowledge_rebuild_unknown_cost_confirmation_required");
@@ -207,7 +212,8 @@ public class KnowledgeRebuildService {
                 batch.setStatus("PENDING");batch.setErrorCode(null);batches.updateById(batch);
             }
             job.setStatus("QUEUED");job.setErrorCode(null);job.setRevision(job.getRevision()+1);job.setFence(job.getFence()+1);jobs.updateById(job);
-            base.setRebuildJobId(jobId);bases.updateById(base);return snapshot(job);
+            base.setRebuildJobId(jobId);bases.updateById(base);
+            var result=snapshot(job);requireLockedQualityMode(base);return result;
         });
     }
 
@@ -218,6 +224,7 @@ public class KnowledgeRebuildService {
             if("PUBLISHED".equals(job.getStatus()))return snapshot(job);
             if(!Objects.equals(base.getControlRevision(),expectedBaseRevision))throw conflict("knowledge_base_revision_conflict");
             if(!"READY".equals(job.getStatus())||!Objects.equals(base.getRebuildJobId(),jobId))throw conflict("knowledge_rebuild_not_ready");
+            requireQualityMode(base);
             target(job.getTargetModelId().toString(),job.getTargetModelRevision());assertUnchanged(job,base);
             job.setStatus("PUBLISHING");jobs.updateById(job);
             // KB行锁在事务提交前持续持有；解除字段锁只供同事务的既有发布服务使用。
@@ -238,7 +245,7 @@ public class KnowledgeRebuildService {
             publications.publish(tenantId,kbId,draft.revision());
             job.setPublishedRevision(draft.revision());job.setStatus("PUBLISHED");job.setRevision(job.getRevision()+1);job.setFence(job.getFence()+1);jobs.updateById(job);
             storage.releasePublishedStaging(tenant,jobId);
-            return snapshot(job);
+            var result=snapshot(job);requireLockedQualityMode(base);return result;
         });
     }
 
@@ -305,6 +312,10 @@ public class KnowledgeRebuildService {
         models.requireEnabled(id,"EMBEDDING");PlatformModelConfig model=models.readRevision(id,revision);
         if(!model.enabled()||!"EMBEDDING".equals(model.kind())||model.dimensions()==null||model.dimensions()<=0)throw invalid("knowledge_rebuild_model_invalid");return model;
     }
+    private boolean qualityMode(KnowledgeBaseDO base){return "high_quality".equals(operationalSettings.lockedIndexingMode(base.getIndexingMode()));}
+    private void requireQualityMode(KnowledgeBaseDO base){if(!"high_quality".equals(operationalSettings.effectiveIndexingMode(base.getIndexingMode())))throw modeChanged();}
+    private void requireLockedQualityMode(KnowledgeBaseDO base){if(!qualityMode(base))throw modeChanged();}
+    private static ApiException modeChanged(){return new ApiException(HttpStatus.CONFLICT,"KNOWLEDGE_REBUILD_MODE_CHANGED","知识库当前索引方式不支持向量重建，请恢复高质量索引或取消任务。",false);}
     private void assertUnchanged(KnowledgeRebuildJobDO job,KnowledgeBaseDO base){
         if(!"active".equals(base.getStatus())||!Objects.equals(base.getActiveRevisionId(),job.getOriginalActiveRevisionId())
                 ||!Objects.equals(base.getEmbeddingModelConfigId(),job.getOriginalModelId())||!Objects.equals(base.getEmbeddingModelRevision(),job.getOriginalModelRevision()))throw conflict("knowledge_rebuild_source_changed");

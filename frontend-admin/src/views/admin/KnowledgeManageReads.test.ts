@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElFormItem, ElSelect, ElTabs } from 'element-plus'
+import { HttpClientError } from '@skillforge/shared/utils/http'
+import { reactive } from 'vue'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -16,11 +18,19 @@ const mocks = vi.hoisted(() => ({
   rebuild: vi.fn(),
   post: vi.fn(),
   confirm: vi.fn(),
+  session: 'session',
   success: vi.fn(),
   showMessage: vi.fn()
 }))
-vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ user: null, identityVersion: 0 }) }))
+const authState = reactive({
+  user: { tenant_id: '1', sub: '1', permissions: ['foundation.knowledge.read'] },
+  identityVersion: 0,
+  sessionIdentity: 'session'
+})
+const routeState = reactive({ params: { id: 'kb-1' } })
+vi.mock('../../stores/auth', () => ({ useAuthStore: () => authState }))
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.session,
   api: {
     knowledge: {
       getBase: mocks.base,
@@ -38,7 +48,7 @@ vi.mock('../../api', () => ({
   post: mocks.post
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'kb-1' } }),
+  useRoute: () => routeState,
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
@@ -75,6 +85,10 @@ const job = (status = 'IDLE') => ({
 })
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.session = 'session'
+  routeState.params.id = 'kb-1'
+  authState.identityVersion = 0
+  authState.sessionIdentity = 'session'
   mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: 'high_quality' })
   mocks.revisions.mockResolvedValue({ items: [] })
   mocks.models.mockResolvedValue([])
@@ -124,6 +138,76 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('初始文档读取在途时切换知识库，旧响应不能写入且忙碌结束后加载新库', async () => {
+    let finish!: (value: unknown) => void
+    mocks.base.mockImplementation(async (id: string) => ({
+      id,
+      name: id,
+      indexing_mode: 'high_quality'
+    }))
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    mocks.documents.mockResolvedValue({
+      items: [{ ...documentFixture, title: '新库文档' }],
+      total: 1
+    })
+    await open()
+    routeState.params.id = 'kb-2'
+    await flushPromises()
+    finish({ items: [{ ...documentFixture, title: '旧库文档' }], total: 1 })
+    await flushPromises()
+    expect(mocks.base).toHaveBeenCalledWith('kb-2')
+    expect(wrapper.text()).toContain('新库文档')
+    expect(wrapper.text()).not.toContain('旧库文档')
+  })
+  it('初始文档读取在途时同主体重新登录，旧响应失效并重新加载', async () => {
+    let finish!: (value: unknown) => void
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    mocks.documents.mockResolvedValue({
+      items: [{ ...documentFixture, title: '新会话文档' }],
+      total: 1
+    })
+    await open()
+    mocks.session = 'new-session'
+    authState.identityVersion++
+    authState.sessionIdentity = 'new-session'
+    await flushPromises()
+    finish({ items: [{ ...documentFixture, title: '旧会话文档' }], total: 1 })
+    await flushPromises()
+    expect(mocks.base).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('新会话文档')
+    expect(wrapper.text()).not.toContain('旧会话文档')
+  })
+  it('浏览器会话先变化而认证状态尚未同步时，普通列表不写入旧响应', async () => {
+    let finish!: (value: unknown) => void
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    mocks.documents.mockResolvedValue({
+      items: [{ ...documentFixture, title: '当前会话文档' }],
+      total: 1
+    })
+    await open()
+    mocks.session = 'new-session'
+    finish({ items: [{ ...documentFixture, title: '旧会话迟到文档' }], total: 1 })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧会话迟到文档')
+    expect(wrapper.text()).not.toContain('暂时无法确认操作结果')
+    authState.identityVersion++
+    authState.sessionIdentity = 'new-session'
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前会话文档')
+    expect(wrapper.text()).not.toContain('旧会话迟到文档')
+  })
   it('经济索引禁止新建向量重建，现有就绪任务仍能查看、取消和发布', async () => {
     mocks.base.mockResolvedValue({
       id: 'kb-1',
@@ -144,6 +228,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     const start = wrapper.findAllComponents(ElButton).find((item) => item.text() === '开始重建')!
     expect(start.props('disabled')).toBe(true)
     expect(wrapper.text()).toContain('当前为经济索引，仅支持全文检索')
+    expect(wrapper.text()).not.toContain('当前索引方式无法确认')
     expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '刷新重建进展')).toBe(
       true
     )
@@ -164,7 +249,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
         .findAllComponents(ElButton)
         .find((item) => item.text() === '发布重建结果')!
         .props('disabled')
-    ).toBe(false)
+    ).toBe(true)
     expect(mocks.post).not.toHaveBeenCalled()
   })
   it('经济索引的已有失败任务仍可显式重试', async () => {
@@ -179,6 +264,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   })
   it('索引方式未确定时不推断为向量索引', async () => {
     mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: null })
+    mocks.rebuild.mockResolvedValue(job('READY'))
     await open()
     await rebuildTab()
     expect(wrapper.text()).toContain('当前索引方式无法确认')
@@ -188,6 +274,18 @@ describe('知识详情按需读取与已发布状态恢复', () => {
         .find((item) => item.text() === '开始重建')!
         .props('disabled')
     ).toBe(true)
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '发布重建结果')!
+        .props('disabled')
+    ).toBe(true)
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '取消重建')!
+        .props('disabled')
+    ).toBe(false)
   })
   it('高质量索引仍可使用目标模型发起重建', async () => {
     mocks.base.mockResolvedValue({
@@ -303,6 +401,120 @@ describe('知识详情按需读取与已发布状态恢复', () => {
       expect(mocks.post).not.toHaveBeenCalled()
     }
   )
+  it('明确模式冲突保留就绪任务，模式恢复后一次只读刷新允许显式发布', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'KNOWLEDGE_REBUILD_MODE_CHANGED',
+        userMessage: '模式冲突'
+      })
+    )
+    await open()
+    await rebuildTab()
+    mocks.base.mockResolvedValueOnce({
+      id: 'kb-1',
+      indexing_mode: null,
+      effective_indexing_mode: 'economical'
+    })
+    await click('发布重建结果')
+    expect(wrapper.text()).toContain('当前索引方式与向量重建不兼容，原任务已保留')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '发布重建结果')!
+        .props('disabled')
+    ).toBe(true)
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '取消重建')!
+        .props('disabled')
+    ).toBe(false)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.success).not.toHaveBeenCalled()
+    mocks.base.mockResolvedValueOnce({
+      id: 'kb-1',
+      indexing_mode: null,
+      effective_indexing_mode: 'high_quality'
+    })
+    await click('刷新重建进展')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '发布重建结果')!
+        .props('disabled')
+    ).toBe(false)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+  it('发布网络异常不被当作模式冲突，也不自动重发', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockRejectedValueOnce(Error('连接中断'))
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    expect(wrapper.text()).not.toContain('当前索引方式与向量重建不兼容')
+    expect(mocks.base).toHaveBeenCalledTimes(1)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+  it('发布迟到错误在浏览器会话变化后不污染页面', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    let fail!: (reason: unknown) => void
+    mocks.post.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        fail = reject
+      })
+    )
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    mocks.session = 'new-session'
+    fail(new Error('旧会话发布失败'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧会话发布失败')
+    expect(mocks.base).toHaveBeenCalledTimes(1)
+  })
+  it('刷新迟到错误在浏览器会话变化后不污染页面', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    await open()
+    await rebuildTab()
+    let fail!: (reason: unknown) => void
+    mocks.rebuild.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        fail = reject
+      })
+    )
+    await click('刷新重建进展')
+    mocks.session = 'new-session'
+    fail(new Error('旧会话读取失败'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧会话读取失败')
+  })
+  it('任务因模式变化停止时保留恢复入口', async () => {
+    mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: 'economical' })
+    mocks.rebuild.mockResolvedValue({
+      ...job('FAILED'),
+      error_code: 'KNOWLEDGE_REBUILD_MODE_CHANGED'
+    })
+    await open()
+    await rebuildTab()
+    expect(wrapper.text()).toContain('任务因索引方式变化而停止')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '重试失败批次')!
+        .props('disabled')
+    ).toBe(true)
+    mocks.base.mockResolvedValueOnce({ id: 'kb-1', name: '知识库', indexing_mode: 'high_quality' })
+    await click('刷新重建进展')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '重试失败批次')!
+        .props('disabled')
+    ).toBe(false)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
   it('发布后文档GET失败只反馈一次，保留成功回执并仅重试读取', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
     mocks.post.mockResolvedValue(job('PUBLISHED'))
@@ -342,5 +554,97 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     expect(mocks.base).toHaveBeenCalledTimes(3)
     expect(mocks.documents).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).not.toContain('重建结果已发布，知识库与文档信息尚未刷新')
+  })
+  it.each(['base', 'revisions'] as const)(
+    '发布后 %s 迟到错误在会话变化后忽略',
+    async (resource) => {
+      mocks.rebuild.mockResolvedValue(job('READY'))
+      mocks.post.mockResolvedValue(job('PUBLISHED'))
+      await open()
+      await rebuildTab()
+      let fail!: (reason: unknown) => void
+      mocks[resource].mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          fail = reject
+        })
+      )
+      await click('发布重建结果')
+      mocks.session = 'new-session'
+      fail(new Error('旧会话发布后读取失败'))
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('旧会话发布后读取失败')
+    }
+  )
+  it('发布后文档迟到响应在会话变化后不写入列表', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    await open()
+    await rebuildTab()
+    let finish!: (value: unknown) => void
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await click('发布重建结果')
+    mocks.session = 'new-session'
+    finish({ items: [{ ...documentFixture, title: '旧会话迟到文档' }], total: 1 })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧会话迟到文档')
+    expect(wrapper.text()).toContain('重建结果已发布，知识库与文档信息尚未刷新')
+  })
+  it('发布后的文档读取使较早筛选失效，旧响应不能覆盖结果或回滚筛选', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    await open()
+    let finish!: (value: unknown) => void
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await wrapper.get('input[aria-label="查找文档标题"]').setValue('目标')
+    await wrapper.get('form.knowledge-document-filters').trigger('submit')
+    await flushPromises()
+    mocks.documents.mockResolvedValueOnce({
+      items: [{ ...documentFixture, title: '目标新结果' }],
+      total: 1
+    })
+    await rebuildTab()
+    await click('发布重建结果')
+    finish({ items: [{ ...documentFixture, title: '旧筛选响应' }], total: 1 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('目标新结果')
+    expect(wrapper.text()).not.toContain('旧筛选响应')
+    expect(wrapper.text()).toContain('标题包含“目标”')
+  })
+  it('较新的文档筛选读取使在途发布读取失效，不回滚新筛选', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    await open()
+    await rebuildTab()
+    let finish!: (value: unknown) => void
+    mocks.documents.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await click('发布重建结果')
+    const state = wrapper.vm as unknown as {
+      appliedDocumentFilters: { titleQuery: string; status: string }
+      loadDocuments: () => Promise<unknown>
+    }
+    state.appliedDocumentFilters = { titleQuery: '新筛选', status: '' }
+    mocks.documents.mockResolvedValueOnce({
+      items: [{ ...documentFixture, title: '新筛选结果' }],
+      total: 1
+    })
+    await state.loadDocuments()
+    await flushPromises()
+    finish({ items: [{ ...documentFixture, title: '旧发布响应' }], total: 1 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('新筛选结果')
+    expect(wrapper.text()).not.toContain('旧发布响应')
+    expect(wrapper.text()).toContain('标题包含“新筛选”')
   })
 })

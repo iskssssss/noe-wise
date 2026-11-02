@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn()
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'test-session',
   api: {
     knowledge: {
       getBase: mocks.base,
