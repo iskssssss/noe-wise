@@ -53,6 +53,7 @@ class SdkWorkflowPortalTest {
     private JdbcExecutionStore store;
     private JdbcExecutionLedgerPort ledger;
     private final Map<ActionRef, Expected> originals = new HashMap<>();
+    private final Map<ResultRef, Material> continuationRequests = new HashMap<>();
     private final AtomicInteger nodes = new AtomicInteger();
 
     @BeforeAll static void schema() throws Exception {
@@ -77,7 +78,8 @@ class SdkWorkflowPortalTest {
         bindings = new JdbcWorkflowBindings(source); policy = new JdbcWorkflowPolicy(source, identities); ledger = new JdbcExecutionLedgerPort(source);
         store = new JdbcExecutionStore(source, identities, (session, run, actor, prepared) -> {
             var expected = originals.get(prepared.action());
-            if (expected == null || !expected.run().equals(run.identity()) || !expected.request().equals(prepared.request())) return false;
+            if (expected == null || !expected.run().equals(run.identity()) || !(expected.request().equals(prepared.request())
+                    || prepared.request().equals(continuationRequests.get(prepared.request().reference())))) return false;
             var resource = WorkflowPolicyResource.dispatchResource(run.identity(), expected.snapshot(), expected.target(), expected.execution(),
                     INPUT, List.of(), prepared.action(), prepared.request().reference(), prepared.fingerprint());
             return identities.authorize(session, new IdentityPolicyPort.AuthorizationRequest(actor, "workflow.dispatch", resource,
@@ -284,6 +286,93 @@ class SdkWorkflowPortalTest {
         assertThrows(IllegalStateException.class,()->portal().dispatchRegistered(f.registered(),f.prepared(),request));
         assertFalse(store.load(f.registered().run().identity().runRef()).orElseThrow().cancelled());
         assertTrue(record(f).cancelRequestId().isEmpty());assertEquals(0,nodes.get());
+    }
+
+    @Test void acceptedContinuationReturnsCommittedCancellationWithoutRunningNextNode() {
+        var f=fixture("resume-cancel",true);
+        var continuation=continuation(f);
+        int executed=nodes.get();var cancelled=new AtomicBoolean();
+        var request=withControl(continuation.request(),new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-resume"),List.of()));
+            cancelled.set(true);
+        },true);
+        assertInstanceOf(WorkflowResult.Cancelled.class,portal.resumeRegistered(continuation.registered(),continuation.prepared(),request));
+        assertEquals(WorkflowExecutionState.CANCELLED,record(f).state());
+        assertTrue(record(f).lease().isEmpty());assertEquals(executed,nodes.get());
+        assertEquals(Optional.of(continuation.registered().attempt().id()),store.waiting(f.dispatch().run(),continuation.waiting()).orElseThrow().continuationAttempt());
+    }
+
+    @Test void acceptedContinuationKeepsUnknownWhenOriginalEffectsCannotBeCancelled() {
+        var f=fixture("resume-cancel-unknown",true);var continuation=continuation(f);
+        int executed=nodes.get();var cancelled=new AtomicBoolean();
+        var request=withControl(continuation.request(),new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-resume-unknown"),List.of()));
+            cancelled.set(true);
+        },false);
+        assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.resumeRegistered(continuation.registered(),continuation.prepared(),request));
+        assertNotEquals(WorkflowExecutionState.CANCELLED,record(f).state());assertEquals(executed,nodes.get());
+    }
+
+    @Test void continuationResponseMismatchCannotBeReportedAsConfirmedCancellation() {
+        var f=fixture("resume-response-mismatch",true);var continuation=continuation(f);
+        int executed=nodes.get();var cancelled=new AtomicBoolean();
+        var original=withControl(continuation.request(),new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var substituted=new WorkflowResume(original.context(),original.snapshot(),original.target(),original.executionRef(),original.suspendRef(),
+                original.actionKey(),new TypedPayload("application/json","{\"confirmed\":false}"),original.expectedRevision(),original.idempotencyKey());
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-resume-mismatch"),List.of()));
+            cancelled.set(true);
+        },true);
+        assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.resumeRegistered(continuation.registered(),continuation.prepared(),substituted));
+        assertEquals(executed,nodes.get());
+    }
+
+    @Test void continuationCancellationSignalWithoutCommittedParentCannotImpersonateCancellation() {
+        var f=fixture("resume-signal-only",true);var continuation=continuation(f);
+        int executed=nodes.get();var cancelled=new AtomicBoolean();
+        var request=withControl(continuation.request(),new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        assertThrows(IllegalStateException.class,()->portal(()->cancelled.set(true),true).resumeRegistered(continuation.registered(),continuation.prepared(),request));
+        assertFalse(store.load(f.dispatch().run()).orElseThrow().cancelled());
+        assertTrue(record(f).lease().isEmpty());assertEquals(executed,nodes.get());
+    }
+
+    private record Continuation(DispatchResult.Registered registered,Prepared prepared,WaitRef waiting,WorkflowResume request) { }
+    private Continuation continuation(Fixture f) {
+        var suspended=assertInstanceOf(WorkflowResult.Suspended.class,portal().dispatchRegistered(f.registered(),f.prepared(),f.request()));
+        var original=record(f);var wait=original.waiting().orElseThrow();
+        var waitRef=new WaitRef(f.prepared().action(),1);var context=material("resume-context:"+f.dispatch().run().runId());
+        var waiting=store.complete(new Completion(f.dispatch().run(),f.registered().attempt().id(),ResultKind.SUCCEEDED,
+                material("resume-suspended:"+f.dispatch().run().runId()),Optional.empty(),Optional.empty(),ExecutionBudgetPort.Usage.unreported(),
+                f.registered().run().revision(),f.registered().run().lease().orElseThrow(),new Progress(0,0,0,context.reference()),context,List.of(),
+                Optional.of(new WaitDeclaration(waitRef,WaitKind.WORKFLOW,Map.of(),Optional.of(new WorkflowWait(f.request().executionRef(),
+                        suspended.suspendRef(),wait.actionKey(),suspended.revision())))))).run();
+        var response=new Material(new ResultRef("resume-response:"+f.dispatch().run().runId()),new TypedPayload("application/json","{\"confirmed\":true}"));
+        store.acceptDependency(new Resume(f.identity(),f.dispatch().run(),waitRef,waiting.revision(),new InputId("resume-input:"+f.dispatch().run().runId()),
+                response,"accepted-response",Map.of(),List.of()),(session,parent,exact,children,value)->{});
+        var claimed=store.claim(new Claim(f.dispatch().run(),"resume-worker","resume-claim:"+f.dispatch().run().runId(),Duration.ofMinutes(5))).orElseThrow();
+        var material=material("resume-request:"+f.dispatch().run().runId());
+        var fingerprint=digest(material.content().schemaId()+"\0"+material.content().canonicalJson());
+        var prepared=new Prepared(f.prepared().action(),f.prepared().ordinal(),Kind.WORKFLOW,f.prepared().target(),f.prepared().capability(),material,fingerprint);
+        continuationRequests.put(material.reference(),material);
+        var attempt="resume-attempt:"+f.dispatch().run().runId();
+        var demand=new ExecutionBudgetPort.Demand(f.dispatch().run(),attempt,fingerprint,ExecutionBudgetPort.Category.TOOL,
+                ExecutionBudgetPort.Resources.call(ExecutionBudgetPort.Category.TOOL,0,0),false);
+        var registered=assertInstanceOf(DispatchResult.Registered.class,store.dispatch(new Dispatch(f.dispatch().run(),claimed.revision(),claimed.lease().orElseThrow(),
+                prepared,attempt,demand,f.identity(),Optional.of(waitRef),List.of())));
+        var dispatch=new ProviderDispatch(f.dispatch().run(),prepared.action(),"resume-invocation",attempt,PortalCallKind.WORKFLOW_RESUME,
+                material.reference(),prepared.capability(),fingerprint,registered.run().fence());
+        var call=ProviderCallContext.dispatched(new PortCallContext(registered.run().identity(),f.identity(),new InvocationControl(Instant.now().plusSeconds(60),()->false)),dispatch);
+        return new Continuation(registered,prepared,waitRef,new WorkflowResume(call,f.request().snapshot(),f.request().target(),f.request().executionRef(),
+                suspended.suspendRef(),wait.actionKey(),response.content(),suspended.revision(),new IdempotencyKey("resume:"+f.dispatch().run().runId())));
+    }
+
+    private WorkflowResume withControl(WorkflowResume original,InvocationControl control) {
+        var call=original.context().callContext();
+        var context=ProviderCallContext.dispatched(new PortCallContext(call.runIdentity(),call.identity(),control),original.context().dispatch());
+        return new WorkflowResume(context,original.snapshot(),original.target(),original.executionRef(),original.suspendRef(),original.actionKey(),
+                original.response(),original.expectedRevision(),original.idempotencyKey());
     }
 
     private WorkflowDispatch withControl(Fixture fixture,InvocationControl control) {

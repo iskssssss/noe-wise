@@ -126,6 +126,7 @@ tasks.named<Test>("test") {
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
+    exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
 }
 
@@ -289,6 +290,19 @@ tasks.register<Test>("workflowHitlReplyBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.WorkflowHitlReplyBrowserE2ETest.realWorkflowReplyAfterResponseInterruption")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("workflowResumeCancelBrowserE2E") {
+    description = "验证人工回复后的工作流续跑取消竞争"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.WorkflowResumeCancelBrowserE2ETest.realReplyThenCancelDuringResume")
     }
     outputs.upToDateWhen { false }
 }
