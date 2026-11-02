@@ -106,3 +106,18 @@ it.each(['issue', 'rotate', 'suspend', 'revoke'] as const)(
     expect(fetchMock).toHaveBeenCalledTimes(1)
   }
 )
+
+it('服务身份带回执轮换收到 401 不自动重发', async () => {
+  localStorage.setItem('skillforge.access_token', 'expired-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    api.governance.servicePrincipals.rotateWithReceipt('request', 42)
+  ).rejects.toMatchObject({ status: 401 })
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})

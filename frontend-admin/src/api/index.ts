@@ -2043,6 +2043,21 @@ export const api = {
       list: () => get<ServicePrincipal[]>('/service-principals'),
       issue: (data: { integration_id: string; scopes: string[] }) =>
         post<IssuedServicePrincipal>('/service-principals', data, { retryOnUnauthorized: false }),
+      rotateWithReceipt: (requestId: string, id: number) =>
+        post<{
+          request_id: string
+          principal_id: string
+          api_key?: string
+          signing_secret?: string
+        }>(
+          '/service-principals/rotate-with-receipt',
+          { request_id: requestId, principal_id: id },
+          { retryOnUnauthorized: false }
+        ),
+      rotationResult: (requestId: string) =>
+        get<{ request_id: string; principal_id: string } | undefined>(
+          `/service-principals/rotate-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+        ),
       rotate: (id: number) =>
         post<IssuedServicePrincipal>(
           `/service-principals/rotate`,

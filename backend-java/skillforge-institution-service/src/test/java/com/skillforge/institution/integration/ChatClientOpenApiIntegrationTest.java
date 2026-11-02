@@ -379,6 +379,63 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void principalRotationReceiptIsAtomicAndNeverReplaysSecret() throws Exception {
+        String slug = "principal-receipt-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "ChannelManagement123";
+        createTestTenantAdministrator(tenant, "principal-admin", password);
+        String jwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "principal-admin", "password", password), null).path("access_token").asText();
+        var create = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/service-principals"))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("integration_id", "receipt",
+                        "scopes", List.of("sessions.read"))))).build();
+        var created = http.send(create, HttpResponse.BodyHandlers.ofString());
+        assertEquals(201, created.statusCode());
+        long id = json.readTree(created.body()).path("data").path("principal").path("id").asLong();
+        assertTrue(id > 0);
+        String requestId = UUID.randomUUID().toString();
+        String path = "/api/v1/service-principals/rotate-with-receipt";
+        var command = Map.of("request_id", requestId, "principal_id", id);
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var firstFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var secondFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var firstResponse = firstFuture.get(30, TimeUnit.SECONDS);
+        var secondResponse = secondFuture.get(30, TimeUnit.SECONDS);
+        assertEquals(200, firstResponse.statusCode());
+        assertEquals(200, secondResponse.statusCode());
+        var first = json.readTree(firstResponse.body()).path("data");
+        var second = json.readTree(secondResponse.body()).path("data");
+        assertNotEquals(first.has("api_key"), second.has("api_key"));
+        var fresh = first.has("api_key") ? first : second;
+        String apiKey = fresh.path("api_key").asText();
+        String secret = fresh.path("signing_secret").asText();
+        assertFalse(apiKey.isBlank()); assertFalse(secret.isBlank());
+        var receipt = managementHttp("GET", path + "/result?request_id=" + requestId, null, jwt);
+        var replay = managementHttp("POST", path, command, jwt);
+        for (var result : List.of(receipt, replay)) {
+            assertEquals(requestId, result.path("request_id").asText());
+            assertEquals(Long.toString(id), result.path("principal_id").asText());
+            assertFalse(result.has("api_key")); assertFalse(result.has("signing_secret"));
+        }
+        String stored = queryRows(jdbc, tenant, "SELECT * FROM nw_principal_rotation_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString();
+        assertFalse(stored.contains(apiKey)); assertFalse(stored.contains(secret));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_principal_rotation_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_service_principals WHERE tenant_id=? AND id=? AND credential_version=2 AND api_key_hash=?", Long.valueOf(tenant), id, TokenHash.sha256Hex(apiKey)));
+        managementHttp("POST", "/api/v1/service-principals/suspend", Map.of("id", id), jwt);
+        String rejectedId = UUID.randomUUID().toString();
+        var rejectedRequest = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", rejectedId, "principal_id", id)))).build();
+        var rejected = http.send(rejectedRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(409, rejected.statusCode());
+        assertEquals("PRINCIPAL_ROTATION_REJECTED", json.readTree(rejected.body()).path("code").asText());
+        assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_principal_rotation_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), rejectedId));
+    }
+
     @Test void credentialReceiptsCannotBeReadAcrossTenants() throws Exception {
         String suffix = Long.toString(SnowflakeIds.nextId());
         String ownerSlug = "receipt-owner-" + suffix;

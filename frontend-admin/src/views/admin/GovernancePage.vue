@@ -10,10 +10,39 @@
       type="error"
     /><ElAlert
       v-if="credentialUncertain"
-      title="本次凭证操作结果未知，原输入已保留，请联系平台核对签发或变更审计。核实前不要重复操作；刷新目录仅查询当前事实，不会重新签发。"
+      :title="
+        pendingRotation
+          ? '本次凭证轮换结果未知，请核对原轮换；确认前不能再次操作。'
+          : '本次凭证操作结果未知，请联系平台核对签发或变更审计；核实前不要重复操作。'
+      "
       type="warning"
       :closable="false"
-    /><ElTabs v-if="!embedded" v-model="tab" @tab-change="reload"
+    />
+    <p v-if="rotationRecovered" class="admin-field-help" role="status">
+      原轮换已确认，但明文无法恢复。如需新凭据，请重新轮换。
+    </p>
+    <div v-if="pendingRotation || rotationStorageError" class="admin-card" role="status">
+      <p v-if="pendingRotation">
+        服务身份轮换结果尚未确认，请求 ID：{{ pendingRotation.requestId }}。未查到回执不表示失败。
+      </p>
+      <p v-if="rotationStorageError">{{ rotationStorageError }}</p>
+      <p v-if="pendingRotation && !identity.allowed('foundation.service_principals.read')">
+        当前账号没有服务身份读取权限，请联系管理员授权后核对原轮换。
+      </p>
+      <ElButton
+        v-if="pendingRotation && identity.allowed('foundation.service_principals.read')"
+        :disabled="busy"
+        @click="checkRotation()"
+        >核对原轮换</ElButton
+      >
+      <ElButton
+        v-if="rotationStorageError && !pendingRotation"
+        :disabled="busy"
+        @click="loadRotation"
+        >重新读取操作记录</ElButton
+      >
+    </div>
+    <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload"
       ><ElTabPane name="principals" label="服务身份" /><ElTabPane
         name="webhooks"
         label="Webhook" /><ElTabPane name="audit" label="审计日志" /><ElTabPane
@@ -391,7 +420,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
 import type { FormInstance } from 'element-plus'
-import { onMounted, reactive, ref, useId } from 'vue'
+import { computed, onMounted, reactive, ref, useId } from 'vue'
 import {
   AdminPage,
   EntitySelect,
@@ -401,6 +430,7 @@ import {
   useDrawerClose
 } from '@skillforge/shared/admin'
 import { confirm, message } from '@skillforge/shared/feedback'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import { OPEN_PLATFORM_V1_OPERATIONS } from '@skillforge/shared/open-platform/generated/v1-contract'
 import { useAuthStore } from '../../stores/auth'
 import { useManagementIdentity } from '../../composables/managementIdentity'
@@ -474,7 +504,78 @@ const { busy, error, run } = useTask(),
     session_id: '',
     signing_secret: ''
   })
-const credentialUncertain = ref(false)
+const legacyUncertain = ref(false)
+const rotationRecovered = ref(false)
+const pendingRotation = ref<{ requestId: string; principalId: string }>()
+const rotationStorageError = ref('')
+const rotationStorageKey = `skillforge.principal-rotation:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
+const credentialUncertain = computed(
+  () => legacyUncertain.value || !!pendingRotation.value || !!rotationStorageError.value
+)
+function loadRotation() {
+  if (!auth.user?.tenant_id || !auth.user?.sub) {
+    rotationStorageError.value = '无法确认当前机构和成员，请重新登录。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(rotationStorageKey)
+    const value = raw !== null ? JSON.parse(raw) : undefined
+    if (
+      raw !== null &&
+      (!value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        typeof value.principalId !== 'string' ||
+        !/^\d+$/.test(value.principalId) ||
+        typeof value.requestId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId))
+    )
+      throw Error('invalid')
+    pendingRotation.value = value
+    rotationStorageError.value = ''
+  } catch {
+    rotationStorageError.value = '无法读取轮换操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function saveRotation(value?: { requestId: string; principalId: string }) {
+  try {
+    if (value) sessionStorage.setItem(rotationStorageKey, JSON.stringify(value))
+    else sessionStorage.removeItem(rotationStorageKey)
+    pendingRotation.value = value
+    rotationStorageError.value = ''
+    return true
+  } catch {
+    rotationStorageError.value = '无法保存轮换操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+onMounted(() => {
+  loadRotation()
+  if (pendingRotation.value && identity.allowed('foundation.service_principals.read'))
+    void checkRotation(true)
+})
+async function checkRotation(automatic = false) {
+  const original = pendingRotation.value
+  if (!original || !identity.allowed('foundation.service_principals.read')) return
+  await run(async () => {
+    const receipt = await api.governance.servicePrincipals.rotationResult(original.requestId)
+    if (!identity.current() || pendingRotation.value?.requestId !== original.requestId) return
+    if (
+      !receipt ||
+      receipt.request_id !== original.requestId ||
+      receipt.principal_id !== original.principalId
+    ) {
+      if (!automatic) message.warning('尚未查到匹配的轮换回执，结果仍未确认。')
+      return
+    }
+    if (!saveRotation()) return
+    rotationRecovered.value = !issued.value?.api_key
+    if (rotationRecovered.value)
+      message.warning('原轮换已确认，明文无法恢复；如需新凭据，请重新轮换。')
+    else message.success('原轮换已确认')
+    await reload()
+  })
+}
 useUnsavedChanges({
   dirty: () => secretOpen.value,
   busy: () => busy.value || credentialUncertain.value
@@ -492,7 +593,7 @@ async function credentialCommand<T>(permission: string, command: () => Promise<T
       typeof reason === 'object' && reason !== null && 'status' in reason
         ? Number(reason.status)
         : 0
-    if (status === 0 || status === 408 || status >= 500) credentialUncertain.value = true
+    if (status === 0 || status === 408 || status >= 500) legacyUncertain.value = true
     throw reason
   }
 }
@@ -563,24 +664,65 @@ async function create() {
   })
 }
 async function rotate(row: ServicePrincipal) {
+  if (credentialUncertain.value) return
+  identity.requirePermission('foundation.service_principals.update')
   if (
-    await confirm({
+    !(await confirm({
       title: '轮换凭据',
       confirmText: '轮换凭据',
       content: `集成“${row.integration_id}”的现有凭据将立即失效，请同步更新调用方。`
-    })
+    }))
   )
-    await run(async () => {
+    return
+  identity.requirePermission('foundation.service_principals.update')
+  await run(async () => {
+    const original = { requestId: crypto.randomUUID(), principalId: String(row.id) }
+    if (!saveRotation(original)) return
+    rotationRecovered.value = false
+    let result
+    try {
+      result = await api.governance.servicePrincipals.rotateWithReceipt(original.requestId, row.id)
       identity.requirePermission('foundation.service_principals.update')
-      const result = await credentialCommand('foundation.service_principals.update', () =>
-        api.governance.servicePrincipals.rotate(row.id)
+      if (
+        !result ||
+        result.request_id !== original.requestId ||
+        result.principal_id !== original.principalId ||
+        ((result.api_key !== undefined || result.signing_secret !== undefined) &&
+          (typeof result.api_key !== 'string' ||
+            !result.api_key.trim() ||
+            typeof result.signing_secret !== 'string' ||
+            !result.signing_secret.trim()))
       )
-      identity.requirePermission('foundation.service_principals.update')
-      issued.value = result
-      message.success('凭据已轮换，旧凭据已失效；请保存新凭据并更新调用方')
+        throw Error('轮换响应不完整，请核对原请求。')
+    } catch (reason) {
+      if (
+        identity.current() &&
+        reason instanceof HttpClientError &&
+        reason.code === 'PRINCIPAL_ROTATION_REJECTED'
+      ) {
+        saveRotation()
+      } else {
+        issued.value = undefined
+        secretOpen.value = false
+      }
+      throw reason
+    }
+    const cleared = saveRotation()
+    if (result.api_key && result.signing_secret) {
+      issued.value = {
+        principal: row,
+        api_key: result.api_key,
+        signing_secret: result.signing_secret
+      }
       secretOpen.value = true
-      await reload()
-    })
+      message.success('凭据已轮换，旧凭据已失效；请保存新凭据并更新调用方')
+    } else {
+      rotationRecovered.value = true
+      message.warning('原轮换已确认，明文无法恢复；如需新凭据，请重新轮换。')
+    }
+    if (!cleared) message.warning('原轮换已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
+    await reload()
+  })
 }
 async function suspend(row: ServicePrincipal) {
   if (

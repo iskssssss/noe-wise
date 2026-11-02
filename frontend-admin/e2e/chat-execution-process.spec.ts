@@ -65,10 +65,10 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
   // 隔离夹具只有一个可用对象，页面会自动选中；选中后不再显示占位文案。
   const target = page.locator('.el-select').filter({ hasText: 'Runtime E2E Agent' })
-  await expect(target.locator('.el-select__selected-item')).toHaveText('Runtime E2E Agent')
+  await expect(target.locator('.el-select__placeholder')).toHaveText('Runtime E2E Agent')
   const input = page.getByPlaceholder('输入消息', { exact: true })
   await input.fill(message)
-  const created = responseAt(page, '/api/v1/chat/sessions', 'POST')
+  const created = responseAt(page, '/api/v1/chat/sessions/create-with-receipt', 'POST')
   const accepted = responseAt(page, '/api/v1/chat', 'POST')
   await page.getByRole('button', { name: '发送', exact: true }).click()
   const session = await dataOf(await created)
@@ -121,6 +121,85 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
         promptTurnsConsumed: live ? [] : [0],
         live,
         errors
+      },
+      null,
+      2
+    )
+  )
+})
+
+test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('button', { name: '创建服务身份', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '签发服务身份' })
+  await drawer.getByLabel('集成标识').fill('browser-receipt-' + Date.now())
+  await drawer
+    .locator('.el-form-item')
+    .filter({ hasText: '授权 Scope' })
+    .locator('.el-select')
+    .click()
+  await page.getByRole('option').filter({ hasText: 'sessions.read' }).first().click()
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  const secretDialog = page.getByRole('dialog', { name: '请保存本次签发凭据' })
+  await expect(secretDialog).toBeVisible()
+  await secretDialog.getByRole('button', { name: '已保存' }).click()
+  let operations = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/service-principals/rotate-with-receipt'
+    )
+      operations++
+  })
+  let originalRequest = ''
+  let finishInterception!: () => void
+  const interceptionFinished = new Promise<void>((resolve) => {
+    finishInterception = resolve
+  })
+  await page.route('**/api/v1/service-principals/rotate-with-receipt', async (route) => {
+    originalRequest = String(route.request().postDataJSON().request_id)
+    const committed = await route.fetch()
+    expect(committed.status()).toBe(200)
+    await route.abort('failed')
+    finishInterception()
+  })
+  await page.getByRole('button', { name: '轮换', exact: true }).first().click()
+  await page.getByRole('button', { name: '轮换凭据', exact: true }).click()
+  await expect(page.getByText('本次凭证轮换结果未知')).toBeVisible()
+  expect(operations).toBe(1)
+  expect(originalRequest).toBeTruthy()
+  await interceptionFinished
+  await page.unroute('**/api/v1/service-principals/rotate-with-receipt')
+  page.on('dialog', (dialog) => void dialog.accept())
+  const receiptReady = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/service-principals/rotate-with-receipt/result'
+  )
+  await page.reload()
+  const receipt = await receiptReady
+  expect(receipt.status()).toBe(200)
+  await expect(
+    page.getByText('原轮换已确认，但明文无法恢复。如需新凭据，请重新轮换。')
+  ).toBeVisible()
+  expect(operations).toBe(1)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({
+    path: join(evidence, 'principal-rotation-recovered.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(evidence, 'principal-rotation-receipt.json'),
+    JSON.stringify(
+      {
+        request_id: originalRequest,
+        posted: operations,
+        recovery_status: receipt.status()
       },
       null,
       2
