@@ -9,15 +9,20 @@ const calls = vi.hoisted(() => ({
   instanceDetail: vi.fn(),
   mcpTools: vi.fn(),
   updateInstance: vi.fn(),
+  updateInstanceWithReceipt: vi.fn(),
+  updateResult: vi.fn(),
   createInstanceWithReceipt: vi.fn(),
   creationResult: vi.fn(),
   push: vi.fn(),
-  permissions: [] as string[]
+  permissions: [] as string[],
+  identityVersion: 1
 }))
 vi.mock('../../api', () => ({ api: { connectors: calls } }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
-    identityVersion: 1,
+    get identityVersion() {
+      return calls.identityVersion
+    },
     user: { tenant_id: '1', sub: 'member-1', permissions: calls.permissions }
   })
 }))
@@ -56,6 +61,7 @@ function page() {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  calls.identityVersion = 1
   calls.permissions = [
     'foundation.connectors.read',
     'foundation.connectors.update',
@@ -67,6 +73,10 @@ beforeEach(() => {
   calls.instanceDetail.mockResolvedValue(detail)
   calls.mcpTools.mockResolvedValue({ items: [beta] })
   calls.updateInstance.mockResolvedValue(detail)
+  calls.updateInstanceWithReceipt.mockImplementation(
+    async (request_id: string, instance_id: string) => ({ request_id, instance_id })
+  )
+  calls.updateResult.mockResolvedValue(undefined)
   sessionStorage.clear()
   calls.createInstanceWithReceipt.mockImplementation(async (request_id: string) => ({
     request_id,
@@ -233,6 +243,188 @@ it('跳转及列表刷新失败时保留原连接器的工具接入入口', asyn
   expect(wrapper!.text()).not.toContain('继续接入原连接器')
 })
 
+it('连接器详情读取期间身份变化不会将旧详情用于新身份', async () => {
+  let finish!: (value: typeof detail) => void
+  calls.instanceDetail.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  page()
+  await flushPromises()
+  await button('编辑').trigger('click')
+  calls.identityVersion = 2
+  finish(detail)
+  await flushPromises()
+  await button('保存').trigger('click')
+  await flushPromises()
+  expect(calls.updateInstanceWithReceipt).not.toHaveBeenCalled()
+  expect(calls.createInstanceWithReceipt).not.toHaveBeenCalled()
+})
+it('校验期间身份变化不会以新身份发送旧连接器更新', async () => {
+  page()
+  await flushPromises()
+  await button('编辑').trigger('click')
+  await flushPromises()
+  const clicked = button('保存').trigger('click')
+  calls.identityVersion = 2
+  await clicked
+  await flushPromises()
+  expect(calls.updateInstanceWithReceipt).not.toHaveBeenCalled()
+  expect(calls.createInstanceWithReceipt).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem('skillforge.connector-update:1:member-1')).toBeNull()
+})
+it('连接器更新断连后只保留身份，重新进入自动核对原回执', async () => {
+  calls.updateInstanceWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
+  page()
+  await flushPromises()
+  await button('编辑').trigger('click')
+  await flushPromises()
+  const authType = wrapper!
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '认证方式')!
+    .findComponent(ElSelect)
+  authType.vm.$emit('update:modelValue', 'bearer')
+  await flushPromises()
+  await wrapper!
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '访问凭据')!
+    .findComponent(ElInput)
+    .setValue('synthetic-secret-never-stored')
+  await button('保存').trigger('click')
+  await flushPromises()
+  const requestId = calls.updateInstanceWithReceipt.mock.calls[0]![0]
+  const key = 'skillforge.connector-update:1:member-1'
+  const saved = sessionStorage.getItem(key)!
+  expect(JSON.parse(saved)).toEqual({ requestId, instanceId: 'server', name: 'MCP服务' })
+  expect(saved).not.toContain('synthetic-secret-never-stored')
+  expect(button('保存').props('disabled')).toBe(true)
+  calls.updateResult.mockResolvedValueOnce(undefined)
+  await button('核对更新结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBe(saved)
+  expect(calls.updateInstanceWithReceipt).toHaveBeenCalledOnce()
+  wrapper!.unmount()
+  calls.updateResult.mockResolvedValueOnce({ request_id: requestId, instance_id: 'server' })
+  page()
+  await flushPromises()
+  expect(calls.updateResult).toHaveBeenLastCalledWith(requestId)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(calls.updateInstanceWithReceipt).toHaveBeenCalledOnce()
+  expect(calls.updateInstance).not.toHaveBeenCalled()
+})
+it('真实抽屉中可核对未知的连接器更新', async () => {
+  calls.updateInstanceWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
+  wrapper = mount(ConnectorsPage, { attachTo: document.body })
+  await flushPromises()
+  await button('编辑').trigger('click')
+  await flushPromises()
+  await button('保存').trigger('click')
+  await flushPromises()
+  expect(document.querySelector('.el-drawer__body')?.textContent).toContain('核对更新结果')
+  const requestId = calls.updateInstanceWithReceipt.mock.calls[0]![0]
+  calls.updateResult.mockResolvedValueOnce({ request_id: requestId, instance_id: 'server' })
+  await button('核对更新结果').trigger('click')
+  await flushPromises()
+  expect(calls.updateResult).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(calls.updateInstanceWithReceipt).toHaveBeenCalledOnce()
+  expect(sessionStorage.getItem('skillforge.connector-update:1:member-1')).toBeNull()
+})
+it('更新回执不匹配或本地记录无法清除时继续锁定并可重试', async () => {
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.connector-update:1:member-1'
+  const original = JSON.stringify({ requestId, instanceId: 'server', name: 'MCP服务' })
+  sessionStorage.setItem(key, original)
+  calls.updateResult.mockResolvedValueOnce({ request_id: requestId, instance_id: 'other' })
+  page()
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBe(original)
+  expect(wrapper!.text()).toContain('更新结果尚未确认')
+  calls.updateResult.mockResolvedValue({ request_id: requestId, instance_id: 'server' })
+  const spy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    throw Error('storage')
+  })
+  await button('核对更新结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBe(original)
+  expect(wrapper!.text()).toContain('无法清除原连接器更新记录')
+  expect(button('新增连接器').props('disabled')).toBe(true)
+  spy.mockRestore()
+  await button('核对更新结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(button('新增连接器').props('disabled')).toBe(false)
+  expect(calls.updateInstanceWithReceipt).not.toHaveBeenCalled()
+})
+it('失去读取权限时保留原更新请求且不自动查询', async () => {
+  calls.permissions = ['foundation.connectors.update']
+  const key = 'skillforge.connector-update:1:member-1'
+  const original = JSON.stringify({
+    requestId: '1d0bb5bf-0000-4000-8000-000000000001',
+    instanceId: 'server',
+    name: 'MCP服务'
+  })
+  sessionStorage.setItem(key, original)
+  page()
+  await flushPromises()
+  expect(calls.updateResult).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).toBe(original)
+  expect(button('核对更新结果').props('disabled')).toBe(true)
+})
+it('不同成员的连接器更新记录不会被读取', async () => {
+  const key = 'skillforge.connector-update:1:another-member'
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({
+      requestId: '1d0bb5bf-0000-4000-8000-000000000001',
+      instanceId: 'server',
+      name: 'MCP服务'
+    })
+  )
+  page()
+  await flushPromises()
+  expect(calls.updateResult).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+})
+it('连接器更新明确拒绝后保留输入，允许修正', async () => {
+  calls.updateInstanceWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 400,
+      code: 'CONNECTOR_UPDATE_REJECTED',
+      userMessage: '更新被拒绝',
+      traceId: 'test'
+    })
+  )
+  page()
+  await flushPromises()
+  await button('编辑').trigger('click')
+  await flushPromises()
+  const name = wrapper!
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '名称')!
+    .findComponent(ElInput)
+  await name.setValue('保留的名称')
+  await button('保存').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem('skillforge.connector-update:1:member-1')).toBeNull()
+  expect(name.props('modelValue')).toBe('保留的名称')
+  expect(button('保存').props('disabled')).toBe(false)
+  expect(calls.updateInstanceWithReceipt).toHaveBeenCalledOnce()
+})
+it('保存连接器更新身份失败时不发送请求', async () => {
+  page()
+  await flushPromises()
+  await button('编辑').trigger('click')
+  await flushPromises()
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw Error('storage')
+  })
+  await button('保存').trigger('click')
+  await flushPromises()
+  expect(calls.updateInstanceWithReceipt).not.toHaveBeenCalled()
+  expect(wrapper!.text()).toContain('本次未发送')
+  spy.mockRestore()
+})
 it('创建结果未知时保留原请求且不持久化凭据，核对后继续接入', async () => {
   calls.createInstanceWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
   page()

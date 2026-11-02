@@ -1356,6 +1356,20 @@ export const api = {
       get<{ request_id: string; instance_id: string } | null>(
         `/connectors/instances/create-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
       ),
+    updateInstanceWithReceipt: (
+      requestId: string,
+      instanceId: string,
+      payload: UpdateMcpConnectorInstanceInput
+    ) =>
+      post<{ request_id: string; instance_id: string }>(
+        '/connectors/instances/update-with-receipt',
+        { request_id: requestId, instance_id: instanceId, payload },
+        { retryOnUnauthorized: false }
+      ),
+    updateResult: (requestId: string) =>
+      get<{ request_id: string; instance_id: string } | undefined>(
+        `/connectors/instances/update-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+      ),
     updateInstance: (instanceId: string, data: UpdateMcpConnectorInstanceInput) =>
       patch<ConnectorInstanceDetail>(`/connectors/instances/update`, {
         instance_id: instanceId,

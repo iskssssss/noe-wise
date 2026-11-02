@@ -4,7 +4,7 @@
       ><ElButton
         type="primary"
         @click="edit()"
-        :disabled="busy || !!pendingCreate || !!storageError"
+        :disabled="busy || !!pendingCreate || !!pendingUpdate || !!storageError"
         >新增连接器</ElButton
       ></template
     ><FeedbackNotice
@@ -23,9 +23,19 @@
         >核对创建结果</ElButton
       >
     </section>
+    <section v-if="pendingUpdate && !open" class="admin-card" role="status">
+      连接器“{{ pendingUpdate.name }}”的更新结果尚未确认，请核对原请求，不要重复保存。
+      <span v-if="!canRead">当前账号没有连接器读取权限，请联系管理员授权。</span>
+      <ElButton :disabled="busy || !canRead" @click="checkUpdate()">核对更新结果</ElButton>
+    </section>
     <section v-if="recoveryConnector && canOnboard" class="admin-card" role="status">
       连接器已保存，可继续接入工具。
-      <ElButton link @click="navigateToTools(recoveryConnector)">继续接入原连接器</ElButton>
+      <ElButton
+        link
+        :disabled="busy || !!pendingUpdate || !!storageError"
+        @click="navigateToTools(recoveryConnector)"
+        >继续接入原连接器</ElButton
+      >
     </section>
     <div class="admin-toolbar admin-card">
       <ElInput
@@ -62,19 +72,19 @@
           ><ElButton
             link
             @click="edit(row as ConnectorInstanceItem)"
-            :disabled="busy || !!pendingCreate || !!storageError"
+            :disabled="busy || !!pendingCreate || !!pendingUpdate || !!storageError"
             >编辑</ElButton
           ><ElButton
             link
             @click="router.push({ path: '/admin/tools', query: { connectorId: row.instance_id } })"
-            :disabled="busy"
+            :disabled="busy || !!pendingUpdate || !!storageError"
             >接入工具</ElButton
           ><ElButton
             v-permission="['foundation.connectors.delete']"
             type="danger"
             link
             @click="remove(row as ConnectorInstanceItem)"
-            :disabled="busy || !!pendingCreate || !!storageError"
+            :disabled="busy || !!pendingCreate || !!pendingUpdate || !!storageError"
             >删除</ElButton
           ></template
         ></ElTableColumn
@@ -91,12 +101,18 @@
       :close-on-press-escape="!busy"
       :show-close="!busy"
       class="admin-drawer"
-      ><ElForm
+      ><p v-if="pendingUpdate" role="status">
+        更新结果尚未确认，请核对原请求，不要重复保存。
+        <span v-if="!canRead">当前账号没有连接器读取权限，请联系管理员授权。</span>
+        <ElButton :disabled="busy || !canRead" @click="checkUpdate()">核对更新结果</ElButton>
+      </p>
+      <p v-if="storageError" role="status">{{ storageError }}</p>
+      <ElForm
         ref="formRef"
         :model="form"
         label-position="top"
         @submit.prevent="save()"
-        :disabled="busy || !!pendingCreate || !!storageError"
+        :disabled="busy || !!pendingCreate || !!pendingUpdate || !!storageError"
         scroll-to-error
         @keydown.capture="guardFormEnter"
         ><ElFormItem label="名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]"
@@ -175,7 +191,7 @@
           v-permission="[editing ? 'foundation.connectors.update' : 'foundation.connectors.create']"
           type="primary"
           :loading="busy"
-          :disabled="!!pendingCreate || !!storageError"
+          :disabled="!!pendingCreate || !!pendingUpdate || !!storageError"
           @click="save()"
           >保存</ElButton
         ><ElButton
@@ -183,7 +199,7 @@
           v-permission="['foundation.connectors.create']"
           type="primary"
           :loading="busy"
-          :disabled="!!pendingCreate || !!storageError"
+          :disabled="!!pendingCreate || !!pendingUpdate || !!storageError"
           @click="save(true)"
           >保存并接入工具</ElButton
         ></template
@@ -216,13 +232,16 @@ import { useAuthStore } from '../../stores/auth'
 const router = useRouter()
 const auth = useAuthStore()
 type PendingCreate = { requestId: string; name: string; onboard: boolean }
+type PendingUpdate = { requestId: string; instanceId: string; name: string }
 const pendingCreate = ref<PendingCreate>()
+const pendingUpdate = ref<PendingUpdate>()
 const storageError = ref('')
 const recoveryConnector = ref('')
 const actor = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? `${auth.user.tenant_id}:${auth.user.sub}` : ''
 )
 const storageKey = (subject: string) => `skillforge.connector-create:${subject}`
+const updateStorageKey = (subject: string) => `skillforge.connector-update:${subject}`
 function notifyConnectorCreated(subject: string) {
   if (typeof BroadcastChannel === 'undefined') return
   try {
@@ -244,24 +263,41 @@ watch(
   () => auth.identityVersion,
   () => {
     pendingCreate.value = undefined
+    pendingUpdate.value = undefined
     storageError.value = ''
     recoveryConnector.value = ''
     if (!actor.value) return
     try {
       const raw = sessionStorage.getItem(storageKey(actor.value))
-      if (!raw) return
-      const operation = JSON.parse(raw) as PendingCreate
-      if (
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          operation.requestId
-        ) ||
-        typeof operation.name !== 'string' ||
-        typeof operation.onboard !== 'boolean'
-      )
-        throw Error('invalid')
-      pendingCreate.value = operation
+      if (raw) {
+        const operation = JSON.parse(raw) as PendingCreate
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            operation.requestId
+          ) ||
+          typeof operation.name !== 'string' ||
+          typeof operation.onboard !== 'boolean'
+        )
+          throw Error('invalid')
+        pendingCreate.value = operation
+      }
+      const savedUpdate = sessionStorage.getItem(updateStorageKey(actor.value))
+      if (savedUpdate) {
+        const operation = JSON.parse(savedUpdate) as PendingUpdate
+        if (
+          !operation ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            operation.requestId
+          ) ||
+          typeof operation.instanceId !== 'string' ||
+          !operation.instanceId ||
+          typeof operation.name !== 'string'
+        )
+          throw Error('invalid')
+        pendingUpdate.value = operation
+      }
     } catch {
-      storageError.value = '无法读取原连接器创建记录，请恢复浏览器存储后重新进入。'
+      storageError.value = '无法读取原连接器操作记录，请恢复浏览器存储后重新进入。'
     }
   },
   { immediate: true, flush: 'sync' }
@@ -278,7 +314,10 @@ const canOnboard = computed(() =>
 const { data, loading, error: loadError, reload } = useResource(() => api.connectors.instances())
 onMounted(() => {
   void reload()
-  if (pendingCreate.value && canRead.value) void checkCreation(true)
+  void (async () => {
+    if (pendingCreate.value && canRead.value) await checkCreation(true)
+    if (!disposed && pendingUpdate.value && canRead.value) await checkUpdate(true)
+  })()
 })
 const { busy, error, run } = useTask(),
   open = ref(false),
@@ -305,7 +344,7 @@ const snapshot = () => JSON.stringify(form)
 const dirty = computed(() => open.value && snapshot() !== saved.value)
 useUnsavedChanges({
   dirty: () => dirty.value,
-  busy: () => busy.value || !!pendingCreate.value || !!storageError.value
+  busy: () => busy.value || !!pendingCreate.value || !!pendingUpdate.value || !!storageError.value
 })
 const query = ref('')
 const filtered = computed(() =>
@@ -314,9 +353,12 @@ const filtered = computed(() =>
   )
 )
 async function edit(row?: ConnectorInstanceItem) {
-  if (pendingCreate.value || storageError.value) return
+  if (pendingCreate.value || pendingUpdate.value || storageError.value) return
+  const subject = actor.value,
+    identity = auth.identityVersion
   await run(async () => {
     const detail = row ? await api.connectors.instanceDetail(row.instance_id) : undefined
+    if (disposed || actor.value !== subject || auth.identityVersion !== identity) return
     editing.value = detail
     Object.assign(form, {
       name: detail?.name ?? '',
@@ -330,10 +372,25 @@ async function edit(row?: ConnectorInstanceItem) {
     open.value = true
   })
 }
+function clearPendingUpdate(subject: string) {
+  try {
+    sessionStorage.removeItem(updateStorageKey(subject))
+  } catch {
+    storageError.value = '无法清除原连接器更新记录，请恢复浏览器存储后重新核对。'
+    return false
+  }
+  pendingUpdate.value = undefined
+  storageError.value = ''
+  return true
+}
 async function save(onboard = false) {
-  if (pendingCreate.value || storageError.value) return
+  if (pendingCreate.value || pendingUpdate.value || storageError.value) return
+  const owner = actor.value,
+    ownerIdentity = auth.identityVersion
   const connectorId = await run(async () => {
     if (!(await formRef.value?.validate().catch(() => false))) return
+    if (disposed || !open.value || actor.value !== owner || auth.identityVersion !== ownerIdentity)
+      return
     const body = {
       name: form.name,
       base_url: form.base_url,
@@ -345,15 +402,56 @@ async function save(onboard = false) {
       headers: { 'MCP-Protocol-Version': form.protocol }
     }
     if (editing.value) {
-      await api.connectors.updateInstance(editing.value.instance_id, {
-        ...body,
-        capabilities: editing.value.capabilities
-      })
-      form.auth_credential = ''
-      saved.value = snapshot()
-      open.value = false
-      await reload()
-      message.success('连接器已保存')
+      const subject = actor.value,
+        identity = auth.identityVersion
+      if (!subject) throw Error('当前身份不可用，请重新登录')
+      const operation = {
+        requestId: crypto.randomUUID(),
+        instanceId: editing.value.instance_id,
+        name: body.name
+      }
+      try {
+        sessionStorage.setItem(updateStorageKey(subject), JSON.stringify(operation))
+      } catch {
+        storageError.value = '无法保存连接器更新记录，本次未发送。请恢复浏览器存储后重试。'
+        throw Error(storageError.value)
+      }
+      pendingUpdate.value = operation
+      try {
+        const result = await api.connectors.updateInstanceWithReceipt(
+          operation.requestId,
+          operation.instanceId,
+          {
+            ...body,
+            capabilities: editing.value.capabilities
+          }
+        )
+        if (disposed || actor.value !== subject || auth.identityVersion !== identity) return
+        if (
+          !result ||
+          result.request_id !== operation.requestId ||
+          result.instance_id !== operation.instanceId
+        )
+          throw Error('更新回执不完整，请核对原请求')
+        if (!clearPendingUpdate(subject)) return
+        form.auth_credential = ''
+        saved.value = snapshot()
+        open.value = false
+        await reload()
+        if (!disposed && actor.value === subject && auth.identityVersion === identity)
+          message.success('连接器已保存')
+      } catch (cause) {
+        if (
+          !disposed &&
+          actor.value === subject &&
+          auth.identityVersion === identity &&
+          cause instanceof HttpClientError &&
+          cause.code === 'CONNECTOR_UPDATE_REJECTED'
+        ) {
+          clearPendingUpdate(subject)
+        }
+        throw cause
+      }
       return
     }
     const subject = actor.value,
@@ -446,8 +544,39 @@ async function checkCreation(automatic = false) {
   })
   if (receipt && operation.onboard && canOnboard.value) await navigateToTools(receipt.instance_id)
 }
+async function checkUpdate(automatic = false) {
+  const operation = pendingUpdate.value,
+    subject = actor.value,
+    identity = auth.identityVersion
+  if (!operation || !subject || !canRead.value) return
+  await run(async () => {
+    const result = await api.connectors.updateResult(operation.requestId)
+    if (
+      disposed ||
+      actor.value !== subject ||
+      auth.identityVersion !== identity ||
+      pendingUpdate.value !== operation
+    )
+      return
+    if (
+      !result ||
+      result.request_id !== operation.requestId ||
+      result.instance_id !== operation.instanceId
+    ) {
+      if (!automatic) message.warning('尚未查到原更新结果，请继续核对，不要重复保存。')
+      return
+    }
+    if (!clearPendingUpdate(subject)) return
+    form.auth_credential = ''
+    saved.value = snapshot()
+    open.value = false
+    await reload()
+    if (!disposed && actor.value === subject && auth.identityVersion === identity)
+      message.success('连接器更新已确认')
+  })
+}
 async function remove(row: ConnectorInstanceItem) {
-  if (pendingCreate.value || storageError.value) return
+  if (pendingCreate.value || pendingUpdate.value || storageError.value) return
   if (
     await confirm({
       title: '删除连接器',

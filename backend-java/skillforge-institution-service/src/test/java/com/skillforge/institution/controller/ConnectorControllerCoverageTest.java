@@ -72,7 +72,9 @@ class ConnectorControllerCoverageTest {
         when(crypto.decrypt("encrypted")).thenReturn("plain");
         when(mcp.listTools(any(McpDiscoveryClient.Request.class))).thenReturn(new McpDiscoveryClient.Catalog(
                 "inst-1", Optional.empty(), 30_000L, List.of()));
-        controller = new ConnectorController(instances, crypto, vault, mcp);
+        controller = new ConnectorController(instances, crypto, vault, mcp,
+                mock(com.skillforge.institution.service.ConnectorUpdateReceiptMapper.class),
+                new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     @AfterEach

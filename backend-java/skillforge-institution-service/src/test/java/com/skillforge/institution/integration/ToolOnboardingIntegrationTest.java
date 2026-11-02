@@ -208,6 +208,67 @@ class ToolOnboardingIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_tool_deployments WHERE tenant_id=?", Long.parseLong(tenant)));
     }
 
+    @Test void connectorUpdateReceiptIsAtomicScopedAndDoesNotPersistCredential() throws Exception {
+        String id = UUID.randomUUID().toString();
+        String query = "/api/v1/connectors/instances/update-with-receipt/result?request_id=" + id;
+        assertEquals(204, send("GET", query, null, token).statusCode());
+        var payload = Map.of("name", "更新后的连接器", "auth_type", "bearer", "auth_credential", "synthetic-update-secret");
+        var command = Map.of("request_id", id, "instance_id", connector, "payload", payload);
+        var first = ok("POST", "/api/v1/connectors/instances/update-with-receipt", command, token);
+        assertEquals(id, first.path("request_id").asText());
+        assertEquals(connector, first.path("instance_id").asText());
+        var originalTime = scoped(() -> jdbc.queryForObject("SELECT updated_at FROM nw_connector_instances WHERE tenant_id=? AND instance_id=?", java.time.OffsetDateTime.class, Long.parseLong(tenant), connector));
+        var replay = ok("POST", "/api/v1/connectors/instances/update-with-receipt", command, token);
+        assertEquals(first, replay);
+        assertEquals(originalTime, scoped(() -> jdbc.queryForObject("SELECT updated_at FROM nw_connector_instances WHERE tenant_id=? AND instance_id=?", java.time.OffsetDateTime.class, Long.parseLong(tenant), connector)));
+        assertEquals(409, send("POST", "/api/v1/connectors/instances/update-with-receipt", Map.of("request_id", id, "instance_id", connector, "payload", Map.of("name", "其他内容")), token).statusCode());
+        assertEquals(409, send("POST", "/api/v1/connectors/instances/update-with-receipt", Map.of("request_id", id, "instance_id", "missing", "payload", payload), token).statusCode());
+        var differentSecret = Map.of("name", "更新后的连接器", "auth_type", "bearer", "auth_credential", "different-update-secret");
+        assertEquals(409, send("POST", "/api/v1/connectors/instances/update-with-receipt", Map.of("request_id", id, "instance_id", connector, "payload", differentSecret), token).statusCode());
+        assertEquals(connector, ok("GET", query, null, token).path("instance_id").asText());
+        String stored = scoped(() -> jdbc.queryForObject("SELECT fingerprint FROM nw_connector_update_receipts WHERE tenant_id=? AND request_id=CAST(? AS uuid)", String.class, Long.parseLong(tenant), id));
+        assertTrue(stored.startsWith("sfenc:1:"));
+        assertFalse(stored.contains("synthetic-update-secret"));
+        String user = "connector-updater-" + SnowflakeIds.nextId();
+        var role = ok("POST", ACCESS + "/role", Map.of("code", "connector_updater_" + SnowflakeIds.nextId(),
+                "name", "连接器维护", "data_scope", "all", "permissions", List.of("foundation.connectors.read", "foundation.connectors.update"), "department_ids", List.of()), token);
+        ok("POST", ACCESS + "/member", Map.of("username", user, "display_name", user, "password", PASSWORD,
+                "role_ids", List.of(role.path("id").asText())), token);
+        String other = login(user);
+        assertEquals(204, send("GET", query, null, other).statusCode());
+        assertEquals(409, send("POST", "/api/v1/connectors/instances/update-with-receipt", command, other).statusCode());
+        String rejected = UUID.randomUUID().toString();
+        var invalid = Map.of("request_id", rejected, "instance_id", connector, "payload", Map.of("name", ""));
+        var response = send("POST", "/api/v1/connectors/instances/update-with-receipt", invalid, token);
+        assertEquals(400, response.statusCode());
+        assertEquals("CONNECTOR_UPDATE_REJECTED", json.readTree(response.body()).path("code").asText());
+        assertEquals(204, send("GET", "/api/v1/connectors/instances/update-with-receipt/result?request_id=" + rejected, null, token).statusCode());
+        assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_connector_update_receipts WHERE tenant_id=? AND request_id=CAST(? AS uuid)", Long.parseLong(tenant), rejected));
+    }
+
+    @Test void concurrentConnectorUpdateWithSameRequestCommitsOneReceipt() throws Exception {
+        String id = UUID.randomUUID().toString();
+        var command = Map.of("request_id", id, "instance_id", connector, "payload", Map.of("name", "并发更新"));
+        var start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var requests = java.util.stream.IntStream.range(0, 2).mapToObj(ignored -> CompletableFuture.supplyAsync(() -> {
+                try {
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("request gate timeout");
+                    return send("POST", "/api/v1/connectors/instances/update-with-receipt", command, token);
+                } catch (Exception failure) { throw new RuntimeException(failure); }
+            }, pool)).toList();
+            start.countDown();
+            for (var request : requests) assertEquals(200, request.get(30, TimeUnit.SECONDS).statusCode());
+            assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_connector_update_receipts WHERE tenant_id=? AND request_id=CAST(? AS uuid)", Long.parseLong(tenant), id));
+            assertEquals(connector, ok("GET", "/api/v1/connectors/instances/update-with-receipt/result?request_id=" + id, null, token).path("instance_id").asText());
+        } finally {
+            start.countDown();
+            pool.shutdownNow();
+            assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
+        }
+    }
+
     @Test void connectorCreationReceiptRecoversOnlyOriginalActorWithoutPersistingPlaintext() throws Exception {
         String requestId = UUID.randomUUID().toString();
         String url = "/api/v1/connectors/instances/create-with-receipt/result?request_id=" + requestId;
@@ -618,6 +679,9 @@ class ToolOnboardingIntegrationTest extends AbstractIntegrationTest {
     @Test void publishedRowsRemainTenantIsolatedUnderAnActualNonBypassDatabaseRole() throws Exception {
         var receipt = onboard(List.of("alpha"), token);
         var item = receipt.path("items").get(0);
+        String updateId = UUID.randomUUID().toString();
+        ok("POST", "/api/v1/connectors/instances/update-with-receipt", Map.of("request_id", updateId,
+                "instance_id", connector, "payload", Map.of("name", "隔离验证")), token);
         String other = createTenant(tenants, plans, "other-onboard-" + SnowflakeIds.nextId());
         String role = "onboard_rls_" + SnowflakeIds.nextId();
         boolean created = false;
@@ -630,7 +694,7 @@ class ToolOnboardingIntegrationTest extends AbstractIntegrationTest {
                     // 默认Testcontainers账号是superuser；只为本只读断言建立临时受限角色。
                     statement.execute("CREATE ROLE " + role + " NOLOGIN NOSUPERUSER NOBYPASSRLS");
                     statement.execute("GRANT USAGE ON SCHEMA public TO " + role);
-                    statement.execute("GRANT SELECT ON nw_capability_definitions,nw_capability_versions,nw_tool_deployments,nw_connector_instances,nw_tool_onboarding_receipts TO " + role);
+                    statement.execute("GRANT SELECT ON nw_capability_definitions,nw_capability_versions,nw_tool_deployments,nw_connector_instances,nw_tool_onboarding_receipts,nw_connector_update_receipts TO " + role);
                     connection.commit(); created = true;
                     statement.execute("SET LOCAL ROLE " + role);
                 }
@@ -644,6 +708,13 @@ class ToolOnboardingIntegrationTest extends AbstractIntegrationTest {
                 try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
                 bind.setString(1, tenant); bind.execute();
                 try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(1, rows.getLong(1)); }
+                try (var updateCount = connection.prepareStatement("SELECT count(*) FROM nw_connector_update_receipts WHERE request_id=CAST(? AS uuid)")) {
+                    updateCount.setString(1, updateId);
+                    bind.setString(1, other); bind.execute();
+                    try (var rows = updateCount.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
+                    bind.setString(1, tenant); bind.execute();
+                    try (var rows = updateCount.executeQuery()) { assertTrue(rows.next()); assertEquals(1, rows.getLong(1)); }
+                }
                 try (var receiptCount = connection.prepareStatement("SELECT count(*) FROM nw_tool_onboarding_receipts WHERE request_id=CAST(? AS uuid)")) {
                     receiptCount.setString(1, receipt.path("request_id").asText());
                     bind.setString(1, other); bind.execute();

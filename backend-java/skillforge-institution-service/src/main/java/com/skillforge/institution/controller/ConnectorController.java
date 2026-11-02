@@ -11,6 +11,9 @@ import jakarta.validation.constraints.NotNull;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.skillforge.institution.common.TenantIds;
 import com.skillforge.institution.service.McpConnectorDiscovery;
+import com.skillforge.institution.service.ConnectorUpdateReceiptMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.skillforge.core.shared.config.SnowflakeIds;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -86,6 +89,8 @@ public class ConnectorController {
 
     /** MCP 客户端，用于 @mcp 类型实例的工具发现（tools/list）。 */
     private final McpDiscoveryClient mcpDiscoveryClient;
+    private final ConnectorUpdateReceiptMapper updateReceipts;
+    private final ObjectMapper json;
 
     /** 日志。 */
     private static final Logger log = LoggerFactory.getLogger(ConnectorController.class);
@@ -97,16 +102,22 @@ public class ConnectorController {
      * @param cryptoService       加密服务
      * @param vaultProvider       Vault 密钥提供者
      * @param mcpDiscoveryClient      Runtime MCP 发现客户端
+     * @param updateReceipts 连接器更新回执存储
+     * @param json 请求规范编码器
      */
     public ConnectorController(
             ConnectorInstanceService instanceService,
             CryptoService cryptoService,
             VaultProvider vaultProvider,
-            McpDiscoveryClient mcpDiscoveryClient) {
+            McpDiscoveryClient mcpDiscoveryClient,
+            ConnectorUpdateReceiptMapper updateReceipts,
+            ObjectMapper json) {
         this.instanceService = instanceService;
         this.cryptoService = cryptoService;
         this.vaultProvider = vaultProvider;
         this.mcpDiscoveryClient = mcpDiscoveryClient;
+        this.updateReceipts = updateReceipts;
+        this.json = json;
     }
 
     /**
@@ -360,6 +371,61 @@ public class ConnectorController {
     public ApiResponse<ConnectorInstanceDetailResponse> updateInstanceEndpoint(
             @Valid @RequestBody UpdateInstanceCommand command) {
         return ApiResponses.wrap(updateInstance(command.instanceId(), command.payload()));
+    }
+
+    public record ConnectorUpdateCommand(@JsonProperty("request_id") @NotNull java.util.UUID requestId,
+            @JsonProperty("instance_id") @NotNull String instanceId,
+            @Valid @NotNull UpdateConnectorInstanceRequest payload) { }
+    public record ConnectorUpdateReceipt(@JsonProperty("request_id") java.util.UUID requestId,
+            @JsonProperty("instance_id") String instanceId) { }
+
+    @RequirePermission("foundation.connectors.update")
+    @PostMapping("/instances/update-with-receipt")
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<ConnectorUpdateReceipt> updateWithReceipt(@Valid @RequestBody ConnectorUpdateCommand command) {
+        long tenant = Long.parseLong(TenantIds.requireTenantId());
+        String actor = creationActor();
+        String fingerprint;
+        try {
+            String canonical = json.writer().with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                    .writeValueAsString(List.of(command.instanceId(), command.payload()));
+            fingerprint = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("连接器更新请求无法编码", failure);
+        }
+        var existing = updateReceipts.find(tenant, command.requestId().toString());
+        if (existing != null) {
+            if (!actor.equals(existing.actorRef()) || !fingerprint.equals(cryptoService.decrypt(existing.fingerprint())))
+                throw new ApiException(HttpStatus.CONFLICT, "连接器更新请求标识已用于其他操作");
+            return ApiResponses.wrap(new ConnectorUpdateReceipt(command.requestId(), existing.instanceId()));
+        }
+        if (readTenantInstance(command.instanceId(), tenant) == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "CONNECTOR_UPDATE_REJECTED", "连接器实例不存在", false);
+        if (updateReceipts.claim(tenant, command.requestId().toString(), actor, command.instanceId(), cryptoService.encrypt(fingerprint)) == 0) {
+            var original = updateReceipts.find(tenant, command.requestId().toString());
+            if (original == null || !actor.equals(original.actorRef()) || !fingerprint.equals(cryptoService.decrypt(original.fingerprint())))
+                throw new ApiException(HttpStatus.CONFLICT, "连接器更新请求标识已用于其他操作");
+            return ApiResponses.wrap(new ConnectorUpdateReceipt(command.requestId(), original.instanceId()));
+        }
+        try {
+            updateInstance(command.instanceId(), command.payload());
+        } catch (ApiException failure) {
+            if (!failure.getStatus().is4xxClientError() || failure.getStatus().value() == 408) throw failure;
+            throw new ApiException(failure.getStatus(), "CONNECTOR_UPDATE_REJECTED", String.valueOf(failure.getDetail()), false);
+        }
+        return ApiResponses.wrap(new ConnectorUpdateReceipt(command.requestId(), command.instanceId()));
+    }
+
+    @RequirePermission("foundation.connectors.read")
+    @GetMapping("/instances/update-with-receipt/result")
+    public ResponseEntity<ApiResponse<ConnectorUpdateReceipt>> updateResult(@RequestParam("request_id") java.util.UUID requestId) {
+        long tenant = Long.parseLong(TenantIds.requireTenantId());
+        String actor = creationActor();
+        var original = updateReceipts.find(tenant, requestId.toString());
+        if (original == null || !actor.equals(original.actorRef())) return ResponseEntity.noContent().build();
+        findTenantInstance(original.instanceId(), tenant);
+        return ResponseEntity.ok(ApiResponses.wrap(new ConnectorUpdateReceipt(requestId, original.instanceId())));
     }
 
     public ConnectorInstanceDetailResponse updateInstance(String instanceId, @Valid UpdateConnectorInstanceRequest request) {
