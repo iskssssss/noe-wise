@@ -131,6 +131,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
+    exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
 }
 
@@ -307,6 +308,19 @@ tasks.register<Test>("workflowAgentSingleBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.WorkflowAgentSingleBrowserE2ETest.browserOnboardsSingleWorkflowAndRuntimeExecutesExactInstallation")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("workflowCrossTabBrowserE2E") {
+    description = "验证跨标签发布工作流后刷新接入及运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.WorkflowCrossTabBrowserE2ETest.publishedWorkflowAppearsAfterManualRefreshAndRuns")
     }
     outputs.upToDateWhen { false }
 }

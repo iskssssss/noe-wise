@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   validateNewContent: vi.fn(),
   validateContent: vi.fn(),
   publish: vi.fn(),
+  notify: vi.fn(),
   saveAndPublish: vi.fn(),
   saveAndPublishResult: vi.fn(),
   confirm: vi.fn(),
@@ -45,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   installReceipt: vi.fn(),
   listRevisions: vi.fn()
 }))
+vi.mock('./workflowPublicationEvents', () => ({ notifyWorkflowPublished: mocks.notify }))
 const routeParams = vi.hoisted(() => ({ workflowId: 'flow' }))
 const reactiveRouteParams = reactive(routeParams)
 vi.mock('../../api', () => ({
@@ -371,6 +373,7 @@ describe('工作流布局保存与恢复', () => {
         viewport: expect.any(Object)
       })
     )
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['7', '8']))
     expect(mocks.confirm.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.saveAndPublish.mock.invocationCallOrder[0]!
     )
@@ -415,6 +418,7 @@ describe('工作流布局保存与恢复', () => {
     await button('核对原发布').trigger('click')
     await flushPromises()
     expect(mocks.saveAndPublishResult).toHaveBeenCalledWith('flow', command.request_id)
+    expect(mocks.notify).not.toHaveBeenCalled()
     expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain(command.request_id)
     expect((wrapper.vm as unknown as { meta: { displayName: string } }).meta.displayName).toBe(
@@ -526,6 +530,7 @@ describe('工作流布局保存与恢复', () => {
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
     expect(mocks.saveAndPublishResult).toHaveBeenCalledExactlyOnceWith('flow', requestId)
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['7', '8']))
     expect(mocks.saveAndPublish).not.toHaveBeenCalled()
     expect(sessionStorage.getItem(key)).toBeNull()
     expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '核对原发布')).toBe(
@@ -1885,6 +1890,7 @@ describe('工作流布局保存与恢复', () => {
     const publish = wrapper.findAllComponents(ElButton).find((button) => button.text() === '发布')!
     await publish.trigger('click')
     await flushPromises()
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['7', '8']))
     expect(
       Array.from(document.body.querySelectorAll('.el-message__content')).at(-1)?.textContent
     ).toContain('发布结果读取失败')

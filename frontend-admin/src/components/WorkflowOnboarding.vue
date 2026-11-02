@@ -4,10 +4,12 @@ import { useTask, useUnsavedChanges } from '@skillforge/shared/admin'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { useAuthStore } from '../stores/auth'
+import { listenWorkflowPublished } from '../views/admin/workflowPublicationEvents'
 import WorkflowInstallationFields from './builder/WorkflowInstallationFields.vue'
 import { defaultInstallationSlots } from './builder/workflowInstallationDefaults'
 import {
   api,
+  getSessionId,
   type BuilderWorkflowInstance,
   type CapabilityDefinition,
   type CapabilityDeployment,
@@ -76,6 +78,9 @@ const instancesRefreshRequired = ref(false)
 const agentRefreshRequired = ref(false)
 const refreshingSelection = ref(false)
 const selectionStale = ref(false)
+let configuredWorkflow = ''
+const catalogInvalid = ref(false)
+let catalogGeneration = 0
 const pending = ref<WorkflowOnboardingCommand>()
 type OperationIdentity = Pick<WorkflowOnboardingCommand, 'request_id' | 'agent_id' | 'workflow_id'>
 const original = ref<OperationIdentity>()
@@ -94,6 +99,7 @@ watch(
   owner,
   (value, previous) => {
     if (previous && previous !== value) {
+      configuredWorkflow = ''
       selected.value = ''
       autoSelected.value = ''
       selectionTouched.value = false
@@ -136,6 +142,7 @@ const manualUnknown = ref('')
 watch(
   () => auth.identityVersion,
   () => {
+    configuredWorkflow = ''
     catalogReady.value = false
     ready.value = false
     dependenciesReady.value = false
@@ -177,6 +184,44 @@ const locked = computed(
     instancesRefreshRequired.value ||
     agentRefreshRequired.value
 )
+type CatalogNotice = { actor: string; owner: string; identity: number; session: string | null }
+let pendingCatalogNotice: CatalogNotice | undefined
+function noticeCurrent(notice: CatalogNotice) {
+  return (
+    active &&
+    !props.receiptOnly &&
+    owner.value === notice.owner &&
+    auth.identityVersion === notice.identity &&
+    getSessionId() === notice.session &&
+    !!auth.user?.tenant_id &&
+    !!auth.user?.sub &&
+    JSON.stringify([auth.user.tenant_id, auth.user.sub]) === notice.actor &&
+    auth.user.permissions.includes('foundation.workflows.read')
+  )
+}
+function refreshPendingCatalog() {
+  if (locked.value || !pendingCatalogNotice) return
+  const notice = pendingCatalogNotice
+  pendingCatalogNotice = undefined
+  if (noticeCurrent(notice)) void loadCatalog()
+}
+const stopWorkflowNotifications = listenWorkflowPublished((actor) => {
+  const notice = {
+    actor,
+    owner: owner.value,
+    identity: auth.identityVersion,
+    session: getSessionId()
+  }
+  if (!noticeCurrent(notice)) return
+  catalogGeneration++
+  catalogInvalid.value = true
+  pendingCatalogNotice = notice
+  refreshPendingCatalog()
+})
+onScopeDispose(stopWorkflowNotifications)
+watch(locked, (value) => {
+  if (!value) refreshPendingCatalog()
+})
 watch(error, (value) => {
   if (value) message.error(value)
 })
@@ -208,19 +253,26 @@ async function loadCatalog() {
   catalogReady.value = false
   const identity = auth.identityVersion
   const subject = owner.value
-  const current = () => active && identity === auth.identityVersion && subject === owner.value
+  const session = getSessionId()
+  const generation = catalogGeneration
+  const current = () =>
+    active &&
+    identity === auth.identityVersion &&
+    subject === owner.value &&
+    session === getSessionId() &&
+    auth.user?.permissions.includes('foundation.workflows.read') === true
   const loaded = await run(async () => {
     const previousInstance = JSON.stringify(currentInstance.value ?? null)
     const result = await Promise.all([
       claimStaleRead(api.workflowDrafts.list(), current),
       claimStaleRead(api.workflowDrafts.instances(), current)
     ]).catch((reason: unknown) => {
-      if (!active || identity !== auth.identityVersion || subject !== owner.value) return undefined
+      if (!current()) return undefined
       throw reason
     })
     if (!result) return false
     const [list, installed] = result
-    if (!active || identity !== auth.identityVersion || subject !== owner.value) return false
+    if (!current()) return false
     workflows.value = list.items.filter(
       (item) => !!item.activeDefinitionVersionId && item.status !== 'archived'
     )
@@ -235,12 +287,16 @@ async function loadCatalog() {
       ready.value = false
       selectionStale.value = true
     }
-    catalogReady.value = true
+    if (generation === catalogGeneration) {
+      catalogInvalid.value = false
+      catalogReady.value = true
+    }
     return true
   })
   if (
     loaded &&
-    active &&
+    current() &&
+    !catalogInvalid.value &&
     identity === auth.identityVersion &&
     subject === owner.value &&
     !selectionTouched.value &&
@@ -290,6 +346,11 @@ function candidates(slot: Slot) {
   })
 }
 async function chooseWorkflow() {
+  const preserve = selectionStale.value && configuredWorkflow === selected.value
+  const previousFields = fields.value
+  const previousConfig = config.value
+  const previousSlots = slots.value
+  const previousPrompt = customPrompt.value
   if (receipt.value?.status === 'REJECTED') receipt.value = undefined
   ready.value = false
   dependenciesReady.value = false
@@ -356,10 +417,22 @@ async function chooseWorkflow() {
     }
     const meta = publication.definition.meta as
       { capability_requirements?: Slot[]; config_schema?: WorkflowConfigField[] } | undefined
-    slots.value = (meta?.capability_requirements ?? []).map((slot) => ({
-      ...slot,
-      label: slot.label ?? slot.slot
-    }))
+    slots.value = (meta?.capability_requirements ?? []).map((slot) => {
+      const previous =
+        preserve &&
+        previousSlots.find(
+          (item) =>
+            item.slot === slot.slot &&
+            item.type === slot.type &&
+            item.capability_id === slot.capability_id
+        )
+      return {
+        ...slot,
+        label: slot.label ?? slot.slot,
+        versionId: previous ? previous.versionId : slot.versionId,
+        deploymentKey: previous ? previous.deploymentKey : slot.deploymentKey
+      }
+    })
     fields.value = workflowConfigFields(JSON.stringify(meta?.config_schema ?? []))
     config.value = Object.fromEntries(
       fields.value
@@ -374,7 +447,17 @@ async function chooseWorkflow() {
           config.value[field.key] = value
       }
     }
-    customPrompt.value = installed?.customPrompt ?? ''
+    if (preserve) {
+      for (const field of fields.value) {
+        if (
+          previousFields.some((item) => item.key === field.key && item.type === field.type) &&
+          Object.hasOwn(previousConfig, field.key)
+        )
+          config.value[field.key] = previousConfig[field.key]
+      }
+    }
+    customPrompt.value = preserve ? previousPrompt : (installed?.customPrompt ?? '')
+    configuredWorkflow = workflowId
     ready.value = true
     if (!currentInstance.value) {
       mode.value = 'INSTALL'
@@ -567,9 +650,36 @@ async function refreshInstances() {
   await run(readConfirmedInstances)
 }
 async function submit() {
-  if (locked.value || !catalogReady.value || !ready.value || !mode.value || !allowed.value) return
+  if (
+    locked.value ||
+    catalogInvalid.value ||
+    !catalogReady.value ||
+    !ready.value ||
+    !mode.value ||
+    !allowed.value
+  )
+    return
   const subject = owner.value
   const identity = auth.identityVersion
+  const session = getSessionId()
+  const authSession = auth.sessionIdentity
+  const generation = catalogGeneration
+  const workflow = selected.value
+  const definition = expectedDefinition.value
+  const current = () =>
+    active &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    auth.sessionIdentity === authSession &&
+    auth.user?.permissions.includes('foundation.workflows.read') === true &&
+    catalogGeneration === generation &&
+    !catalogInvalid.value &&
+    catalogReady.value &&
+    ready.value &&
+    allowed.value &&
+    selected.value === workflow &&
+    expectedDefinition.value === definition
   await run(async () => {
     const instance = currentInstance.value
     const revision = instance?.installationRevision ? Number(instance.installationRevision) : 0
@@ -593,6 +703,7 @@ async function submit() {
       }))
     )
       return
+    if (!current()) return
     const command: WorkflowOnboardingCommand = {
       request_id: crypto.randomUUID(),
       agent_id: props.agentId,
@@ -606,7 +717,7 @@ async function submit() {
         mode.value === 'REUSE' ? { capabilities: [], workflows: [], agents: [] } : await bindings(),
       ...(mount ? { mount_id: mount.mountId, expected_mount_revision: mount.revision } : {})
     }
-    if (!active || owner.value !== subject || auth.identityVersion !== identity) return
+    if (!current()) return
     const operation = {
       request_id: command.request_id,
       agent_id: command.agent_id,
@@ -814,7 +925,12 @@ async function inspect(automatic = false) {
       v-if="ready"
       type="primary"
       :disabled="
-        locked || !catalogReady || !mode || !allowed || (mode !== 'REUSE' && !dependenciesReady)
+        locked ||
+        catalogInvalid ||
+        !catalogReady ||
+        !mode ||
+        !allowed ||
+        (mode !== 'REUSE' && !dependenciesReady)
       "
       :loading="busy"
       @click="submit"

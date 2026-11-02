@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn()
 }))
 vi.mock('../api', () => ({
+  getSessionId: () => 'test-session',
   api: {
     workflowDrafts: {
       list: mocks.list,
@@ -42,7 +43,10 @@ vi.mock('../api/workflowOnboarding', () => ({
 }))
 vi.mock('../stores/auth', async () => {
   const { reactive } = await import('vue')
-  const auth = reactive({ user: { tenant_id: '1', sub: 'member-1' }, identityVersion: 1 })
+  const auth = reactive({
+    user: { tenant_id: '1', sub: 'member-1', permissions: ['foundation.workflows.read'] },
+    identityVersion: 1
+  })
   return { useAuthStore: () => auth }
 })
 vi.mock('@skillforge/shared/feedback', () => ({
@@ -136,6 +140,175 @@ function workflowSelect(wrapper: VueWrapper) {
     .getComponent(ElSelect)
 }
 describe('智能体内工作流接入', () => {
+  it('原工作流版本变化后切换到另一工作流，不带入原配置', async () => {
+    mocks.list.mockResolvedValue({
+      items: [
+        { workflowId: 'flow', name: '流程 A', status: 'published', activeDefinitionVersionId: '1' },
+        { workflowId: 'other', name: '流程 B', status: 'published', activeDefinitionVersionId: '2' }
+      ]
+    })
+    mocks.detail.mockImplementation(async (id: string, version: string) => ({
+      workflowId: id,
+      current: true,
+      definitionVersionId: version,
+      definition: {
+        nodes: [],
+        meta: {
+          config_schema: [
+            {
+              key: 'note',
+              type: 'string',
+              label: '说明',
+              default: id === 'other' ? 'B 默认值' : 'A 默认值'
+            }
+          ]
+        }
+      }
+    }))
+    const wrapper = await open()
+    wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '说明（可选）')!
+      .getComponent(ElInput)
+      .vm.$emit('update:modelValue', 'A 私有配置')
+    mocks.list.mockResolvedValue({
+      items: [
+        { workflowId: 'flow', name: '流程 A', status: 'published', activeDefinitionVersionId: '3' },
+        { workflowId: 'other', name: '流程 B', status: 'published', activeDefinitionVersionId: '2' }
+      ]
+    })
+    await button(wrapper, '刷新工作流选项').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('所选工作流的发布版本或共享安装已变化')
+    const select = workflowSelect(wrapper)
+    select.vm.$emit('update:modelValue', 'other')
+    select.vm.$emit('change', 'other')
+    await flushPromises()
+    expect(
+      wrapper
+        .findAllComponents(ElFormItem)
+        .find((item) => item.props('label') === '说明（可选）')!
+        .getComponent(ElInput)
+        .props('modelValue')
+    ).toBe('B 默认值')
+  })
+  it('确认接入弹窗期间收到发布通知，确认后不提交旧目录', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      name: string
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    const wrapper = await open()
+    let finish!: (value: boolean) => void
+    mocks.confirm.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await button(wrapper, '接入智能体').trigger('click')
+    await flushPromises()
+    channels.find((item) => item.name === 'skillforge.workflow.published')!.onmessage!({
+      data: JSON.stringify(['1', 'member-1'])
+    })
+    finish(true)
+    await flushPromises()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+  })
+  it('首读期间收到同主体发布通知，完成后重读且不自动提交', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      name: string
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    let finish!: (value: unknown) => void
+    mocks.list.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const wrapper = mountPanel()
+    await flushPromises()
+    channels.find((item) => item.name === 'skillforge.workflow.published')!.onmessage!({
+      data: JSON.stringify(['1', 'member-1'])
+    })
+    finish({ items: [] })
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('flow')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('发布通知读取失败阻止提交，重新读取版本变化后要求确认', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      name: string
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    mocks.detail.mockImplementation(async (_id: string, version: string) => ({
+      workflowId: 'flow',
+      current: true,
+      definitionVersionId: version,
+      definition: {
+        nodes: [],
+        meta: { config_schema: [{ key: 'note', type: 'string', label: '说明' }] }
+      }
+    }))
+    const wrapper = await open()
+    wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '说明（可选）')!
+      .getComponent(ElInput)
+      .vm.$emit('update:modelValue', '保留配置')
+    await flushPromises()
+    mocks.list.mockRejectedValueOnce(Error('读取失败'))
+    channels.find((item) => item.name === 'skillforge.workflow.published')!.onmessage!({
+      data: JSON.stringify(['1', 'member-1'])
+    })
+    await flushPromises()
+    expect(button(wrapper, '接入智能体').props('disabled')).toBe(true)
+    mocks.list.mockResolvedValue({
+      items: [
+        {
+          workflowId: 'flow',
+          name: '服务流程',
+          status: 'published',
+          activeDefinitionVersionId: '77'
+        }
+      ]
+    })
+    await button(wrapper, '重新读取工作流目录').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('所选工作流的发布版本或共享安装已变化')
+    await button(wrapper, '重新读取当前工作流').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper
+        .findAllComponents(ElFormItem)
+        .find((item) => item.props('label') === '说明（可选）')!
+        .getComponent(ElInput)
+        .props('modelValue')
+    ).toBe('保留配置')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
   it('唯一可用发布版本自动选择并只读加载，不自动接入', async () => {
     mocks.list.mockResolvedValueOnce({
       items: [

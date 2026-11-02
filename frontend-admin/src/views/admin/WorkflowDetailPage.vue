@@ -785,6 +785,7 @@ import type {
   WorkflowSaveAndPublishReceipt
 } from '../../api/workflowDrafts'
 import { useAuthStore } from '../../stores/auth'
+import { notifyWorkflowPublished } from './workflowPublicationEvents'
 import {
   api,
   getSessionId,
@@ -1670,6 +1671,7 @@ async function acceptPublication(
       message.warning('原发布回执不完整，请稍后核对')
       return
     }
+    notifyWorkflowPublished(owner)
     const fresh = await reload()
     if (
       pageDisposed ||
@@ -1799,6 +1801,10 @@ watch(
 )
 async function publish() {
   if (busy.value || draftConflict.value || readonly.value) return
+  const noticeOwner = installOwner.value
+  const noticeSession = publicationSession()
+  const noticeIdentity = auth.identityVersion
+  const noticeId = workflowId.value
   await run(async () => {
     if (!draft.value || readonly.value || publishedSnapshot.value === snapshot()) return
     const saveFirst = dirty.value
@@ -1904,6 +1910,17 @@ async function publish() {
     await revisionWrite(() =>
       api.workflowDrafts.publish(publicationDraft.workflowId, publicationDraft.revision)
     )
+    if (
+      !pageDisposed &&
+      noticeOwner &&
+      noticeOwner === installOwner.value &&
+      noticeSession &&
+      noticeSession === publicationSession() &&
+      noticeIdentity === auth.identityVersion &&
+      noticeId === workflowId.value &&
+      route.params.workflowId === noticeId
+    )
+      notifyWorkflowPublished(noticeOwner)
     publishedSnapshot.value = snapshot()
     message.success('工作流已发布')
     const value = await reload()
