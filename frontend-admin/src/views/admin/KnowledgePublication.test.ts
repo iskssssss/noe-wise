@@ -43,7 +43,7 @@ vi.mock('../../api', () => ({
     },
     settings: { availableModels: async () => [] }
   },
-  get: async () => ({ status: 'IDLE' }),
+  get: async () => ({ status: 'IDLE', kb_id: 'kb-1', job_id: null }),
   post: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({

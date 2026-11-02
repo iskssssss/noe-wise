@@ -23,7 +23,11 @@ const mocks = vi.hoisted(() => ({
   showMessage: vi.fn()
 }))
 const authState = reactive({
-  user: { tenant_id: '1', sub: '1', permissions: ['foundation.knowledge.read'] },
+  user: {
+    tenant_id: '1',
+    sub: '1',
+    permissions: ['foundation.knowledge.read', 'foundation.knowledge.publish']
+  },
   identityVersion: 0,
   sessionIdentity: 'session'
 })
@@ -85,10 +89,12 @@ const job = (status = 'IDLE') => ({
 })
 beforeEach(() => {
   vi.resetAllMocks()
+  sessionStorage.clear()
   mocks.session = 'session'
   routeState.params.id = 'kb-1'
   authState.identityVersion = 0
   authState.sessionIdentity = 'session'
+  authState.user.permissions = ['foundation.knowledge.read', 'foundation.knowledge.publish']
   mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: 'high_quality' })
   mocks.revisions.mockResolvedValue({ items: [] })
   mocks.models.mockResolvedValue([])
@@ -138,6 +144,142 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('重建发布的大整数 ID 从读取到原请求和回执全程保持精确字符串', async () => {
+    const kb = '9007199254740993'
+    const jobId = '9223372036854775807'
+    routeState.params.id = kb
+    mocks.base.mockResolvedValue({ id: kb, name: '知识库', indexing_mode: 'high_quality' })
+    mocks.rebuild.mockResolvedValue({ ...job('READY'), kb_id: kb, job_id: jobId })
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: {
+        ...job('PUBLISHED'),
+        kb_id: kb,
+        job_id: jobId,
+        revision: 3,
+        published_revision: 1
+      }
+    })
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    expect(mocks.post.mock.calls[0]![1]).toMatchObject({ kb_id: kb, job_id: jobId })
+    expect(wrapper.text()).not.toContain('重建发布结果尚未确认')
+    expect(mocks.success).toHaveBeenCalledWith('重建结果已发布')
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('旧记录中数值化的任务 ID 不被转换或发送，保留原键供人工核对', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const key = `skillforge.knowledge-rebuild-publication.${JSON.stringify(['1', '1', 'kb-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        requestId,
+        kbId: 'kb-1',
+        jobId: JSON.parse('9007199254740993'),
+        jobRevision: 2,
+        baseRevision: 3,
+        policy: {
+          model_invocable: true,
+          user_invocable: true,
+          allowed_operators: ['VECTOR'],
+          freshness_policy: 'PINNED',
+          citation_required: true
+        }
+      })
+    )
+    await open()
+    expect(wrapper.text()).toContain('原任务标识不完整，无法安全核对')
+    expect(wrapper.text()).toContain(requestId)
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(
+      mocks.rebuild.mock.calls.some((call) => String(call[0]).includes('publish-resolution'))
+    ).toBe(false)
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+  })
+  it('重建发布返回 401 后刷新只读原请求，确认成功前不重发', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockRejectedValueOnce(new HttpClientError({ status: 401, userMessage: '登录失效' }))
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    const command = mocks.post.mock.calls[0]![1]
+    expect(mocks.post.mock.calls[0]![2]).toEqual({ retryOnUnauthorized: false })
+    expect(wrapper.text()).toContain('重建发布结果尚未确认')
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).toContain(command.request_id)
+    wrapper.unmount()
+    mocks.rebuild.mockImplementation(async (path: string) =>
+      path.includes('publish-resolution')
+        ? { status: 'UNKNOWN', snapshot: null }
+        : { ...job('READY'), job_id: 'newer-job' }
+    )
+    await open()
+    expect(
+      mocks.rebuild.mock.calls.some((call) =>
+        String(call[0]).includes(`job_id=job-1&request_id=${command.request_id}`)
+      )
+    ).toBe(true)
+    expect(wrapper.text()).toContain('重建发布结果尚未确认')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    mocks.rebuild.mockImplementation(async (path: string) =>
+      path.includes('publish-resolution')
+        ? {
+            status: 'SUCCEEDED',
+            snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+          }
+        : { ...job('READY'), job_id: 'newer-job' }
+    )
+    await click('核对原重建发布')
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+  it('只读权限可显式封存未知发布，断连后可同键再次封存', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockRejectedValueOnce(Error('原发布断连')).mockRejectedValueOnce(Error('封存断连'))
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    authState.user.permissions = ['foundation.knowledge.read']
+    await flushPromises()
+    await click('结束未确认的重建发布')
+    const fenceCommand = mocks.post.mock.calls[1]![1]
+    mocks.post.mockResolvedValueOnce({ status: 'FENCED', snapshot: null })
+    await click('结束未确认的重建发布')
+    expect(mocks.post.mock.calls[2]![1]).toEqual(fenceCommand)
+    expect(mocks.post.mock.calls[1]![2]).toEqual({ retryOnUnauthorized: false })
+    expect(mocks.post.mock.calls[2]![0]).toBe('/knowledge/bases/rebuilds/publish-fence')
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('核对返回不匹配任务时保留原请求并禁止重复发布', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.post.mockRejectedValueOnce(Error('断连'))
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    mocks.rebuild.mockResolvedValueOnce({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), job_id: 'other-job', revision: 3, published_revision: 1 }
+    })
+    await click('核对原重建发布')
+    expect(wrapper.text()).toContain('重建发布结果尚未确认')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(1)
+  })
+  it('原请求无法持久化时不发送重建发布', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    await open()
+    await rebuildTab()
+    const blocked = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('blocked')
+    })
+    try {
+      await click('发布重建结果')
+      expect(mocks.post).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('无法保存原请求记录，未发送重建发布')
+    } finally {
+      blocked.mockRestore()
+    }
+  })
   it('初始文档读取在途时切换知识库，旧响应不能写入且忙碌结束后加载新库', async () => {
     let finish!: (value: unknown) => void
     mocks.base.mockImplementation(async (id: string) => ({
@@ -517,7 +659,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   })
   it('发布后文档GET失败只反馈一次，保留成功回执并仅重试读取', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
-    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
     await open()
     await rebuildTab()
     mocks.documents.mockRejectedValueOnce(new Error('文档列表暂时不可读'))
@@ -538,7 +683,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   })
   it('发布回执后定向刷新来源版本，刷新失败可只重试GET而不再次发布', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
-    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
     await open()
     await rebuildTab()
     mocks.base.mockRejectedValueOnce(new Error('发布信息暂时不可读'))
@@ -546,7 +694,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     expect(mocks.success).toHaveBeenCalledWith('重建结果已发布')
     expect(wrapper.text()).toContain('重建结果已发布，知识库与文档信息尚未刷新')
     expect(mocks.post).toHaveBeenCalledTimes(1)
-    expect(mocks.post.mock.calls[0]![0]).toBe('/knowledge/bases/rebuilds/publish')
+    expect(mocks.post.mock.calls[0]![0]).toBe('/knowledge/bases/rebuilds/publish-with-receipt')
     await click('重新读取发布信息')
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.models).toHaveBeenCalledTimes(1)
@@ -559,7 +707,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     '发布后 %s 迟到错误在会话变化后忽略',
     async (resource) => {
       mocks.rebuild.mockResolvedValue(job('READY'))
-      mocks.post.mockResolvedValue(job('PUBLISHED'))
+      mocks.post.mockResolvedValue({
+        status: 'SUCCEEDED',
+        snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+      })
       await open()
       await rebuildTab()
       let fail!: (reason: unknown) => void
@@ -577,7 +728,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   )
   it('发布后文档迟到响应在会话变化后不写入列表', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
-    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
     await open()
     await rebuildTab()
     let finish!: (value: unknown) => void
@@ -595,7 +749,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   })
   it('发布后的文档读取使较早筛选失效，旧响应不能覆盖结果或回滚筛选', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
-    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
     await open()
     let finish!: (value: unknown) => void
     mocks.documents.mockReturnValueOnce(
@@ -620,7 +777,10 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   })
   it('较新的文档筛选读取使在途发布读取失效，不回滚新筛选', async () => {
     mocks.rebuild.mockResolvedValue(job('READY'))
-    mocks.post.mockResolvedValue(job('PUBLISHED'))
+    mocks.post.mockResolvedValue({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
     await open()
     await rebuildTab()
     let finish!: (value: unknown) => void

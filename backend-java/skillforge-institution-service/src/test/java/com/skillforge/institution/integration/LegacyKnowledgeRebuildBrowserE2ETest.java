@@ -98,7 +98,7 @@ class LegacyKnowledgeRebuildBrowserE2ETest extends ChatExecutionChainE2ETest {
                             gate.countDown();
                         }
                         if(switched&&!readySaved){TenantContext.setTenantId(tenantId);try{var state=rebuilds.latest(tenantId,Long.parseLong(original.kbId()));
-                            if("READY".equals(state.status())){Files.writeString(evidence.resolve("server-ready.json"),objectMapper.writeValueAsString(Map.of("status",state.status(),"jobId",state.jobId())));readySaved=true;}
+                            if("READY".equals(state.status())){Files.writeString(evidence.resolve("server-ready.json"),objectMapper.writeValueAsString(Map.of("status",state.status(),"jobId",state.jobId().toString())));readySaved=true;}
                         }finally{TenantContext.clear();}}
                         if(switched&&!restored&&Files.exists(evidence.resolve("restore-default"))){
                             changedRevision=settings.update("knowledge",changedRevision,oldSettings.values(),actor).revision();restored=true;
@@ -117,6 +117,8 @@ class LegacyKnowledgeRebuildBrowserE2ETest extends ChatExecutionChainE2ETest {
             var facts=objectMapper.readTree(Files.readString(browser.resolve("legacy-rebuild.json")));
             String mode=System.getenv().getOrDefault("E2E_LEGACY_REBUILD_MODE","baseline");
             assertEquals(mode,facts.path("mode").asText());assertEquals(1,facts.path("creates").asInt());
+            assertEquals("SUCCEEDED",facts.path("publication").path("status").asText());
+            assertEquals(facts.path("published"),facts.path("publication").path("snapshot"));
             assertEquals("candidate".equals(mode)?2:1,facts.path("publishes").asInt());
             if("candidate".equals(mode)){assertTrue(restored);assertEquals(original.revisionId(),facts.path("conflict").path("activeRevisionId").asLong());}
             long revisionNumber=facts.path("publishedRevision").asLong();assertTrue(revisionNumber>0);

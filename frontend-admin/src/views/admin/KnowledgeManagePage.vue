@@ -106,6 +106,25 @@
       >。
       <ElButton @click="preparationOpen = true">核对原操作</ElButton>
     </section>
+    <section v-if="rebuildPublicationLocked" class="admin-card" role="status">
+      <template v-if="rebuildPublicationPending"
+        >重建发布结果尚未确认，原请求 ID：<code>{{ rebuildPublicationPending.requestId }}</code
+        >。</template
+      >
+      {{ rebuildPublicationStorageError }}
+      <ElButton
+        v-if="rebuildPublicationPending && can('foundation.knowledge.read')"
+        :disabled="busy"
+        @click="checkRebuildPublication"
+        >核对原重建发布</ElButton
+      >
+      <ElButton
+        v-if="rebuildPublicationPending && can('foundation.knowledge.read')"
+        :disabled="busy"
+        @click="fenceRebuildPublication"
+        >结束未确认的重建发布</ElButton
+      >
+    </section>
     <details
       v-if="!publicationPending && can('foundation.knowledge.read')"
       class="knowledge-receipt"
@@ -262,7 +281,11 @@
                 v-permission="['foundation.knowledge.run']"
                 link
                 :disabled="
-                  busy || documentMutationRefresh || rebuildRefresh || rebuild?.write_locked
+                  busy ||
+                  documentMutationRefresh ||
+                  rebuildRefresh ||
+                  rebuildPublicationLocked ||
+                  rebuild?.write_locked
                 "
                 @click="reindex(row as KnowledgeDocumentItem)"
                 >{{ row.status === 'failed' ? '重试索引' : '重新索引' }}</ElButton
@@ -271,7 +294,11 @@
                 link
                 type="danger"
                 :disabled="
-                  busy || documentMutationRefresh || rebuildRefresh || rebuild?.write_locked
+                  busy ||
+                  documentMutationRefresh ||
+                  rebuildRefresh ||
+                  rebuildPublicationLocked ||
+                  rebuild?.write_locked
                 "
                 @click="removeDocument(row as KnowledgeDocumentItem)"
                 >删除</ElButton
@@ -578,6 +605,7 @@
             v-permission="['foundation.knowledge.create']"
             :disabled="
               busy ||
+              rebuildPublicationLocked ||
               rebuildRefresh ||
               rebuild?.write_locked ||
               !modelId ||
@@ -591,7 +619,7 @@
               rebuild?.job_id &&
               ['QUEUED', 'RUNNING', 'READY', 'FAILED', 'UNKNOWN'].includes(rebuild.status)
             "
-            :disabled="busy"
+            :disabled="busy || rebuildPublicationLocked"
             @click="cancelRebuild"
             >取消重建</ElButton
           ><ElButton
@@ -603,6 +631,7 @@
             "
             :disabled="
               busy ||
+              rebuildPublicationLocked ||
               (rebuild?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED' &&
                 effectiveIndexingMode !== 'high_quality')
             "
@@ -767,14 +796,26 @@
             v-described-by="formTipId + '-group-0'"
             :aria-describedby="formTipId + '-group-0'"
             v-model="title"
-            :disabled="busy || !!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+            :disabled="
+              busy ||
+              !!documentRefresh ||
+              rebuildRefresh ||
+              rebuildPublicationLocked ||
+              rebuild?.write_locked
+            "
             placeholder="文档标题"
           /><CodeEditor
             :described-by="formTipId + '-group-0'"
             v-model="content"
             language="markdown"
             height="440px"
-            :readonly="busy || !!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+            :readonly="
+              busy ||
+              !!documentRefresh ||
+              rebuildRefresh ||
+              rebuildPublicationLocked ||
+              rebuild?.write_locked
+            "
           />
           <p class="muted">来源版本：{{ document?.source_version }}</p>
           <FieldTip :id="formTipId + '-group-0'"
@@ -790,13 +831,25 @@
                 {{ chunk.has_embedding ? '已向量化' : '无向量' }}</span
               ><ElButton
                 v-permission="['foundation.knowledge.update']"
-                :disabled="busy || !!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+                :disabled="
+                  busy ||
+                  !!documentRefresh ||
+                  rebuildRefresh ||
+                  rebuildPublicationLocked ||
+                  rebuild?.write_locked
+                "
                 @click="saveChunk(chunk)"
                 >保存分块</ElButton
               ><ElButton
                 v-permission="['foundation.knowledge.delete']"
                 type="danger"
-                :disabled="busy || !!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+                :disabled="
+                  busy ||
+                  !!documentRefresh ||
+                  rebuildRefresh ||
+                  rebuildPublicationLocked ||
+                  rebuild?.write_locked
+                "
                 @click="removeChunk(chunk)"
                 >删除分块</ElButton
               >
@@ -807,7 +860,13 @@
                 formTipId + '-group-1' + '-' + encodeURIComponent(String(chunk.id))
               "
               v-model="chunk.content"
-              :disabled="busy || !!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+              :disabled="
+                busy ||
+                !!documentRefresh ||
+                rebuildRefresh ||
+                rebuildPublicationLocked ||
+                rebuild?.write_locked
+              "
               type="textarea"
               :rows="5"
             />
@@ -830,7 +889,9 @@
           v-permission="['foundation.knowledge.update']"
           type="primary"
           :loading="busy"
-          :disabled="!!documentRefresh || rebuildRefresh || rebuild?.write_locked"
+          :disabled="
+            !!documentRefresh || rebuildRefresh || rebuildPublicationLocked || rebuild?.write_locked
+          "
           @click="saveDocument"
           >保存原文</ElButton
         ></template
@@ -875,7 +936,13 @@ import {
   type KnowledgeSearchParams,
   type ModelSummary
 } from '../../api'
-import { createKnowledgeRebuildApi, type KnowledgeRebuild } from '../../api/knowledgeRebuild'
+import {
+  createKnowledgeRebuildApi,
+  type KnowledgeRebuild,
+  type KnowledgeRebuildPolicy,
+  type KnowledgeRebuildPublicationCommand,
+  type KnowledgeRebuildPublicationResolution
+} from '../../api/knowledgeRebuild'
 import { peekInitialFile, takeInitialFile } from './knowledgeInitialFile'
 import { notifyKnowledgePublished } from './knowledgePublicationEvents'
 const route = useRoute(),
@@ -962,23 +1029,41 @@ const historicalUpload = ref<KnowledgeUploadReceipt>()
 watch(uploadRequestId, () => {
   historicalUpload.value = undefined
 })
-const uploadBlocked = computed(() => !!uploadUnknown.value || !!uploadStorageError.value)
+const uploadBlocked = computed(
+  () => !!uploadUnknown.value || !!uploadStorageError.value || rebuildPublicationLocked.value
+)
 type PublicationPending = {
   requestId: string
   kbId: string
   sources: string[]
   policy: typeof policy
 }
+type RebuildPublicationPending = {
+  requestId: string
+  kbId: string
+  jobId: string
+  jobRevision: number
+  baseRevision: number
+  policy: KnowledgeRebuildPolicy
+}
+const rebuildPublicationPending = ref<RebuildPublicationPending>()
+const rebuildPublicationStorageError = ref('')
+const rebuildPublicationKey = (owner: string) => `skillforge.knowledge-rebuild-publication.${owner}`
+const rebuildPublicationLocked = computed(
+  () => !!rebuildPublicationPending.value || !!rebuildPublicationStorageError.value
+)
 const publicationPending = ref<PublicationPending>()
 const publicationStorageError = ref('')
 const publicationRequestId = ref('')
 const publicationReceipt = ref<KnowledgePrepareAndPublishReceipt>()
 const publicationLocked = computed(
-  () => !!publicationPending.value || !!publicationStorageError.value
+  () =>
+    !!publicationPending.value || !!publicationStorageError.value || rebuildPublicationLocked.value
 )
 let disposed = false
 let autoCheckedUpload = ''
 let autoCheckedPublication = ''
+let autoCheckedRebuildPublication = ''
 onScopeDispose(() => {
   disposed = true
 })
@@ -1032,6 +1117,52 @@ watch(
       publicationPending.value = value
     } catch {
       publicationStorageError.value = '无法读取原知识发布记录，请恢复浏览器存储后重新进入页面。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
+watch(
+  publicationOwner,
+  (owner) => {
+    rebuildPublicationPending.value = undefined
+    rebuildPublicationStorageError.value = ''
+    autoCheckedRebuildPublication = ''
+    if (!owner) return
+    try {
+      const raw = sessionStorage.getItem(rebuildPublicationKey(owner))
+      if (!raw) return
+      const value = JSON.parse(raw) as RebuildPublicationPending
+      if (
+        value &&
+        typeof value.jobId !== 'string' &&
+        typeof value.requestId === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+      ) {
+        rebuildPublicationStorageError.value = `原任务标识不完整，无法安全核对；请联系管理员，原请求 ID：${value.requestId}。`
+        return
+      }
+      if (
+        !value ||
+        value.kbId !== id.value ||
+        !value.jobId ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+        !Number.isSafeInteger(value.jobRevision) ||
+        value.jobRevision < 1 ||
+        value.jobRevision >= Number.MAX_SAFE_INTEGER ||
+        !Number.isSafeInteger(value.baseRevision) ||
+        value.baseRevision < 0 ||
+        !value.policy ||
+        typeof value.policy.model_invocable !== 'boolean' ||
+        typeof value.policy.user_invocable !== 'boolean' ||
+        !Array.isArray(value.policy.allowed_operators) ||
+        !value.policy.allowed_operators.every((entry) => typeof entry === 'string') ||
+        typeof value.policy.freshness_policy !== 'string' ||
+        typeof value.policy.citation_required !== 'boolean'
+      )
+        throw Error('invalid')
+      rebuildPublicationPending.value = value
+    } catch {
+      rebuildPublicationStorageError.value = '无法读取原重建发布记录，请恢复浏览器存储后重新进入。'
     }
   },
   { immediate: true, flush: 'sync' }
@@ -1159,6 +1290,19 @@ async function load() {
   ) {
     autoCheckedPublication = publicationPending.value.requestId
     await checkPublication()
+  }
+  if (
+    loaded &&
+    !disposed &&
+    !busy.value &&
+    id.value === target &&
+    auth.identityVersion === identity &&
+    can('foundation.knowledge.read') &&
+    rebuildPublicationPending.value?.requestId &&
+    autoCheckedRebuildPublication !== rebuildPublicationPending.value.requestId
+  ) {
+    autoCheckedRebuildPublication = rebuildPublicationPending.value.requestId
+    await checkRebuildPublication()
   }
   if (
     loaded &&
@@ -1428,6 +1572,7 @@ useUnsavedChanges({
   dirty: () =>
     documentDirty.value ||
     !!publicationPending.value ||
+    !!rebuildPublicationPending.value ||
     !!uploadUnknown.value ||
     !!initialPending.value,
   busy: () => busy.value,
@@ -1436,9 +1581,11 @@ useUnsavedChanges({
       ? `文件“${uploadUnknown.value.name}”的上传结果未知；关闭标签页可能丢失原文件记录。`
       : initialPending.value
         ? `文件“${initialPending.value.name}”尚未上传；刷新或关闭页面后需要重新选择。`
-        : publicationPending.value
-          ? `知识发布结果未知，请记录原请求 ID：${publicationPending.value.requestId}。`
-          : undefined
+        : rebuildPublicationPending.value
+          ? `重建发布结果未知，请记录原请求 ID：${rebuildPublicationPending.value.requestId}。`
+          : publicationPending.value
+            ? `知识发布结果未知，请记录原请求 ID：${publicationPending.value.requestId}。`
+            : undefined
 })
 async function loadChunks() {
   if (!document.value) return
@@ -1496,7 +1643,7 @@ async function editDocument(documentId: string) {
   })
 }
 async function saveDocument() {
-  if (documentRefresh.value) return
+  if (documentRefresh.value || rebuildPublicationLocked.value) return
   if (
     JSON.stringify(chunks.value) !== savedChunks.value &&
     !(await confirm({
@@ -1507,6 +1654,7 @@ async function saveDocument() {
     }))
   )
     return
+  if (rebuildPublicationLocked.value) return
   await run(async () => {
     const doc = document.value
     if (!doc?.source_version)
@@ -1526,7 +1674,7 @@ async function refreshDocumentList() {
   if ((await loadDocuments()) !== undefined) documentMutationRefresh.value = false
 }
 async function reindex(row: KnowledgeDocumentItem) {
-  if (documentMutationRefresh.value) return
+  if (documentMutationRefresh.value || rebuildPublicationLocked.value) return
   await run(async () => {
     if (!row.source_version)
       throw Error('尚未读到文档版本，请刷新文档列表后再选择需要重新索引的文档')
@@ -1537,7 +1685,7 @@ async function reindex(row: KnowledgeDocumentItem) {
   })
 }
 async function removeDocument(row: KnowledgeDocumentItem) {
-  if (documentMutationRefresh.value) return
+  if (documentMutationRefresh.value || rebuildPublicationLocked.value) return
   if (
     await confirm({
       title: '删除文档',
@@ -1547,6 +1695,7 @@ async function removeDocument(row: KnowledgeDocumentItem) {
     })
   )
     await run(async () => {
+      if (rebuildPublicationLocked.value) return
       if (!row.source_version) throw Error('尚未读到文档版本，请刷新文档列表后再核对要删除的文档')
       await api.knowledge.removeDocument(row.id, row.source_version)
       message.success('文档已删除')
@@ -1596,7 +1745,7 @@ async function refreshAfterChunkWrite(
   }))
 }
 async function saveChunk(chunk: KnowledgeChunkItem) {
-  if (documentRefresh.value) return
+  if (documentRefresh.value || rebuildPublicationLocked.value) return
   await run(async () => {
     const submittedContent = chunk.content
     await api.knowledge.updateChunk(chunk.id, chunk.source_version, { content: submittedContent })
@@ -1606,7 +1755,7 @@ async function saveChunk(chunk: KnowledgeChunkItem) {
   })
 }
 async function removeChunk(chunk: KnowledgeChunkItem) {
-  if (documentRefresh.value) return
+  if (documentRefresh.value || rebuildPublicationLocked.value) return
   if (
     await confirm({
       title: '删除分块',
@@ -1616,6 +1765,7 @@ async function removeChunk(chunk: KnowledgeChunkItem) {
     })
   )
     await run(async () => {
+      if (rebuildPublicationLocked.value) return
       await api.knowledge.removeChunk(chunk.id, chunk.source_version)
       message.success('分块已删除')
       documentRefresh.value = () => refreshAfterChunkWrite(chunk, true)
@@ -2064,7 +2214,7 @@ async function publishRevision(row: KnowledgeBaseRevision) {
   })
 }
 async function startRebuild() {
-  if (effectiveIndexingMode.value !== 'high_quality') return
+  if (rebuildPublicationLocked.value || effectiveIndexingMode.value !== 'high_quality') return
   await run(async () => {
     const model = models.value?.find((m) => m.id === modelId.value)
     if (!model || !rebuild.value) throw Error('请选择目标模型')
@@ -2079,6 +2229,7 @@ async function startRebuild() {
   })
 }
 async function cancelRebuild() {
+  if (rebuildPublicationLocked.value) return
   if (
     await confirm({
       title: '取消重建',
@@ -2093,6 +2244,7 @@ async function cancelRebuild() {
     })
 }
 async function retryRebuild() {
+  if (rebuildPublicationLocked.value) return
   if (
     rebuild.value?.error_code === 'KNOWLEDGE_REBUILD_MODE_CHANGED' &&
     effectiveIndexingMode.value !== 'high_quality'
@@ -2233,6 +2385,113 @@ async function refreshRebuild() {
     }
   })
 }
+function rebuildPublicationCommand(
+  operation: RebuildPublicationPending
+): KnowledgeRebuildPublicationCommand {
+  return {
+    request_id: operation.requestId,
+    kb_id: operation.kbId,
+    job_id: operation.jobId,
+    expected_revision: operation.jobRevision,
+    expected_base_revision: operation.baseRevision,
+    policy: operation.policy
+  }
+}
+async function acceptRebuildPublication(
+  operation: RebuildPublicationPending,
+  resolution: KnowledgeRebuildPublicationResolution | null,
+  current: () => boolean
+) {
+  if (!current() || rebuildPublicationPending.value !== operation) return
+  const snapshot = resolution?.snapshot
+  if (resolution?.status === 'UNKNOWN' || !resolution) {
+    message.warning('原重建发布仍未确认，请稍后核对')
+    return
+  }
+  if (
+    resolution.status !== 'FENCED' &&
+    (resolution.status !== 'SUCCEEDED' ||
+      !snapshot ||
+      snapshot.kb_id !== operation.kbId ||
+      snapshot.job_id !== operation.jobId ||
+      snapshot.status !== 'PUBLISHED' ||
+      !Number.isSafeInteger(snapshot.revision) ||
+      snapshot.revision !== operation.jobRevision + 1 ||
+      !Number.isSafeInteger(snapshot.published_revision) ||
+      snapshot.published_revision! < 1)
+  ) {
+    message.warning('原重建发布回执不完整，结果仍未确认')
+    return
+  }
+  if (resolution.status === 'FENCED' && snapshot !== null) {
+    message.warning('原重建发布回执不完整，结果仍未确认')
+    return
+  }
+  try {
+    sessionStorage.removeItem(rebuildPublicationKey(publicationOwner.value))
+  } catch {
+    rebuildPublicationStorageError.value = '无法清除原请求记录，请恢复浏览器存储后核对。'
+    return
+  }
+  rebuildPublicationPending.value = undefined
+  rebuildPublicationStorageError.value = ''
+  if (resolution.status === 'FENCED') {
+    message.success('原重建发布已结束，未发布。')
+    return
+  }
+  if (rebuild.value?.job_id === operation.jobId) rebuild.value = snapshot!
+  notifyKnowledgePublished(initialOwner.value)
+  message.success('重建结果已发布')
+  rebuildRefresh.value = true
+  await readPublishedRebuild(current)
+}
+async function checkRebuildPublication() {
+  const operation = rebuildPublicationPending.value
+  if (!operation || !can('foundation.knowledge.read')) return
+  const current = rebuildReadCurrent()
+  await run(async () => {
+    try {
+      const resolution = await rebuildApi.publishResolution(
+        operation.kbId,
+        operation.jobId,
+        operation.requestId
+      )
+      await acceptRebuildPublication(operation, resolution, current)
+    } catch (reason) {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    }
+  })
+}
+async function fenceRebuildPublication() {
+  const operation = rebuildPublicationPending.value
+  if (!operation || !can('foundation.knowledge.read')) return
+  const current = rebuildReadCurrent()
+  await run(async () => {
+    if (
+      !(await confirm({
+        title: '结束未确认的重建发布',
+        confirmText: '结束原发布',
+        content: '服务端将阻止原请求之后生效；若原请求已成功，将显示原发布结果。'
+      }))
+    )
+      return
+    if (!current() || rebuildPublicationPending.value !== operation) return
+    try {
+      const resolution = await rebuildApi.publishFence(rebuildPublicationCommand(operation))
+      await acceptRebuildPublication(operation, resolution, current)
+    } catch (reason) {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    }
+  })
+}
 async function publishRebuild() {
   if (
     publicationLocked.value ||
@@ -2267,11 +2526,41 @@ async function publishRebuild() {
       }))
     )
       return
-    if (!current()) return
+    if (
+      !current() ||
+      !can('foundation.knowledge.publish') ||
+      !publicationOwner.value ||
+      !job?.job_id ||
+      typeof job.job_id !== 'string' ||
+      typeof job.kb_id !== 'string' ||
+      job.kb_id !== target ||
+      !Number.isSafeInteger(job.revision) ||
+      !Number.isSafeInteger(job.base_revision)
+    )
+      return
+    const original: RebuildPublicationPending = {
+      requestId: crypto.randomUUID(),
+      kbId: target,
+      jobId: job.job_id,
+      jobRevision: job.revision!,
+      baseRevision: job.base_revision,
+      policy: { ...policy, allowed_operators: [...policy.allowed_operators] }
+    }
     try {
-      const published = await rebuildApi.publish(job!, policy)
+      sessionStorage.setItem(
+        rebuildPublicationKey(publicationOwner.value),
+        JSON.stringify(original)
+      )
+    } catch {
+      rebuildPublicationStorageError.value = '无法保存原请求记录，未发送重建发布。'
+      return
+    }
+    rebuildPublicationPending.value = original
+    const operation = rebuildPublicationPending.value
+    try {
+      const resolution = await rebuildApi.publishWithReceipt(rebuildPublicationCommand(operation))
       if (!current()) return
-      rebuild.value = published
+      await acceptRebuildPublication(operation, resolution, readCurrent)
     } catch (reason) {
       if (!current()) {
         if (reason instanceof HttpClientError) reason.claimFeedback()
@@ -2281,6 +2570,13 @@ async function publishRebuild() {
         throw reason
       reason.claimFeedback()
       if (!current()) return
+      try {
+        sessionStorage.removeItem(rebuildPublicationKey(publicationOwner.value))
+        rebuildPublicationPending.value = undefined
+      } catch {
+        rebuildPublicationStorageError.value = '无法清除原请求记录，请恢复浏览器存储后核对。'
+        return
+      }
       rebuildModeConflict.value = true
       if (!can('foundation.knowledge.read')) return
       try {
@@ -2291,11 +2587,6 @@ async function publishRebuild() {
       }
       return
     }
-    if (owner === initialOwner.value && rebuild.value.status === 'PUBLISHED')
-      notifyKnowledgePublished(owner)
-    message.success('重建结果已发布')
-    rebuildRefresh.value = true
-    await readPublishedRebuild(readCurrent)
   })
 }
 

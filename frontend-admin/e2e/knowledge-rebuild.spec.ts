@@ -46,6 +46,9 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
   )
   await pane.getByRole('button', { name: '开始重建', exact: true }).click()
   const created = await dataOf(await createdResponse)
+  expect(created.job_id).toMatch(/^[1-9]\d*$/)
+  expect(created.kb_id).toBe(kb)
+  expect(created.target_model_id).toMatch(/^[1-9]\d*$/)
   expect(created.write_locked).toBe(true)
   expect(created.document_count).toBeGreaterThan(0)
   const control = required('E2E_CONTROL_URL')
@@ -65,14 +68,16 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
     })
     .toBe(1)
   const publishResponse = page.waitForResponse((r) =>
-    new URL(r.url()).pathname.endsWith('/knowledge/bases/rebuilds/publish')
+    new URL(r.url()).pathname.endsWith('/knowledge/bases/rebuilds/publish-with-receipt')
   )
   await pane.getByRole('button', { name: '发布重建结果', exact: true }).click()
   await page
     .getByRole('dialog', { name: '发布重建结果' })
     .getByRole('button', { name: '发布重建结果', exact: true })
     .click()
-  const published = await dataOf(await publishResponse)
+  const publication = await dataOf(await publishResponse)
+  expect(publication.status).toBe('SUCCEEDED')
+  const published = publication.snapshot
   expect(published.status).toBe('PUBLISHED')
   expect(published.write_locked).toBe(false)
   expect(published.published_revision).toBeGreaterThan(0)
@@ -93,6 +98,6 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
   expect(cancelled.job_id).toBe(second.job_id)
   await writeFile(
     join(required('E2E_ARTIFACT_DIR'), 'browser-receipt.json'),
-    JSON.stringify({ create: created, publish: published, cancel: cancelled }, null, 2)
+    JSON.stringify({ create: created, publish: publication, cancel: cancelled }, null, 2)
   )
 })

@@ -132,6 +132,8 @@ tasks.named<Test>("test") {
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/LegacyKnowledgeRebuildBrowserE2ETest.class")
+    exclude("**/KnowledgeRebuild401BrowserE2ETest.class")
+    exclude("**/KnowledgeRebuildFenceBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
@@ -373,6 +375,32 @@ tasks.register<Test>("legacyKnowledgeRebuildBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.LegacyKnowledgeRebuildBrowserE2ETest.defaultChangesDuringRebuildAndRuntimeUsesPublishedSources")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeRebuild401BrowserE2E") {
+    description = "验证重建发布响应中断后的真实页面及运行时"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.KnowledgeRebuild401BrowserE2ETest.lostUnauthorizedPublicationResponseUsesSameRuntimeVersion")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeRebuildFenceBrowserE2E") {
+    description = "验证封存重建发布后拒绝迟到写入"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.KnowledgeRebuildFenceBrowserE2ETest.fencedPublicationRejectsLateOriginalWrite")
     }
     outputs.upToDateWhen { false }
 }

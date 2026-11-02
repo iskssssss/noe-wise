@@ -33,4 +33,16 @@ class KnowledgeRebuildServiceTest {
   }
   verify(jobs,times(2)).progress(7,20);verifyNoInteractions(items,batches);
  }
+ @Test void snapshotSerializesAllIdsAsExactStringsAndReadsPreviouslyStoredNumericReceipts() throws Exception {
+  var mapper=new com.fasterxml.jackson.databind.ObjectMapper().setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
+  long kb=9007199254740993L, job=9007199254740995L, model=9007199254740997L;
+  var snapshot=new KnowledgeRebuildService.Snapshot(job,kb,"PUBLISHED",4L,model,2L,768,1,1,0,null,3L,false,6L);
+  var data=mapper.valueToTree(snapshot);
+  assertTrue(data.get("job_id").isTextual());assertEquals(Long.toString(job),data.get("job_id").textValue());
+  assertTrue(data.get("kb_id").isTextual());assertEquals(Long.toString(kb),data.get("kb_id").textValue());
+  assertTrue(data.get("target_model_id").isTextual());assertEquals(Long.toString(model),data.get("target_model_id").textValue());
+  assertTrue(data.get("revision").isNumber());assertEquals(snapshot,mapper.treeToValue(data,KnowledgeRebuildService.Snapshot.class));
+  var old=(com.fasterxml.jackson.databind.node.ObjectNode)data.deepCopy();old.put("job_id",job);old.put("kb_id",kb);old.put("target_model_id",model);
+  assertEquals(snapshot,mapper.treeToValue(old,KnowledgeRebuildService.Snapshot.class));
+ }
 }

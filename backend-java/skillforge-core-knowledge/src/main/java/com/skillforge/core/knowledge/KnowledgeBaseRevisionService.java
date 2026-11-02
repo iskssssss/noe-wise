@@ -271,7 +271,7 @@ public class KnowledgeBaseRevisionService {
         return List.copyOf(normalized);
     }
 
-    private static Map<String, Object> normalizePolicy(KnowledgeCapabilityPolicyRequest request) {
+    static Map<String, Object> normalizePolicy(KnowledgeCapabilityPolicyRequest request) {
         if (request == null || request.modelInvocable() == null || request.userInvocable() == null
                 || request.citationRequired() == null || request.allowedOperators() == null
                 || request.allowedOperators().isEmpty()

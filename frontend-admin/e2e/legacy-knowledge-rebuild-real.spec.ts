@@ -28,7 +28,10 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (request.method() === 'POST' && path === '/api/v1/knowledge/bases/rebuilds/create') creates++
-    if (request.method() === 'POST' && path === '/api/v1/knowledge/bases/rebuilds/publish')
+    if (
+      request.method() === 'POST' &&
+      path === '/api/v1/knowledge/bases/rebuilds/publish-with-receipt'
+    )
       publishes++
   })
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/knowledge/' + kb)}`)
@@ -55,6 +58,9 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
   expect(response.status()).toBe(200)
   const job = (await response.json()).data
   expect(job.status).toBe('QUEUED')
+  expect(job.job_id).toMatch(/^[1-9]\d*$/)
+  expect(job.kb_id).toBe(kb)
+  expect(job.target_model_id).toMatch(/^[1-9]\d*$/)
   await expect.poll(() => exists(join(gate, 'embedding-started')), { timeout: 45_000 }).toBe(true)
   const running = page.waitForResponse(
     (r) =>
@@ -74,7 +80,7 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
   await expect.poll(() => exists(join(gate, 'server-ready.json')), { timeout: 45_000 }).toBe(true)
   const ready = JSON.parse(await readFile(join(gate, 'server-ready.json'), 'utf8'))
   expect(ready.status).toBe('READY')
-  expect(String(ready.jobId)).toBe(String(job.job_id))
+  expect(ready.jobId).toBe(job.job_id)
   const refreshed = page.waitForResponse(
     (r) =>
       r.request().method() === 'GET' &&
@@ -86,7 +92,7 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
   const posted = page.waitForResponse(
     (r) =>
       r.request().method() === 'POST' &&
-      new URL(r.url()).pathname === '/api/v1/knowledge/bases/rebuilds/publish'
+      new URL(r.url()).pathname === '/api/v1/knowledge/bases/rebuilds/publish-with-receipt'
   )
   await panel.getByRole('button', { name: '发布重建结果', exact: true }).click()
   await page
@@ -118,12 +124,12 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
     expect(observed.jobStatus).toBe(200)
     conflict = {
       activeRevisionId: String(observed.base.data.active_revision_id),
-      jobId: String(observed.job.data.job_id),
+      jobId: observed.job.data.job_id,
       status: observed.job.data.status,
       code: rejection.code
     }
     expect(conflict.activeRevisionId).toBe(required('E2E_ORIGINAL_REVISION_ID'))
-    expect(conflict.jobId).toBe(String(job.job_id))
+    expect(conflict.jobId).toBe(job.job_id)
     expect(conflict.status).toBe('READY')
     await writeFile(join(evidence, 'publish-conflict.json'), JSON.stringify({ conflict, observed }))
     await writeFile(join(gate, 'restore-default'), 'restore')
@@ -138,11 +144,11 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
     await panel.getByRole('button', { name: '刷新重建进展', exact: true }).click()
     const current = (await (await reread).json()).data
     expect(current.status).toBe('READY')
-    expect(String(current.job_id)).toBe(String(job.job_id))
+    expect(current.job_id).toBe(job.job_id)
     const explicitPublish = page.waitForResponse(
       (r) =>
         r.request().method() === 'POST' &&
-        new URL(r.url()).pathname === '/api/v1/knowledge/bases/rebuilds/publish'
+        new URL(r.url()).pathname === '/api/v1/knowledge/bases/rebuilds/publish-with-receipt'
     )
     await panel.getByRole('button', { name: '发布重建结果', exact: true }).click()
     await page
@@ -152,9 +158,11 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
     result = await explicitPublish
   }
   expect(result.status()).toBe(200)
-  const published = (await result.json()).data
+  const publication = (await result.json()).data
+  expect(publication.status).toBe('SUCCEEDED')
+  const published = publication.snapshot
   expect(published.status).toBe('PUBLISHED')
-  expect(String(published.job_id)).toBe(String(job.job_id))
+  expect(published.job_id).toBe(job.job_id)
   expect(creates).toBe(1)
   expect(publishes).toBe(mode === 'candidate' ? 2 : 1)
   await page.screenshot({
@@ -166,6 +174,7 @@ test('历史知识库重建期间运营默认变化', async ({ page }) => {
     JSON.stringify({
       job,
       ready: readyData,
+      publication,
       published,
       mode,
       conflict,

@@ -926,6 +926,44 @@ class KnowledgeServiceIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
+    @Autowired private com.skillforge.core.knowledge.KnowledgeRebuildPublishReceiptService rebuildReceipts;
+
+    @Test
+    void originalRebuildPublicationAndFenceHaveOneAtomicOutcome() throws Exception {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        try {
+            TenantContext.setTenantId(tenantId);
+            var model=rebuildModel(1536);
+            for (String kind:List.of("success","race")) {
+                var base=knowledgeService.createBase(tenantId,"回执并发"+kind,null);
+                knowledgeService.uploadFile(tenantId,base.id(),"test",textFile("test.txt","receipt publication"));
+                var created=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),kind,rebuilds.latest(tenantId,base.id()).baseRevision());
+                rebuilds.run(tenantId,created.jobId());var ready=rebuilds.latest(tenantId,base.id());assertEquals("READY",ready.status());
+                var command=new com.skillforge.core.knowledge.KnowledgeRebuildPublishReceiptService.Command(
+                    java.util.UUID.randomUUID(),base.id(),ready.jobId(),ready.revision(),ready.baseRevision(),policy());
+                String actor="tenant:"+tenantId+":member:1";
+                if (kind.equals("success")) {
+                    var published=rebuildReceipts.publish(tenantId,actor,command);assertEquals("SUCCEEDED",published.status());
+                    assertEquals(published,rebuildReceipts.publish(tenantId,actor,command));
+                    assertEquals(published,rebuildReceipts.fence(tenantId,actor,command));
+                    assertEquals(published,rebuildReceipts.resolve(tenantId,actor,base.id(),ready.jobId(),command.requestId()));
+                    assertEquals("PUBLISHED",published.snapshot().status());assertEquals(ready.revision()+1,published.snapshot().revision());
+                } else {
+                    var gate=new java.util.concurrent.CountDownLatch(1);
+                    try(var pool=java.util.concurrent.Executors.newFixedThreadPool(2)) {
+                        var first=pool.submit(()->{TenantContext.setTenantId(tenantId);try{gate.await();return rebuildReceipts.publish(tenantId,actor,command);}finally{TenantContext.clear();}});
+                        var second=pool.submit(()->{TenantContext.setTenantId(tenantId);try{gate.await();return rebuildReceipts.fence(tenantId,actor,command);}finally{TenantContext.clear();}});
+                        gate.countDown();var outcome=first.get(30,java.util.concurrent.TimeUnit.SECONDS);
+                        assertEquals(outcome,second.get(30,java.util.concurrent.TimeUnit.SECONDS));
+                        assertTrue(Set.of("SUCCEEDED","FENCED").contains(outcome.status()));
+                        assertEquals(outcome,rebuildReceipts.resolve(tenantId,actor,base.id(),ready.jobId(),command.requestId()));
+                        assertEquals(outcome.status().equals("SUCCEEDED")?"PUBLISHED":"READY",rebuilds.latest(tenantId,base.id()).status());
+                    }
+                }
+            }
+        } finally {TenantContext.clear();}
+    }
+
     @Test
     void wholeBaseRebuildFreezesWritesThenManuallySwitchesDimensionsAndKeepsPinnedOldModel() {
         float[] oldVector=new float[1536];oldVector[0]=1;whenEmbeddingIsAvailable(oldVector);
@@ -1016,7 +1054,10 @@ class KnowledgeServiceIntegrationTest extends AbstractIntegrationTest {
             var ready=rebuilds.latest(tenantId,base.id());assertEquals("READY",ready.status());
             org.mockito.Mockito.doThrow(new IllegalStateException("catalog publication failed"))
                     .when(catalogPublication).publish(org.mockito.ArgumentMatchers.any());
-            assertThrows(IllegalStateException.class,()->rebuilds.publish(tenantId,base.id(),ready.jobId(),ready.revision(),ready.baseRevision(),policy()));
+            var command=new com.skillforge.core.knowledge.KnowledgeRebuildPublishReceiptService.Command(java.util.UUID.randomUUID(),base.id(),ready.jobId(),ready.revision(),ready.baseRevision(),policy());
+            String actor="tenant:"+tenantId+":member:1";
+            assertThrows(IllegalStateException.class,()->rebuildReceipts.publish(tenantId,actor,command));
+            assertEquals("UNKNOWN",rebuildReceipts.resolve(tenantId,actor,base.id(),ready.jobId(),command.requestId()).status());
             assertEquals("READY",rebuilds.latest(tenantId,base.id()).status());
             assertEquals(ready.baseRevision(),rebuilds.latest(tenantId,base.id()).baseRevision());
             assertTrue(rebuilds.latest(tenantId,base.id()).writeLocked());

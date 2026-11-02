@@ -106,13 +106,14 @@ class KnowledgeRebuildBrowserE2ETest extends AbstractIntegrationTest {
             while(process.isAlive()&&System.nanoTime()<end){capture(owned);process.waitFor(200,TimeUnit.MILLISECONDS);}capture(owned);
             assertFalse(process.isAlive(),"browser_timeout: "+evidence);assertEquals(0,process.exitValue(),"browser_failed: "+evidence+"\n"+Files.readString(evidence.resolve("playwright-vite.log")));
             assertNull(failure.get());var receipt=json.readTree(Files.readString(evidence.resolve("browser-receipt.json")));
-            assertEquals("PUBLISHED",receipt.path("publish").path("status").asText());assertEquals("CANCELLED",receipt.path("cancel").path("status").asText());
+            assertEquals("SUCCEEDED",receipt.path("publish").path("status").asText());
+            assertEquals("PUBLISHED",receipt.path("publish").path("snapshot").path("status").asText());assertEquals("CANCELLED",receipt.path("cancel").path("status").asText());
             var facts=queryRows(jdbc,tenant,"SELECT b.active_revision_id,r.revision,r.status,d.current_source_version,b.rebuild_job_id FROM nw_knowledge_bases b JOIN nw_knowledge_base_revisions r ON r.id=b.active_revision_id JOIN nw_knowledge_documents d ON d.kb_id=b.id WHERE b.tenant_id=? AND b.id=?",Long.parseLong(tenant),base.id());
             assertEquals(3,facts.size());
             for (var fact : facts) {
                 assertEquals("published", fact.get("status")); assertNull(fact.get("rebuild_job_id"));
                 assertFalse(originalSources.contains(fact.get("current_source_version")));
-                assertEquals(receipt.path("publish").path("published_revision").asLong(), ((Number)fact.get("revision")).longValue());
+                assertEquals(receipt.path("publish").path("snapshot").path("published_revision").asLong(), ((Number)fact.get("revision")).longValue());
             }
             Files.writeString(evidence.resolve("database-evidence.json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(facts));
         } finally {
