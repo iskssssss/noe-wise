@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
   issueApiKey: vi.fn(),
   rotateApiKey: vi.fn(),
+  issueApiKeyWithReceipt: vi.fn(),
+  apiKeyIssueResult: vi.fn(),
   confirm: vi.fn()
 }))
 vi.mock('../../api', () => ({ api: { channels: mocks, agents: { list: mocks.agents } } }))
@@ -36,11 +38,14 @@ const channel = {
   ui_config: {}
 }
 const permissions = ref(['foundation.channels.read', 'foundation.channels.create'])
+const subject = ref('8')
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     user: {
       tenant_id: '7',
-      sub: '8',
+      get sub() {
+        return subject.value
+      },
       get permissions() {
         return permissions.value
       }
@@ -73,6 +78,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
   permissions.value = ['foundation.channels.read', 'foundation.channels.create']
+  subject.value = '8'
   mocks.list.mockResolvedValue({ items: [channel], total: 1 })
   mocks.create.mockResolvedValue({ ...channel, channel_token: 'one-time-only' })
   mocks.onboard.mockImplementation(async (requestId: string) => ({
@@ -81,6 +87,12 @@ beforeEach(() => {
     channel: { ...channel, channel_token: 'one-time-only' }
   }))
   mocks.confirm.mockResolvedValue(true)
+  mocks.issueApiKeyWithReceipt.mockImplementation(async (requestId: string, channelId: string) => ({
+    request_id: requestId,
+    channel_id: channelId,
+    api_key: 'new-key',
+    api_secret: 'new-secret'
+  }))
   mocks.issueApiKey.mockResolvedValue({
     channel_id: channel.id,
     api_key: 'new-key',
@@ -379,128 +391,177 @@ it('首次响应令牌缺失时保留原请求并通过回执恢复', async () =
 })
 
 async function openApiCredentials() {
-  permissions.value.push('foundation.channels.update')
+  permissions.value.push('foundation.channels.update', 'foundation.channels.delete')
   mocks.list.mockResolvedValue({
     items: [{ ...channel, type: 'openapi', api_key_issued: false }],
     total: 1
   })
+  mocks.get.mockResolvedValue({ ...channel, type: 'openapi', api_key_issued: true })
   await render()
   await click('访问凭据')
 }
 async function unknownFirstIssue() {
   await openApiCredentials()
-  mocks.issueApiKey.mockRejectedValueOnce(
-    new HttpClientError({ status: 0, userMessage: '结果尚未确认' })
-  )
+  mocks.issueApiKeyWithReceipt.mockRejectedValueOnce(Error('连接中断'))
   await click('签发 API Key', drawer('渠道访问凭据'))
+  return mocks.issueApiKeyWithReceipt.mock.calls[0]![0] as string
 }
-it.each([true, false])('核对显示%s仍保留未知，新写必须确认', async (issued) => {
-  await unknownFirstIssue()
-  mocks.get.mockResolvedValueOnce({ ...channel, type: 'openapi', api_key_issued: issued })
-  await click('核对 API Key 状态', drawer('渠道访问凭据'))
-  expect(mocks.get).toHaveBeenCalledExactlyOnceWith(channel.id)
-  expect(mocks.issueApiKey).toHaveBeenCalledTimes(1)
-  expect(mocks.rotateApiKey).not.toHaveBeenCalled()
-  expect(document.body.textContent).toContain(`当前读取显示${issued ? '已签发' : '未签发'}`)
-  mocks.confirm.mockResolvedValueOnce(false)
-  await click('重新生成 API 凭据', drawer('渠道访问凭据'))
-  expect(mocks.confirm).toHaveBeenCalledWith(
-    expect.objectContaining({ content: expect.stringContaining('旧 Key 立即失效') })
-  )
-  expect(mocks.rotateApiKey).not.toHaveBeenCalled()
-  await click('重新生成 API 凭据', drawer('渠道访问凭据'))
-  expect(mocks.rotateApiKey).toHaveBeenCalledExactlyOnceWith(channel.id)
-  expect(mocks.issueApiKey).toHaveBeenCalledTimes(1)
-  expect(document.body.textContent).toContain('recovered-secret')
-  expect(document.body.textContent).not.toContain('API 凭据签发结果尚未确认')
-})
-it('核对失败和关闭重开仍保留该渠道未知状态，不自动签发', async () => {
-  await unknownFirstIssue()
-  mocks.get.mockRejectedValueOnce(Error('核对读取失败'))
-  await click('核对 API Key 状态', drawer('渠道访问凭据'))
-  await click('关闭', drawer('渠道访问凭据'))
-  await click('访问凭据')
-  expect(document.body.textContent).toContain('API 凭据签发结果尚未确认')
-  expect(document.body.textContent).toContain('核对 API Key 状态')
-  expect(mocks.issueApiKey).toHaveBeenCalledTimes(1)
-  expect(mocks.rotateApiKey).not.toHaveBeenCalled()
-})
-it.each([
-  new HttpClientError({
-    status: 503,
-    code: 'UNAVAILABLE',
-    traceId: 'trace',
-    userMessage: '服务不可用'
-  }),
-  new HttpClientError({ status: 400, userMessage: '响应损坏' }),
-  new HttpClientError({ status: 408, code: 'TIMEOUT', traceId: 'trace', userMessage: '等待超时' })
-])('非明确拒绝保留未知：%s', async (failure) => {
-  await openApiCredentials()
-  mocks.issueApiKey.mockRejectedValueOnce(failure)
-  await click('签发 API Key', drawer('渠道访问凭据'))
-  expect(document.body.textContent).toContain('核对 API Key 状态')
-  expect(mocks.issueApiKey).toHaveBeenCalledTimes(1)
-})
-it.each([null, {}, { api_key: 'key' }])('损坏成功DTO保留未知：%s', async (result) => {
-  await openApiCredentials()
-  mocks.issueApiKey.mockResolvedValueOnce(result)
-  await click('签发 API Key', drawer('渠道访问凭据'))
-  expect(document.body.textContent).toContain('API 凭据签发结果尚未确认')
-  expect(drawer('渠道访问凭据').find('.channel-secrets').exists()).toBe(false)
-})
-it.each([400, 403, 422])('完整明确HTTP%s拒绝保留未签发事实', async (status) => {
-  await openApiCredentials()
-  mocks.issueApiKey.mockRejectedValueOnce(
-    new HttpClientError({ status, code: 'REJECTED', traceId: 'trace', userMessage: '明确拒绝' })
-  )
-  await click('签发 API Key', drawer('渠道访问凭据'))
-  expect(document.body.textContent).not.toContain('API 凭据签发结果尚未确认')
-  expect(document.body.textContent).toContain('签发 API Key')
-  expect(mocks.issueApiKey).toHaveBeenCalledTimes(1)
-})
-it('已有未知结果不会因重新生成被明确拒绝而清除', async () => {
-  await unknownFirstIssue()
-  mocks.rotateApiKey.mockRejectedValueOnce(
-    new HttpClientError({ status: 403, code: 'FORBIDDEN', traceId: 'trace', userMessage: '无权限' })
-  )
-  await click('重新生成 API 凭据', drawer('渠道访问凭据'))
-  expect(document.body.textContent).toContain('API 凭据签发结果尚未确认')
-  expect(mocks.rotateApiKey).toHaveBeenCalledTimes(1)
-})
-it('重新生成成功后刷新失败仍保留一次明文，关闭清空且不重复签发', async () => {
-  await unknownFirstIssue()
-  mocks.list.mockRejectedValueOnce(Error('列表读取失败'))
-  await click('重新生成 API 凭据', drawer('渠道访问凭据'))
-  expect(document.body.textContent).toContain('recovered-key')
-  expect(document.body.textContent).toContain('recovered-secret')
-  expect(document.body.textContent).not.toContain('API 凭据签发结果尚未确认')
-  await click('刷新')
-  expect(mocks.rotateApiKey).toHaveBeenCalledTimes(1)
-  await click('关闭', drawer('渠道访问凭据'))
-  await click('访问凭据')
-  expect(document.body.textContent).not.toContain('recovered-secret')
-})
+const stored = () => sessionStorage.getItem('skillforge.channel-key:["7","8"]')
 
-it.each([false, true])('已展示明文的轮换失败：明确拒绝=%s', async (rejected) => {
+it('首次签发只显示一次明文，存储不含凭据', async () => {
   await openApiCredentials()
   await click('签发 API Key', drawer('渠道访问凭据'))
   expect(document.body.textContent).toContain('new-key')
   expect(document.body.textContent).toContain('new-secret')
-  mocks.rotateApiKey.mockRejectedValueOnce(
+  expect(stored()).not.toContain('new-key')
+  expect(stored()).not.toContain('new-secret')
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(1)
+  await click('关闭', drawer('渠道访问凭据'))
+  await click('访问凭据')
+  expect(document.body.textContent).not.toContain('new-secret')
+})
+
+it('结果未知跨页面保留原请求，未匹配回执不能重新签发或吊销', async () => {
+  const requestId = await unknownFirstIssue()
+  expect(stored()).toContain(requestId)
+  expect(stored()).not.toContain('secret')
+  wrapper.unmount()
+  await render()
+  mocks.apiKeyIssueResult.mockResolvedValueOnce(undefined)
+  await click('访问凭据')
+  expect(mocks.apiKeyIssueResult).toHaveBeenCalledWith(requestId)
+  expect(document.body.textContent).toContain(requestId)
+  expect(document.body.textContent).not.toContain('签发 API Key')
+  mocks.apiKeyIssueResult.mockResolvedValueOnce({ request_id: requestId, channel_id: 'other' })
+  await click('核对原签发', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain(requestId)
+  mocks.apiKeyIssueResult.mockRejectedValueOnce(Error('读取失败'))
+  await click('核对原签发', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain(requestId)
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(1)
+})
+
+it('回执确认并读取渠道后，只有显式操作才发出新请求', async () => {
+  const requestId = await unknownFirstIssue()
+  mocks.apiKeyIssueResult.mockResolvedValue({ request_id: requestId, channel_id: channel.id })
+  await click('核对原签发', drawer('渠道访问凭据'))
+  expect(mocks.get).toHaveBeenCalledWith(channel.id)
+  expect(document.body.textContent).toContain('原签发已确认，但明文无法恢复')
+  expect(stored()).not.toContain(requestId)
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(1)
+  mocks.confirm.mockResolvedValueOnce(false)
+  await click('轮换 API Key', drawer('渠道访问凭据'))
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(1)
+  await click('轮换 API Key', drawer('渠道访问凭据'))
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(2)
+  expect(mocks.issueApiKeyWithReceipt.mock.calls[1]![0]).not.toBe(requestId)
+})
+
+it.each([400, 403, 409, 429, 408, 503])('HTTP %s 不能证明原操作失败', async (status) => {
+  await openApiCredentials()
+  mocks.issueApiKeyWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({ status, code: 'ERROR', traceId: 'trace', userMessage: '未确认' })
+  )
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('API 凭据签发结果尚未确认')
+  expect(stored()).toContain(mocks.issueApiKeyWithReceipt.mock.calls[0]![0])
+})
+
+it.each([
+  { api_key: 'key' },
+  { api_key: '', api_secret: '' },
+  { request_id: 'other', channel_id: channel.id, api_key: 'key', api_secret: 'secret' },
+  { channel_id: 'other', api_key: 'key', api_secret: 'secret' }
+])('损坏响应保留请求：%s', async (partial) => {
+  await openApiCredentials()
+  mocks.issueApiKeyWithReceipt.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    channel_id: channel.id,
+    ...partial
+  }))
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('API 凭据签发结果尚未确认')
+  expect(drawer('渠道访问凭据').find('.channel-secrets').exists()).toBe(false)
+})
+
+it('没有明文的重放回执读取当前渠道，提示无法恢复', async () => {
+  await openApiCredentials()
+  mocks.issueApiKeyWithReceipt.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    channel_id: channel.id
+  }))
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  expect(mocks.get).toHaveBeenCalledWith(channel.id)
+  expect(document.body.textContent).toContain('原签发已确认，但明文无法恢复')
+  expect(document.body.textContent).not.toContain('API 凭据签发结果尚未确认')
+})
+
+it.each([false, true])('轮换失败时保留旧明文仅限明确拒绝：%s', async (rejected) => {
+  await openApiCredentials()
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  mocks.issueApiKeyWithReceipt.mockRejectedValueOnce(
     new HttpClientError(
       rejected
-        ? { status: 403, code: 'FORBIDDEN', traceId: 'trace', userMessage: '明确拒绝' }
+        ? { status: 422, code: 'CHANNEL_KEY_REJECTED', userMessage: '明确拒绝' }
         : { status: 0, userMessage: '轮换结果尚未确认' }
     )
   )
   await click('轮换 API Key', drawer('渠道访问凭据'))
-  expect(document.body.textContent!.includes('new-key')).toBe(rejected)
   expect(document.body.textContent!.includes('new-secret')).toBe(rejected)
-  expect(
-    drawer('渠道访问凭据')
-      .findAllComponents(ElButton)
-      .some((button) => button.text() === '复制 api_key')
-  ).toBe(rejected)
   expect(document.body.textContent!.includes('API 凭据签发结果尚未确认')).toBe(!rejected)
-  expect(mocks.rotateApiKey).toHaveBeenCalledTimes(1)
+})
+
+it('存储写入失败时不发送签发', async () => {
+  await openApiCredentials()
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+    throw Error('storage blocked')
+  })
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  expect(mocks.issueApiKeyWithReceipt).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('无法保存凭据操作记录')
+  spy.mockRestore()
+})
+
+it('成功后清除记录失败仍展示明文，恢复存储后核对原请求', async () => {
+  await openApiCredentials()
+  const original = Storage.prototype.setItem
+  let calls = 0
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+    this: Storage,
+    key,
+    value
+  ) {
+    calls++
+    if (calls === 2) throw Error('storage blocked')
+    return original.call(this, key, value)
+  })
+  await click('签发 API Key', drawer('渠道访问凭据'))
+  const requestId = mocks.issueApiKeyWithReceipt.mock.calls[0]![0]
+  expect(document.body.textContent).toContain('new-secret')
+  expect(stored()).toContain(requestId)
+  spy.mockRestore()
+  mocks.apiKeyIssueResult.mockResolvedValue({ request_id: requestId, channel_id: channel.id })
+  await click('核对原签发', drawer('渠道访问凭据'))
+  expect(stored()).not.toContain(requestId)
+  expect(mocks.issueApiKeyWithReceipt).toHaveBeenCalledTimes(1)
+})
+
+it('无读取权限时保留原请求，不自动查询', async () => {
+  const requestId = await unknownFirstIssue()
+  await click('关闭', drawer('渠道访问凭据'))
+  permissions.value = ['foundation.channels.update']
+  await click('访问凭据')
+  expect(mocks.apiKeyIssueResult).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain(requestId)
+  expect(document.body.textContent).toContain('当前账号没有渠道读取权限')
+})
+
+it('成员切换后不显示或读取其他成员的请求记录', async () => {
+  const requestId = await unknownFirstIssue()
+  subject.value = '9'
+  await flushPromises()
+  await click('访问凭据')
+  expect(document.body.textContent).not.toContain(requestId)
+  expect(mocks.apiKeyIssueResult).not.toHaveBeenCalled()
+  expect(stored()).toContain(requestId)
 })

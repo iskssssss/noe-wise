@@ -1311,11 +1311,30 @@ export const api = {
     /** 轮换渠道令牌，返回明文（仅此一次）。 */
     rotateToken: (id: string) =>
       post<{ id: string; channel_token: string }>(`/channels/rotate-token`, { channel_id: id }),
+    issueApiKeyWithReceipt: (requestId: string, channelId: string) =>
+      post<{ request_id: string; channel_id: string; api_key?: string; api_secret?: string }>(
+        '/channels/api-keys/issue-with-receipt',
+        { request_id: requestId, channel_id: channelId },
+        { retryOnUnauthorized: false }
+      ),
+    apiKeyIssueResult: (requestId: string) =>
+      get<{ request_id: string; channel_id: string } | undefined>(
+        `/channels/api-keys/issue-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+      ),
     /** 签发 OpenAPI API Key（明文仅此一次）。 */
-    issueApiKey: (id: string) => post<ApiKeyIssueResult>(`/channels/api-keys`, { channel_id: id }),
+    issueApiKey: (id: string) =>
+      post<ApiKeyIssueResult>(
+        `/channels/api-keys`,
+        { channel_id: id },
+        { retryOnUnauthorized: false }
+      ),
     /** 轮换 OpenAPI API Key（旧 key 立即失效，明文仅此一次）。 */
     rotateApiKey: (id: string) =>
-      post<ApiKeyIssueResult>(`/channels/api-keys/rotate`, { channel_id: id }),
+      post<ApiKeyIssueResult>(
+        `/channels/api-keys/rotate`,
+        { channel_id: id },
+        { retryOnUnauthorized: false }
+      ),
     /** 吊销 OpenAPI API Key。 */
     deleteApiKey: (id: string) =>
       del<{ channel_id: string; status: string }>(`/channels/api-keys`, { channel_id: id }),

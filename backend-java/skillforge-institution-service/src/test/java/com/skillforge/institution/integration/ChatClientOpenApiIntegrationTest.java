@@ -379,6 +379,55 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void keyReceiptCommitsOnceWithoutPersistingOrReplayingPlaintext() throws Exception {
+        String slug = "key-receipt-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "ChannelManagement123";
+        initializeChannelAdministrator(tenant, "receipt-admin", password);
+        String jwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "receipt-admin", "password", password), null).path("access_token").asText();
+        long id = managementHttp("POST", "/api/v1/channels", Map.of("name", "receipt openapi",
+                "channel_type", "openapi", "config", Map.of(), "ui_config", Map.of()), jwt).path("id").asLong();
+        String requestId = UUID.randomUUID().toString();
+        var command = Map.of("request_id", requestId, "channel_id", id);
+        String path = "/api/v1/channels/api-keys/issue-with-receipt";
+        var first = managementHttp("POST", path, command, jwt);
+        String issuedKey = first.path("api_key").asText(), issuedSecret = first.path("api_secret").asText();
+        assertFalse(issuedKey.isBlank()); assertFalse(issuedSecret.isBlank());
+        assertEquals(requestId, first.path("request_id").asText());
+        assertEquals(Long.toString(id), first.path("channel_id").asText());
+        String hash = channels.selectById(id).getApiKeyHash();
+        assertEquals(TokenHash.sha256Hex(issuedKey), hash);
+        var receipt = managementHttp("GET", path + "/result?request_id=" + requestId, null, jwt);
+        var replay = managementHttp("POST", path, command, jwt);
+        for (var response : List.of(receipt, replay)) {
+            assertEquals(Long.toString(id), response.path("channel_id").asText());
+            assertFalse(response.has("api_key")); assertFalse(response.has("api_secret"));
+        }
+        assertEquals(hash, channels.selectById(id).getApiKeyHash());
+        String stored = queryRows(jdbc, tenant, "SELECT * FROM nw_channel_key_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString();
+        assertFalse(stored.contains(issuedKey)); assertFalse(stored.contains(issuedSecret));
+        long widget = managementHttp("POST", "/api/v1/channels", Map.of("name", "receipt widget",
+                "channel_type", "web_widget", "config", Map.of(), "ui_config", Map.of()), jwt).path("id").asLong();
+        var conflicting = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", requestId, "channel_id", widget)))).build();
+        assertEquals(409, http.send(conflicting, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String invalidId = UUID.randomUUID().toString();
+        var missing = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + invalidId))
+                .header("Authorization", "Bearer " + jwt).GET().build();
+        assertEquals(204, http.send(missing, HttpResponse.BodyHandlers.ofString()).statusCode());
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", invalidId, "channel_id", widget)))).build();
+        var rejected = http.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(422, rejected.statusCode());
+        assertEquals("CHANNEL_KEY_REJECTED", json.readTree(rejected.body()).path("code").asText());
+        assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_key_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
+        assertNull(channels.selectById(widget).getApiKeyHash());
+    }
+
     @Test void managementIssueRotationAndRevocationControlRealHttpAuthentication() throws Exception {
         String tenantSlug = "api-key-lifecycle-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, tenantSlug);

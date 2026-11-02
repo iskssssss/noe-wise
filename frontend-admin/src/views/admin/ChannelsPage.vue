@@ -301,39 +301,36 @@
       <div class="admin-actions">
         <ElButton v-permission="['foundation.channels.update']" :loading="busy" @click="rotateToken"
           >轮换渠道令牌</ElButton
+        ><ElButton v-if="pendingKey && canRead" :loading="busy" @click="checkKeyReceipt()"
+          >核对原签发</ElButton
         ><ElButton
+          v-if="selected?.type === 'openapi' && !pendingKey"
           v-permission="['foundation.channels.update']"
-          v-if="selected?.type === 'openapi'"
           :loading="busy"
+          :disabled="!!keyStorageError"
           @click="issueKey()"
-          >{{
-            pendingKey
-              ? '核对 API Key 状态'
-              : selected.api_key_issued
-                ? '轮换 API Key'
-                : '签发 API Key'
-          }}</ElButton
-        ><ElButton
-          v-if="pendingKey"
-          v-permission="['foundation.channels.update']"
-          :loading="busy"
-          @click="issueKey(true)"
-          >重新生成 API 凭据</ElButton
+          >{{ selected.api_key_issued ? '轮换 API Key' : '签发 API Key' }}</ElButton
         ><ElButton
           v-permission="['foundation.channels.delete']"
           v-if="selected?.api_key_issued"
           type="danger"
           @click="revokeKey"
-          :disabled="busy"
+          :disabled="busy || !!pendingKey || !!keyStorageError"
           >吊销 API Key</ElButton
         >
       </div>
       <p v-if="pendingKey" class="admin-field-help" role="status">
-        API 凭据签发结果尚未确认。核对状态只读取渠道，不会重新签发。
-        <template v-if="pendingKey.issued !== undefined">
-          当前读取显示{{ pendingKey.issued ? '已签发' : '未签发' }}，仍不能确定原请求的最终结果。
-        </template>
-        原明文无法恢复；如需新凭据，请明确重新生成，旧 Key 可能立即失效。
+        API 凭据签发结果尚未确认，原请求 ID：{{ pendingKey }}。未查到回执不代表失败。
+        <span v-if="!canRead">当前账号没有渠道读取权限，请联系管理员授权后核对。</span>
+      </p>
+      <p v-if="keyReceiptRecovered" class="admin-field-help" role="status">
+        原签发已确认，但明文无法恢复。如需新凭据，请重新签发。
+      </p>
+      <p v-if="keyStorageError" class="admin-field-help" role="status">
+        {{ keyStorageError }}
+        <ElButton v-if="!pendingKey" :disabled="busy" @click="loadPendingKeys(owner)"
+          >重新读取操作记录</ElButton
+        >
       </p>
       <ElDescriptions v-if="secrets" class="channel-secrets" :column="1" :label-width="128" border
         ><template v-for="(value, key) in secrets" :key="key"
@@ -433,8 +430,15 @@ const dirty = computed(
     (JSON.stringify(form) !== saved.value || (!editing.value && selectedAgents.value.length > 0))
 )
 useUnsavedChanges({
-  dirty: () => dirty.value || (bindingOpen.value && bindingSnapshot() !== savedBindings.value),
-  busy: () => busy.value
+  dirty: () =>
+    dirty.value ||
+    (bindingOpen.value && bindingSnapshot() !== savedBindings.value) ||
+    Object.keys(unknownKeys.value).length > 0,
+  busy: () => busy.value,
+  leaveMessage: () =>
+    Object.keys(unknownKeys.value).length
+      ? 'API 凭据签发结果尚未确认。关闭标签页可能丢失原请求记录，请先核对。'
+      : undefined
 })
 const filtered = computed(() =>
   (data.value?.items ?? []).filter((r) => (r.name + r.type).includes(query.value))
@@ -668,7 +672,54 @@ async function saveBindings() {
     message.success('智能体绑定已保存')
   })
 }
-const unknownKeys = ref<Record<string, { issued?: boolean }>>({})
+const unknownKeys = ref<Record<string, string>>({})
+const keyStorageError = ref('')
+const keyReceiptRecovered = ref(false)
+const keyStorageKey = (subject: string) => 'skillforge.channel-key:' + subject
+function loadPendingKeys(subject: string) {
+  if (!subject) {
+    keyStorageError.value = '无法确认当前机构和成员，请重新登录后操作凭据。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(keyStorageKey(subject))
+    const value: Record<string, unknown> = raw ? JSON.parse(raw) : {}
+    if (
+      !value ||
+      Array.isArray(value) ||
+      typeof value !== 'object' ||
+      Object.entries(value).some(
+        ([channel, request]) =>
+          !channel ||
+          typeof request !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request)
+      )
+    )
+      throw Error('invalid')
+    unknownKeys.value = value as Record<string, string>
+    keyStorageError.value = ''
+  } catch {
+    keyStorageError.value = '无法读取凭据操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function persistPendingKeys(subject: string, value: Record<string, string>) {
+  try {
+    sessionStorage.setItem(keyStorageKey(subject), JSON.stringify(value))
+    unknownKeys.value = value
+    keyStorageError.value = ''
+    return true
+  } catch {
+    keyStorageError.value = '无法保存凭据操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+function clearPendingKey(subject: string, channelId: string, requestId: string) {
+  if (disposed || owner.value !== subject || unknownKeys.value[channelId] !== requestId)
+    return false
+  const next = { ...unknownKeys.value }
+  delete next[channelId]
+  return persistPendingKeys(subject, next)
+}
 const pendingKey = computed(() =>
   selected.value?.id ? unknownKeys.value[selected.value.id] : undefined
 )
@@ -676,11 +727,24 @@ const secretOpen = ref(false),
   createdCredentials = ref(false),
   recoveredCredentials = ref(false),
   secrets = ref<Record<string, string>>()
+watch(
+  owner,
+  (subject) => {
+    unknownKeys.value = {}
+    keyStorageError.value = ''
+    keyReceiptRecovered.value = false
+    secrets.value = undefined
+    secretOpen.value = false
+    loadPendingKeys(subject)
+  },
+  { immediate: true, flush: 'sync' }
+)
 watch(secretOpen, (value) => {
   if (!value) {
     secrets.value = undefined
     createdCredentials.value = false
     recoveredCredentials.value = false
+    keyReceiptRecovered.value = false
   }
 })
 function credentials(row: ChannelItem) {
@@ -688,7 +752,9 @@ function credentials(row: ChannelItem) {
   recoveredCredentials.value = false
   selected.value = row
   secrets.value = undefined
+  keyReceiptRecovered.value = false
   secretOpen.value = true
+  if (pendingKey.value && canRead.value) void checkKeyReceipt(true)
 }
 async function copySecret(value: string) {
   try {
@@ -718,70 +784,98 @@ async function rotateToken() {
       message.success('渠道令牌已轮换，请保存新凭据')
     })
 }
-async function issueKey(regenerate = false) {
-  const channel = selected.value!
-  if (pendingKey.value && !regenerate) {
-    await run(async () => {
-      const current = await api.channels.get(channel.id!)
-      channel.api_key_issued = current.api_key_issued
-      unknownKeys.value[channel.id!] = { issued: current.api_key_issued }
-    })
-    return
-  }
+async function checkKeyReceipt(automatic = false) {
+  const channel = selected.value,
+    subject = owner.value,
+    requestId = pendingKey.value
+  if (!channel?.id || !subject || !requestId || !canRead.value) return
+  await run(async () => {
+    const result = await api.channels.apiKeyIssueResult(requestId)
+    if (disposed || owner.value !== subject || unknownKeys.value[channel.id!] !== requestId) return
+    if (!result || result.request_id !== requestId || result.channel_id !== channel.id) {
+      if (!automatic) message.warning('尚未查到匹配的原签发回执，结果仍未确认。')
+      return
+    }
+    const current = await api.channels.get(channel.id!)
+    if (disposed || owner.value !== subject || unknownKeys.value[channel.id!] !== requestId) return
+    if (current.id !== channel.id) throw Error('渠道详情不匹配，请重新核对原请求')
+    if (!clearPendingKey(subject, channel.id!, requestId)) return
+    channel.api_key_issued = current.api_key_issued
+    keyReceiptRecovered.value = !secrets.value?.api_key
+    message.success('原凭据签发已确认')
+  })
+}
+async function issueKey() {
+  const channel = selected.value!,
+    subject = owner.value
+  if (!channel.id || !subject || pendingKey.value || keyStorageError.value) return
   if (
-    (pendingKey.value || channel.api_key_issued) &&
+    channel.api_key_issued &&
     !(await confirm({
-      title: pendingKey.value ? '重新生成 API 凭据' : '轮换 API Key',
-      confirmText: pendingKey.value ? '重新生成' : '轮换 API Key',
-      content: pendingKey.value
-        ? `渠道“${channel.name}”原签发结果尚未确认，原明文无法恢复。重新生成可能使旧 Key 立即失效，请同步更新接入方。`
-        : `渠道“${channel.name}”的旧 API Key 将立即失效，请同步更新接入方。`
+      title: '轮换 API Key',
+      confirmText: '轮换 API Key',
+      content: `渠道“${channel.name}”的旧 API Key 将立即失效，请同步更新接入方。`
     }))
   )
     return
+  if (disposed || owner.value !== subject || selected.value?.id !== channel.id) return
   await run(async () => {
+    const requestId = crypto.randomUUID()
+    if (!persistPendingKeys(subject, { ...unknownKeys.value, [channel.id!]: requestId })) return
     let result
     try {
-      result = await (
-        pendingKey.value || channel.api_key_issued
-          ? api.channels.rotateApiKey
-          : api.channels.issueApiKey
-      )(channel.id!)
+      result = await api.channels.issueApiKeyWithReceipt(requestId, channel.id!)
+      if (disposed || owner.value !== subject || unknownKeys.value[channel.id!] !== requestId)
+        return
       if (
         !result ||
-        typeof result.api_key !== 'string' ||
-        !result.api_key.trim() ||
-        typeof result.api_secret !== 'string' ||
-        !result.api_secret.trim()
+        result.request_id !== requestId ||
+        result.channel_id !== channel.id ||
+        ((result.api_key !== undefined || result.api_secret !== undefined) &&
+          (typeof result.api_key !== 'string' ||
+            !result.api_key.trim() ||
+            typeof result.api_secret !== 'string' ||
+            !result.api_secret.trim()))
       )
-        throw Error('API 凭据响应不完整，请先核对签发状态')
+        throw Error('API 凭据响应不完整，请核对原请求')
     } catch (reason) {
-      const rejected =
-        reason instanceof HttpClientError &&
-        reason.status >= 400 &&
-        reason.status < 500 &&
-        reason.status !== 408 &&
-        !!reason.code &&
-        !!reason.traceId
-      if (!rejected) {
-        if (!unknownKeys.value[channel.id!]) unknownKeys.value[channel.id!] = {}
-        if (secrets.value?.api_key || secrets.value?.api_secret) {
-          const remaining = { ...secrets.value }
-          delete remaining.api_key
-          delete remaining.api_secret
-          secrets.value = Object.keys(remaining).length ? remaining : undefined
-        }
+      if (disposed || owner.value !== subject || unknownKeys.value[channel.id!] !== requestId)
+        return
+      if (reason instanceof HttpClientError && reason.code === 'CHANNEL_KEY_REJECTED') {
+        clearPendingKey(subject, channel.id!, requestId)
+      } else if (secrets.value?.api_key || secrets.value?.api_secret) {
+        const remaining = { ...secrets.value }
+        delete remaining.api_key
+        delete remaining.api_secret
+        secrets.value = Object.keys(remaining).length ? remaining : undefined
       }
       throw reason
     }
-    delete unknownKeys.value[channel.id!]
-    secrets.value = { api_key: result.api_key, api_secret: result.api_secret }
-    channel.api_key_issued = true
+    let issued = true
+    if (!result.api_key && !result.api_secret) {
+      const current = await api.channels.get(channel.id!)
+      if (disposed || owner.value !== subject || unknownKeys.value[channel.id!] !== requestId)
+        return
+      if (current.id !== channel.id) throw Error('渠道详情不匹配，请重新核对原请求')
+      issued = !!current.api_key_issued
+    }
+    const cleared = clearPendingKey(subject, channel.id!, requestId)
+    channel.api_key_issued = issued
+    if (result.api_key && result.api_secret) {
+      secrets.value = { api_key: result.api_key, api_secret: result.api_secret }
+      keyReceiptRecovered.value = false
+      message.success('API 凭据已签发，请保存新凭据')
+    } else {
+      secrets.value = undefined
+      keyReceiptRecovered.value = true
+      message.warning('原签发已确认，但明文无法恢复，请重新签发。')
+    }
+    if (!cleared) message.warning('原签发已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
     await reload()
-    message.success('API 凭据已签发，请保存新凭据')
   })
 }
 async function revokeKey() {
+  if (pendingKey.value || keyStorageError.value) return
   if (
     await confirm({
       title: '吊销 API Key',

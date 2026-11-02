@@ -44,3 +44,25 @@ it('连接器更新收到 401 不自动重发', async () => {
   ).rejects.toMatchObject({ status: 401 })
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
+
+it.each(['receipt', 'issue', 'rotate'] as const)(
+  '渠道凭据 %s 收到 401 不自动重发',
+  async (kind) => {
+    localStorage.setItem('skillforge.access_token', 'expired-token')
+    localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const action =
+      kind === 'receipt'
+        ? api.channels.issueApiKeyWithReceipt('request', '42')
+        : kind === 'issue'
+          ? api.channels.issueApiKey('42')
+          : api.channels.rotateApiKey('42')
+    await expect(action).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  }
+)
