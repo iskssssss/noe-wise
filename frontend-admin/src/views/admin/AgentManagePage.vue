@@ -695,6 +695,12 @@
       >
         {{ workflowOnboardingOpen ? '收起工作流接入' : '接入工作流' }}
       </ElButton>
+      <p v-if="mountType === 'WORKFLOW' && workflowOptionsRefreshRequired" role="status">
+        工作流接入已确认，挂载选项尚未刷新。
+        <ElButton :disabled="busy || onboardingBusy" @click="refreshWorkflowOptions"
+          >重新读取挂载选项</ElButton
+        >
+      </p>
       <WorkflowOnboarding
         v-if="workflowOnboardingOpen && mountType === 'WORKFLOW'"
         :agent-id="id"
@@ -717,6 +723,8 @@
           :loading="busy"
           :disabled="
             mountOptionsState !== 'ready' ||
+            refreshRequired ||
+            (mountType === 'WORKFLOW' && workflowOptionsRefreshRequired) ||
             onboardingLocked ||
             onboardingOpen ||
             workflowOnboardingOpen ||
@@ -1385,6 +1393,7 @@ const onboardingLocked = ref(false)
 const onboardingUnknown = ref(false)
 const onboardingBusy = ref(false)
 const toolsRefreshRequired = ref(false)
+const workflowOptionsRefreshRequired = ref(false)
 const knowledgeUnpublished = ref(false)
 const pendingToolReceipt = ref<ToolOnboardingReceipt>()
 const availableTools = ref<AvailableTool[]>([])
@@ -1590,6 +1599,7 @@ async function readMountOptions() {
       versions.value = options.versions
       if (mountableDefinitions.value.length === 1)
         definitionId.value = mountableDefinitions.value[0]!.id
+      workflowOptionsRefreshRequired.value = false
       mountOptionsState.value = 'ready'
       return
     }
@@ -1696,10 +1706,36 @@ function toolsConfirmed(receipt: ToolOnboardingReceipt) {
   toolsRefreshRequired.value = true
   void refreshAvailableTools()
 }
+async function refreshWorkflowOptions() {
+  const owner = publicationOwner.value
+  await run(async () => {
+    const [options, nextInstances] = await Promise.all([
+      readCurrentOptions('WORKFLOW'),
+      api.agents.capabilityMounts.workflowOptions()
+    ])
+    if (publicationOwner.value !== owner || !mountOpen.value || mountType.value !== 'WORKFLOW')
+      return
+    instances.value = nextInstances
+    definitions.value = options.definitions.filter((definition) =>
+      nextInstances.some((instance) => instance.definitionId === definition.id)
+    )
+    versions.value = options.versions
+    versionId.value = selectedDefinition.value?.defaultVersionId ?? undefined
+    if (
+      workflowInstanceId.value &&
+      !matchingInstances.value.some((item) => item.id === workflowInstanceId.value)
+    )
+      workflowInstanceId.value = ''
+    workflowOptionsRefreshRequired.value = false
+  })
+}
 function workflowConfirmed() {
   refreshRequired.value = true
+  if (mountOpen.value && mountType.value === 'WORKFLOW') workflowOptionsRefreshRequired.value = true
   void reload().then((value) => {
-    if (value) refreshRequired.value = false
+    if (!value) return
+    refreshRequired.value = false
+    if (workflowOptionsRefreshRequired.value) void refreshWorkflowOptions()
   })
 }
 async function refreshWorkflowAgent() {

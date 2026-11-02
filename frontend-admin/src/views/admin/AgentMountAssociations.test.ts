@@ -542,13 +542,93 @@ describe('按挂载类型加载实际关联', () => {
     const { drawer } = await open('WORKFLOW')
     const selected = drawer.findAllComponents(ElSelect)[1]!
     expect(selected.props('modelValue')).toBe('10')
+    const instance = drawer.findAllComponents(ElSelect)[2]!
+    instance.vm.$emit('update:modelValue', '9223372036854775807')
+    mocks.definitions.mockResolvedValue([
+      { id: '10', defaultVersionId: '23', name: '已有工作流' },
+      { id: '11', defaultVersionId: '22', name: '新工作流' }
+    ])
+    mocks.requirementOptions.mockResolvedValue([
+      { id: '10', name: '已有工作流', versionId: '23', versionKey: '3' },
+      { id: '11', name: '新工作流', versionId: '22', versionKey: '1' }
+    ])
+    mocks.workflowOptions.mockResolvedValue([
+      {
+        id: '9223372036854775807',
+        instanceId: 'first',
+        workflowId: 'workflow',
+        definitionId: '10',
+        installationRevision: '100'
+      },
+      {
+        id: '9223372036854775806',
+        instanceId: 'second',
+        workflowId: 'workflow',
+        definitionId: '10',
+        installationRevision: '101'
+      },
+      {
+        id: '43',
+        instanceId: 'new',
+        workflowId: 'new',
+        definitionId: '11',
+        installationRevision: '1'
+      }
+    ])
     await button(drawer, '接入工作流').trigger('click')
     await flushPromises()
     expect(mocks.workflowResult).toHaveBeenCalledWith(id)
     expect(sessionStorage.getItem(key)).toBeNull()
     expect(mocks.get.mock.calls.length).toBeGreaterThan(1)
     expect(selected.props('modelValue')).toBe('10')
+    expect(instance.props('modelValue')).toBe('9223372036854775807')
+    expect(selected.findAllComponents(ElOption).map((option) => option.props('value'))).toContain(
+      '11'
+    )
+    expect(mocks.workflowOptions).toHaveBeenCalledTimes(2)
     expect(mocks.workflowSubmit).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    await button(drawer, '收起工作流接入').trigger('click')
+    await flushPromises()
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledWith(
+      'agent-1',
+      expect.objectContaining({
+        capabilityDefinitionId: '10',
+        workflowConfig: { workflowInstanceId: '9223372036854775807' }
+      })
+    )
+  })
+  it('工作流接入后的挂载选项读取失败时保留选择并可重试', async () => {
+    mocks.permissions.push(
+      'foundation.agents.read',
+      'foundation.workflows.read',
+      'foundation.agents.create',
+      'foundation.workflows.create'
+    )
+    const { drawer } = await open('WORKFLOW')
+    const selected = drawer.findAllComponents(ElSelect)[1]!
+    const instance = drawer.findAllComponents(ElSelect)[2]!
+    instance.vm.$emit('update:modelValue', '9223372036854775807')
+    await button(drawer, '接入工作流').trigger('click')
+    await flushPromises()
+    mocks.workflowOptions.mockRejectedValueOnce(new Error('目录不可读'))
+    drawer.getComponent(WorkflowOnboarding).vm.$emit('confirmed')
+    await flushPromises()
+    expect(document.body.textContent).toContain('工作流接入已确认，挂载选项尚未刷新')
+    expect(selected.props('modelValue')).toBe('10')
+    expect(instance.props('modelValue')).toBe('9223372036854775807')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    await button(drawer, '重新读取挂载选项').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('工作流接入已确认，挂载选项尚未刷新')
+    expect(selected.props('modelValue')).toBe('10')
+    expect(instance.props('modelValue')).toBe('9223372036854775807')
     expect(mocks.create).not.toHaveBeenCalled()
     expect(mocks.publish).not.toHaveBeenCalled()
   })
