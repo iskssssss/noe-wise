@@ -66,3 +66,20 @@ it.each(['receipt', 'issue', 'rotate'] as const)(
     expect(fetchMock).toHaveBeenCalledTimes(1)
   }
 )
+
+it.each(['receipt', 'legacy'] as const)('渠道令牌 %s 轮换收到 401 不自动重发', async (kind) => {
+  localStorage.setItem('skillforge.access_token', 'expired-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    kind === 'receipt'
+      ? api.channels.rotateTokenWithReceipt('request', '42')
+      : api.channels.rotateToken('42')
+  ).rejects.toMatchObject({ status: 401 })
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})

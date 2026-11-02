@@ -379,6 +379,65 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void tokenRotationReceiptCommitsOnceWithoutPersistingOrReplayingPlaintext() throws Exception {
+        String slug = "token-receipt-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "ChannelManagement123";
+        initializeChannelAdministrator(tenant, "token-receipt-admin", password);
+        String jwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "token-receipt-admin", "password", password), null).path("access_token").asText();
+        var created = managementHttp("POST", "/api/v1/channels", Map.of("name", "receipt widget",
+                "channel_type", "web_widget", "config", Map.of(), "ui_config", Map.of()), jwt);
+        long id = created.path("id").asLong();
+        String oldToken = created.path("channel_token").asText();
+        assertFalse(oldToken.isBlank());
+        String requestId = UUID.randomUUID().toString();
+        var command = Map.of("request_id", requestId, "channel_id", id);
+        String path = "/api/v1/channels/tokens/rotate-with-receipt";
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var firstFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var secondFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var firstResponse = firstFuture.get(30, TimeUnit.SECONDS);
+        var secondResponse = secondFuture.get(30, TimeUnit.SECONDS);
+        assertEquals(200, firstResponse.statusCode(), firstResponse.body());
+        assertEquals(200, secondResponse.statusCode(), secondResponse.body());
+        var first = json.readTree(firstResponse.body()).path("data");
+        var second = json.readTree(secondResponse.body()).path("data");
+        assertNotEquals(first.has("channel_token"), second.has("channel_token"), "同一请求只允许一次返回明文");
+        String rotated = (first.has("channel_token") ? first : second).path("channel_token").asText();
+        assertFalse(rotated.isBlank()); assertNotEquals(oldToken, rotated);
+        for (var result : List.of(first, second)) {
+            assertEquals(requestId, result.path("request_id").asText());
+            assertEquals(Long.toString(id), result.path("channel_id").asText());
+        }
+        String hash = channels.selectById(id).getChannelTokenHash();
+        assertEquals(TokenHash.sha256Hex(rotated), hash);
+        var receipt = managementHttp("GET", path + "/result?request_id=" + requestId, null, jwt);
+        var replay = managementHttp("POST", path, command, jwt);
+        for (var result : List.of(receipt, replay)) {
+            assertEquals(requestId, result.path("request_id").asText());
+            assertEquals(Long.toString(id), result.path("channel_id").asText());
+            assertFalse(result.has("channel_token"));
+        }
+        assertEquals(hash, channels.selectById(id).getChannelTokenHash());
+        String stored = queryRows(jdbc, tenant, "SELECT * FROM nw_channel_token_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString();
+        assertFalse(stored.contains(rotated)); assertFalse(stored.contains(oldToken));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_token_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId));
+        long otherId = managementHttp("POST", "/api/v1/channels", Map.of("name", "other widget",
+                "channel_type", "web_widget", "config", Map.of(), "ui_config", Map.of()), jwt).path("id").asLong();
+        var conflict = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", requestId, "channel_id", otherId)))).build();
+        assertEquals(409, http.send(conflict, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String missingId = UUID.randomUUID().toString();
+        var missing = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + missingId))
+                .header("Authorization", "Bearer " + jwt).GET().build();
+        assertEquals(204, http.send(missing, HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
+
     @Test void keyReceiptCommitsOnceWithoutPersistingOrReplayingPlaintext() throws Exception {
         String slug = "key-receipt-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, slug);

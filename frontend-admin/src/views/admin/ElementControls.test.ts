@@ -98,7 +98,7 @@ vi.mock('../../api', () => ({
     chat: { sessions: mocks.sessions },
     conversationTasks: { list: mocks.tasks },
     agents: { list: mocks.agents },
-    channels: { list: mocks.channels, rotateToken: mocks.rotateToken },
+    channels: { list: mocks.channels, rotateTokenWithReceipt: mocks.rotateToken },
     billing: { usage: mocks.usage },
     health: mocks.health
   },
@@ -696,7 +696,7 @@ describe('Element Plus 控件与业务交互', () => {
       items: [{ id: 'channel-1', name: '网页', type: 'web_widget' }],
       total: 1
     })
-    const pending = deferred<{ channel_token: string }>()
+    const pending = deferred<{ request_id: string; channel_id: string; channel_token: string }>()
     mocks.rotateToken.mockReturnValue(pending.promise)
     const wrapper = render(ChannelsPage)
     await flushPromises()
@@ -712,7 +712,11 @@ describe('Element Plus 控件与业务交互', () => {
     await close.trigger('click')
     await flushPromises()
     expect(drawer.props('modelValue')).toBe(true)
-    pending.resolve({ channel_token: 'new-one-time-token' })
+    pending.resolve({
+      request_id: mocks.rotateToken.mock.calls[0]![0],
+      channel_id: 'channel-1',
+      channel_token: 'new-one-time-token'
+    })
     await flushPromises()
     expect(document.body.textContent).toContain('new-one-time-token')
     await close.trigger('click')

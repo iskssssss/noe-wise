@@ -295,12 +295,19 @@
           selectedAgents.length ? '所选智能体已绑定。' : '接入前还需绑定已发布智能体。'
         }}
       </p>
-      <p v-if="recoveredCredentials" class="admin-field-help" role="status">
+      <p v-if="recoveredCredentials && !pendingToken" class="admin-field-help" role="status">
         已确认渠道创建成功，但首次令牌无法恢复。请在此轮换令牌；没有轮换权限时请联系有权限的管理员。
       </p>
       <div class="admin-actions">
-        <ElButton v-permission="['foundation.channels.update']" :loading="busy" @click="rotateToken"
+        <ElButton
+          v-if="!pendingToken"
+          v-permission="['foundation.channels.update']"
+          :loading="busy"
+          :disabled="!!tokenStorageError"
+          @click="rotateToken"
           >轮换渠道令牌</ElButton
+        ><ElButton v-if="pendingToken && canRead" :loading="busy" @click="checkTokenReceipt()"
+          >核对原轮换</ElButton
         ><ElButton v-if="pendingKey && canRead" :loading="busy" @click="checkKeyReceipt()"
           >核对原签发</ElButton
         ><ElButton
@@ -319,6 +326,19 @@
           >吊销 API Key</ElButton
         >
       </div>
+      <p v-if="pendingToken" class="admin-field-help" role="status">
+        渠道令牌轮换结果尚未确认，原请求 ID：{{ pendingToken }}。未查到回执不代表失败。
+        <span v-if="!canRead">当前账号没有渠道读取权限，请联系管理员授权后核对。</span>
+      </p>
+      <p v-if="tokenReceiptRecovered" class="admin-field-help" role="status">
+        原令牌轮换已确认，但明文无法恢复。如需新令牌，请重新轮换。
+      </p>
+      <p v-if="tokenStorageError" class="admin-field-help" role="status">
+        {{ tokenStorageError }}
+        <ElButton v-if="!pendingToken" :disabled="busy" @click="loadPendingTokens(owner)">
+          重新读取令牌操作记录
+        </ElButton>
+      </p>
       <p v-if="pendingKey" class="admin-field-help" role="status">
         API 凭据签发结果尚未确认，原请求 ID：{{ pendingKey }}。未查到回执不代表失败。
         <span v-if="!canRead">当前账号没有渠道读取权限，请联系管理员授权后核对。</span>
@@ -433,11 +453,12 @@ useUnsavedChanges({
   dirty: () =>
     dirty.value ||
     (bindingOpen.value && bindingSnapshot() !== savedBindings.value) ||
-    Object.keys(unknownKeys.value).length > 0,
+    Object.keys(unknownKeys.value).length > 0 ||
+    Object.keys(unknownTokens.value).length > 0,
   busy: () => busy.value,
   leaveMessage: () =>
-    Object.keys(unknownKeys.value).length
-      ? 'API 凭据签发结果尚未确认。关闭标签页可能丢失原请求记录，请先核对。'
+    Object.keys(unknownKeys.value).length || Object.keys(unknownTokens.value).length
+      ? '凭据操作结果尚未确认。关闭标签页可能丢失原请求记录，请先核对。'
       : undefined
 })
 const filtered = computed(() =>
@@ -672,6 +693,57 @@ async function saveBindings() {
     message.success('智能体绑定已保存')
   })
 }
+const unknownTokens = ref<Record<string, string>>({})
+const tokenStorageError = ref('')
+const tokenReceiptRecovered = ref(false)
+const tokenStorageKey = (subject: string) => 'skillforge.channel-token:' + subject
+function loadPendingTokens(subject: string) {
+  if (!subject) {
+    tokenStorageError.value = '无法确认当前机构和成员，请重新登录后操作令牌。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(tokenStorageKey(subject))
+    const value: Record<string, unknown> = raw ? JSON.parse(raw) : {}
+    if (
+      !value ||
+      Array.isArray(value) ||
+      typeof value !== 'object' ||
+      Object.entries(value).some(
+        ([channel, request]) =>
+          !channel ||
+          typeof request !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request)
+      )
+    )
+      throw Error('invalid')
+    unknownTokens.value = value as Record<string, string>
+    tokenStorageError.value = ''
+  } catch {
+    tokenStorageError.value = '无法读取令牌操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function persistPendingTokens(subject: string, value: Record<string, string>) {
+  try {
+    sessionStorage.setItem(tokenStorageKey(subject), JSON.stringify(value))
+    unknownTokens.value = value
+    tokenStorageError.value = ''
+    return true
+  } catch {
+    tokenStorageError.value = '无法保存令牌操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+function clearPendingToken(subject: string, channelId: string, requestId: string) {
+  if (disposed || owner.value !== subject || unknownTokens.value[channelId] !== requestId)
+    return false
+  const next = { ...unknownTokens.value }
+  delete next[channelId]
+  return persistPendingTokens(subject, next)
+}
+const pendingToken = computed(() =>
+  selected.value?.id ? unknownTokens.value[selected.value.id] : undefined
+)
 const unknownKeys = ref<Record<string, string>>({})
 const keyStorageError = ref('')
 const keyReceiptRecovered = ref(false)
@@ -731,11 +803,15 @@ watch(
   owner,
   (subject) => {
     unknownKeys.value = {}
+    unknownTokens.value = {}
+    tokenStorageError.value = ''
+    tokenReceiptRecovered.value = false
     keyStorageError.value = ''
     keyReceiptRecovered.value = false
     secrets.value = undefined
     secretOpen.value = false
     loadPendingKeys(subject)
+    loadPendingTokens(subject)
   },
   { immediate: true, flush: 'sync' }
 )
@@ -745,6 +821,7 @@ watch(secretOpen, (value) => {
     createdCredentials.value = false
     recoveredCredentials.value = false
     keyReceiptRecovered.value = false
+    tokenReceiptRecovered.value = false
   }
 })
 function credentials(row: ChannelItem) {
@@ -753,8 +830,13 @@ function credentials(row: ChannelItem) {
   selected.value = row
   secrets.value = undefined
   keyReceiptRecovered.value = false
+  tokenReceiptRecovered.value = false
   secretOpen.value = true
-  if (pendingKey.value && canRead.value) void checkKeyReceipt(true)
+  if (canRead.value) void checkPendingCredentials()
+}
+async function checkPendingCredentials() {
+  if (pendingKey.value) await checkKeyReceipt(true)
+  if (pendingToken.value) await checkTokenReceipt(true)
 }
 async function copySecret(value: string) {
   try {
@@ -769,20 +851,83 @@ async function continueBinding() {
   await bind(channel)
   if (bindingOpen.value) closeDrawer2()
 }
+async function checkTokenReceipt(automatic = false) {
+  const channel = selected.value,
+    subject = owner.value,
+    requestId = pendingToken.value
+  if (!channel?.id || !subject || !requestId || !canRead.value) return
+  await run(async () => {
+    const result = await api.channels.tokenRotationResult(requestId)
+    if (disposed || owner.value !== subject || unknownTokens.value[channel.id!] !== requestId)
+      return
+    if (!result || result.request_id !== requestId || result.channel_id !== channel.id) {
+      if (!automatic) message.warning('尚未查到匹配的原轮换回执，结果仍未确认。')
+      return
+    }
+    if (!clearPendingToken(subject, channel.id!, requestId)) return
+    tokenReceiptRecovered.value = !secrets.value?.channel_token
+    recoveredCredentials.value = false
+    message.success('原令牌轮换已确认')
+  })
+}
 async function rotateToken() {
+  const channel = selected.value,
+    subject = owner.value
+  if (!channel?.id || !subject || pendingToken.value || tokenStorageError.value) return
   if (
-    await confirm({
+    !(await confirm({
       title: '轮换渠道令牌',
       confirmText: '轮换渠道令牌',
-      content: `渠道“${selected.value?.name}”的旧令牌将立即失效，请同步更新接入方。`
-    })
+      content: `渠道“${channel.name}”的旧令牌将立即失效，请同步更新接入方。`
+    }))
   )
-    await run(async () => {
-      const result = await api.channels.rotateToken(selected.value!.id!)
+    return
+  if (disposed || owner.value !== subject || selected.value?.id !== channel.id) return
+  await run(async () => {
+    const requestId = crypto.randomUUID()
+    if (!persistPendingTokens(subject, { ...unknownTokens.value, [channel.id!]: requestId })) return
+    let result
+    try {
+      result = await api.channels.rotateTokenWithReceipt(requestId, channel.id!)
+      if (disposed || owner.value !== subject || unknownTokens.value[channel.id!] !== requestId)
+        return
+      if (
+        !result ||
+        result.request_id !== requestId ||
+        result.channel_id !== channel.id ||
+        (result.channel_token !== undefined &&
+          (typeof result.channel_token !== 'string' || !result.channel_token.trim()))
+      )
+        throw Error('渠道令牌响应不完整，请核对原请求')
+    } catch (reason) {
+      if (disposed || owner.value !== subject || unknownTokens.value[channel.id!] !== requestId)
+        return
+      if (reason instanceof HttpClientError && reason.code === 'CHANNEL_TOKEN_REJECTED') {
+        clearPendingToken(subject, channel.id!, requestId)
+      } else if (secrets.value?.channel_token) {
+        const remaining = { ...secrets.value }
+        delete remaining.channel_token
+        secrets.value = Object.keys(remaining).length ? remaining : undefined
+      }
+      throw reason
+    }
+    const cleared = clearPendingToken(subject, channel.id!, requestId)
+    recoveredCredentials.value = false
+    if (result.channel_token) {
       secrets.value = { channel_token: result.channel_token }
-      recoveredCredentials.value = false
+      tokenReceiptRecovered.value = false
       message.success('渠道令牌已轮换，请保存新凭据')
-    })
+    } else {
+      if (secrets.value?.channel_token) {
+        const remaining = { ...secrets.value }
+        delete remaining.channel_token
+        secrets.value = Object.keys(remaining).length ? remaining : undefined
+      }
+      tokenReceiptRecovered.value = true
+      message.warning('原令牌轮换已确认，但明文无法恢复，请重新轮换。')
+    }
+    if (!cleared) message.warning('原轮换已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
+  })
 }
 async function checkKeyReceipt(automatic = false) {
   const channel = selected.value,

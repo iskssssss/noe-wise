@@ -1310,7 +1310,21 @@ export const api = {
     remove: (id: string) => del<{ status: string }>(`/channels/delete`, { channel_id: id }),
     /** 轮换渠道令牌，返回明文（仅此一次）。 */
     rotateToken: (id: string) =>
-      post<{ id: string; channel_token: string }>(`/channels/rotate-token`, { channel_id: id }),
+      post<{ id: string; channel_token: string }>(
+        `/channels/rotate-token`,
+        { channel_id: id },
+        { retryOnUnauthorized: false }
+      ),
+    rotateTokenWithReceipt: (requestId: string, channelId: string) =>
+      post<{ request_id: string; channel_id: string; channel_token?: string }>(
+        '/channels/tokens/rotate-with-receipt',
+        { request_id: requestId, channel_id: channelId },
+        { retryOnUnauthorized: false }
+      ),
+    tokenRotationResult: (requestId: string) =>
+      get<{ request_id: string; channel_id: string } | undefined>(
+        `/channels/tokens/rotate-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+      ),
     issueApiKeyWithReceipt: (requestId: string, channelId: string) =>
       post<{ request_id: string; channel_id: string; api_key?: string; api_secret?: string }>(
         '/channels/api-keys/issue-with-receipt',

@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   agents: vi.fn(),
   rotateToken: vi.fn(),
+  rotateTokenWithReceipt: vi.fn(),
+  tokenRotationResult: vi.fn(),
   bindAgents: vi.fn(),
   copy: vi.fn(),
   error: vi.fn(),
@@ -87,6 +89,11 @@ beforeEach(() => {
     channel: { ...channel, channel_token: 'one-time-only' }
   }))
   mocks.confirm.mockResolvedValue(true)
+  mocks.rotateTokenWithReceipt.mockImplementation(async (requestId: string, channelId: string) => ({
+    request_id: requestId,
+    channel_id: channelId,
+    channel_token: 'replacement-token'
+  }))
   mocks.issueApiKeyWithReceipt.mockImplementation(async (requestId: string, channelId: string) => ({
     request_id: requestId,
     channel_id: channelId,
@@ -367,7 +374,6 @@ it('回执确认后详情读取失败保留原请求，可重新核对且不重�
   expect(drawer('渠道访问凭据').props('modelValue')).toBe(true)
   expect(mocks.onboard).toHaveBeenCalledTimes(1)
   expect(mocks.rotateToken).not.toHaveBeenCalled()
-  mocks.rotateToken.mockResolvedValueOnce({ channel_token: 'replacement-token' })
   await click('轮换渠道令牌', drawer('渠道访问凭据'))
   expect(document.body.textContent).toContain('replacement-token')
   expect(document.body.textContent).not.toContain('已确认渠道创建成功，但首次令牌无法恢复')
@@ -564,4 +570,160 @@ it('成员切换后不显示或读取其他成员的请求记录', async () => {
   expect(document.body.textContent).not.toContain(requestId)
   expect(mocks.apiKeyIssueResult).not.toHaveBeenCalled()
   expect(stored()).toContain(requestId)
+})
+
+async function openTokenCredentials() {
+  permissions.value.push('foundation.channels.update')
+  await render()
+  await click('访问凭据')
+}
+const tokenStored = () => sessionStorage.getItem('skillforge.channel-token:["7","8"]')
+
+it('令牌首次轮换显示一次性明文且本地记录不含明文', async () => {
+  await openTokenCredentials()
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('replacement-token')
+  expect(tokenStored()).not.toContain('replacement-token')
+  expect(mocks.rotateTokenWithReceipt).toHaveBeenCalledTimes(1)
+  expect(mocks.rotateToken).not.toHaveBeenCalled()
+  await click('关闭', drawer('渠道访问凭据'))
+  await click('访问凭据')
+  expect(document.body.textContent).not.toContain('replacement-token')
+})
+
+it('令牌轮换结果未知后跨页面保留身份，只读核对成功前不能再次轮换', async () => {
+  await openTokenCredentials()
+  mocks.rotateTokenWithReceipt.mockRejectedValueOnce(Error('连接中断'))
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  const requestId = mocks.rotateTokenWithReceipt.mock.calls[0]![0] as string
+  expect(tokenStored()).toContain(requestId)
+  wrapper.unmount()
+  await render()
+  await click('访问凭据')
+  expect(mocks.tokenRotationResult).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(document.body.textContent).toContain(requestId)
+  expect(document.body.textContent).not.toContain('轮换渠道令牌')
+  mocks.tokenRotationResult.mockResolvedValueOnce({ request_id: requestId, channel_id: 'other' })
+  await click('核对原轮换', drawer('渠道访问凭据'))
+  expect(tokenStored()).toContain(requestId)
+  mocks.tokenRotationResult.mockRejectedValueOnce(Error('读取失败'))
+  await click('核对原轮换', drawer('渠道访问凭据'))
+  expect(tokenStored()).toContain(requestId)
+  mocks.tokenRotationResult.mockResolvedValueOnce({ request_id: requestId, channel_id: channel.id })
+  await click('核对原轮换', drawer('渠道访问凭据'))
+  expect(tokenStored()).not.toContain(requestId)
+  expect(document.body.textContent).toContain('原令牌轮换已确认，但明文无法恢复')
+  expect(mocks.rotateTokenWithReceipt).toHaveBeenCalledTimes(1)
+  mocks.confirm.mockResolvedValueOnce(false)
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(mocks.rotateTokenWithReceipt).toHaveBeenCalledTimes(1)
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(mocks.rotateTokenWithReceipt).toHaveBeenCalledTimes(2)
+  expect(mocks.rotateTokenWithReceipt.mock.calls[1]![0]).not.toBe(requestId)
+})
+
+it.each([400, 403, 409, 429, 408, 503])('令牌轮换 HTTP %s 不能证明原操作失败', async (status) => {
+  await openTokenCredentials()
+  mocks.rotateTokenWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({ status, code: 'ERROR', traceId: 'trace', userMessage: '未确认' })
+  )
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('渠道令牌轮换结果尚未确认')
+  expect(tokenStored()).toContain(mocks.rotateTokenWithReceipt.mock.calls[0]![0])
+})
+
+it.each([false, true])('令牌再次轮换仅明确拒绝时保留旧明文：%s', async (rejected) => {
+  await openTokenCredentials()
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  mocks.rotateTokenWithReceipt.mockRejectedValueOnce(
+    new HttpClientError(
+      rejected
+        ? { status: 422, code: 'CHANNEL_TOKEN_REJECTED', userMessage: '明确拒绝' }
+        : { status: 0, userMessage: '轮换结果尚未确认' }
+    )
+  )
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(document.body.textContent!.includes('replacement-token')).toBe(rejected)
+  expect(document.body.textContent!.includes('渠道令牌轮换结果尚未确认')).toBe(!rejected)
+})
+
+it.each([
+  { channel_token: '' },
+  { request_id: 'other', channel_token: 'token' },
+  { channel_id: 'other', channel_token: 'token' }
+])('令牌损坏响应保留请求：%s', async (partial) => {
+  await openTokenCredentials()
+  mocks.rotateTokenWithReceipt.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    channel_id: channel.id,
+    ...partial
+  }))
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('渠道令牌轮换结果尚未确认')
+  expect(drawer('渠道访问凭据').find('.channel-secrets').exists()).toBe(false)
+})
+
+it('无明文的轮换重放回执提示无法恢复', async () => {
+  await openTokenCredentials()
+  mocks.rotateTokenWithReceipt.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    channel_id: channel.id
+  }))
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(document.body.textContent).toContain('原令牌轮换已确认，但明文无法恢复')
+  expect(document.body.textContent).not.toContain('渠道令牌轮换结果尚未确认')
+})
+
+it('令牌操作记录不可写时不发送轮换', async () => {
+  await openTokenCredentials()
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+    throw Error('blocked')
+  })
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  expect(mocks.rotateTokenWithReceipt).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('无法保存令牌操作记录')
+  spy.mockRestore()
+})
+
+it('令牌成功后清除记录失败仍显示明文，恢复存储后只读核对', async () => {
+  await openTokenCredentials()
+  const original = Storage.prototype.setItem
+  let calls = 0
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+    this: Storage,
+    key,
+    value
+  ) {
+    calls++
+    if (calls === 2) throw Error('blocked')
+    return original.call(this, key, value)
+  })
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  const requestId = mocks.rotateTokenWithReceipt.mock.calls[0]![0]
+  expect(document.body.textContent).toContain('replacement-token')
+  expect(tokenStored()).toContain(requestId)
+  spy.mockRestore()
+  mocks.tokenRotationResult.mockResolvedValue({ request_id: requestId, channel_id: channel.id })
+  await click('核对原轮换', drawer('渠道访问凭据'))
+  expect(tokenStored()).not.toContain(requestId)
+  expect(document.body.textContent).toContain('replacement-token')
+  expect(mocks.rotateTokenWithReceipt).toHaveBeenCalledTimes(1)
+})
+
+it('令牌结果未知且无读取权限时不查询，成员切换后不混用记录', async () => {
+  await openTokenCredentials()
+  mocks.rotateTokenWithReceipt.mockRejectedValueOnce(Error('连接中断'))
+  await click('轮换渠道令牌', drawer('渠道访问凭据'))
+  const requestId = mocks.rotateTokenWithReceipt.mock.calls[0]![0]
+  await click('关闭', drawer('渠道访问凭据'))
+  permissions.value = ['foundation.channels.update']
+  await click('访问凭据')
+  expect(mocks.tokenRotationResult).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain(requestId)
+  expect(document.body.textContent).toContain('当前账号没有渠道读取权限')
+  subject.value = '9'
+  await flushPromises()
+  await click('访问凭据')
+  expect(document.body.textContent).not.toContain(requestId)
+  expect(tokenStored()).toContain(requestId)
 })
