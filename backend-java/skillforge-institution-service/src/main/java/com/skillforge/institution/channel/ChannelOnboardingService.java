@@ -50,7 +50,13 @@ public class ChannelOnboardingService {
                 throw new ApiException(HttpStatus.CONFLICT, "渠道创建请求标识已用于不同内容或操作人");
             return new Result(command.requestId(), row.channelId().toString(), null);
         }
-        CreateChannelResponse created = channels.create(tenant, command.channel());
+        CreateChannelResponse created;
+        try {
+            created = channels.create(tenant, command.channel());
+        } catch (ApiException failure) {
+            if (!failure.getStatus().is4xxClientError() || failure.getStatus().value() == 408) throw failure;
+            throw new ApiException(failure.getStatus(), "CHANNEL_ONBOARDING_REJECTED", String.valueOf(failure.getDetail()), false);
+        }
         if (receipts.complete(tenant, key, created.id()) != 1)
             throw new IllegalStateException("渠道创建回执写入失败");
         return new Result(command.requestId(), created.id().toString(), created);

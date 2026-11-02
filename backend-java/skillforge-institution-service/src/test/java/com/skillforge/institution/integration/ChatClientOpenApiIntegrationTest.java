@@ -358,13 +358,23 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertFalse(receipt.toString().contains(issued));
         assertFalse(managementHttp("POST", "/api/v1/channels/onboarding", command, jwt).toString().contains(issued));
         assertFalse(queryRows(jdbc, tenant, "SELECT * FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString().contains(issued));
+        var conflicting = Map.of("request_id", requestId, "channel", Map.of("name", "不同请求", "channel_type", "web_widget"));
+        var conflictRequest = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/channels/onboarding"))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(conflicting))).build();
+        var conflict = http.send(conflictRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(409, conflict.statusCode());
+        assertNotEquals("CHANNEL_ONBOARDING_REJECTED", json.readTree(conflict.body()).path("code").asText());
+        assertEquals(channelId, managementHttp("GET", "/api/v1/channels/onboarding/result?request_id=" + requestId, null, jwt).path("channel_id").asText());
         String invalidId = UUID.randomUUID().toString();
         var invalid = Map.of("request_id", invalidId, "channel", Map.of("name", "回滚渠道", "channel_type", "web_widget",
                 "agent_bindings", List.of(Map.of("agent_id", Long.toString(draft), "is_default", true))));
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/channels/onboarding"))
                 .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(invalid))).build();
-        assertEquals(422, http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+        var rejected = http.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(422, rejected.statusCode());
+        assertEquals("CHANNEL_ONBOARDING_REJECTED", json.readTree(rejected.body()).path("code").asText());
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channels WHERE tenant_id=? AND name=?", Long.valueOf(tenant), "回滚渠道"));
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }

@@ -171,6 +171,51 @@ it('创建失败保留表单，不自动重发创建或轮换', async () => {
   expect(mocks.onboard).toHaveBeenCalledTimes(1)
   expect(mocks.rotateToken).not.toHaveBeenCalled()
 })
+it.each([
+  { status: 409, code: 'CONFLICT' },
+  { status: 403, code: 'FORBIDDEN' },
+  { status: 429, code: 'RATE_LIMITED' }
+])('非明确创建拒绝保留原请求：$code', async ({ status, code }) => {
+  await render()
+  mocks.onboard.mockRejectedValueOnce(
+    new HttpClientError({ status, code, traceId: 'trace', userMessage: '请求未确认' })
+  )
+  await create()
+  const requestId = mocks.onboard.mock.calls[0]![0] as string
+  expect(sessionStorage.getItem('skillforge.channel-create:["7","8"]')).toBe(requestId)
+  expect(document.body.textContent).toContain(requestId)
+  expect(
+    drawer('新增渠道')
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '保存')!
+      .props('disabled')
+  ).toBe(true)
+  expect(mocks.onboard).toHaveBeenCalledTimes(1)
+})
+it('明确回滚的渠道创建可保留输入并修正后重新提交', async () => {
+  await render()
+  mocks.onboard.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 422,
+      code: 'CHANNEL_ONBOARDING_REJECTED',
+      userMessage: '绑定目标无效'
+    })
+  )
+  await create()
+  expect(sessionStorage.getItem('skillforge.channel-create:["7","8"]')).toBeNull()
+  expect(drawer('新增渠道').findComponent(ElInput).props('modelValue')).toBe(channel.name)
+  expect(
+    drawer('新增渠道')
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '保存')!
+      .props('disabled')
+  ).toBe(false)
+  const first = mocks.onboard.mock.calls[0]![0]
+  await click('保存', drawer('新增渠道'))
+  expect(mocks.onboard).toHaveBeenCalledTimes(2)
+  expect(mocks.onboard.mock.calls[1]![0]).not.toBe(first)
+  expect(document.body.textContent).toContain('one-time-only')
+})
 it('创建时选择智能体，一次请求完成默认绑定', async () => {
   permissions.value.push('foundation.channels.update', 'foundation.agents.read')
   mocks.agents.mockResolvedValue({

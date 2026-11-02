@@ -16,8 +16,32 @@ import com.skillforge.core.shared.exception.ApiException;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 class ChannelOnboardingServiceTest {
+    @Test void onlyRejectionAfterClaimGetsRollbackCode() {
+        var access = mock(FoundationAccess.class);
+        var channels = mock(ChannelService.class);
+        var receipts = mock(ChannelCreateReceiptMapper.class);
+        var context = mock(CapabilityCatalogDatabaseContext.class);
+        var service = new ChannelOnboardingService(access, channels, receipts, context, new ObjectMapper());
+        var requestId = UUID.randomUUID();
+        var request = new CreateChannelRequest("渠道", ChannelType.WEB_WIDGET, Map.of(), Map.of(), null);
+        var command = new ChannelOnboardingService.Command(requestId, request);
+        when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false, "7", "8"));
+        when(receipts.claim(eq(7L), eq(requestId.toString()), eq("8"), anyString())).thenReturn(1, 1, 0);
+        when(channels.create(7L, request))
+                .thenThrow(new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "绑定目标无效"))
+                .thenThrow(new ApiException(HttpStatus.REQUEST_TIMEOUT, "请求超时"));
+        assertThatThrownBy(() -> service.create(7L, command)).isInstanceOf(ApiException.class)
+                .satisfies(failure -> assertThat(((ApiException) failure).getCode()).isEqualTo("CHANNEL_ONBOARDING_REJECTED"));
+        assertThatThrownBy(() -> service.create(7L, command)).isInstanceOf(ApiException.class)
+                .satisfies(failure -> assertThat(((ApiException) failure).getCode()).isNotEqualTo("CHANNEL_ONBOARDING_REJECTED"));
+        when(receipts.find(7L, requestId.toString())).thenReturn(new ChannelCreateReceiptMapper.Row("8", "different", 31L));
+        assertThatThrownBy(() -> service.create(7L, command)).isInstanceOf(ApiException.class)
+                .satisfies(failure -> assertThat(((ApiException) failure).getCode()).isNotEqualTo("CHANNEL_ONBOARDING_REJECTED"));
+        verify(channels, times(2)).create(7L, request);
+    }
     @Test void originalResponseContainsTokenButReceiptAndReplayNeverDo() {
         var access = mock(FoundationAccess.class);
         var channels = mock(ChannelService.class);

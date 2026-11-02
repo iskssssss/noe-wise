@@ -498,11 +498,7 @@ async function save() {
       } catch (reason) {
         if (
           reason instanceof HttpClientError &&
-          reason.status >= 400 &&
-          reason.status < 500 &&
-          reason.status !== 408 &&
-          reason.code &&
-          reason.traceId &&
+          reason.code === 'CHANNEL_ONBOARDING_REJECTED' &&
           !disposed &&
           owner.value === subject
         ) {
