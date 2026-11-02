@@ -50,6 +50,8 @@ Session 历史和正文使用会话自身的所有权与部门范围，Agent 被
 
 接管工单读取按当前可读 Session 范围过滤，详情只要求会话读权；受理、领取、解决及新人工回复要求工单动作和会话写权。处理其他坐席已领取的工单另需 `foundation.handoff.manage`。后台人工回复先核对已经提交的原始 SessionLog 回执，再从持久受理记录绑定原坐席并检查当前动作及会话权限；撤权阻止新的副作用，但不把已发生事实改写成未提交。平台模型调用私有正文另需 `foundation.sessions.diagnostic_read`，普通会话观测读取不隐含该权限。
 
+领取和解决请求携带稳定 `command_id` 与 `expected_revision`；成功回执和工单状态在同一数据库事务提交，回执绑定原成员、工单、动作、修订及请求内容摘要。同键同内容返回原结果，同键不同内容冲突。`GET /api/v1/handoff/tickets/action-receipt` 按当前成员和可读工单只读查询；未查到不能认定失败。首次请求返回 `HANDOFF_ACTION_NOT_ACCEPTED` 表示该命令的状态变更未提交，客户端保留输入并刷新工单。客户端保存原命令身份，连接中断后先查询原回执，不以新命令自动重发；用户确认后可使用原命令和修订继续，解决说明只保留摘要，刷新后需重新输入一致内容。
+
 ### 2.3 租户功能和资源配额
 
 [FeatureGate](../../backend-java/skillforge-core-foundation/src/main/java/com/skillforge/core/foundation/catalog/entitlements/FeatureGate.java)检查当前功能目录、套餐关系、机构显式覆盖及启停状态。没有功能关系即没有授权，移除机构覆盖后恢复当前套餐继承。该检查不授予成员动作权限，也不写入 Runtime 的运行参数。

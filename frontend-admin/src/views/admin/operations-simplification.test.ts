@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElInput, ElSelect, ElPagination } from 'element-plus'
+import { ElButton, ElInput, ElSelect, ElPagination, ElCollapse } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import HandoffPage from './HandoffPage.vue'
 import ConnectorsPage from './ConnectorsPage.vue'
@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   handoffList: vi.fn(),
   handoffDetail: vi.fn(),
   accept: vi.fn(),
+  resolve: vi.fn(),
+  actionReceipt: vi.fn(),
   reply: vi.fn(),
   replyReceipt: vi.fn(),
   marketplaceSearch: vi.fn(),
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   mcpTools: vi.fn(),
   updateInstance: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
   confirm: vi.fn(),
   push: vi.fn()
 }))
@@ -30,6 +33,8 @@ vi.mock('../../api', () => ({
       list: mocks.handoffList,
       detail: mocks.handoffDetail,
       accept: mocks.accept,
+      resolve: mocks.resolve,
+      actionReceipt: mocks.actionReceipt,
       reply: mocks.reply,
       replyReceipt: mocks.replyReceipt
     },
@@ -57,7 +62,7 @@ vi.mock('vue-router', () => ({
 vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@skillforge/shared/feedback')>()),
   confirm: mocks.confirm,
-  message: { success: mocks.success }
+  message: { success: mocks.success, warning: mocks.warning }
 }))
 const wrappers: VueWrapper[] = []
 const ticket = {
@@ -89,7 +94,7 @@ beforeEach(() => {
   mocks.permissions = ['foundation.handoff.read', 'foundation.handoff.update']
   mocks.handoffList.mockResolvedValue({ items: [ticket] })
   mocks.handoffDetail.mockResolvedValue({
-    ticket: { ...ticket, revision: 3 },
+    ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
     messages: [],
     replies: [],
     has_more: false
@@ -99,7 +104,18 @@ beforeEach(() => {
   mocks.mcpTools.mockResolvedValue({
     items: [{ name: 'search', qualified_name: 'mcp-1.search', description: '检索资料' }]
   })
-  mocks.accept.mockResolvedValue({})
+  mocks.accept.mockImplementation(async (id, _revision, command_id) => ({
+    command_id,
+    ticket_id: id,
+    action: 'accept',
+    status: 'assigned'
+  }))
+  mocks.resolve.mockImplementation(async (id, _revision, command_id) => ({
+    command_id,
+    ticket_id: id,
+    action: 'resolve',
+    status: 'resolved'
+  }))
   mocks.updateInstance.mockResolvedValue({})
   mocks.marketplaceSearch.mockResolvedValue({ items: [], total: 41 })
 })
@@ -127,7 +143,9 @@ describe('机构日常任务简化', () => {
     await flushPromises()
     expect(select.props('modelValue')).toBe('pending')
     expect(wrapper.text()).toContain('需要人工处理')
-    mocks.handoffList.mockResolvedValueOnce({ items: [{ ...ticket, status: 'resolved', reason: '已解决工单' }] })
+    mocks.handoffList.mockResolvedValueOnce({
+      items: [{ ...ticket, status: 'resolved', reason: '已解决工单' }]
+    })
     select.vm.$emit('update:modelValue', 'resolved')
     select.vm.$emit('change', 'resolved')
     await flushPromises()
@@ -141,14 +159,99 @@ describe('机构日常任务简化', () => {
     expect(wrapper.text()).toContain('工单列表尚未读取，请刷新重试')
     expect(wrapper.text()).not.toContain('暂无待处理工单')
   })
+  it.each([
+    ['pending', undefined, false],
+    ['assigned', 'other', false],
+    ['assigned', 'member', true]
+  ])('工单 %s 的处理权限决定回复和解决入口', async (status, assignee, allowed) => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, status, assigned_to: assignee, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    const input = wrapper
+      .findAllComponents(ElInput)
+      .find((item) => item.props('type') === 'textarea')!
+    expect(input.props('disabled')).toBe(!allowed)
+    wrapper.getComponent(ElCollapse).vm.$emit('update:modelValue', ['resolve'])
+    await flushPromises()
+    const resolution = wrapper
+      .findAllComponents(ElInput)
+      .filter((item) => item.props('type') === 'textarea')[1]!
+    expect(resolution.props('disabled')).toBe(!allowed)
+    if (!allowed) {
+      expect(button(wrapper, '发送回复').props('disabled')).toBe(true)
+      expect(document.body.textContent).toContain(
+        status === 'pending' ? '请先领取工单' : '此工单由其他坐席处理'
+      )
+    }
+    expect(mocks.reply).not.toHaveBeenCalled()
+  })
+  it('领取后读取新状态并直接开放回复', async () => {
+    mocks.handoffDetail
+      .mockResolvedValueOnce({
+        ticket: { ...ticket, revision: 3 },
+        messages: [],
+        replies: [],
+        has_more: false
+      })
+      .mockResolvedValueOnce({
+        ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 4 },
+        messages: [],
+        replies: [],
+        has_more: false
+      })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    const input = wrapper
+      .findAllComponents(ElInput)
+      .find((item) => item.props('type') === 'textarea')!
+    expect(input.props('disabled')).toBe(true)
+    await button(wrapper, '领取工单').trigger('click')
+    await flushPromises()
+    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 3, expect.any(String))
+    expect(input.props('disabled')).toBe(false)
+  })
+  it('管理员可以处理其他坐席接管的工单', async () => {
+    mocks.permissions.push('foundation.handoff.manage')
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'other', revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper
+        .findAllComponents(ElInput)
+        .find((item) => item.props('type') === 'textarea')!
+        .props('disabled')
+    ).toBe(false)
+  })
   it('接管默认读取待办，领取并处理使用详情中的最新修订', async () => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
     const wrapper = render(HandoffPage)
     await flushPromises()
     expect(mocks.handoffList).toHaveBeenCalledWith('pending')
     await button(wrapper, '领取并处理').trigger('click')
     await flushPromises()
     expect(mocks.handoffDetail).toHaveBeenCalledWith('ticket-1')
-    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 3)
+    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 3, expect.any(String))
   })
   it('工单详情已经解决时，快捷领取不提交旧列表修订', async () => {
     mocks.handoffDetail.mockResolvedValue({
@@ -173,6 +276,249 @@ describe('机构日常任务简化', () => {
     await flushPromises()
     expect(mocks.accept).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('暂时无法读取工单')
+  })
+  it('领取响应中断后重进自动核对原命令，不依赖待办列表', async () => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    mocks.accept.mockRejectedValueOnce(Error('连接中断'))
+    const first = render(HandoffPage)
+    await flushPromises()
+    await button(first, '领取并处理').trigger('click')
+    await flushPromises()
+    const command = mocks.accept.mock.calls[0]![2]
+    expect(document.body.textContent).toContain(command)
+    expect(button(first, '领取工单').props('disabled')).toBe(true)
+    first.unmount()
+    mocks.handoffList.mockResolvedValue({ items: [] })
+    mocks.handoffDetail
+      .mockResolvedValueOnce({
+        ticket: { ...ticket, revision: 3 },
+        messages: [],
+        replies: [],
+        has_more: false
+      })
+      .mockResolvedValueOnce({
+        ticket: { ...ticket, revision: 3 },
+        messages: [],
+        replies: [],
+        has_more: false
+      })
+      .mockResolvedValue({
+        ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 4 },
+        messages: [],
+        replies: [],
+        has_more: false
+      })
+    mocks.actionReceipt.mockResolvedValueOnce({
+      command_id: command,
+      ticket_id: 'ticket-1',
+      action: 'accept',
+      status: 'assigned'
+    })
+    const second = render(HandoffPage)
+    await flushPromises()
+    expect(mocks.actionReceipt).toHaveBeenCalledExactlyOnceWith('ticket-1', command)
+    expect(mocks.accept).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).not.toContain('工单操作结果尚未确认')
+    expect(button(second, '发送回复').exists()).toBe(true)
+    expect(
+      second
+        .findAllComponents(ElInput)
+        .find((item) => item.props('type') === 'textarea')!
+        .props('disabled')
+    ).toBe(false)
+    expect(
+      sessionStorage.getItem(`skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`)
+    ).toBeNull()
+  })
+  it('原工单详情首次读取失败时保留原命令并可原地重读', async () => {
+    const commandId = '12345678-1234-4234-8234-123456789abc'
+    const key = `skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`
+    const pending = JSON.stringify({ id: 'ticket-1', commandId, action: 'accept', revision: 3 })
+    sessionStorage.setItem(key, pending)
+    mocks.handoffDetail.mockRejectedValueOnce(Error('工单暂不可读'))
+    mocks.actionReceipt.mockResolvedValueOnce(null)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(pending)
+    expect(wrapper.text()).toContain(commandId)
+    expect(mocks.accept).not.toHaveBeenCalled()
+    await button(wrapper, '重新读取原工单').trigger('click')
+    await flushPromises()
+    expect(mocks.actionReceipt).toHaveBeenCalledExactlyOnceWith('ticket-1', commandId)
+    expect(document.body.textContent).toContain('工单操作结果尚未确认')
+    expect(sessionStorage.getItem(key)).toBe(pending)
+  })
+  it('原工单操作没有匹配回执时保持锁定且不重复执行', async () => {
+    const commandId = '12345678-1234-4234-8234-123456789abc'
+    const key = `skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`
+    const pending = JSON.stringify({
+      id: 'ticket-1',
+      commandId,
+      action: 'resolve',
+      revision: 3,
+      digest: 'a'.repeat(64)
+    })
+    sessionStorage.setItem(key, pending)
+    mocks.actionReceipt.mockResolvedValueOnce(null)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    expect(mocks.actionReceipt).toHaveBeenCalledExactlyOnceWith('ticket-1', commandId)
+    expect(sessionStorage.getItem(key)).toBe(pending)
+    expect(document.body.textContent).toContain('工单操作结果尚未确认')
+    expect(button(wrapper, '发送回复').props('disabled')).toBe(true)
+    expect(mocks.resolve).not.toHaveBeenCalled()
+  })
+  it('领取的明确未受理回执解除未知锁定并要求刷新工单', async () => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    mocks.accept.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'HANDOFF_ACTION_NOT_ACCEPTED',
+        userMessage: '修订已变化'
+      })
+    )
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '领取并处理').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('当前工单信息需要更新')
+    expect(document.body.textContent).not.toContain('工单操作结果尚未确认')
+    expect(
+      sessionStorage.getItem(`skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`)
+    ).toBeNull()
+    expect(button(wrapper, '领取工单').props('disabled')).toBe(true)
+  })
+  it('无法保存原工单操作标识时不派发领取', async () => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw Error('blocked')
+    })
+    await button(wrapper, '领取工单').trigger('click')
+    await flushPromises()
+    expect(mocks.accept).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('尚未发送请求')
+    storage.mockRestore()
+  })
+  it('解决请求中断后保留说明，确认原回执后刷新状态', async () => {
+    mocks.resolve.mockRejectedValueOnce(Error('连接中断'))
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    wrapper.getComponent(ElCollapse).vm.$emit('update:modelValue', ['resolve'])
+    await flushPromises()
+    const note = wrapper
+      .findAllComponents(ElInput)
+      .filter((item) => item.props('type') === 'textarea')[1]!
+    note.vm.$emit('update:modelValue', '已核实并完成')
+    await flushPromises()
+    await button(wrapper, '标记已解决').trigger('click')
+    await flushPromises()
+    const command = mocks.resolve.mock.calls[0]![2]
+    expect(mocks.resolve).toHaveBeenCalledExactlyOnceWith('ticket-1', 3, command, '已核实并完成')
+    expect(note.props('modelValue')).toBe('已核实并完成')
+    expect(button(wrapper, '标记已解决').props('disabled')).toBe(true)
+    mocks.actionReceipt.mockResolvedValueOnce({
+      command_id: command,
+      ticket_id: 'ticket-1',
+      action: 'resolve',
+      status: 'resolved'
+    })
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, status: 'resolved', revision: 4 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    await button(wrapper, '刷新状态').trigger('click')
+    await flushPromises()
+    expect(mocks.resolve).toHaveBeenCalledTimes(1)
+    expect(note.props('modelValue')).toBe('')
+    expect(document.body.textContent).not.toContain('工单操作结果尚未确认')
+  })
+  it('领取未知且无回执时仅在确认后继续同一命令', async () => {
+    const commandId = '12345678-1234-4234-8234-123456789abc'
+    const key = `skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ id: 'ticket-1', commandId, action: 'accept', revision: 3 })
+    )
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, revision: 3 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    mocks.actionReceipt.mockResolvedValueOnce(null)
+    mocks.confirm.mockResolvedValueOnce(true)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    expect(mocks.accept).not.toHaveBeenCalled()
+    await button(wrapper, '继续原工单操作').trigger('click')
+    await flushPromises()
+    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 3, commandId)
+    expect(sessionStorage.getItem(key)).toBeNull()
+  })
+  it('解决未知重进后仅保存摘要，重录一致并确认后继续原命令', async () => {
+    mocks.resolve.mockRejectedValueOnce(Error('连接中断'))
+    const first = render(HandoffPage)
+    await flushPromises()
+    await button(first, '查看工单').trigger('click')
+    await flushPromises()
+    first.getComponent(ElCollapse).vm.$emit('update:modelValue', ['resolve'])
+    await flushPromises()
+    first
+      .findAllComponents(ElInput)
+      .filter((item) => item.props('type') === 'textarea')[1]!
+      .vm.$emit('update:modelValue', '原解决说明')
+    await flushPromises()
+    await button(first, '标记已解决').trigger('click')
+    await flushPromises()
+    const command = mocks.resolve.mock.calls[0]![2]
+    const key = `skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`
+    expect(sessionStorage.getItem(key)).not.toContain('原解决说明')
+    first.unmount()
+    mocks.actionReceipt.mockResolvedValueOnce(null)
+    const second = render(HandoffPage)
+    await flushPromises()
+    const recovery = second
+      .findAllComponents(ElInput)
+      .find(
+        (item) =>
+          item.attributes('aria-label') === '重新输入原解决说明' ||
+          item.props('ariaLabel') === '重新输入原解决说明'
+      )!
+    recovery.vm.$emit('update:modelValue', '错误说明')
+    await flushPromises()
+    await button(second, '继续原工单操作').trigger('click')
+    await flushPromises()
+    expect(mocks.resolve).toHaveBeenCalledTimes(1)
+    recovery.vm.$emit('update:modelValue', '原解决说明')
+    mocks.confirm.mockResolvedValueOnce(true)
+    await flushPromises()
+    await button(second, '继续原工单操作').trigger('click')
+    await flushPromises()
+    expect(mocks.resolve).toHaveBeenLastCalledWith('ticket-1', 3, command, '原解决说明')
+    expect(sessionStorage.getItem(key)).toBeNull()
   })
   it('人工回复结果未知时冻结原内容，只读核对同一命令回执，不发送第二条回复', async () => {
     mocks.reply.mockRejectedValueOnce(Error('连接中断'))
@@ -233,7 +579,7 @@ describe('机构日常任务简化', () => {
     await button(wrapper, '刷新状态').trigger('click')
     await flushPromises()
     expect(mocks.reply).toHaveBeenCalledTimes(1)
-    expect(button(wrapper, '领取工单').props('disabled')).toBe(false)
+    expect(button(wrapper, '领取工单').props('disabled')).toBe(true)
   })
   it('无专用回执的回复拒绝保留原身份并冻结为未知结果', async () => {
     mocks.reply.mockRejectedValueOnce(
@@ -356,7 +702,79 @@ describe('机构日常任务简化', () => {
     expect(mocks.accept).not.toHaveBeenCalled()
     await button(wrapper, '领取工单').trigger('click')
     await flushPromises()
-    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 7)
+    expect(mocks.accept).toHaveBeenCalledExactlyOnceWith('ticket-1', 7, expect.any(String))
+  })
+  it('重新打开工单自动只读核对原回复，确认后无需手动刷新', async () => {
+    const owner = JSON.stringify(['tenant', 'member'])
+    const key = `skillforge.handoff-reply.${JSON.stringify([owner, 'ticket-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        id: 'ticket-1',
+        commandId: 'original-command',
+        revision: 3,
+        digest: 'a'.repeat(64)
+      })
+    )
+    mocks.replyReceipt.mockResolvedValueOnce({
+      ticket_id: 'ticket-1',
+      command_id: 'original-command',
+      status: 'committed'
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    expect(mocks.replyReceipt).toHaveBeenCalledExactlyOnceWith('ticket-1', 'original-command')
+    expect(mocks.reply).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(button(wrapper, '发送回复').props('disabled')).toBe(true)
+    expect(mocks.success).toHaveBeenCalledWith('人工回复已写入会话')
+  })
+  it('自动核对未得到匹配回执时保留原回复与手动入口', async () => {
+    const owner = JSON.stringify(['tenant', 'member'])
+    const key = `skillforge.handoff-reply.${JSON.stringify([owner, 'ticket-1'])}`
+    const pending = JSON.stringify({
+      id: 'ticket-1',
+      commandId: 'original-command',
+      revision: 3,
+      digest: 'a'.repeat(64)
+    })
+    sessionStorage.setItem(key, pending)
+    mocks.replyReceipt.mockResolvedValueOnce({
+      ticket_id: 'ticket-1',
+      command_id: 'other',
+      status: 'committed'
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(pending)
+    expect(button(wrapper, '刷新状态').exists()).toBe(true)
+    expect(button(wrapper, '发送回复').props('disabled')).toBe(true)
+    expect(mocks.reply).not.toHaveBeenCalled()
+  })
+  it('自动核对连接失败时仍显示工单并保留原回复', async () => {
+    const owner = JSON.stringify(['tenant', 'member'])
+    const key = `skillforge.handoff-reply.${JSON.stringify([owner, 'ticket-1'])}`
+    const pending = JSON.stringify({
+      id: 'ticket-1',
+      commandId: 'original-command',
+      revision: 3,
+      digest: 'a'.repeat(64)
+    })
+    sessionStorage.setItem(key, pending)
+    mocks.replyReceipt.mockRejectedValueOnce(Error('回执暂不可用'))
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('回执暂不可用')
+    expect(sessionStorage.getItem(key)).toBe(pending)
+    expect(button(wrapper, '刷新状态').exists()).toBe(true)
+    expect(button(wrapper, '发送回复').props('disabled')).toBe(true)
+    expect(mocks.reply).not.toHaveBeenCalled()
   })
   it('原回复跨重建只存摘要，重录一致后才能确认同键继续', async () => {
     mocks.reply.mockRejectedValueOnce(Error('断连'))

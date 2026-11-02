@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   },
   create: vi.fn(),
   lookup: vi.fn(),
+  receipt: vi.fn(),
   plans: vi.fn(),
   confirm: vi.fn(),
   list: vi.fn(),
@@ -24,7 +25,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('../api', () => ({
   api: {
-    admin: { createTenant: mocks.create, findTenantBySlug: mocks.lookup, plans: mocks.plans },
+    admin: {
+      createTenant: mocks.create,
+      tenantCreateResult: mocks.receipt,
+      findTenantBySlug: mocks.lookup,
+      plans: mocks.plans
+    },
     agentDeployments: { list: mocks.list },
     platformIntegration: { institutionCredentials: mocks.credentials }
   }
@@ -63,7 +69,8 @@ vi.mock('../views/platform/InstitutionAgentSetup.vue', () => ({
 }))
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  sessionStorage.clear()
   mocks.agentBusy = false
   mocks.auth = reactive({
     identityVersion: 1,
@@ -82,11 +89,12 @@ beforeEach(() => {
     }
   })
   mocks.plans.mockResolvedValue([{ plan_code: 'free', display_name: '免费' }])
-  mocks.create.mockResolvedValue({
-    id: '9223372036854775807',
-    name: '验收机构',
-    slug: 'test-institution'
-  })
+  mocks.create.mockImplementation(async (requestId: string) => ({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    tenant_id: '9223372036854775807',
+    tenant_name: '验收机构'
+  }))
   mocks.lookup.mockResolvedValue(null)
   mocks.list.mockResolvedValue({ items: [], total: 0 })
   mocks.credentials.mockResolvedValue({ items: [], total: 0 })
@@ -161,38 +169,61 @@ describe('平台连续开通流程', () => {
         .findAll('input[type="password"]')
         .every((input) => !(input.element as HTMLInputElement).value)
     ).toBe(true)
-    await button(wrapper, '继续配置').trigger('click')
-    await flushPromises()
     expect(wrapper.findComponent({ name: 'CredentialPanel' }).props('tenantId')).toBe(
       '9223372036854775807'
     )
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '继续配置')).toBe(
+      false
+    )
+    await button(wrapper, '上一步').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '继续关联外部系统').exists()).toBe(true)
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.credentials).not.toHaveBeenCalled()
   })
 
-  it('普通创建未知后只读核对slug，不重发创建；明确采用已找到机构后继续', async () => {
+  it('普通创建结果未知后按原请求核对，不重复创建', async () => {
     mocks.create.mockRejectedValue(new HttpClientError({ status: 0, userMessage: '创建结果未知' }))
     const wrapper = await open()
     await fillOrdinary(wrapper)
     await button(wrapper, '创建机构').trigger('click')
     await flushPromises()
+    const requestId = mocks.create.mock.calls[0]![0]
     expect(button(wrapper, '创建机构').attributes('disabled')).toBeDefined()
     wrapper.findComponent(ElRadioGroup).vm.$emit('change', 'mapping')
     await flushPromises()
     expect(wrapper.findComponent({ name: 'MappingPanel' }).exists()).toBe(false)
     expect(wrapper.text()).toContain('机构创建结果未知')
+    mocks.receipt.mockResolvedValue({
+      request_id: requestId,
+      status: 'SUCCEEDED',
+      tenant_id: '51',
+      tenant_name: '验收机构'
+    })
+    await button(wrapper, '核对原请求').trigger('click')
+    await flushPromises()
+    expect(mocks.receipt).toHaveBeenCalledWith(requestId, { silent: true })
+    expect(wrapper.text()).toContain('本次目标：验收机构')
+    expect(wrapper.findComponent({ name: 'CredentialPanel' }).props('tenantId')).toBe('51')
+    expect(mocks.credentials).not.toHaveBeenCalled()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.lookup).not.toHaveBeenCalled()
+  })
+
+  it('旧的标识核对记录只读查找并在确认后采用机构', async () => {
+    sessionStorage.setItem('skillforge.platform-tenant-create:platform-user', 'test-institution')
     mocks.lookup.mockResolvedValue({ id: '51', name: '验收机构', slug: 'test-institution' })
+    const wrapper = await open()
     await button(wrapper, '按原机构标识核对').trigger('click')
     await flushPromises()
     expect(mocks.lookup).toHaveBeenCalledWith('test-institution', { silent: true })
-    expect(mocks.create).toHaveBeenCalledTimes(1)
     await button(wrapper, '使用该机构继续').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('本次目标：验收机构')
     expect(mocks.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ title: '使用已找到的机构继续' })
     )
-    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('本次目标：验收机构')
+    expect(mocks.create).not.toHaveBeenCalled()
   })
 
   it('从既有映射直接进入同机构执行凭证，不重新创建或关联机构', async () => {
@@ -230,7 +261,6 @@ describe('平台连续开通流程', () => {
     expect(mappings.props('tenantId')).toBe('41')
     mappings.vm.$emit('provisioned', { tenantId: '41', integrationId: 'integration-1' })
     await flushPromises()
-    await button(wrapper, '继续配置').trigger('click')
     await flushPromises()
     expect(wrapper.findComponent({ name: 'CredentialPanel' }).props()).toMatchObject({
       tenantId: '41',
@@ -251,7 +281,6 @@ describe('平台连续开通流程', () => {
       .findComponent({ name: 'MappingPanel' })
       .vm.$emit('provisioned', { tenantId: '41', integrationId: 'i-1' })
     await flushPromises()
-    await button(wrapper, '继续配置').trigger('click')
     await button(wrapper, '继续下一步 / 稍后处理').trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'AgentSetupPanel' }).vm.$emit('completed', { agentId: 'agent-1' })
@@ -284,7 +313,6 @@ describe('平台连续开通流程', () => {
       .findComponent({ name: 'MappingPanel' })
       .vm.$emit('provisioned', { tenantId: '41', integrationId: 'i-1' })
     await flushPromises()
-    await button(wrapper, '继续配置').trigger('click')
     await flushPromises()
     await button(wrapper, '继续下一步 / 稍后处理').trigger('click')
     await flushPromises()
@@ -312,7 +340,6 @@ describe('平台连续开通流程', () => {
       integrationId: 'integration-1'
     })
     await flushPromises()
-    await button(wrapper, '继续配置').trigger('click')
     await flushPromises()
     await button(wrapper, '继续下一步 / 稍后处理').trigger('click')
     await flushPromises()
@@ -338,7 +365,6 @@ describe('平台连续开通流程', () => {
       .findComponent({ name: 'MappingPanel' })
       .vm.$emit('provisioned', { tenantId: '41', integrationId: 'i-1' })
     await flushPromises()
-    await button(wrapper, '继续配置').trigger('click')
     await button(wrapper, '继续下一步 / 稍后处理').trigger('click')
     await button(wrapper, '继续下一步 / 稍后处理').trigger('click')
     await flushPromises()

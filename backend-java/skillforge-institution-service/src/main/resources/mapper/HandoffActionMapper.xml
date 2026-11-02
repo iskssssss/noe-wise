@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.service.HandoffActionMapper">
+  <insert id="insert">
+    INSERT INTO nw_handoff_action_receipts
+      (tenant_id, command_id, ticket_id, operator_id, action, expected_revision, fingerprint)
+    VALUES (#{tenant}, CAST(#{command} AS uuid), #{ticket}, #{operator}, #{action}, #{revision}, #{fingerprint})
+    ON CONFLICT (tenant_id, command_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.service.HandoffActionMapper$Row">
+    SELECT ticket_id, operator_id, action, expected_revision, fingerprint
+    FROM nw_handoff_action_receipts WHERE tenant_id = #{tenant} AND command_id = CAST(#{command} AS uuid)
+  </select>
+</mapper>

@@ -62,7 +62,15 @@ class HandoffCreateReceiptHttpIntegrationTest extends AbstractIntegrationTest {
         var receipt=call(token,"GET",base+"/create-receipt?command_id="+command,null,200);
         assertEquals(id,receipt.path("id").asText());assertEquals(command,receipt.path("command_id").asText());
         call(token,"GET",base+"/create-receipt?command_id="+UUID.randomUUID(),null,404);
-        call(token,"POST",base+"/accept",Map.of("ticket_id",id,"expected_revision",1),200);
+        String acceptCommand=UUID.randomUUID().toString();
+        var accept=Map.of("ticket_id",id,"expected_revision",1,"command_id",acceptCommand);
+        var acceptedAction=call(token,"POST",base+"/accept",accept,200);
+        assertEquals(acceptCommand,acceptedAction.path("command_id").asText());
+        assertEquals("accept",acceptedAction.path("action").asText());assertEquals("assigned",acceptedAction.path("status").asText());
+        assertEquals(id,call(token,"GET",base+"/action-receipt?ticket_id="+id+"&command_id="+acceptCommand,null,200).path("ticket_id").asText());
+        assertEquals("assigned",call(token,"POST",base+"/accept",accept,200).path("status").asText());
+        assertTrue(call(token,"GET",base+"/action-receipt?ticket_id="+id+"&command_id="+UUID.randomUUID(),null,200).isNull());
+        call(token,"POST",base+"/accept",Map.of("ticket_id",id,"expected_revision",2,"command_id",acceptCommand),409);
         String reply=UUID.randomUUID().toString();
         assertEquals("accepted",call(token,"POST",base+"/replies",Map.of("ticket_id",id,"expected_revision",2,"command_id",reply,"content","验收回复"),200).path("status").asText());
         assertEquals("accepted",call(token,"GET",base+"/reply-receipt?ticket_id="+id+"&command_id="+reply,null,200).path("status").asText());
@@ -125,6 +133,12 @@ class HandoffCreateReceiptHttpIntegrationTest extends AbstractIntegrationTest {
         var conflict=http.send(conflictRequest,HttpResponse.BodyHandlers.ofString());
         assertEquals(409,conflict.statusCode());assertNotEquals("HANDOFF_REPLY_NOT_ACCEPTED",json.readTree(conflict.body()).path("code").asText());
         call(token,"GET",base+"/reply-receipt?ticket_id="+id+"&command_id="+UUID.randomUUID(),null,404);
+        String resolveCommand=UUID.randomUUID().toString();
+        long currentRevision=call(token,"GET",base+"/detail?ticket_id="+id,null,200).path("ticket").path("revision").asLong();
+        var resolution=Map.of("ticket_id",id,"expected_revision",currentRevision,"command_id",resolveCommand,"payload",Map.of("resolution_note","已核实"));
+        assertEquals("resolved",call(token,"POST",base+"/resolve",resolution,200).path("status").asText());
+        assertEquals("resolve",call(token,"GET",base+"/action-receipt?ticket_id="+id+"&command_id="+resolveCommand,null,200).path("action").asText());
+        assertEquals("resolved",call(token,"POST",base+"/resolve",resolution,200).path("status").asText());
         String rolledBack=UUID.randomUUID().toString();
         new org.springframework.transaction.support.TransactionTemplate(transactions).execute(status -> {
             access.withSubject(new FoundationAccess.Subject(false,tenant,Long.toString(admin)),()->handoffs.create(Long.parseLong(tenant),
@@ -137,6 +151,7 @@ class HandoffCreateReceiptHttpIntegrationTest extends AbstractIntegrationTest {
         createTestTenantAdministrator(foreign,"foreign-admin","SyntheticHandoff123");
         String foreignToken=call(null,"POST","/api/v1/auth/login",Map.of("tenant_slug",foreignSlug,"username","foreign-admin","password","SyntheticHandoff123"),200).path("access_token").asText();
         call(foreignToken,"GET",base+"/create-receipt?command_id="+command,null,404);
+        call(foreignToken,"GET",base+"/action-receipt?ticket_id="+id+"&command_id="+acceptCommand,null,404);
     }
     private JsonNode call(String token,String method,String path,Object body,int expected) throws Exception {
         var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+path)).header("Content-Type","application/json");

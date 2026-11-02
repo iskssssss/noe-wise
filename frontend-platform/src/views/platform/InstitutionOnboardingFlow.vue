@@ -158,7 +158,7 @@ function mappingCompleted(value: { tenantId: string; integrationId?: string }) {
   acceptTarget(value)
   if (value.integrationId) void go(1)
 }
-function createOrdinary() {
+async function createOrdinary() {
   if (
     target.value ||
     ordinaryUnknown.value ||
@@ -166,7 +166,7 @@ function createOrdinary() {
     !allowed('foundation.tenants.create')
   )
     return
-  void action.run(async () => {
+  const created = await action.run(async () => {
     requireIdentity()
     formValidationError.value = ''
     // Element Plus 校验失败会拒绝字段对象；这是本地输入错误，尚未发起创建请求。
@@ -250,11 +250,13 @@ function createOrdinary() {
       }
       throw reason
     }
+    return true
   })
+  if (created && identityCurrent.value && !ordinaryStorageError.value) await go(1)
 }
-function verifyOrdinary() {
+async function verifyOrdinary() {
   if (!ordinaryUnknown.value || !allowed('foundation.tenants.read')) return
-  void action.run(async () => {
+  const confirmed = await action.run(async () => {
     requireIdentity()
     if (originalRequestId.value) {
       const receipt = await checked('foundation.tenants.read', () =>
@@ -285,7 +287,7 @@ function verifyOrdinary() {
       acceptTarget({ tenantId: receipt.tenant_id })
       ordinaryUnknown.value = false
       sessionStorage.removeItem(ordinaryStorageKey())
-      return
+      return true
     }
     candidate.value = await checked('foundation.tenants.read', () =>
       api.admin.findTenantBySlug(originalSlug.value, { silent: true })
@@ -294,6 +296,7 @@ function verifyOrdinary() {
     if (!candidate.value)
       throw Error('尚未找到该标识的机构，创建结果仍未知。请保留当前状态核对，不要重新创建。')
   })
+  if (confirmed && identityCurrent.value) await go(1)
 }
 function acceptCandidate() {
   if (!candidate.value || !ordinaryUnknown.value) return

@@ -54,6 +54,14 @@ class SessionMediaHttpContractTest {
                 .andExpect(status().isNotFound());
         verifyNoInteractions(bodies, mapper);
     }
+    @Test void invalidImageReturnsPreWriteRejectionCode() throws Exception {
+        mvc.perform(multipart("/api/v1/chat/sessions/media/upload")
+                .file(new MockMultipartFile("file", "image.png", "image/png", new byte[]{1, 2, 3}))
+                .param("session_id", "session").param("upload_id", "3d9b2652-1243-4b93-a4c1-f432d5c88311"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("SESSION_MEDIA_UPLOAD_REJECTED"));
+        verifyNoInteractions(bodies, mapper);
+    }
     @Test void uploadReceiptIsSessionAuthorizedAndDoesNotMutateOrTreatMissingAsFailure() throws Exception {
         String upload = "3d9b2652-1243-4b93-a4c1-f432d5c88311";
         mvc.perform(get("/api/v1/chat/sessions/media/upload-receipt").param("session_id", "session").param("upload_id", upload))

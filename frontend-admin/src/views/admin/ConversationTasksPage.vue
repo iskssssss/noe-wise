@@ -239,6 +239,7 @@ function requireCurrentSession() {
 onMounted(async () => {
   await loadSessions()
   if (sessionId.value) await reload()
+  if (active && pending.value) checkReceipt()
 })
 const { busy, error, run } = useTask()
 const auth = useAuthStore()

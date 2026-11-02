@@ -6,6 +6,13 @@
       :closable="false"
       type="error"
     />
+    <p v-if="actionStorageError && !open" role="status">{{ actionStorageError }}</p>
+    <section v-if="pendingAction && !open" class="admin-card" role="status">
+      原工单操作结果尚未确认，命令 {{ pendingAction.commandId }}。
+      <ElButton :loading="busy" @click="viewTicket(pendingAction.id, '', true)"
+        >重新读取原工单</ElButton
+      >
+    </section>
     <div class="admin-toolbar admin-card">
       <ElSelect
         v-described-by="formTipId + '-group-0'"
@@ -62,10 +69,13 @@
             v-if="row.status === 'pending' && can('foundation.handoff.update')"
             type="primary"
             link
-            :disabled="busy || !!pendingReply"
+            :disabled="busy || !!pendingReply || !!pendingAction"
             @click="claim(row as HandoffTicket)"
             >领取并处理</ElButton
-          ><ElButton link @click="view(row as HandoffTicket)" :disabled="busy || !!pendingReply"
+          ><ElButton
+            link
+            @click="view(row as HandoffTicket)"
+            :disabled="busy || !!pendingReply || !!pendingAction"
             >查看工单</ElButton
           ></template
         ></ElTableColumn
@@ -78,13 +88,19 @@
       append-to-body
       direction="rtl"
       :close-on-click-modal="false"
-      :close-on-press-escape="!busy && !pendingReply"
-      :show-close="!busy && !pendingReply"
+      :close-on-press-escape="!busy && !pendingReply && !pendingAction"
+      :show-close="!busy && !pendingReply && !pendingAction"
       class="admin-drawer"
       ><FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
       <ElAlert
         v-if="pendingReply"
         :title="`回复发送结果尚未确认，原命令 ${pendingReply.commandId}。请点击“刷新状态”只读核对；未查到不代表失败。${pendingReply.text ? '原回复仍在当前页面。' : '原正文未保存在浏览器，请勿重复发送。'}`"
+        type="warning"
+        :closable="false"
+      />
+      <ElAlert
+        v-else-if="pendingAction"
+        :title="`工单操作结果尚未确认，原命令 ${pendingAction.commandId}。请点击刷新状态核对；未查到不代表失败。`"
         type="warning"
         :closable="false"
       />
@@ -95,6 +111,21 @@
         :closable="false"
       />
       <p v-if="replyStorageError" role="status">{{ replyStorageError }}</p>
+      <p v-if="actionStorageError" role="status">{{ actionStorageError }}</p>
+      <div
+        v-if="
+          pendingAction?.action === 'resolve' && !resolution && can('foundation.handoff.update')
+        "
+      >
+        <p>请重新输入原解决说明；仅内容一致时才能继续原请求。</p>
+        <ElInput v-model="actionRecoveryText" type="textarea" aria-label="重新输入原解决说明" />
+      </div>
+      <ElButton
+        v-if="pendingAction && can('foundation.handoff.update')"
+        :disabled="busy || !!actionStorageError"
+        @click="continueAction"
+        >继续原工单操作</ElButton
+      >
       <div v-if="pendingReply && !pendingReply.text && can('foundation.handoff.update')">
         <p>请重新输入原回复内容；仅在摘要与原内容一致时才能继续原请求。</p>
         <ElInput v-model="recoveryText" type="textarea" aria-label="重新输入原回复" />
@@ -119,7 +150,9 @@
               !can('foundation.handoff.update') ||
               busy ||
               !!pendingReply ||
+              !!pendingAction ||
               !!replyStorageError ||
+              !!actionStorageError ||
               refreshRequired ||
               detail.ticket.status !== 'pending'
             "
@@ -127,6 +160,12 @@
             >领取工单</ElButton
           ><ElButton :disabled="busy" @click="refreshDetail">刷新状态</ElButton>
         </div>
+        <p v-if="detail.ticket.status === 'pending'" role="status">
+          请先领取工单，再回复或结束处理。
+        </p>
+        <p v-else-if="detail.ticket.status === 'assigned' && !canHandleTicket" role="status">
+          此工单由其他坐席处理；请联系负责人或管理员。
+        </p>
         <ElButton v-if="detail.has_more" :disabled="busy" @click="older">加载较早消息</ElButton
         ><ElCard v-for="message in detail.messages" :key="message.message_id" style="margin: 12px 0"
           ><div class="admin-muted">
@@ -156,9 +195,11 @@
                 !can('foundation.handoff.update') ||
                 busy ||
                 !!pendingReply ||
+                !!pendingAction ||
                 !!replyStorageError ||
+                !!actionStorageError ||
                 refreshRequired ||
-                detail.ticket.status === 'resolved'
+                !canHandleTicket
               "
             />
             <p id="handoff-reply-help" class="admin-field-help">
@@ -171,10 +212,12 @@
             :disabled="
               !can('foundation.handoff.update') ||
               !!pendingReply ||
+              !!pendingAction ||
               !!replyStorageError ||
+              !!actionStorageError ||
               refreshRequired ||
               !replyText.trim() ||
-              detail.ticket.status === 'resolved'
+              !canHandleTicket
             "
             >发送回复</ElButton
           ><ElCollapse
@@ -185,6 +228,16 @@
                   aria-describedby="handoff-resolution-help"
                   v-model="resolution"
                   type="textarea"
+                  :disabled="
+                    !can('foundation.handoff.update') ||
+                    busy ||
+                    !!pendingReply ||
+                    !!pendingAction ||
+                    !!replyStorageError ||
+                    !!actionStorageError ||
+                    refreshRequired ||
+                    !canHandleTicket
+                  "
                 />
                 <p id="handoff-resolution-help" class="admin-field-help">
                   说明问题如何解决，标记后该工单不再接受人工回复。
@@ -194,9 +247,11 @@
                   !can('foundation.handoff.update') ||
                   busy ||
                   !!pendingReply ||
+                  !!pendingAction ||
                   !!replyStorageError ||
+                  !!actionStorageError ||
                   refreshRequired ||
-                  detail.ticket.status === 'resolved'
+                  !canHandleTicket
                 "
                 @click="resolve"
                 >标记已解决</ElButton
@@ -205,7 +260,7 @@
           ></ElForm
         ></template
       ><template #footer
-        ><ElButton @click="requestClose" :disabled="busy || !!pendingReply"
+        ><ElButton @click="requestClose" :disabled="busy || !!pendingReply || !!pendingAction"
           >关闭</ElButton
         ></template
       ></ElDrawer
@@ -222,7 +277,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
-import { onMounted, onScopeDispose, ref, useId } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, useId } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -234,13 +289,44 @@ import {
 } from '@skillforge/shared/admin'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import MarkdownContent from '@skillforge/shared/components/MarkdownContent.vue'
-import { api, type HandoffTicket, type HandoffDetail, type HandoffReply } from '../../api'
+import {
+  api,
+  type HandoffTicket,
+  type HandoffDetail,
+  type HandoffReply,
+  type HandoffActionReceipt
+} from '../../api'
 const route = useRoute()
 const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const subject = () => JSON.stringify([auth.user?.tenant_id, auth.user?.sub])
 const replyKey = (id: string, owner = subject()) =>
   `skillforge.handoff-reply.${JSON.stringify([owner, id])}`
+const actionKey = (owner = subject()) => `skillforge.handoff-action.${owner}`
+type PendingAction = {
+  id: string
+  commandId: string
+  action: 'accept' | 'resolve'
+  revision: number
+  digest?: string
+}
+function readStoredAction(owner: string): PendingAction | undefined {
+  const raw = sessionStorage.getItem(actionKey(owner))
+  if (!raw) return
+  const saved = JSON.parse(raw) as PendingAction
+  if (
+    !saved ||
+    typeof saved.id !== 'string' ||
+    !saved.id ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.commandId) ||
+    !['accept', 'resolve'].includes(saved.action) ||
+    !Number.isSafeInteger(saved.revision) ||
+    saved.revision <= 0 ||
+    (saved.action === 'resolve' && !/^[0-9a-f]{64}$/.test(saved.digest ?? ''))
+  )
+    throw Error('invalid')
+  return saved
+}
 let disposed = false
 onScopeDispose(() => {
   disposed = true
@@ -261,7 +347,18 @@ onMounted(() => {
   reload()
   const ticket = typeof route.query?.ticket_id === 'string' ? route.query.ticket_id : ''
   const session = typeof route.query?.session_id === 'string' ? route.query.session_id : ''
-  if (ticket && can('foundation.handoff.read')) void viewTicket(ticket, session)
+  let original = ''
+  try {
+    const saved = readStoredAction(subject())
+    if (saved) {
+      pendingAction.value = saved
+      original = saved.id
+    }
+  } catch {
+    actionStorageError.value = '无法读取原工单操作记录，请恢复浏览器存储后重新进入。'
+  }
+  if (can('foundation.handoff.read') && (original || ticket))
+    void viewTicket(original || ticket, original ? '' : session, !!original)
 })
 const { busy, error, run } = useTask(),
   open = ref(false),
@@ -277,27 +374,43 @@ const { busy, error, run } = useTask(),
     digest: string
   }>(),
   recoveryText = ref(''),
-  replyStorageError = ref('')
+  replyStorageError = ref(''),
+  pendingAction = ref<PendingAction>(),
+  actionRecoveryText = ref(''),
+  actionStorageError = ref('')
+const canHandleTicket = computed(
+  () =>
+    detail.value?.ticket.status === 'assigned' &&
+    (can('foundation.handoff.manage') || detail.value.ticket.assigned_to === auth.user?.sub)
+)
 useUnsavedChanges({
   dirty: () => open.value && !!(replyText.value || resolution.value),
-  busy: () => busy.value || !!pendingReply.value
+  busy: () => busy.value || !!pendingReply.value || !!pendingAction.value
 })
 const { requestClose } = useDrawerClose({
   open: () => open.value,
-  busy: () => busy.value || !!pendingReply.value,
+  busy: () => busy.value || !!pendingReply.value || !!pendingAction.value,
   dirty: () => open.value && !!(replyText.value || resolution.value),
   close: () => {
     open.value = false
     pendingReply.value = undefined
+    pendingAction.value = undefined
   }
 })
 async function view(row: HandoffTicket) {
   return viewTicket(row.id)
 }
-async function viewTicket(id: string, expectedSession = '') {
-  if (!can('foundation.handoff.read') || pendingReply.value) return
+async function viewTicket(id: string, expectedSession = '', recovering = false) {
+  if (
+    !can('foundation.handoff.read') ||
+    pendingReply.value ||
+    (pendingAction.value && (!recovering || pendingAction.value.id !== id))
+  )
+    return
+  const owner = subject()
   return await run(async () => {
     const value = await api.handoff.detail(id)
+    if (disposed || subject() !== owner) return
     if (value.ticket.id !== id || (expectedSession && value.ticket.session_id !== expectedSession))
       throw Error('工单与原会话不匹配')
     detail.value = value
@@ -323,11 +436,25 @@ async function viewTicket(id: string, expectedSession = '') {
     } catch {
       replyStorageError.value = '无法读取原回复记录，请恢复浏览器存储后核对。'
     }
+    actionStorageError.value = ''
+    try {
+      const stored = recovering ? pendingAction.value : readStoredAction(owner)
+      if (stored && stored.id !== id) throw Error('invalid')
+      pendingAction.value = stored
+    } catch {
+      actionStorageError.value = '无法读取原工单操作记录，请恢复浏览器存储后核对。'
+    }
     replyText.value = ''
     recoveryText.value = ''
+    actionRecoveryText.value = ''
     resolution.value = ''
     refreshRequired.value = false
     open.value = true
+    if (
+      (pendingReply.value && !replyStorageError.value) ||
+      (pendingAction.value && !actionStorageError.value)
+    )
+      await readDetail()
     return detail.value
   })
 }
@@ -343,12 +470,25 @@ async function refreshDetail() {
 }
 async function readDetail() {
   if (!detail.value) return
+  const owner = subject()
   const next = await api.handoff.detail(detail.value.ticket.id)
+  if (disposed || subject() !== owner) return
   detail.value = next
   refreshRequired.value = false
+  if (pendingAction.value) {
+    const action = pendingAction.value
+    const receipt = await api.handoff.actionReceipt(action.id, action.commandId)
+    if (acceptActionReceipt(receipt, action, owner)) {
+      refreshRequired.value = true
+      const confirmed = await api.handoff.detail(action.id)
+      if (disposed || subject() !== owner) return
+      detail.value = confirmed
+      refreshRequired.value = false
+      await reload()
+    }
+  }
   const pending = pendingReply.value
   if (!pending) return
-  const owner = subject()
   try {
     await acceptReplyReceipt(
       await api.handoff.replyReceipt(pending.id, pending.commandId),
@@ -371,19 +511,148 @@ async function older() {
     detail.value = { ...older, messages: [...older.messages, ...current.messages] }
   })
 }
+function acceptActionReceipt(
+  receipt: HandoffActionReceipt | null,
+  pending: NonNullable<typeof pendingAction.value>,
+  owner: string
+) {
+  if (
+    !receipt ||
+    receipt.command_id !== pending.commandId ||
+    receipt.ticket_id !== pending.id ||
+    receipt.action !== pending.action ||
+    receipt.status !== (pending.action === 'accept' ? 'assigned' : 'resolved')
+  )
+    return false
+  if (disposed || subject() !== owner || pendingAction.value?.commandId !== pending.commandId)
+    return false
+  try {
+    sessionStorage.removeItem(actionKey(owner))
+  } catch {
+    actionStorageError.value = '无法清除原工单操作记录，请恢复浏览器存储后重新核对。'
+    return false
+  }
+  pendingAction.value = undefined
+  actionStorageError.value = ''
+  if (pending.action === 'resolve') resolution.value = ''
+  actionRecoveryText.value = ''
+  message.success(pending.action === 'accept' ? '工单已领取' : '工单已标记解决')
+  return true
+}
+function rejectAction(
+  cause: unknown,
+  pending: NonNullable<typeof pendingAction.value>,
+  owner: string
+) {
+  if (
+    !(cause instanceof HttpClientError) ||
+    cause.code !== 'HANDOFF_ACTION_NOT_ACCEPTED' ||
+    disposed ||
+    subject() !== owner ||
+    pendingAction.value?.commandId !== pending.commandId
+  )
+    return
+  try {
+    sessionStorage.removeItem(actionKey(owner))
+    pendingAction.value = undefined
+    actionStorageError.value = ''
+    refreshRequired.value = true
+  } catch {
+    actionStorageError.value = '无法清除原工单操作记录，请恢复浏览器存储后重新核对。'
+  }
+}
+async function beginAction(
+  id: string,
+  action: 'accept' | 'resolve',
+  revision: number,
+  note?: string
+) {
+  const owner = subject(),
+    identity = auth.identityVersion
+  const digest = action === 'resolve' ? await replyDigest(note!) : undefined
+  if (
+    disposed ||
+    subject() !== owner ||
+    auth.identityVersion !== identity ||
+    !can('foundation.handoff.update')
+  )
+    return
+  const command = { id, action, revision, digest, commandId: crypto.randomUUID() }
+  try {
+    sessionStorage.setItem(actionKey(owner), JSON.stringify(command))
+  } catch {
+    actionStorageError.value = '无法保存原工单操作记录，尚未发送请求。'
+    throw Error(actionStorageError.value)
+  }
+  pendingAction.value = command
+  return command
+}
+async function continueAction() {
+  const pending = pendingAction.value,
+    owner = subject(),
+    identity = auth.identityVersion
+  if (!pending || actionStorageError.value || !can('foundation.handoff.update')) return
+  await run(async () => {
+    const note =
+      pending.action === 'resolve' ? resolution.value || actionRecoveryText.value : undefined
+    if (pending.action === 'resolve' && (!note || (await replyDigest(note)) !== pending.digest))
+      throw Error('输入的解决说明与原内容不一致，请核对后重试')
+    if (
+      !(await confirm({
+        title: '继续原工单操作',
+        confirmText: '继续原请求',
+        content: '使用原命令和原修订继续；若原请求尚未受理，此操作会提交该请求。'
+      }))
+    )
+      return
+    if (
+      disposed ||
+      subject() !== owner ||
+      auth.identityVersion !== identity ||
+      !can('foundation.handoff.update') ||
+      pendingAction.value?.commandId !== pending.commandId
+    )
+      return
+    let receipt: HandoffActionReceipt
+    try {
+      receipt =
+        pending.action === 'accept'
+          ? await api.handoff.accept(pending.id, pending.revision, pending.commandId)
+          : await api.handoff.resolve(pending.id, pending.revision, pending.commandId, note!)
+    } catch (cause) {
+      rejectAction(cause, pending, owner)
+      throw cause
+    }
+    if (!acceptActionReceipt(receipt, pending, owner)) return
+    refreshRequired.value = true
+    await readDetail()
+    await reload()
+  })
+}
 async function accept() {
   if (
     !can('foundation.handoff.update') ||
     pendingReply.value ||
+    pendingAction.value ||
     replyStorageError.value ||
+    actionStorageError.value ||
     refreshRequired.value
   )
     return
   await run(async () => {
     const ticket = detail.value!.ticket
-    await api.handoff.accept(ticket.id, ticket.revision)
+    const owner = subject()
+    const action = await beginAction(ticket.id, 'accept', ticket.revision)
+    if (!action) return
+    let receipt: HandoffActionReceipt
+    try {
+      receipt = await api.handoff.accept(ticket.id, ticket.revision, action.commandId)
+    } catch (cause) {
+      rejectAction(cause, action, owner)
+      throw cause
+    }
+    if (!acceptActionReceipt(receipt, action, owner)) return
     refreshRequired.value = true
-    message.success('工单已领取')
     await readDetail()
     await reload()
   })
@@ -426,8 +695,11 @@ async function replyDigest(text: string) {
 async function send() {
   if (
     !can('foundation.handoff.update') ||
+    !canHandleTicket.value ||
     pendingReply.value ||
+    pendingAction.value ||
     replyStorageError.value ||
+    actionStorageError.value ||
     refreshRequired.value
   )
     return
@@ -552,18 +824,35 @@ async function continueReply() {
 async function resolve() {
   if (
     !can('foundation.handoff.update') ||
+    !canHandleTicket.value ||
     pendingReply.value ||
+    pendingAction.value ||
     replyStorageError.value ||
+    actionStorageError.value ||
     refreshRequired.value
   )
     return
   await run(async () => {
     if (!resolution.value.trim()) throw Error('请填写解决说明')
+    if (resolution.value.length > 2000) throw Error('解决说明不能超过 2000 个字符')
     const ticket = detail.value!.ticket
-    await api.handoff.resolve(ticket.id, ticket.revision, resolution.value)
-    resolution.value = ''
+    const owner = subject()
+    const action = await beginAction(ticket.id, 'resolve', ticket.revision, resolution.value)
+    if (!action) return
+    let receipt: HandoffActionReceipt
+    try {
+      receipt = await api.handoff.resolve(
+        ticket.id,
+        ticket.revision,
+        action.commandId,
+        resolution.value
+      )
+    } catch (cause) {
+      rejectAction(cause, action, owner)
+      throw cause
+    }
+    if (!acceptActionReceipt(receipt, action, owner)) return
     refreshRequired.value = true
-    message.success('工单已标记解决')
     await readDetail()
     await reload()
   })

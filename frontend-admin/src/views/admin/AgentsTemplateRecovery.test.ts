@@ -10,6 +10,7 @@ import { useAuthStore } from '../../stores/auth'
 const mocks = vi.hoisted(() => ({
   install: vi.fn(),
   result: vi.fn(),
+  creationResult: vi.fn(),
   push: vi.fn(),
   templates: vi.fn()
 }))
@@ -28,7 +29,8 @@ vi.mock('../../api', () => ({
       templates: mocks.templates,
       templateDetail: async () => ({ name: '客服模板', definition: {} }),
       installTemplate: mocks.install,
-      installationResult: mocks.result
+      installationResult: mocks.result,
+      creationResult: mocks.creationResult
     },
     capabilities: { listDefinitions: async () => [], deployments: async () => [] },
     workflowDrafts: { instances: async () => ({ items: [] }) }
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
   useAuthStore().user!.sub = 'actor-1'
+  useAuthStore().user!.permissions = []
   useAuthStore().identityVersion = 1
   mocks.templates.mockResolvedValue({
     items: [{ id: 'template-1', name: '客服模板', version: '1' }]
@@ -79,6 +82,62 @@ async function open() {
 }
 
 describe('模板安装原请求核对', () => {
+  it('重新进入时自动核对原安装并进入已创建智能体', async () => {
+    useAuthStore().user!.permissions = ['foundation.agents.read']
+    const key = `skillforge.agent-template-install:${encodeURIComponent(JSON.stringify(['1', 'actor-1']))}`
+    sessionStorage.setItem(key, 'original-request')
+    mocks.result.mockResolvedValueOnce({ request_id: 'original-request', agent_id: '123' })
+    wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    await flushPromises()
+    expect(mocks.result).toHaveBeenCalledExactlyOnceWith('original-request')
+    expect(mocks.install).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.push).toHaveBeenCalledWith('/admin/agents/123')
+  })
+  it('自动核对未找到回执时保留请求并允许手动核对', async () => {
+    useAuthStore().user!.permissions = ['foundation.agents.read']
+    const key = `skillforge.agent-template-install:${encodeURIComponent(JSON.stringify(['1', 'actor-1']))}`
+    sessionStorage.setItem(key, 'original-request')
+    mocks.result.mockResolvedValueOnce(undefined)
+    wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    await flushPromises()
+    expect(mocks.result).toHaveBeenCalledExactlyOnceWith('original-request')
+    expect(sessionStorage.getItem(key)).toBe('original-request')
+    expect(button('核对原安装结果').exists()).toBe(true)
+    expect(mocks.install).not.toHaveBeenCalled()
+  })
+
+  it('同时恢复创建与安装请求时顺序核对两条原回执', async () => {
+    useAuthStore().user!.permissions = ['foundation.agents.read']
+    const owner = encodeURIComponent(JSON.stringify(['1', 'actor-1']))
+    const creationId = '12345678-1234-4234-8234-123456789abc'
+    sessionStorage.setItem(
+      `skillforge.agent-create:${owner}`,
+      JSON.stringify({ requestId: creationId, name: '助手' })
+    )
+    sessionStorage.setItem(`skillforge.agent-template-install:${owner}`, 'original-request')
+    mocks.creationResult.mockResolvedValueOnce(undefined)
+    mocks.result.mockResolvedValueOnce(undefined)
+    wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    await flushPromises()
+    expect(mocks.creationResult).toHaveBeenCalledExactlyOnceWith(creationId)
+    expect(mocks.result).toHaveBeenCalledExactlyOnceWith('original-request')
+    expect(mocks.creationResult.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.result.mock.invocationCallOrder[0]!
+    )
+    expect(wrapper.text()).toContain(creationId)
+    expect(wrapper.text()).toContain('original-request')
+    expect(mocks.install).not.toHaveBeenCalled()
+  })
   it('刷新后只读查询原回执，查不到时保持锁定且不重发安装', async () => {
     mocks.install.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '结果未知' }))
     await open()

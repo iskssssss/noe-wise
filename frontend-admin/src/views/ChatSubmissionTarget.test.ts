@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElInput, ElSelect, ElUpload } from 'element-plus'
+import { ElInput, ElSelect, ElUpload, type UploadRawFile } from 'element-plus'
 import ChatPage from './ChatPage.vue'
 vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({
@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   observe: vi.fn(),
   uploadAttachment: vi.fn(),
   uploadMedia: vi.fn(),
+  attachments: vi.fn(),
+  mediaUploadReceipt: vi.fn(),
   mediaContent: vi.fn()
 }))
 vi.mock('../api', () => ({
@@ -53,6 +55,8 @@ vi.mock('../api', () => ({
       observeSession: mocks.observe,
       uploadAttachment: mocks.uploadAttachment,
       uploadMedia: mocks.uploadMedia,
+      attachments: mocks.attachments,
+      mediaUploadReceipt: mocks.mediaUploadReceipt,
       mediaContent: mocks.mediaContent
     },
     agents: {
@@ -91,8 +95,17 @@ beforeEach(() => {
     has_more: false
   }))
   mocks.observe.mockResolvedValue(undefined)
-  mocks.uploadAttachment.mockResolvedValue({ id: 'file-original', name: '原文件.txt' })
-  mocks.uploadMedia.mockResolvedValue({ media_id: 'image-original' })
+  mocks.uploadAttachment.mockImplementation(async (_session: string, id: string) => ({
+    id,
+    name: '原文件.txt'
+  }))
+  mocks.uploadMedia.mockResolvedValue({
+    media_id: 'image-original',
+    mime_type: 'image/png',
+    byte_length: 1,
+    width: 1,
+    height: 1
+  })
   mocks.mediaContent.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
   let imageUrl = 0
   vi.stubGlobal(
@@ -330,7 +343,10 @@ describe('后台Chat原消息受理恢复', () => {
     expect(mocks.mediaContent).not.toHaveBeenCalled()
     expect(mocks.submit.mock.calls[0]![0]).toMatchObject({
       content: kind === '附件' ? [] : [{ type: 'image', media_id: 'image-original' }],
-      context: { end_user_id: '42', attachment_ids: kind === '附件' ? ['file-original'] : [] }
+      context: {
+        end_user_id: '42',
+        attachment_ids: kind === '附件' ? [mocks.uploadAttachment.mock.calls[0]![1]] : []
+      }
     })
   })
 
@@ -414,7 +430,7 @@ describe('后台Chat原消息受理恢复', () => {
         { type: 'text', text: '原正文' },
         { type: 'image', media_id: 'image-original' }
       ],
-      context: { end_user_id: '42', attachment_ids: ['file-original'] }
+      context: { end_user_id: '42', attachment_ids: [mocks.uploadAttachment.mock.calls[0]![1]] }
     })
     expect(composer().get('textarea').attributes('disabled')).toBeDefined()
     expect(wrapper!.findAll('.el-tag__close')).toHaveLength(0)
@@ -751,6 +767,260 @@ it('会话创建响应中断后按原请求核对，未查到时不重复创建�
   await send('保留草稿')
   expect(mocks.createSession).toHaveBeenCalledOnce()
   expect(mocks.submit).toHaveBeenCalledOnce()
+})
+
+it.each(['file', 'image'] as const)(
+  '会话创建结果未知时保留未发送的%s并在确认后继续上传',
+  async (kind) => {
+    mocks.createSession.mockRejectedValueOnce(new Error('连接中断'))
+    await open()
+    await choose('终端用户', '目标回归用户')
+    await choose('选择智能体或团队', '已发布智能体')
+    const file = Object.assign(new File(['内容'], kind === 'file' ? '资料.txt' : '图片.png'), {
+      uid: 123
+    }) as UploadRawFile
+    wrapper!.findAllComponents(ElUpload)[kind === 'file' ? 0 : 1]!.vm.handleStart(file)
+    await flushPromises()
+    const requestId = mocks.createSession.mock.calls[0]![0]
+    expect(wrapper!.text()).toContain('文件尚未上传')
+    expect(mocks.uploadAttachment).not.toHaveBeenCalled()
+    expect(mocks.uploadMedia).not.toHaveBeenCalled()
+    mocks.sessionCreationResult.mockResolvedValueOnce({
+      request_id: requestId,
+      session_id: 'created-session'
+    })
+    await wrapper!
+      .findAll('button')
+      .find((item) => item.text() === '核对创建结果')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper!.text()).toContain('继续上传原文件')
+    expect(mocks.createSession).toHaveBeenCalledTimes(1)
+    expect(mocks.uploadAttachment).not.toHaveBeenCalled()
+    expect(mocks.uploadMedia).not.toHaveBeenCalled()
+    await wrapper!
+      .findAll('button')
+      .find((item) => item.text() === '继续上传原文件')!
+      .trigger('click')
+    await flushPromises()
+    const upload = kind === 'file' ? mocks.uploadAttachment : mocks.uploadMedia
+    expect(upload).toHaveBeenCalledExactlyOnceWith('created-session', expect.any(String), file)
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(wrapper!.text()).not.toContain('文件尚未上传')
+  }
+)
+
+it.each(['file', 'image'] as const)('先选择%s再补全会话对象时无需重新选择文件', async (kind) => {
+  await open()
+  const file = Object.assign(new File(['内容'], kind === 'file' ? '资料.txt' : '图片.png'), {
+    uid: 456
+  }) as UploadRawFile
+  wrapper!.findAllComponents(ElUpload)[kind === 'file' ? 0 : 1]!.vm.handleStart(file)
+  await flushPromises()
+  expect(wrapper!.text()).toContain('请选择终端用户和对话对象后继续')
+  const resume = () => wrapper!.findAll('button').find((item) => item.text() === '继续上传原文件')!
+  expect(resume().attributes('disabled')).toBeDefined()
+  expect(mocks.createSession).not.toHaveBeenCalled()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  expect(resume().attributes('disabled')).toBeUndefined()
+  await resume().trigger('click')
+  await flushPromises()
+  expect(mocks.createSession).toHaveBeenCalledTimes(1)
+  const upload = kind === 'file' ? mocks.uploadAttachment : mocks.uploadMedia
+  expect(upload).toHaveBeenCalledExactlyOnceWith('created-session', expect.any(String), file)
+  expect(mocks.submit).not.toHaveBeenCalled()
+  expect(wrapper!.text()).not.toContain('文件尚未上传')
+})
+
+it.each(['file', 'image'] as const)('%s上传响应中断后仅核对原标识，未查到不重传', async (kind) => {
+  const upload = kind === 'file' ? mocks.uploadAttachment : mocks.uploadMedia
+  upload.mockRejectedValueOnce(new Error('响应中断'))
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  const file = Object.assign(new File(['内容'], kind === 'file' ? '资料.txt' : '图片.png'), {
+    uid: 789
+  }) as UploadRawFile
+  wrapper!.findAllComponents(ElUpload)[kind === 'file' ? 0 : 1]!.vm.handleStart(file)
+  await flushPromises()
+  const uploadId = upload.mock.calls[0]![1]
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  const key = 'skillforge.chat-upload:1:member-1'
+  expect(JSON.parse(sessionStorage.getItem(key)!)[0]).toMatchObject({
+    uploadId,
+    session: 'created-session',
+    kind
+  })
+  if (kind === 'file')
+    mocks.attachments
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: uploadId, name: '资料.txt' }])
+  else
+    mocks.mediaUploadReceipt
+      .mockResolvedValueOnce({ status: 'UNKNOWN', media: null })
+      .mockResolvedValueOnce({
+        status: 'FOUND',
+        media: { media_id: 'media-1', mime_type: 'image/png', byte_length: 1, width: 1, height: 1 }
+      })
+  const inspect = () => wrapper!.findAll('button').find((item) => item.text() === '核对原上传')!
+  await inspect().trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  expect(upload).toHaveBeenCalledTimes(1)
+  await inspect().trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('上传结果尚未确认')
+  expect(wrapper!.text()).toContain(kind === 'file' ? '资料.txt' : '图片 media-1')
+  expect(upload).toHaveBeenCalledTimes(1)
+  expect(mocks.submit).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).toBeNull()
+})
+
+it.each([
+  ['SESSION_ATTACHMENT_UPLOAD_REJECTED', false],
+  ['UNPROCESSABLE_ENTITY', true]
+])('附件上传返回 %s 时按明确回执决定是否保留待核对', async (code, unknown) => {
+  mocks.uploadAttachment.mockRejectedValueOnce(
+    new HttpClientError({ status: 422, code: String(code), userMessage: '文件不合法' })
+  )
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  const upload = (uid: number) =>
+    wrapper!
+      .findAllComponents(ElUpload)[0]!
+      .vm.handleStart(Object.assign(new File(['内容'], '资料.txt'), { uid }) as UploadRawFile)
+  upload(1)
+  await flushPromises()
+  expect(wrapper!.text().includes('上传结果尚未确认')).toBe(unknown)
+  expect(sessionStorage.getItem('skillforge.chat-upload:1:member-1') !== null).toBe(unknown)
+  upload(2)
+  await flushPromises()
+  expect(mocks.uploadAttachment).toHaveBeenCalledTimes(unknown ? 1 : 2)
+})
+
+it.each([
+  ['SESSION_MEDIA_UPLOAD_REJECTED', false],
+  ['UNPROCESSABLE_ENTITY', true]
+])('图片上传返回 %s 时按明确回执决定是否保留待核对', async (code, unknown) => {
+  mocks.uploadMedia.mockRejectedValueOnce(
+    new HttpClientError({ status: 422, code: String(code), userMessage: '图片不合法' })
+  )
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  const upload = (uid: number) =>
+    wrapper!
+      .findAllComponents(ElUpload)[1]!
+      .vm.handleStart(Object.assign(new File(['内容'], '图片.png'), { uid }) as UploadRawFile)
+  upload(1)
+  await flushPromises()
+  expect(wrapper!.text().includes('上传结果尚未确认')).toBe(unknown)
+  expect(sessionStorage.getItem('skillforge.chat-upload:1:member-1') !== null).toBe(unknown)
+  upload(2)
+  await flushPromises()
+  expect(mocks.uploadMedia).toHaveBeenCalledTimes(unknown ? 1 : 2)
+})
+
+it('未确认上传阻止同一文件重复上传，但允许继续上传其他文件', async () => {
+  mocks.uploadAttachment.mockRejectedValueOnce(new Error('响应中断'))
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  const upload = (name: string, uid: number) =>
+    wrapper!
+      .findAllComponents(ElUpload)[0]!
+      .vm.handleStart(Object.assign(new File(['内容'], name), { uid }) as UploadRawFile)
+  upload('资料.txt', 1)
+  await flushPromises()
+  upload('资料.txt', 2)
+  await flushPromises()
+  expect(mocks.uploadAttachment).toHaveBeenCalledTimes(1)
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  upload('其他.txt', 3)
+  await flushPromises()
+  expect(mocks.uploadAttachment).toHaveBeenCalledTimes(2)
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  expect(mocks.submit).not.toHaveBeenCalled()
+})
+
+it('附件上传返回其他标识时保留原请求供核对', async () => {
+  mocks.uploadAttachment.mockResolvedValueOnce({ id: 'other', name: '资料.txt' })
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  wrapper!
+    .findAllComponents(ElUpload)[0]!
+    .vm.handleStart(Object.assign(new File(['内容'], '资料.txt'), { uid: 321 }) as UploadRawFile)
+  await flushPromises()
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  expect(sessionStorage.getItem('skillforge.chat-upload:1:member-1')).not.toBeNull()
+  expect(mocks.uploadAttachment).toHaveBeenCalledTimes(1)
+})
+
+it('上传标识无法保存时保留原文件，恢复后可继续且未提前发送', async () => {
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  const originalSet = Storage.prototype.setItem
+  let fail = true
+  const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+    this: Storage,
+    key,
+    value
+  ) {
+    if (key.startsWith('skillforge.chat-upload:') && fail) {
+      fail = false
+      throw Error('存储不可用')
+    }
+    return originalSet.call(this, key, value)
+  })
+  try {
+    const file = Object.assign(new File(['内容'], '资料.txt'), { uid: 987 }) as UploadRawFile
+    wrapper!.findAllComponents(ElUpload)[0]!.vm.handleStart(file)
+    await flushPromises()
+    expect(wrapper!.text()).toContain('文件尚未上传')
+    expect(mocks.uploadAttachment).not.toHaveBeenCalled()
+    await wrapper!
+      .findAll('button')
+      .find((item) => item.text() === '继续上传原文件')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.uploadAttachment).toHaveBeenCalledExactlyOnceWith(
+      'created-session',
+      expect.any(String),
+      file
+    )
+    expect(mocks.createSession).toHaveBeenCalledTimes(1)
+  } finally {
+    storage.mockRestore()
+  }
+})
+
+it('重新进入后恢复原会话并核对未确认上传，不重传', async () => {
+  const uploadId = '7a904f16-0dfe-40d0-afae-496c76e9c208'
+  sessionStorage.setItem(
+    'skillforge.chat-upload:1:member-1',
+    JSON.stringify([{ session: 'original-session', uploadId, name: '资料.txt', kind: 'file' }])
+  )
+  mocks.attachments.mockResolvedValueOnce([{ id: uploadId, name: '资料.txt' }])
+  await open()
+  expect(wrapper!.text()).toContain('上传结果尚未确认')
+  await wrapper!
+    .findAll('button')
+    .find((item) => item.text() === '恢复原会话')!
+    .trigger('click')
+  await flushPromises()
+  await wrapper!
+    .findAll('button')
+    .find((item) => item.text() === '核对原上传')!
+    .trigger('click')
+  await flushPromises()
+  expect(mocks.attachments).toHaveBeenCalledExactlyOnceWith('original-session')
+  expect(mocks.uploadAttachment).not.toHaveBeenCalled()
+  expect(wrapper!.text()).toContain('资料.txt')
+  expect(sessionStorage.getItem('skillforge.chat-upload:1:member-1')).toBeNull()
 })
 
 it('重新进入时自动核对原会话，确认后无需再次点击或发送', async () => {

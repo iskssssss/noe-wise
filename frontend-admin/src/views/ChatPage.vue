@@ -29,7 +29,7 @@
     <div v-if="pendingSession || sessionStorageError" class="admin-card" role="status">
       <p v-if="sessionStorageError">{{ sessionStorageError }}</p>
       <p v-else>
-        会话创建结果尚未确认，请核对原请求；确认后需重新选择未上传的文件，不会自动发送消息。
+        会话创建结果尚未确认，请核对原请求；不会自动发送消息。刷新页面后需重新选择未上传的文件。
       </p>
       <ElButton
         v-if="pendingSession"
@@ -37,6 +37,37 @@
         @click="inspectSessionCreation()"
         >核对创建结果</ElButton
       >
+    </div>
+    <div v-if="deferredUpload" class="admin-card" role="status">
+      已选择“{{ deferredUpload.file.name }}”，文件尚未上传。
+      <span v-if="!sessionId && !pendingSession">请选择终端用户和对话对象后继续。</span>
+      <ElButton
+        v-if="!pendingSession"
+        :disabled="busy || readOnly || (!sessionId && (!canCreate || !endUserId || !targetKey))"
+        @click="continueUpload"
+        >继续上传原文件</ElButton
+      >
+      <ElButton :disabled="busy" @click="deferredUpload = undefined">移除文件选择</ElButton>
+    </div>
+    <div v-for="upload in pendingUploads" :key="upload.uploadId" class="admin-card" role="status">
+      文件“{{ upload.name }}”上传结果尚未确认，尚未加入消息；请核对原上传，不要重新上传。
+      会话：<code>{{ upload.session }}</code
+      >；上传标识：<code>{{ upload.uploadId }}</code
+      >。
+      <ElButton
+        v-if="sessionId !== upload.session"
+        :disabled="busy"
+        @click="loadSession(upload.session)"
+      >
+        恢复原会话
+      </ElButton>
+      <ElButton
+        v-else
+        :disabled="busy || !can('foundation.sessions.read')"
+        @click="inspectUpload(upload)"
+      >
+        核对原上传
+      </ElButton>
     </div>
     <div v-if="pendingInput" class="admin-card" role="status">
       <p>
@@ -404,6 +435,7 @@
               :loading="busy"
               :disabled="
                 readOnly ||
+                !!deferredUpload ||
                 (!sessionId && !canCreate) ||
                 (!input.trim() && !attachments.length && !mediaIds.length)
               "
@@ -415,19 +447,23 @@
               ref="attachmentUpload"
               :auto-upload="false"
               :show-file-list="false"
-              :disabled="busy || readOnly"
+              :disabled="busy || readOnly || !!deferredUpload"
               :on-change="uploadAttachment"
-              ><ElButton :disabled="busy || readOnly">附加文件</ElButton></ElUpload
+              ><ElButton :disabled="busy || readOnly || !!deferredUpload"
+                >附加文件</ElButton
+              ></ElUpload
             ><ElUpload
               v-described-by="formTipId + '-upload'"
               :aria-describedby="formTipId + '-upload'"
               ref="imageUpload"
               :auto-upload="false"
               :show-file-list="false"
-              :disabled="busy || readOnly"
+              :disabled="busy || readOnly || !!deferredUpload"
               :on-change="uploadImage"
               accept="image/*"
-              ><ElButton :disabled="busy || readOnly">附加图片</ElButton></ElUpload
+              ><ElButton :disabled="busy || readOnly || !!deferredUpload"
+                >附加图片</ElButton
+              ></ElUpload
             >
             <FieldTip :id="formTipId + '-upload'"
               >选中文件或图片后会上传到当前会话，发送消息时附带已选内容；图片输入需要对话模型支持视觉。</FieldTip
@@ -906,11 +942,15 @@ const trialTeamReady = computed(
 
 type PendingSession = { requestId: string; endUserId: string; targetKey: string }
 const pendingSession = shallowRef<PendingSession>()
+const deferredUpload = shallowRef<{ file: File; kind: 'file' | 'image' }>()
+type PendingUpload = { session: string; uploadId: string; name: string; kind: 'file' | 'image' }
+const pendingUploads = shallowRef<PendingUpload[]>([])
 const sessionStorageError = ref('')
 const creationActor = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? `${auth.user.tenant_id}:${auth.user.sub}` : ''
 )
 const creationKey = (actor: string) => `skillforge.chat-session-create:${actor}`
+const uploadKey = (actor: string) => `skillforge.chat-upload:${actor}`
 let pageDisposed = false
 onScopeDispose(() => {
   pageDisposed = true
@@ -978,9 +1018,27 @@ watch(
   () => auth.identityVersion,
   () => {
     pendingSession.value = undefined
+    pendingUploads.value = []
+    deferredUpload.value = undefined
     sessionStorageError.value = ''
     if (!creationActor.value) return
     try {
+      const upload = sessionStorage.getItem(uploadKey(creationActor.value))
+      if (upload) {
+        const values = JSON.parse(upload) as PendingUpload[]
+        if (
+          !Array.isArray(values) ||
+          values.some(
+            (value) =>
+              !value.session ||
+              !value.name ||
+              !/^[0-9a-f-]{36}$/i.test(value.uploadId) ||
+              !['file', 'image'].includes(value.kind)
+          )
+        )
+          throw Error('invalid upload')
+        pendingUploads.value = values
+      }
       const raw = sessionStorage.getItem(creationKey(creationActor.value))
       if (!raw) return
       const operation = JSON.parse(raw) as PendingSession
@@ -996,7 +1054,7 @@ watch(
       endUserId.value = operation.endUserId
       targetKey.value = operation.targetKey
     } catch {
-      sessionStorageError.value = '无法读取原会话创建记录，请恢复浏览器存储后重新进入。'
+      sessionStorageError.value = '无法读取会话创建或上传记录，请恢复浏览器存储后重新进入。'
     }
   },
   { immediate: true, flush: 'sync' }
@@ -1081,6 +1139,7 @@ const toolInputForms = ref<{ dirty: boolean }[]>([])
 const hasSessionDraft = () =>
   !!(
     pendingSession.value ||
+    deferredUpload.value ||
     pendingInput.value ||
     pendingSteering.value ||
     steerText.value ||
@@ -1442,7 +1501,11 @@ async function inspectSessionCreation(automatic = false) {
       return
     }
     acceptSessionCreation(operation, result.session_id, actor)
-    message.success('会话创建已确认，请继续发送或重新选择文件。')
+    message.success(
+      deferredUpload.value
+        ? '会话创建已确认，可继续上传所选文件。'
+        : '会话创建已确认，请继续发送或重新选择文件。'
+    )
   })
 }
 /** 仅清理已确认的原消息快照；恢复期间的其他草稿资源不属于此回执。 */
@@ -1497,7 +1560,7 @@ async function dispatchInput(sent: FrozenMessage) {
   await refreshHistory()
 }
 async function send() {
-  if (pendingInput.value) return
+  if (pendingInput.value || deferredUpload.value) return
   await run(async () => {
     const text = input.value.trim()
     if (!text && !attachments.value.length && !mediaIds.value.length) return
@@ -1571,6 +1634,7 @@ function clearSessionView() {
   processes.value = []
   collaboration.value = undefined
   input.value = ''
+  deferredUpload.value = undefined
   attachments.value = []
   mediaIds.value = []
   readError.value = ''
@@ -1818,27 +1882,188 @@ function samePendingResponse(
   )
 }
 const attachmentUpload = ref<UploadInstance>()
+async function uploadSelected(file: File, kind: 'file' | 'image') {
+  await run(async () => {
+    const actor = creationActor.value,
+      identity = auth.identityVersion
+    try {
+      await ensureSession()
+    } catch (reason) {
+      if (!pageDisposed && creationActor.value === actor && auth.identityVersion === identity)
+        deferredUpload.value = { file, kind }
+      throw reason
+    }
+    if (
+      pendingUploads.value.some(
+        (item) => item.session === sessionId.value && item.kind === kind && item.name === file.name
+      )
+    )
+      throw Error('该文件的原上传结果尚未确认，请先核对，不要重新上传。')
+    const operation: PendingUpload = {
+      session: sessionId.value,
+      uploadId: crypto.randomUUID(),
+      name: file.name,
+      kind
+    }
+    try {
+      savePendingUploads(actor, [...pendingUploads.value, operation])
+    } catch {
+      deferredUpload.value = { file, kind }
+      throw Error('无法保存上传记录，文件尚未发送；请恢复浏览器存储后继续。')
+    }
+    deferredUpload.value = undefined
+    if (kind === 'file') {
+      let attachment: Awaited<ReturnType<typeof api.chat.uploadAttachment>>
+      try {
+        attachment = await api.chat.uploadAttachment(operation.session, operation.uploadId, file)
+      } catch (cause) {
+        if (
+          cause instanceof HttpClientError &&
+          cause.code === 'SESSION_ATTACHMENT_UPLOAD_REJECTED' &&
+          !pageDisposed &&
+          creationActor.value === actor &&
+          auth.identityVersion === identity
+        )
+          savePendingUploads(
+            actor,
+            pendingUploads.value.filter((item) => item !== operation)
+          )
+        throw cause
+      }
+      if (pageDisposed || creationActor.value !== actor || auth.identityVersion !== identity) return
+      if (attachment?.id !== operation.uploadId || !attachment.name)
+        throw Error('上传回执不完整，请核对原上传')
+      savePendingUploads(
+        actor,
+        pendingUploads.value.filter((item) => item !== operation)
+      )
+      attachments.value.push(attachment)
+    } else {
+      let media: Awaited<ReturnType<typeof api.chat.uploadMedia>>
+      try {
+        media = await api.chat.uploadMedia(operation.session, operation.uploadId, file)
+      } catch (cause) {
+        if (
+          cause instanceof HttpClientError &&
+          cause.code === 'SESSION_MEDIA_UPLOAD_REJECTED' &&
+          !pageDisposed &&
+          creationActor.value === actor &&
+          auth.identityVersion === identity
+        )
+          savePendingUploads(
+            actor,
+            pendingUploads.value.filter((item) => item !== operation)
+          )
+        throw cause
+      }
+      if (pageDisposed || creationActor.value !== actor || auth.identityVersion !== identity) return
+      if (
+        !media?.media_id ||
+        !media.mime_type ||
+        !Number.isSafeInteger(media.byte_length) ||
+        media.byte_length <= 0 ||
+        !Number.isSafeInteger(media.width) ||
+        media.width <= 0 ||
+        !Number.isSafeInteger(media.height) ||
+        media.height <= 0
+      )
+        throw Error('上传回执不完整，请核对原上传')
+      savePendingUploads(
+        actor,
+        pendingUploads.value.filter((item) => item !== operation)
+      )
+      mediaIds.value.push(media.media_id)
+    }
+  })
+}
+function savePendingUploads(actor: string, values: PendingUpload[]) {
+  if (values.length) sessionStorage.setItem(uploadKey(actor), JSON.stringify(values))
+  else sessionStorage.removeItem(uploadKey(actor))
+  pendingUploads.value = values
+}
+async function inspectUpload(operation: PendingUpload) {
+  const actor = creationActor.value,
+    identity = auth.identityVersion
+  if (
+    !operation ||
+    !actor ||
+    sessionId.value !== operation.session ||
+    !can('foundation.sessions.read')
+  )
+    return
+  await run(async () => {
+    if (operation.kind === 'file') {
+      const items = await api.chat.attachments(operation.session)
+      if (
+        pageDisposed ||
+        creationActor.value !== actor ||
+        auth.identityVersion !== identity ||
+        !pendingUploads.value.includes(operation)
+      )
+        return
+      const found = items.find((item) => item.id === operation.uploadId)
+      if (!found || typeof found.name !== 'string' || !found.name) {
+        message.warning('尚未查到原上传，结果仍未确认。')
+        return
+      }
+      savePendingUploads(
+        actor,
+        pendingUploads.value.filter((item) => item !== operation)
+      )
+      if (!attachments.value.some((item) => item.id === found.id)) attachments.value.push(found)
+    } else {
+      const result = await api.chat.mediaUploadReceipt(operation.session, operation.uploadId)
+      if (
+        pageDisposed ||
+        creationActor.value !== actor ||
+        auth.identityVersion !== identity ||
+        !pendingUploads.value.includes(operation)
+      )
+        return
+      if (
+        result.status !== 'FOUND' ||
+        !result.media?.media_id ||
+        !result.media.mime_type ||
+        !Number.isSafeInteger(result.media.byte_length) ||
+        result.media.byte_length <= 0 ||
+        !Number.isSafeInteger(result.media.width) ||
+        result.media.width <= 0 ||
+        !Number.isSafeInteger(result.media.height) ||
+        result.media.height <= 0
+      ) {
+        message.warning('尚未查到原上传，结果仍未确认。')
+        return
+      }
+      savePendingUploads(
+        actor,
+        pendingUploads.value.filter((item) => item !== operation)
+      )
+      if (!mediaIds.value.includes(result.media.media_id))
+        mediaIds.value.push(result.media.media_id)
+    }
+    message.success('原上传已确认，已加入当前消息。')
+  })
+}
+async function continueUpload() {
+  if (
+    !deferredUpload.value ||
+    readOnly.value ||
+    (!sessionId.value && (!canCreate.value || !endUserId.value || !targetKey.value))
+  )
+    return
+  const { file, kind } = deferredUpload.value
+  await uploadSelected(file, kind)
+}
 async function uploadAttachment(selection: UploadFile) {
   const file = selection.raw
   attachmentUpload.value?.clearFiles()
-  if (!file) return
-  await run(async () => {
-    await ensureSession()
-    attachments.value.push(
-      await api.chat.uploadAttachment(sessionId.value, crypto.randomUUID(), file)
-    )
-  })
+  if (file && !deferredUpload.value) await uploadSelected(file, 'file')
 }
 const imageUpload = ref<UploadInstance>()
 async function uploadImage(selection: UploadFile) {
   const file = selection.raw
   imageUpload.value?.clearFiles()
-  if (!file) return
-  await run(async () => {
-    await ensureSession()
-    const media = await api.chat.uploadMedia(sessionId.value, crypto.randomUUID(), file)
-    mediaIds.value.push(media.media_id)
-  })
+  if (file && !deferredUpload.value) await uploadSelected(file, 'image')
 }
 async function setPlan(value: unknown) {
   if (readOnly.value) return

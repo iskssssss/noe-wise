@@ -53,10 +53,22 @@ class SessionMediaServiceTest {
         verify(mapper,never()).pin(anyString(),anyString(),anyString());
         var nativeReplay=media.upload("session",id,new org.springframework.mock.web.MockMultipartFile("file","input.png","image/png",png));
         assertEquals(raw,nativeReplay);assertEquals(3,raw.width());assertEquals(2,raw.height());
-        assertThrows(IllegalArgumentException.class,()->media.upload("session",java.util.UUID.randomUUID().toString(),new byte[]{1,2,3}));
+        assertEquals("SESSION_MEDIA_UPLOAD_REJECTED", assertThrows(ApiException.class,()->media.upload("session",java.util.UUID.randomUUID().toString(),new byte[]{1,2,3})).getCode());
         doThrow(new SecurityException("session denied")).when(access).authorizeWritableCurrent("7","foreign");
         assertThrows(SecurityException.class,()->media.upload("foreign",java.util.UUID.randomUUID().toString(),png));
         verify(mapper,never()).find(eq("7"),eq("foreign"),anyString());
+    }
+    @Test void storageFailureAfterSourceRegistrationIsNotAnUploadRejection() {
+        var bodies = mock(com.skillforge.institution.attachment.SessionAttachmentBodyStore.class);
+        var service = new SessionMediaService(mapper, access, mock(com.skillforge.institution.runtime.AgentRunBindings.class),
+                bodies, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), mock(org.springframework.beans.factory.ObjectProvider.class));
+        doNothing().doThrow(new IllegalArgumentException("storage failure"))
+                .when(bodies).register(anyString(), anyString(), anyString(), any());
+        byte[] png = SessionMediaImages.encode(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "image/png").bytes();
+        var failure = assertThrows(IllegalArgumentException.class,
+                () -> service.upload("session", java.util.UUID.randomUUID().toString(), png));
+        assertEquals("storage failure", failure.getMessage());
+        verify(mapper).insert(any());
     }
     @Test void actualPixelsSurviveAdmissionCropAndDeterministicRequestVariant() throws Exception {
         var pixels = new BufferedImage(40, 20, BufferedImage.TYPE_INT_ARGB);

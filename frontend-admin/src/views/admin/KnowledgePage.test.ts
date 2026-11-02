@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
+import { confirm } from '@skillforge/shared/feedback'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
 import {
   ElButton,
@@ -458,6 +459,32 @@ it('创建成功直接进入新知识库，导航失败时保留原身份入口'
   expect(api.createBase).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).toContain('知识库“连续维护”已创建，标识：kb-owned')
   expect(wrapper.find('router-link-stub').attributes('to')).toBe('/admin/knowledge/kb-owned')
+})
+
+it('创建后导航失败时提示首个文件待上传，放弃前保护文件选择', async () => {
+  permissions.value.push('foundation.knowledge.read')
+  push.mockRejectedValueOnce(new Error('导航失败'))
+  const wrapper = await createForm('连续维护')
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+  Object.defineProperty(input, 'files', {
+    value: [new File(['内容'], '资料.txt')],
+    configurable: true
+  })
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  await flushPromises()
+  await button(wrapper, '保存').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('文件“资料.txt”尚未上传')
+  expect(wrapper.find('router-link-stub').attributes('to')).toBe('/admin/knowledge/kb-owned')
+  vi.mocked(confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+  await button(wrapper, '新建知识库').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('文件“资料.txt”尚未上传')
+  expect(api.createBase).toHaveBeenCalledTimes(1)
+  await button(wrapper, '新建知识库').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('文件“资料.txt”尚未上传')
+  expect(vi.mocked(confirm)).toHaveBeenCalledTimes(2)
 })
 
 it('没有读取权限时保留已创建信息且不进入详情', async () => {

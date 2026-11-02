@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 @Service
 public class SessionAttachmentService {
     private static final Logger LOG = LoggerFactory.getLogger(SessionAttachmentService.class);
+    private static final String INVALID_MESSAGE = "附件须为不超过50MiB的UTF-8文本、PDF、DOCX、PPTX、XLSX或PNG/JPEG；每条消息最多16个、合计不超过200MiB";
     public static final int MAX_BYTES = ChatAttachmentLimits.MAX_FILE_BYTES;
     static final int MAX_PREPARED_TEXT_BYTES = 32 * 1024;
     static final int MAX_TOTAL_PREPARED_TEXT_BYTES = 64 * 1024;
@@ -67,7 +68,7 @@ public class SessionAttachmentService {
         String tenant = access.tenant();
         access.authorizeWritableCurrent(tenant, session);
         requireId(uploadId);
-        if (file == null || file.isEmpty() || file.getSize() > MAX_BYTES) throw invalid();
+        if (file == null || file.isEmpty() || file.getSize() > MAX_BYTES) throw uploadRejected(INVALID_MESSAGE);
         byte[] bytes;
         try (var input = file.getInputStream()) { bytes = input.readNBytes(MAX_BYTES + 1); }
         return registerUpload(tenant, session, uploadId, file.getOriginalFilename(), bytes);
@@ -84,11 +85,15 @@ public class SessionAttachmentService {
 
     private Metadata registerUpload(String tenant, String session, String uploadId, String name, byte[] bytes) throws IOException {
         if (name == null || name.isBlank() || name.length() > 128
-                || name.chars().anyMatch(c -> c < 32 || c == 127 || c == '/' || c == '\\')) throw invalid();
+                || name.chars().anyMatch(c -> c < 32 || c == 127 || c == '/' || c == '\\')) throw uploadRejected(INVALID_MESSAGE);
         String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
-        if (!EXTENSIONS.contains(extension)) throw invalid();
-        if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) throw invalid();
-        SessionAttachmentContentValidator.validate(extension, bytes);
+        if (!EXTENSIONS.contains(extension)) throw uploadRejected(INVALID_MESSAGE);
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) throw uploadRejected(INVALID_MESSAGE);
+        try {
+            SessionAttachmentContentValidator.validate(extension, bytes);
+        } catch (ApiException rejected) {
+            throw uploadRejected(rejected.getMessage());
+        }
         Instant now = Instant.now();
         var row = new SessionAttachmentRow(uploadId, tenant, session, name,
                 "attachments/" + uploadId + "/input." + extension, bytes.length, digest(bytes), bytes,
@@ -371,9 +376,11 @@ public class SessionAttachmentService {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
         catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
+    private static ApiException uploadRejected(String message) {
+        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "SESSION_ATTACHMENT_UPLOAD_REJECTED", message, false);
+    }
     private static ApiException invalid() {
-        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "附件须为不超过50MiB的UTF-8文本、PDF、DOCX、PPTX、XLSX或PNG/JPEG；每条消息最多16个、合计不超过200MiB");
+        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, INVALID_MESSAGE);
     }
     private static Metadata metadata(SessionAttachmentRow row) {
         return new Metadata(row.id(), row.name(), row.inputPath(), row.size(), row.sha256(), row.expiresAt());

@@ -100,6 +100,10 @@ test('real browser creates, replies, restores both clients and resolves a handof
   await page.getByRole('tab', { name: '任务', exact: true }).click()
   const ticketResponse = responseAt(page, '/api/v1/handoff/tickets', 'POST')
   await page.getByRole('button', { name: '创建人工接管工单', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '创建人工接管工单' })
+    .getByRole('button', { name: '创建工单', exact: true })
+    .click()
   const ticket = await dataOf(await ticketResponse)
   const ticketId = String(ticket.id)
   expect(ticket.status).toBe('pending')
@@ -138,6 +142,8 @@ test('real browser creates, replies, restores both clients and resolves a handof
 
   // 两端刷新后都从数据库重新读取原事实与身份，而非重发回复或模型请求。
   await page.reload()
+  await page.locator('.admin-toolbar .el-select .el-select__wrapper').first().click()
+  await page.getByRole('option', { name: '已接管', exact: true }).click()
   const restored = await openTicket(page, ticketId)
   expect(
     restored.replies.filter(
@@ -153,6 +159,7 @@ test('real browser creates, replies, restores both clients and resolves a handof
   await expect(publicMessage).toHaveAttribute('data-message-id', sourceMessageId!)
   await expect(chat.locator('.connection-status')).toContainText('已连接')
 
+  await drawer.getByText('结束处理并标记已解决', { exact: true }).click()
   await drawer
     .locator('.el-form-item')
     .filter({ hasText: '说明问题如何解决' })

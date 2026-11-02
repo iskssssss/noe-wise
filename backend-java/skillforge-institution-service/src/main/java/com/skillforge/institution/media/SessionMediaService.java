@@ -46,7 +46,7 @@ public class SessionMediaService implements MediaPort {
         String tenant = access.tenant();
         access.authorizeWritableCurrent(tenant, session);
         requireId(uploadId);
-        if (file == null || file.isEmpty() || file.getSize() > SessionMediaImages.MAX_BYTES) throw invalid();
+        if (file == null || file.isEmpty() || file.getSize() > SessionMediaImages.MAX_BYTES) throw uploadRejected();
         byte[] bytes;
         try (var input = file.getInputStream()) { bytes = input.readNBytes(SessionMediaImages.MAX_BYTES + 1); }
         return registerUpload(tenant, session, uploadId, bytes);
@@ -62,8 +62,14 @@ public class SessionMediaService implements MediaPort {
     }
 
     private MediaView registerUpload(String tenant, String session, String uploadId, byte[] bytes) {
-        if (bytes == null || bytes.length == 0 || bytes.length > SessionMediaImages.MAX_BYTES) throw invalid();
-        return view(register(new SessionRef(new TenantId(tenant), session), uploadId, "图片", bytes));
+        SessionMediaImages.Decoded decoded;
+        try {
+            decoded = SessionMediaImages.decode(bytes);
+        } catch (IllegalArgumentException rejected) {
+            throw uploadRejected();
+        }
+        var owner = new SessionRef(new TenantId(tenant), session);
+        return view(register(owner, owner.sessionId(), null, uploadId, "图片", bytes, decoded));
     }
 
     /** 只按原上传标识和当前会话读取已完成的图片；未找到不代表上传失败。 */
@@ -151,8 +157,12 @@ public class SessionMediaService implements MediaPort {
     }
 
     private MediaRef register(SessionRef owner, String productSession, String runId, String stableId, String name, byte[] bytes) {
+        return register(owner, productSession, runId, stableId, name, bytes, SessionMediaImages.decode(bytes));
+    }
+
+    private MediaRef register(SessionRef owner, String productSession, String runId, String stableId, String name,
+            byte[] bytes, SessionMediaImages.Decoded decoded) {
         return inTenant(owner, () -> {
-            var decoded = SessionMediaImages.decode(bytes);
             String sourceId = sourceId(owner, stableId);
             var source = store(owner, productSession, runId, sourceId, name, bytes, decoded.mime(), decoded.pixels().getWidth(),
                     decoded.pixels().getHeight(), null, "source-v1");
@@ -321,6 +331,10 @@ public class SessionMediaService implements MediaPort {
         String previous = TenantContext.getTenantId();
         try { TenantContext.setTenantId(owner.tenantId().value()); return action.get(); }
         finally { if (previous == null) TenantContext.clear(); else TenantContext.setTenantId(previous); }
+    }
+    private static ApiException uploadRejected() {
+        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "SESSION_MEDIA_UPLOAD_REJECTED",
+                "图片须为不超过50MiB、4000万像素的有效 PNG、JPEG 或 WebP 文件", false);
     }
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("image_content_invalid"); }
     public record Crop(int x, int y, int width, int height) { }

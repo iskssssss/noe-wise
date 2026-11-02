@@ -34,13 +34,14 @@ import org.springframework.test.context.TestPropertySource;
 /** 真实 PG 的持久受理→原 SessionLog→中断恢复→公开历史，不调用模型。 */
 @TestPropertySource(properties={"skillforge.handoff-reply-delay-ms=3600000","skillforge.session-outbox-cron=-","agent-runtime.workers.auto-startup=false"})
 class HandoffHumanAssistanceIntegrationTest extends AbstractIntegrationTest {
- @Autowired HandoffApplicationService handoffs;@Autowired HandoffReplyService replies;@Autowired HandoffReplyMapper replyMapper;
+ @Autowired HandoffApplicationService handoffs;@Autowired HandoffActionService actions;@Autowired HandoffReplyService replies;@Autowired HandoffReplyMapper replyMapper;
  @Autowired AgentRuntimeInboundGateway runtime;@Autowired AgentRuntimeExecutionProjection projection;
  @Autowired SessionMailboxService mailbox;
  @Autowired PlanMapper plans;@Autowired TenantMapper tenants;@Autowired TenantMemberMapper members;
  @Autowired EndUserMapper users;@Autowired AgentMapper agents;@Autowired SessionMapper sessions;
  @Autowired SessionStorePort runtimeSessions;@Autowired HandoffController controller;
  @Autowired FoundationAccess access;@Autowired FoundationOrganizationService organization;
+ @Autowired javax.sql.DataSource dataSource;
  @Autowired com.skillforge.core.chat.session.SessionService productSessions;
  long tenant,operator;SessionDO session;
  @BeforeEach void setup(){
@@ -53,6 +54,28 @@ class HandoffHumanAssistanceIntegrationTest extends AbstractIntegrationTest {
   access.withSubject(subject(),()->{organization.registerSessionOwnership(session.getSessionId());return null;});
  }
  @AfterEach void clear(){TenantContext.clear();}
+ @Test void actionReceiptCommitsWithStateAndReplaysOnlyTheSameCommand(){
+  access.withSubject(subject(),()->{
+   String id=handoffs.create(tenant,new CreateHandoffTicketRequest("user_request",null,session.getSessionId(),null,0,java.util.UUID.randomUUID().toString())).id();
+   String accept=java.util.UUID.randomUUID().toString();
+   var first=actions.execute(tenant,operator,id,1,accept,"accept",null);
+   assertTrue(first.created());assertEquals("assigned",first.status());
+   var replay=actions.execute(tenant,operator,id,1,accept,"accept",null);
+   assertFalse(replay.created());assertEquals(first.commandId(),replay.commandId());
+   assertEquals("assigned",actions.receipt(tenant,operator,id,accept).status());
+   assertActionReceiptTenantIsolation();
+   assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->actions.execute(tenant,operator,id,2,accept,"resolve","已处理"));
+   String rejected=java.util.UUID.randomUUID().toString();
+   var failure=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->actions.execute(tenant,operator,id,1,rejected,"resolve","过期"));
+   assertEquals("HANDOFF_ACTION_NOT_ACCEPTED",failure.getCode());
+   assertNull(actions.receipt(tenant,operator,id,rejected),"失败事务不能留下成功回执");
+   String resolve=java.util.UUID.randomUUID().toString();
+   assertEquals("resolved",actions.execute(tenant,operator,id,2,resolve,"resolve","已处理").status());
+   assertEquals("resolved",actions.receipt(tenant,operator,id,resolve).status());
+   assertEquals("已处理",handoffs.require(tenant,id).getResolutionNote());
+   return null;
+  });
+ }
  @Test void sourceCommittedBeforeWorkerReceiptSurvivesReconstructionAndDoesNotDuplicate(){
   access.withSubject(subject(),()->{
   String id=handoffs.create(tenant,new CreateHandoffTicketRequest("user_request",null,session.getSessionId(),null,0,java.util.UUID.randomUUID().toString())).id();
@@ -99,6 +122,31 @@ class HandoffHumanAssistanceIntegrationTest extends AbstractIntegrationTest {
   assertEquals(publicBeforeRejectedReply,publicOutputIds(),"关闭后的拒绝不能追加公开Mailbox事件");
   assertTrue(controller.detail(id,null).data().messages().stream().anyMatch(m->m.content().equals(first.content())));
   return null;});
+ }
+ private void assertActionReceiptTenantIsolation() {
+  String role="handoff_rls_"+java.util.UUID.randomUUID().toString().replace("-", "");
+  try(var connection=dataSource.getConnection();var statement=connection.createStatement()) {
+   String previousTenant;
+   try(var rows=statement.executeQuery("SELECT current_setting('app.tenant_id', true)")) {rows.next();previousTenant=rows.getString(1);}
+   statement.execute("CREATE ROLE "+role+" NOLOGIN");
+   statement.execute("GRANT USAGE ON SCHEMA public TO "+role);
+   statement.execute("GRANT SELECT ON public.nw_handoff_action_receipts TO "+role);
+   try {
+    statement.execute("SET ROLE "+role);
+    try(var set=connection.prepareStatement("SELECT set_config('app.tenant_id', ?, false)")) {
+     set.setString(1,Long.toString(tenant));set.execute();
+     try(var rows=statement.executeQuery("SELECT count(*) FROM public.nw_handoff_action_receipts WHERE tenant_id="+tenant)) {rows.next();assertEquals(1,rows.getInt(1));}
+     set.setString(1,Long.toString(tenant+1));set.execute();
+     try(var rows=statement.executeQuery("SELECT count(*) FROM public.nw_handoff_action_receipts WHERE tenant_id="+tenant)) {rows.next();assertEquals(0,rows.getInt(1));}
+    }
+   } finally {
+    statement.execute("RESET ROLE");
+    try(var reset=connection.prepareStatement("SELECT set_config('app.tenant_id', ?, false)")) {reset.setString(1,previousTenant==null?"":previousTenant);reset.execute();}
+    statement.execute("REVOKE SELECT ON public.nw_handoff_action_receipts FROM "+role);
+    statement.execute("REVOKE USAGE ON SCHEMA public FROM "+role);
+    statement.execute("DROP ROLE "+role);
+   }
+  } catch(java.sql.SQLException error) {throw new IllegalStateException(error);}
  }
  private FoundationAccess.Subject subject(){return new FoundationAccess.Subject(false,Long.toString(tenant),Long.toString(operator));}
  private java.util.List<String> publicOutputIds(){

@@ -37,6 +37,9 @@
         >进入知识库维护文档</RouterLink
       >
       <span v-else>当前账号没有知识库读取权限，请联系管理员授权后维护文档。</span>
+      <p v-if="createdInitialFile">
+        文件“{{ createdInitialFile.name }}”尚未上传，请进入此知识库继续。
+      </p>
     </section>
     <div class="admin-toolbar admin-filters">
       <ElInput v-model="query" clearable aria-label="搜索知识库" placeholder="搜索名称或说明" />
@@ -365,7 +368,7 @@ import {
 import { confirm, message } from '@skillforge/shared/feedback'
 import { api, type KnowledgeBase } from '../../api'
 import { useAuthStore } from '../../stores/auth'
-import { prepareInitialFile } from './knowledgeInitialFile'
+import { peekInitialFile, prepareInitialFile, takeInitialFile } from './knowledgeInitialFile'
 const auth = useAuthStore()
 const router = useRouter()
 const canRead = computed(
@@ -415,6 +418,11 @@ const isKnowledgeWriteRejection = (cause: unknown) =>
 const createdKnowledge = ref<{ id: string; name: string }>()
 const initialFile = ref<File>()
 const initialInput = ref<HTMLInputElement>()
+const createdInitialFile = computed(() =>
+  createdKnowledge.value
+    ? peekInitialFile(owner.value, auth.identityVersion, createdKnowledge.value.id)
+    : undefined
+)
 watch(
   () => auth.identityVersion,
   () => {
@@ -521,6 +529,18 @@ async function edit(row?: KnowledgeBase) {
     if (configurationUnknown.value || creationUnknown.value || creationStorageError.value) return
     if (row ? !canUpdate.value : !canCreate.value)
       throw Error(row ? '当前账号没有更新知识库权限' : '当前账号没有创建知识库权限')
+    if (createdInitialFile.value && createdKnowledge.value) {
+      if (
+        !(await confirm({
+          title: '放弃待上传文件',
+          content: `文件“${createdInitialFile.value.name}”尚未上传，继续将放弃当前文件选择。`,
+          confirmText: '放弃并继续',
+          cancelText: '返回原知识库'
+        }))
+      )
+        return
+      takeInitialFile(owner.value, auth.identityVersion, createdKnowledge.value.id)
+    }
     createdKnowledge.value = undefined
     initialFile.value = undefined
     if (initialInput.value) initialInput.value.value = ''

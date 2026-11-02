@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   revisions: vi.fn(),
   prepare: vi.fn(),
   upload: vi.fn(),
+  uploadResult: vi.fn(),
   publish: vi.fn(),
   combine: vi.fn(),
   result: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('../../api', () => ({
       latestReadySources: mocks.latestSources,
       prepareRevision: mocks.prepare,
       uploadFile: mocks.upload,
+      uploadResult: mocks.uploadResult,
       publishRevision: mocks.publish,
       prepareAndPublish: mocks.combine,
       prepareAndPublishResult: mocks.result
@@ -465,6 +467,87 @@ it('economical knowledge preparation declares only its actual keyword retrieval 
     ['v1', 'v2'],
     expect.objectContaining({ allowed_operators: ['KEYWORD'] })
   )
+})
+
+it('重新进入知识库自动只读核对并恢复原发布结果', async () => {
+  const request = '12345678-1234-4234-8234-123456789abc'
+  const key = `skillforge.knowledge-publication.${JSON.stringify(['tenant', 'user', 'kb-1'])}`
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({
+      requestId: request,
+      kbId: 'kb-1',
+      sources: ['v1', 'v2'],
+      policy: { allowed_operators: ['KEYWORD'] }
+    })
+  )
+  mocks.result.mockResolvedValueOnce({
+    request_id: request,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published', capability_version_id: 'cap-1' }
+  })
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(mocks.result).toHaveBeenCalledExactlyOnceWith(request)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(document.body.textContent).toContain('知识发布已确认：修订 1')
+  expect(mocks.combine).not.toHaveBeenCalled()
+  expect(mocks.prepare).not.toHaveBeenCalled()
+  expect(mocks.publish).not.toHaveBeenCalled()
+})
+
+it('自动核对发布失败时保留原请求，刷新页面内列表不重复查询', async () => {
+  const request = '12345678-1234-4234-8234-123456789abc'
+  const key = `skillforge.knowledge-publication.${JSON.stringify(['tenant', 'user', 'kb-1'])}`
+  const pending = JSON.stringify({
+    requestId: request,
+    kbId: 'kb-1',
+    sources: ['v1', 'v2'],
+    policy: { allowed_operators: ['KEYWORD'] }
+  })
+  sessionStorage.setItem(key, pending)
+  mocks.result.mockRejectedValueOnce(new Error('回执暂不可用'))
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBe(pending)
+  expect(document.body.textContent).toContain(request)
+  await button('刷新').trigger('click')
+  await flushPromises()
+  expect(mocks.result).toHaveBeenCalledTimes(1)
+  expect(mocks.combine).not.toHaveBeenCalled()
+})
+
+it('同一知识库同时存在上传和发布待核对时依次只读核对', async () => {
+  const owner = JSON.stringify(['tenant', 'user', 'kb-1'])
+  const publicationId = '12345678-1234-4234-8234-123456789abc'
+  const uploadId = '22345678-1234-4234-8234-123456789abc'
+  sessionStorage.setItem(
+    `skillforge.knowledge-publication.${owner}`,
+    JSON.stringify({
+      requestId: publicationId,
+      kbId: 'kb-1',
+      sources: ['v1', 'v2'],
+      policy: { allowed_operators: ['KEYWORD'] }
+    })
+  )
+  sessionStorage.setItem(
+    `skillforge.knowledge-upload.${owner}`,
+    JSON.stringify({ name: '文档.txt', size: 4, requestId: uploadId })
+  )
+  mocks.result.mockResolvedValueOnce({
+    request_id: publicationId,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published', capability_version_id: 'cap-1' }
+  })
+  mocks.uploadResult.mockResolvedValueOnce({ request_id: uploadId, status: 'PROCESSING' })
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(mocks.result).toHaveBeenCalledExactlyOnceWith(publicationId)
+  expect(mocks.uploadResult).toHaveBeenCalledExactlyOnceWith('kb-1', uploadId)
+  expect(sessionStorage.getItem(`skillforge.knowledge-publication.${owner}`)).toBeNull()
+  expect(sessionStorage.getItem(`skillforge.knowledge-upload.${owner}`)).not.toBeNull()
+  expect(mocks.combine).not.toHaveBeenCalled()
+  expect(mocks.upload).not.toHaveBeenCalled()
 })
 
 it('范围确认后一次组合发布并显示精确回执', async () => {

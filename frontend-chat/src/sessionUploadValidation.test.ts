@@ -30,7 +30,7 @@ beforeEach(async () => {
     response({ media_id: 'media', mime_type: 'image/png', byte_length: 2, width: 1, height: 1 })
   upload = async (body) =>
     response({
-      id: `confirmed-${body.get('upload_id')}`,
+      id: String(body.get('upload_id')),
       name: (body.get('file') as File).name,
       input_path: 'inputs/confirmed.txt',
       size: 2,
@@ -105,6 +105,207 @@ afterEach(() => {
   wrapper.unmount()
   vi.unstubAllGlobals()
 })
+
+describe('上传明确拒绝', () => {
+  it.each([
+    ['attachment', 'SESSION_ATTACHMENT_UPLOAD_REJECTED', false],
+    ['media', 'SESSION_MEDIA_UPLOAD_REJECTED', false],
+    ['attachment', 'UNPROCESSABLE_ENTITY', true],
+    ['media', 'UNPROCESSABLE_ENTITY', true]
+  ])('%s 的 %s 按原请求回执保留或清除记录', async (kind, code, unknown) => {
+    const rejected = async () =>
+      new Response(
+        JSON.stringify({ code, message: '内容不合法', data: null, trace_id: 'upload-test' }),
+        { status: 422, headers: { 'content-type': 'application/json' } }
+      )
+    if (kind === 'media') mediaUpload = rejected
+    else upload = rejected
+    const file =
+      kind === 'media'
+        ? new File(['bad'], 'bad.png', { type: 'image/png' })
+        : new File(['bad'], 'bad.txt', { type: 'text/plain' })
+    await state.upload([file])
+    expect(uploads).toHaveLength(1)
+    expect(state.currentUnconfirmedUploads.value).toHaveLength(unknown ? 1 : 0)
+    expect(
+      JSON.parse(sessionStorage.getItem('skillforge.chat.unconfirmedUploads') || '[]')
+    ).toHaveLength(unknown ? 1 : 0)
+    if (!unknown) expect(state.error.value).toContain('内容不合法')
+    expect(state.draft.value).toBe('已有正文草稿')
+  })
+})
+
+it('明确拒绝后无法清除浏览器记录时保留原记录', async () => {
+  upload = async () =>
+    new Response(
+      JSON.stringify({
+        code: 'SESSION_ATTACHMENT_UPLOAD_REJECTED',
+        message: '内容不合法',
+        data: null,
+        trace_id: 'upload-test'
+      }),
+      { status: 422, headers: { 'content-type': 'application/json' } }
+    )
+  const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    throw new Error('storage unavailable')
+  })
+  try {
+    await state.upload([new File(['bad'], 'bad.txt', { type: 'text/plain' })])
+    expect(state.uploadStorageUnavailable.value).toBe(true)
+    expect(state.currentUnconfirmedUploads.value).toHaveLength(1)
+    expect(JSON.parse(sessionStorage.getItem('skillforge.chat.unconfirmedUploads')!)).toHaveLength(
+      1
+    )
+    expect(uploads).toHaveLength(1)
+  } finally {
+    remove.mockRestore()
+  }
+})
+
+it.each(['attachment', 'media'] as const)('%s 上传成功响应不完整时保留原标识', async (kind) => {
+  if (kind === 'media')
+    mediaUpload = async () => response({ media_id: 'image', mime_type: 'image/png' })
+  else
+    upload = async () =>
+      response({
+        id: 'other',
+        name: 'bad.txt',
+        input_path: 'x',
+        size: 2,
+        sha256: 'hash',
+        expires_at: 'later'
+      })
+  const file =
+    kind === 'media'
+      ? new File(['ok'], 'bad.png', { type: 'image/png' })
+      : new File(['ok'], 'bad.txt', { type: 'text/plain' })
+  expect(await state.upload([file])).toEqual([])
+  expect(uploads).toHaveLength(1)
+  expect(state.currentUnconfirmedUploads.value[0]?.uploadId).toBe(uploads[0]!.get('upload_id'))
+  expect(state.currentConfirmedUploads.value).toEqual([])
+  expect(state.attachments.value).toEqual([])
+  expect(state.images.value).toEqual([])
+  expect(JSON.parse(sessionStorage.getItem('skillforge.chat.unconfirmedUploads')!)).toHaveLength(1)
+})
+
+it('切换会话后收到不完整上传回执，原会话仍可核对', async () => {
+  let finish!: (value: Response) => void
+  upload = () =>
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  const pending = state.upload([new File(['ok'], 'bad.txt', { type: 'text/plain' })])
+  await vi.waitFor(() => expect(uploads).toHaveLength(1))
+  const id = uploads[0]!.get('upload_id')
+  await state.openSession('other')
+  finish(response(null))
+  await pending
+  await state.openSession('existing')
+  expect(state.currentUnconfirmedUploads.value[0]?.uploadId).toBe(id)
+  expect(state.currentConfirmedUploads.value).toEqual([])
+  expect(state.attachments.value).toEqual([])
+})
+
+it.each(['attachment', 'media'] as const)(
+  '%s 上传结果未知时阻止同名重传，其他文件和会话可继续上传',
+  async (kind) => {
+    if (kind === 'media')
+      mediaUpload = async () => {
+        throw new TypeError('offline')
+      }
+    else
+      upload = async () => {
+        throw new TypeError('offline')
+      }
+    const file = (name: string) =>
+      kind === 'media'
+        ? new File(['ok'], `${name}.png`, { type: 'image/png' })
+        : new File(['ok'], `${name}.txt`, { type: 'text/plain' })
+    await state.upload([file('same')])
+    const originalId = uploads[0]!.get('upload_id')
+    await state.upload([file('same')])
+    expect(uploads).toHaveLength(1)
+    expect(state.error.value).toContain('请先核对原上传')
+    expect(state.currentUnconfirmedUploads.value[0]?.uploadId).toBe(originalId)
+    await state.upload([file('other')])
+    expect(uploads).toHaveLength(2)
+    await state.openSession('other')
+    await state.upload([file('same')])
+    expect(uploads).toHaveLength(3)
+    expect(uploads[2]!.get('session_id')).toBe('other')
+  }
+)
+
+it('原附件查证完成后允许用户再次选择同名文件', async () => {
+  const normal = upload
+  upload = async () => {
+    throw new TypeError('offline')
+  }
+  const file = new File(['ok'], 'same.txt', { type: 'text/plain' })
+  await state.upload([file])
+  const id = String(uploads[0]!.get('upload_id'))
+  attachmentList = [
+    {
+      id,
+      name: file.name,
+      input_path: 'inputs/same.txt',
+      size: 2,
+      sha256: 'hash',
+      expires_at: '2027-01-01T00:00:00Z'
+    }
+  ]
+  await state.checkUnconfirmedUpload(id)
+  expect(state.currentUnconfirmedUploads.value).toEqual([])
+  upload = normal
+  await state.upload([file])
+  expect(uploads).toHaveLength(2)
+  expect(uploads[1]!.get('upload_id')).not.toBe(id)
+})
+
+it.each(['supplement', 'locked'] as const)(
+  '附件核对期间进入 %s 时保留回执，不改写草稿',
+  async (mode) => {
+    upload = async () => {
+      throw new TypeError('offline')
+    }
+    await state.upload([new File(['ok'], 'pending.txt', { type: 'text/plain' })])
+    const id = String(uploads[0]!.get('upload_id'))
+    const item = {
+      id,
+      name: 'pending.txt',
+      input_path: 'inputs/pending.txt',
+      size: 2,
+      sha256: 'hash',
+      expires_at: '2027-01-01T00:00:00Z'
+    }
+    let finish!: (value: Response) => void
+    attachmentRead = () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    const checking = state.checkUnconfirmedUpload(id)
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    if (mode === 'supplement') state.inputMode.value = 'supplement'
+    else state.pendingInput.value = {} as never
+    finish(response([item]))
+    await checking
+    expect(state.attachments.value).toEqual([])
+    expect(state.draft.value).toBe('已有正文草稿')
+    expect(state.currentUnconfirmedUploads.value).toEqual([])
+    expect(state.currentConfirmedUploads.value[0]?.uploadId).toBe(id)
+    expect(
+      JSON.parse(sessionStorage.getItem('skillforge.chat.unconfirmedUploads')!)[0].receipt.id
+    ).toBe(id)
+    state.inputMode.value = 'message'
+    state.pendingInput.value = undefined
+    attachmentRead = undefined
+    attachmentList = [item]
+    await state.claimConfirmedUpload(id)
+    expect(state.attachments.value.map((value) => value.id)).toEqual([id])
+    expect(state.currentConfirmedUploads.value).toEqual([])
+    expect(uploads).toHaveLength(1)
+  }
+)
 
 describe('上传批次的本地预检', () => {
   it.each([

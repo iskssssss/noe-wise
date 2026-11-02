@@ -203,7 +203,7 @@ it('缺少工具接入权限时仍可单独创建连接器', async () => {
   expect(button('保存').exists()).toBe(true)
 })
 
-it('跳转失败时保留已创建结果并提示从列表继续，不重复创建', async () => {
+it('跳转及列表刷新失败时保留原连接器的工具接入入口', async () => {
   calls.push.mockRejectedValueOnce(Error('路由不可用'))
   page()
   await flushPromises()
@@ -218,10 +218,19 @@ it('跳转失败时保留已创建结果并提示从列表继续，不重复创�
       .find((item) => item.props('label') === label)!
       .findComponent(ElInput)
       .setValue(value)
+  calls.instances.mockRejectedValueOnce(new Error('目录不可用'))
   await button('保存并接入工具').trigger('click')
   await flushPromises()
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(document.body.textContent).toContain('连接器已保存，未能进入工具接入')
+  await button('继续接入原连接器').trigger('click')
+  await flushPromises()
+  expect(calls.push).toHaveBeenLastCalledWith({
+    path: '/admin/tools',
+    query: { connectorId: 'new' }
+  })
+  expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
+  expect(wrapper!.text()).not.toContain('继续接入原连接器')
 })
 
 it('创建结果未知时保留原请求且不持久化凭据，核对后继续接入', async () => {
@@ -262,6 +271,7 @@ it('创建结果未知时保留原请求且不持久化凭据，核对后继续�
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(wrapper!.text()).toContain('创建结果尚未确认')
   calls.creationResult.mockResolvedValueOnce({ request_id: requestId, instance_id: 'new' })
+  calls.push.mockResolvedValueOnce({ type: 4 })
   await button('核对创建结果').trigger('click')
   await flushPromises()
   expect(calls.push).toHaveBeenCalledExactlyOnceWith({
@@ -270,6 +280,11 @@ it('创建结果未知时保留原请求且不持久化凭据，核对后继续�
   })
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(sessionStorage.getItem('skillforge.connector-create:1:member-1')).toBeNull()
+  expect(button('继续接入原连接器').exists()).toBe(true)
+  await button('继续接入原连接器').trigger('click')
+  await flushPromises()
+  expect(calls.push).toHaveBeenCalledTimes(2)
+  expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
 })
 
 it('明确发生在保存前的发现失败解除待核对并保留输入', async () => {

@@ -42,6 +42,7 @@ beforeEach(() => {
   calls.auth = reactive({ user: { tenant_id: 'tenant-1', sub: 'user-1' } })
   calls.sessions.mockResolvedValue([session])
   calls.list.mockResolvedValue([])
+  calls.receipt.mockResolvedValue({ status: 'UNKNOWN', task: null })
 })
 
 it('切换机构后清除旧任务和会话，忽略旧机构迟到的列表', async () => {
@@ -114,9 +115,8 @@ it('任务操作断连后重新进入仍保存原标识，只有成功回执解�
   await flushPromises()
   expect(wrapper.text()).toContain(operationId)
   expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
-  await button('核对原操作').trigger('click')
-  await flushPromises()
   expect(button('设为当前任务').props('disabled')).toBe(true)
+  expect(calls.receipt).toHaveBeenCalledTimes(1)
   await button('核对原操作').trigger('click')
   await flushPromises()
   expect(wrapper.text()).not.toContain(operationId)
@@ -124,6 +124,43 @@ it('任务操作断连后重新进入仍保存原标识，只有成功回执解�
   expect(calls.receipt).toHaveBeenNthCalledWith(1, 'session-1', 'task-1', operationId)
   expect(calls.receipt).toHaveBeenNthCalledWith(2, 'session-1', 'task-1', operationId)
   expect(calls.select).toHaveBeenCalledTimes(1)
+})
+
+it('重新进入后自动确认原任务操作并刷新，不重复写入', async () => {
+  const owner = JSON.stringify(['tenant-1', 'user-1'])
+  const operationId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = `skillforge.task-operation.${owner}`
+  const task = { taskId: 'task-1', title: '核对资料', summary: '', status: 'OPEN', revision: 2 }
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({ sessionId: 'session-1', taskId: task.taskId, operationId })
+  )
+  calls.list.mockResolvedValue([task])
+  calls.receipt.mockResolvedValueOnce({ status: 'SUCCEEDED', task })
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.receipt).toHaveBeenCalledExactlyOnceWith('session-1', 'task-1', operationId)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(button('设为当前任务').props('disabled')).toBe(false)
+  expect(calls.list).toHaveBeenCalledTimes(2)
+  expect(calls.select).not.toHaveBeenCalled()
+  expect(calls.update).not.toHaveBeenCalled()
+})
+
+it('自动核对失败时保留原操作与手动核对入口', async () => {
+  const owner = JSON.stringify(['tenant-1', 'user-1'])
+  const operationId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = `skillforge.task-operation.${owner}`
+  const pending = JSON.stringify({ sessionId: 'session-1', taskId: 'task-1', operationId })
+  sessionStorage.setItem(key, pending)
+  calls.receipt.mockRejectedValueOnce(new Error('回执暂不可用'))
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(document.body.textContent).toContain('回执暂不可用')
+  expect(sessionStorage.getItem(key)).toBe(pending)
+  expect(button('核对原操作').exists()).toBe(true)
+  expect(calls.select).not.toHaveBeenCalled()
+  expect(calls.update).not.toHaveBeenCalled()
 })
 
 it('recovers the session picker after an initial failure without reloading the page', async () => {

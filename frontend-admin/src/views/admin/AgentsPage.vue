@@ -4,7 +4,10 @@
       ><ElButton
         @click="openTemplate"
         :disabled="
-          busy || !!installationStorageError || (!!pendingInstallationId && !pendingInstallation)
+          busy ||
+          !!createdAgent ||
+          !!installationStorageError ||
+          (!!pendingInstallationId && !pendingInstallation)
         "
         >从模板安装</ElButton
       ><ElButton
@@ -41,7 +44,7 @@
       <ElButton
         v-permission="['foundation.agents.read']"
         :disabled="busy"
-        @click="checkInstallation"
+        @click="checkInstallation()"
         >核对原安装结果</ElButton
       >
     </section>
@@ -466,8 +469,11 @@ const router = useRouter(),
   { data, loading, error: loadError, reload, invalidate } = useResource(() => api.agents.list())
 onMounted(() => {
   void reload()
-  if (pendingCreation.value && auth.user?.permissions.includes('foundation.agents.read'))
-    void checkAgentCreation(true)
+  void (async () => {
+    if (!auth.user?.permissions.includes('foundation.agents.read')) return
+    if (pendingCreation.value) await checkAgentCreation(true)
+    if (active && !createdAgent.value && pendingInstallationId.value) await checkInstallation(true)
+  })()
 })
 let active = true
 onScopeDispose(() => {
@@ -717,7 +723,7 @@ function clearInstallation() {
     return false
   }
 }
-async function checkInstallation() {
+async function checkInstallation(automatic = false) {
   const requestId = pendingInstallationId.value,
     identity = auth.identityVersion
   if (!requestId) return
@@ -726,17 +732,18 @@ async function checkInstallation() {
     if (!active || identity !== auth.identityVersion || pendingInstallationId.value !== requestId)
       return
     if (!value) {
-      message.warning('尚未查到原安装回执，结果仍待核对')
+      if (!automatic) message.warning('尚未查到原安装回执，结果仍待核对')
       return
     }
     if (value.request_id !== requestId || !/^[1-9][0-9]*$/.test(value.agent_id))
       throw Error('原安装回执不完整，请稍后核对')
     if (!clearInstallation()) return
     templateOpen.value = false
+    createdAgent.value = value.agent_id
     message.success('已确认模板安装')
     return value
   })
-  if (receipt) await router.push('/admin/agents/' + receipt.agent_id)
+  if (receipt) await navigateCreatedAgent(receipt.agent_id)
 }
 const templateSwitching = ref(false)
 const templateOpen = ref(false),
@@ -746,6 +753,7 @@ const templateOpen = ref(false),
   automaticTemplateId = ref(''),
   automaticTemplateName = ref(''),
   loadedTemplateId = ref(''),
+  attemptedTemplateId = ref(''),
   templateDetail = ref<AgentTemplate>(),
   versions = ref<Array<Pick<CapabilityVersion, 'id' | 'definitionId' | 'capabilityType'>>>([]),
   definitions = ref<CapabilityDefinition[]>([])
@@ -784,6 +792,7 @@ watch(
     automaticTemplateId.value = ''
     automaticTemplateName.value = ''
     loadedTemplateId.value = ''
+    attemptedTemplateId.value = ''
     templateDetail.value = undefined
     resourceSlots.value = []
     delegateSlots.value = []
@@ -794,7 +803,7 @@ watch(
   { flush: 'sync' }
 )
 async function openTemplate() {
-  if (pendingInstallationId.value && !pendingInstallation.value) return
+  if (createdAgent.value || (pendingInstallationId.value && !pendingInstallation.value)) return
   if (pendingInstallation.value) {
     templateOpen.value = true
     return
@@ -806,6 +815,7 @@ async function openTemplate() {
     automaticTemplateId.value = ''
     automaticTemplateName.value = ''
     loadedTemplateId.value = ''
+    attemptedTemplateId.value = ''
     templateDetail.value = undefined
     resourceSlots.value = []
     delegateSlots.value = []
@@ -835,13 +845,13 @@ async function selectTemplate() {
   const selected = templateId.value
   const identity = auth.identityVersion
   if (templateDetail.value && selected === loadedTemplateId.value) return
-  const changed =
-    templateDetail.value &&
-    (templateName.value !== templateDetail.value.name ||
+  const changed = templateDetail.value
+    ? templateName.value !== templateDetail.value.name ||
       resourceSlots.value.some(
         (slot) => slot.definitionId || slot.deploymentKey || slot.workflowInstanceId
       ) ||
-      delegateSlots.value.some((slot) => slot.agentId))
+      delegateSlots.value.some((slot) => slot.agentId)
+    : !!templateName.value
   if (changed) {
     templateSwitching.value = true
     let accepted: boolean
@@ -857,10 +867,11 @@ async function selectTemplate() {
     }
     if (!active || auth.identityVersion !== identity || !templateOpen.value) return
     if (!accepted) {
-      templateId.value = loadedTemplateId.value
+      templateId.value = attemptedTemplateId.value
       return
     }
   }
+  if (selected !== attemptedTemplateId.value) templateName.value = ''
   if (selected !== automaticTemplateId.value) {
     automaticTemplateId.value = ''
     automaticTemplateName.value = ''
@@ -870,6 +881,7 @@ async function selectTemplate() {
 async function loadTemplate() {
   const identity = auth.identityVersion
   const selected = templateId.value
+  attemptedTemplateId.value = selected
   templateDetail.value = undefined
   resourceSlots.value = []
   delegateSlots.value = []
@@ -904,7 +916,9 @@ async function loadTemplate() {
     )
       return
     const keepEditedName =
-      selected === automaticTemplateId.value && templateName.value !== automaticTemplateName.value
+      selected === automaticTemplateId.value
+        ? templateName.value !== automaticTemplateName.value
+        : !!templateName.value && selected !== loadedTemplateId.value
     if (!keepEditedName) templateName.value = detail.name
     if (selected === automaticTemplateId.value) automaticTemplateName.value = detail.name
     resourceSlots.value = slots
@@ -1089,10 +1103,11 @@ async function install() {
     }
     if (!clearInstallation()) return
     templateOpen.value = false
+    createdAgent.value = result.agent.id
     message.success('模板已安装')
     return result
   })
-  if (installed) await router.push('/admin/agents/' + installed.agent.id)
+  if (installed) await navigateCreatedAgent(installed.agent.id)
 }
 
 const { requestClose: closeDrawer0 } = useDrawerClose({

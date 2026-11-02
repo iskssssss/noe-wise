@@ -44,7 +44,10 @@
           ? '读取知识库后将继续上传；如读取失败请重试。'
           : '当前账号没有上传权限。'
       }}
-      <ElButton v-if="can('foundation.knowledge.create')" :disabled="busy" @click="load"
+      <ElButton
+        v-if="can('foundation.knowledge.create')"
+        :disabled="busy"
+        @click="retryInitialUpload"
         >重新读取并继续</ElButton
       >
       <ElButton :disabled="busy" @click="discardInitialFile">移除待上传文件</ElButton>
@@ -868,6 +871,10 @@ const initialPending = computed(() =>
 )
 function discardInitialFile() {
   takeInitialFile(initialOwner.value, auth.identityVersion, id.value)
+  if (uploadNotStarted.value) {
+    uploadStorageError.value = ''
+    uploadNotStarted.value = false
+  }
 }
 const canPrepareAndPublish = computed(() =>
   [
@@ -886,6 +893,7 @@ const publicationKey = (owner: string) => `skillforge.knowledge-publication.${ow
 const uploadKey = (owner: string) => `skillforge.knowledge-upload.${owner}`
 const uploadUnknown = ref<{ name: string; size: number; requestId?: string }>()
 const uploadStorageError = ref('')
+const uploadNotStarted = ref(false)
 const uploadRequestId = ref('')
 const historicalUpload = ref<KnowledgeUploadReceipt>()
 watch(uploadRequestId, () => {
@@ -907,6 +915,7 @@ const publicationLocked = computed(
 )
 let disposed = false
 let autoCheckedUpload = ''
+let autoCheckedPublication = ''
 onScopeDispose(() => {
   disposed = true
 })
@@ -915,7 +924,9 @@ watch(
   (owner) => {
     uploadUnknown.value = undefined
     autoCheckedUpload = ''
+    autoCheckedPublication = ''
     uploadStorageError.value = ''
+    uploadNotStarted.value = false
     uploadRequestId.value = ''
     historicalUpload.value = undefined
     publicationPending.value = undefined
@@ -1056,6 +1067,19 @@ async function load() {
     id.value === target &&
     auth.identityVersion === identity &&
     can('foundation.knowledge.read') &&
+    publicationPending.value?.requestId &&
+    autoCheckedPublication !== publicationPending.value.requestId
+  ) {
+    autoCheckedPublication = publicationPending.value.requestId
+    await checkPublication()
+  }
+  if (
+    loaded &&
+    !disposed &&
+    !busy.value &&
+    id.value === target &&
+    auth.identityVersion === identity &&
+    can('foundation.knowledge.read') &&
     uploadUnknown.value?.requestId &&
     autoCheckedUpload !== uploadUnknown.value.requestId
   ) {
@@ -1075,8 +1099,15 @@ async function load() {
     !can('foundation.knowledge.create')
   )
     return
-  const file = takeInitialFile(initialOwner.value, identity, target)
-  if (file) await uploadFile(file)
+  const file = peekInitialFile(initialOwner.value, identity, target)
+  if (file) await uploadFile(file, () => takeInitialFile(initialOwner.value, identity, target))
+}
+function retryInitialUpload() {
+  if (uploadNotStarted.value) {
+    uploadStorageError.value = ''
+    uploadNotStarted.value = false
+  }
+  void load()
 }
 watch(
   id,
@@ -1115,7 +1146,7 @@ async function upload(selection: UploadFile) {
   fileUpload.value?.clearFiles()
   if (file && !initialPending.value) await uploadFile(file)
 }
-async function uploadFile(file: File) {
+async function uploadFile(file: File, onDispatch?: () => void) {
   if (busy.value || uploadBlocked.value || rebuildRefresh.value || rebuild.value?.write_locked)
     return
   await run(async () => {
@@ -1127,11 +1158,13 @@ async function uploadFile(file: File) {
     try {
       sessionStorage.setItem(key, JSON.stringify(original))
     } catch {
+      uploadNotStarted.value = true
       uploadStorageError.value = '无法保存上传记录，未发送文件；请恢复浏览器存储。'
       throw Error(uploadStorageError.value)
     }
     const data = new FormData()
     data.append('file', file, file.name)
+    onDispatch?.()
     try {
       const receipt = await api.knowledge.uploadFile(id.value, data, original.requestId)
       if (disposed || publicationOwner.value !== owner || auth.identityVersion !== identity) return

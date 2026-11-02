@@ -250,6 +250,34 @@ describe('添加智能体真实页面装配', () => {
     expect(mocks.authorize).not.toHaveBeenCalled()
   })
 
+  it('自动选择的唯一授权变为多条时要求重新选择并保留其他输入', async () => {
+    mocks.grants.mockResolvedValue({ items: [grant] })
+    const wrapper = await open('31')
+    const selected = () => field(wrapper, '部署与执行授权').findComponent(ElSelect)
+    expect(selected().props('modelValue')).toBe('21')
+    await field(wrapper, '外部智能体标识').findComponent(ElInput).get('input').setValue('assistant')
+    mocks.grants.mockResolvedValue({ items: [grant, { ...grant, grant_id: '22' }] })
+    await button(wrapper, '刷新授权与定义').trigger('click')
+    await flushPromises()
+    expect(selected().props('modelValue')).toBe('')
+    expect(wrapper.text()).toContain('存在多条授权链，请明确选择')
+    expect(
+      (
+        field(wrapper, '外部智能体标识').findComponent(ElInput).get('input')
+          .element as HTMLInputElement
+      ).value
+    ).toBe('assistant')
+    await button(wrapper, '部署智能体').trigger('click')
+    await flushPromises()
+    expect(mocks.deploy).not.toHaveBeenCalled()
+    selected().vm.$emit('update:modelValue', '21')
+    selected().vm.$emit('change', '21')
+    await flushPromises()
+    await button(wrapper, '刷新授权与定义').trigger('click')
+    await flushPromises()
+    expect(selected().props('modelValue')).toBe('21')
+  })
+
   it('模板入口没有授权时直接选择新增并核验原模板', async () => {
     mocks.grants.mockResolvedValueOnce({ items: [] })
     const wrapper = await open('31')

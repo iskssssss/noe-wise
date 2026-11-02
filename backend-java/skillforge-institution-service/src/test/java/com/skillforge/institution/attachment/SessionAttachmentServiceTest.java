@@ -57,6 +57,7 @@ class SessionAttachmentServiceTest {
     private static final String ID = "3d9b2652-1243-4b93-a4c1-f432d5c88311";
     private final SessionAttachmentMapper mapper = mock(SessionAttachmentMapper.class);
     private final ArtifactAccess access = mock(ArtifactAccess.class);
+    private final SessionAttachmentBodyStore bodies = mock(SessionAttachmentBodyStore.class);
     private final AgentRunBindings bindings = mock(AgentRunBindings.class);
     private final AgentRunBindings.Binding binding = mock(AgentRunBindings.Binding.class);
     private final ExecutionStore facts = mock(ExecutionStore.class);
@@ -65,7 +66,7 @@ class SessionAttachmentServiceTest {
     private SessionAttachmentService service;
 
     @BeforeEach void setup() {
-        service = new SessionAttachmentService(mapper, access, bindings, mock(SessionAttachmentBodyStore.class), facts, CODEC,programs);
+        service = new SessionAttachmentService(mapper, access, bindings, bodies, facts, CODEC,programs);
         when(access.tenant()).thenReturn("1");
         var run = context("1", "session", Instant.now().plusSeconds(60), false).run();
         when(bindings.find(run.runRef())).thenReturn(Optional.of(binding));
@@ -121,14 +122,15 @@ class SessionAttachmentServiceTest {
     }
 
     @Test void uploadRejectsUnsupportedExtensionMalformedUtf8AndOversizeBeforePersistence() {
-        assertThrows(ApiException.class,
-                () -> service.upload("session", ID, file("payload.exe", "text")));
-        assertThrows(ApiException.class, () -> service.upload("session", ID,
-                new MockMultipartFile("file", "broken.txt", "text/plain", new byte[]{(byte) 0xc3, 0x28})));
+        assertEquals("SESSION_ATTACHMENT_UPLOAD_REJECTED", assertThrows(ApiException.class,
+                () -> service.upload("session", ID, file("payload.exe", "text"))).getCode());
+        assertEquals("SESSION_ATTACHMENT_UPLOAD_REJECTED", assertThrows(ApiException.class, () -> service.upload("session", ID,
+                new MockMultipartFile("file", "broken.txt", "text/plain", new byte[]{(byte) 0xc3, 0x28}))).getCode());
         var oversized = mock(org.springframework.web.multipart.MultipartFile.class);
         when(oversized.getSize()).thenReturn((long)SessionAttachmentService.MAX_BYTES + 1);
-        assertThrows(ApiException.class, () -> service.upload("session", ID, oversized));
-        verifyNoInteractions(mapper);
+        assertEquals("SESSION_ATTACHMENT_UPLOAD_REJECTED", assertThrows(ApiException.class,
+                () -> service.upload("session", ID, oversized)).getCode());
+        verifyNoInteractions(mapper, bodies);
     }
 
     @Test void inputContextReplacesClientMetadataWithServerValuesWithoutContent() {

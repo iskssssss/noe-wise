@@ -12,8 +12,6 @@ import com.skillforge.common.context.TenantContext;
 import com.skillforge.core.foundation.access.RequirePermission;
 import com.skillforge.core.foundation.constant.RoleConstants;
 import com.skillforge.core.chat.dto.handoff.CreateHandoffTicketRequest;
-import com.skillforge.core.chat.dto.handoff.HandoffActionResponse;
-import com.skillforge.core.chat.enums.HandoffTicketStatus;
 import com.skillforge.core.shared.exception.ApiException;
 import com.skillforge.core.chat.persistence.HumanHandoffTicketDO;
 import com.skillforge.institution.service.HandoffApplicationService;
@@ -31,6 +29,7 @@ class HandoffControllerCoverageTest {
 
     private HandoffApplicationService handoffs;
     private AgentSessionRegistry sessions;
+    private com.skillforge.institution.service.HandoffActionService actions;
     private HandoffController controller;
 
     @BeforeEach
@@ -38,7 +37,8 @@ class HandoffControllerCoverageTest {
         TenantContext.setTenantId("7");
         handoffs = mock(HandoffApplicationService.class);
         sessions = mock(AgentSessionRegistry.class);
-        controller = new HandoffController(handoffs, sessions, mock(com.skillforge.institution.service.HandoffReplyService.class), mock(com.skillforge.core.chat.ChatSessionService.class));
+        actions = mock(com.skillforge.institution.service.HandoffActionService.class);
+        controller = new HandoffController(handoffs, sessions, mock(com.skillforge.institution.service.HandoffReplyService.class), mock(com.skillforge.core.chat.ChatSessionService.class), actions);
     }
 
     @AfterEach
@@ -65,19 +65,38 @@ class HandoffControllerCoverageTest {
         CreateHandoffTicketRequest create = new CreateHandoffTicketRequest(
                 null, "summary", "session-1", "execution-1", null, "00000000-0000-0000-0000-000000000001");
         when(handoffs.create(7L, create)).thenReturn(new HandoffApplicationService.CreateReceipt("ticket-1", "pending", "session-1", create.commandId(), true));
-        when(handoffs.accept(7L, "ticket-1", 42L, 1L))
-                .thenReturn(action("ticket-1", HandoffTicketStatus.ASSIGNED));
-        when(handoffs.resolve(7L, "ticket-1", 42L, 2L, null))
-                .thenReturn(action("ticket-1", HandoffTicketStatus.RESOLVED));
+        String acceptCommand = "12345678-1234-4234-8234-123456789abc";
+        String resolveCommand = "22345678-1234-4234-8234-123456789abc";
+        when(actions.execute(7L, 42L, "ticket-1", 1L, acceptCommand, "accept", null))
+                .thenReturn(new com.skillforge.institution.service.HandoffActionService.Receipt(acceptCommand, "ticket-1", "accept", "assigned", true));
+        when(actions.execute(7L, 42L, "ticket-1", 2L, resolveCommand, "resolve", null))
+                .thenReturn(new com.skillforge.institution.service.HandoffActionService.Receipt(resolveCommand, "ticket-1", "resolve", "resolved", true));
 
         assertThat(controller.create(create).data().status()).isEqualTo("pending");
         try (var stp = org.mockito.Mockito.mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdAsString).thenReturn("42");
-            assertThat(controller.accept("ticket-1", 1L).status()).isEqualTo(HandoffTicketStatus.ASSIGNED);
-            assertThat(controller.resolve("ticket-1", 2L, null).status()).isEqualTo(HandoffTicketStatus.RESOLVED);
+            assertThat(controller.acceptEndpoint(new HandoffController.AcceptCommand("ticket-1", 1L, acceptCommand)).data().status()).isEqualTo("assigned");
+            assertThat(controller.resolveEndpoint(new HandoffController.ResolveCommand("ticket-1", 2L, resolveCommand, null)).data().status()).isEqualTo("resolved");
         }
 
         verify(sessions, org.mockito.Mockito.times(3)).notifyTicketChanged("7", "ticket-1");
+    }
+
+    @Test
+    void actionEndpointNotifiesOnlyForFirstCommitAndReceiptReadsOriginalCommand() {
+        String command = "12345678-1234-4234-8234-123456789abc";
+        var first = new com.skillforge.institution.service.HandoffActionService.Receipt(command, "ticket-1", "accept", "assigned", true);
+        var replay = new com.skillforge.institution.service.HandoffActionService.Receipt(command, "ticket-1", "accept", "assigned", false);
+        when(actions.execute(7L, 42L, "ticket-1", 1L, command, "accept", null)).thenReturn(first, replay);
+        when(actions.receipt(7L, 42L, "ticket-1", command)).thenReturn(replay);
+        try (var stp = org.mockito.Mockito.mockStatic(StpUtil.class)) {
+            stp.when(StpUtil::getLoginIdAsString).thenReturn("42");
+            var request = new HandoffController.AcceptCommand("ticket-1", 1L, command);
+            assertThat(controller.acceptEndpoint(request).data().commandId()).isEqualTo(command);
+            assertThat(controller.acceptEndpoint(request).data().created()).isFalse();
+            assertThat(controller.actionReceipt("ticket-1", command).data().ticketId()).isEqualTo("ticket-1");
+        }
+        verify(sessions).notifyTicketChanged("7", "ticket-1");
     }
 
     @Test
@@ -102,21 +121,18 @@ class HandoffControllerCoverageTest {
 
     @Test
     void failedCasDoesNotPublishChangeNotification() {
-        when(handoffs.accept(7L, "ticket-1", 42L, 1L))
+        String command = "12345678-1234-4234-8234-123456789abc";
+        when(actions.execute(7L, 42L, "ticket-1", 1L, command, "accept", null))
                 .thenThrow(new ApiException(HttpStatus.CONFLICT, "工单已被接单"));
 
         try (var stp = org.mockito.Mockito.mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdAsString).thenReturn("42");
-            assertThatThrownBy(() -> controller.accept("ticket-1", 1L))
+            assertThatThrownBy(() -> controller.acceptEndpoint(new HandoffController.AcceptCommand("ticket-1", 1L, command)))
                     .isInstanceOfSatisfying(ApiException.class,
                             exception -> assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONFLICT));
         }
 
         verifyNoInteractions(sessions);
-    }
-
-    private static HandoffActionResponse action(String id, HandoffTicketStatus status) {
-        return new HandoffActionResponse(id, status);
     }
 
     private static HumanHandoffTicketDO ticket(String id, String status) {

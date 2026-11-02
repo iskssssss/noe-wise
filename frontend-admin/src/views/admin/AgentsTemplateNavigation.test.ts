@@ -6,7 +6,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import { clearFeedback, confirm } from '@skillforge/shared/feedback'
 import AgentsPage from './AgentsPage.vue'
 
-const mocks = vi.hoisted(() => ({ install: vi.fn() }))
+const mocks = vi.hoisted(() => ({ install: vi.fn(), receipt: vi.fn() }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     identityVersion: 1,
@@ -19,7 +19,8 @@ vi.mock('../../api', () => ({
       list: async () => ({ items: [] }),
       templates: async () => ({ items: [{ id: 'template-1', name: '客服模板', version: '1' }] }),
       templateDetail: async () => ({ name: '客服模板', definition: {} }),
-      installTemplate: mocks.install
+      installTemplate: mocks.install,
+      installationResult: mocks.receipt
     },
     capabilities: { listDefinitions: async () => [], deployments: async () => [] },
     workflowDrafts: { instances: async () => ({ items: [] }) }
@@ -149,4 +150,38 @@ it('模板安装成功后直接进入新智能体，不触发草稿离开确认'
   expect(router.currentRoute.value.path).toBe('/admin/agents/installed-agent')
   expect(confirm).not.toHaveBeenCalled()
   expect(mocks.install).toHaveBeenCalledTimes(1)
+})
+
+it.each(['安装成功', '回执确认'])('%s后导航被阻止时保留原智能体入口', async (mode) => {
+  const requestId = 'request-1'
+  if (mode === '回执确认') {
+    const key = `skillforge.agent-template-install:${encodeURIComponent(JSON.stringify(['1', 'actor-1']))}`
+    sessionStorage.setItem(key, requestId)
+    mocks.receipt.mockResolvedValue({ request_id: requestId, agent_id: '123' })
+  } else mocks.install.mockResolvedValue({ agent: { id: '123' } })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/agents', component: AgentsPage },
+      { path: '/admin/agents/:id', component: { template: '<p>智能体配置</p>' } }
+    ]
+  })
+  router.beforeEach((to) => (to.path.startsWith('/admin/agents/') ? false : true))
+  await router.push('/agents')
+  await router.isReady()
+  wrapper = mount(RouterView, { attachTo: document.body, global: { plugins: [router] } })
+  await flushPromises()
+  if (mode === '回执确认') {
+    await button('核对原安装结果').trigger('click')
+  } else {
+    await button('从模板安装').trigger('click')
+    await flushPromises()
+    await button('安装并配置').trigger('click')
+  }
+  await flushPromises()
+  expect(router.currentRoute.value.path).toBe('/agents')
+  expect(wrapper.get('a[href="/admin/agents/123"]').text()).toContain('进入原智能体配置')
+  expect(button('从模板安装').props('disabled')).toBe(true)
+  expect(button('新建智能体').props('disabled')).toBe(true)
+  expect(mocks.install).toHaveBeenCalledTimes(mode === '安装成功' ? 1 : 0)
 })

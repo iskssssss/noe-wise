@@ -73,7 +73,42 @@ const canReadReceipt = computed(
   () => allowed('foundation.connectors.read') && allowed('foundation.capabilities.read')
 )
 const uncertain = ref<{ requestId: string; connectorId: string; names: string[] }>()
-const locked = computed(() => busy.value || !!uncertain.value)
+const storageError = ref('')
+const owner = computed(() =>
+  auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
+)
+const storageKey = (subject: string) => `skillforge.tool-onboarding.${subject}`
+watch(
+  owner,
+  (subject) => {
+    uncertain.value = undefined
+    storageError.value = ''
+    if (!subject) {
+      storageError.value = '无法确认当前机构和成员，暂不能接入工具。'
+      return
+    }
+    try {
+      const raw = sessionStorage.getItem(storageKey(subject))
+      if (!raw) return
+      const value = JSON.parse(raw)
+      if (
+        !value ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+        typeof value.connectorId !== 'string' ||
+        !value.connectorId ||
+        !Array.isArray(value.names) ||
+        !value.names.length ||
+        !value.names.every((name: unknown) => typeof name === 'string' && !!name)
+      )
+        throw Error('invalid')
+      uncertain.value = value
+    } catch {
+      storageError.value = '无法读取原工具接入记录，请恢复浏览器存储后重新进入。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
+const locked = computed(() => busy.value || !!uncertain.value || !!storageError.value)
 watch(locked, (value) => emit('locked', value), { immediate: true, flush: 'sync' })
 watch(busy, (value) => emit('busy', value), { immediate: true, flush: 'sync' })
 watch(uncertain, (value) => emit('unknown', !!value), { immediate: true, flush: 'sync' })
@@ -107,6 +142,21 @@ let connectorChannel: BroadcastChannel | undefined
 function connectorSettingsOpened() {
   refreshOnReturn = true
 }
+async function refreshConnectorSettings() {
+  const refreshCatalog = catalog.value !== undefined
+  if (refreshCatalog) catalogStale.value = true
+  const result = await loadConnectors()
+  if (
+    refreshCatalog &&
+    result &&
+    active &&
+    open.value &&
+    canOnboard.value &&
+    !busy.value &&
+    !uncertain.value
+  )
+    await discover()
+}
 function refreshAfterConnectorSettings() {
   if (
     !refreshOnReturn ||
@@ -117,7 +167,7 @@ function refreshAfterConnectorSettings() {
   )
     return
   refreshOnReturn = false
-  void loadConnectors()
+  void refreshConnectorSettings()
 }
 function refreshWhenVisible() {
   if (document.visibilityState === 'visible') refreshAfterConnectorSettings()
@@ -139,7 +189,7 @@ onMounted(() => {
         )
           return
         refreshOnReturn = false
-        void loadConnectors()
+        void refreshConnectorSettings()
       }
     } catch {
       // 通知通道不可用时仍可在返回页面后读取连接器。
@@ -149,6 +199,20 @@ onMounted(() => {
   document.addEventListener('visibilitychange', refreshWhenVisible)
   if (!props.embedded && allowed('foundation.capabilities.read')) void refreshAvailable()
   if (allowed('foundation.connectors.read')) void loadConnectors()
+  if (uncertain.value && canReadReceipt.value)
+    void (async () => {
+      await inspect(true)
+      if (
+        active &&
+        open.value &&
+        canOnboard.value &&
+        !busy.value &&
+        !uncertain.value &&
+        !storageError.value &&
+        catalog.value === undefined
+      )
+        await discover()
+    })()
 })
 async function discover() {
   if (!mcpConnectors.value.some((connector) => connector.instance_id === connectorId.value)) return
@@ -219,22 +283,40 @@ function matchesReceipt(
 }
 async function handleReceipt(
   receipt: ToolOnboardingReceipt | undefined,
-  selection: NonNullable<typeof uncertain.value>
+  selection: NonNullable<typeof uncertain.value>,
+  subject: string,
+  automatic = false
 ) {
   if (!matchesReceipt(receipt, selection.requestId, selection)) {
-    message.warning('暂未查到完整匹配的原请求回执，结果仍未确认，请稍后再次核对')
+    if (!automatic) message.warning('暂未查到完整匹配的原请求回执，结果仍未确认，请稍后再次核对')
     return
   }
+  if (!active || owner.value !== subject) return
   if (receipt!.status === 'PROCESSING') {
-    uncertain.value = {
+    const pending = {
       requestId: selection.requestId,
       connectorId: receipt!.connector_id,
       names: [...receipt!.tool_names]
     }
-    message.warning('原请求结果尚未确认，请稍后再次核对')
+    try {
+      sessionStorage.setItem(storageKey(subject), JSON.stringify(pending))
+      uncertain.value = pending
+    } catch {
+      storageError.value = '无法保存原工具接入记录，请恢复浏览器存储后核对。'
+    }
+    if (!automatic) message.warning('原请求结果尚未确认，请稍后再次核对')
     return
   }
+  if (uncertain.value?.requestId === selection.requestId) {
+    try {
+      sessionStorage.removeItem(storageKey(subject))
+    } catch {
+      storageError.value = '无法清除原工具接入记录，请恢复浏览器存储后重新核对。'
+      return
+    }
+  }
   uncertain.value = undefined
+  storageError.value = ''
   receiptRequestId.value = ''
   if (receipt!.status === 'REJECTED') {
     message.error(`接入未完成：${receipt!.error_message}，请修正后重新接入`)
@@ -243,12 +325,25 @@ async function handleReceipt(
   await acceptConfirmed(receipt!)
 }
 async function confirm(names: string[]) {
-  if (!mcpConnectors.value.some((connector) => connector.instance_id === connectorId.value)) return
+  if (
+    !owner.value ||
+    storageError.value ||
+    uncertain.value ||
+    !mcpConnectors.value.some((connector) => connector.instance_id === connectorId.value)
+  )
+    return
   await run(async () => {
+    const subject = owner.value
     const selection = {
       requestId: crypto.randomUUID(),
       connectorId: connectorId.value,
       names: [...names]
+    }
+    try {
+      sessionStorage.setItem(storageKey(subject), JSON.stringify(selection))
+    } catch {
+      storageError.value = '无法保存原工具接入记录，尚未发送请求；请恢复浏览器存储。'
+      return
     }
     uncertain.value = selection
     const receipt = await toolsApi.onboard(
@@ -257,19 +352,21 @@ async function confirm(names: string[]) {
       selection.names,
       true
     )
-    await handleReceipt(receipt, selection)
+    await handleReceipt(receipt, selection, subject)
   })
 }
-async function inspect() {
+async function inspect(automatic = false) {
   const requestId = uncertain.value?.requestId ?? receiptRequestId.value.trim()
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
     message.warning('请输入原请求的 UUID')
     return
   }
   const selection = uncertain.value ?? { requestId, connectorId: '', names: [] }
+  const subject = owner.value
+  if (!subject) return
   await run(async () => {
     const receipt = await toolsApi.onboarding(requestId)
-    await handleReceipt(receipt, selection)
+    await handleReceipt(receipt, selection, subject, automatic)
   })
 }
 </script>
@@ -284,7 +381,7 @@ async function inspect() {
       <ElButton
         v-if="!embedded && canOnboard"
         type="primary"
-        :disabled="busy || !!uncertain"
+        :disabled="busy || !!uncertain || !!storageError"
         @click="open = !open"
         >接入工具</ElButton
       >
@@ -308,6 +405,7 @@ async function inspect() {
       :type="!error && listError && confirmedChange ? 'warning' : 'error'"
       :closable="false"
     />
+    <p v-if="storageError" role="status">{{ storageError }}</p>
     <section v-if="uncertain" class="admin-card">
       <p role="status">接入结果尚未确认。可核对原请求回执，暂未查到时请稍后再试。</p>
       <p>
@@ -316,7 +414,7 @@ async function inspect() {
           >；连接器：{{ uncertain.connectorId }}；工具：{{ uncertain.names.join('、') }}</template
         >
       </p>
-      <ElButton :loading="busy" @click="inspect">核对接入结果</ElButton>
+      <ElButton v-if="canReadReceipt" :loading="busy" @click="inspect()">核对接入结果</ElButton>
     </section>
     <section v-if="canReadReceipt && !uncertain" class="admin-card">
       <p>已离开接入页面时，可使用原请求 ID 查询接入回执。</p>
@@ -326,11 +424,11 @@ async function inspect() {
         placeholder="输入原请求 ID"
         :disabled="busy"
       />
-      <ElButton :disabled="busy || !receiptRequestId.trim()" :loading="busy" @click="inspect"
+      <ElButton :disabled="busy || !receiptRequestId.trim()" :loading="busy" @click="inspect()"
         >查询原接入回执</ElButton
       >
     </section>
-    <section v-if="open && canOnboard" v-show="!uncertain" class="admin-card">
+    <section v-if="open && canOnboard" v-show="!uncertain && !storageError" class="admin-card">
       <ToolOnboarding
         v-model:connector-id="connectorId"
         :connectors="mcpConnectors"
@@ -349,7 +447,9 @@ async function inspect() {
       >
         当前没有可选的 MCP 连接器。配置后返回此处即可读取并接入工具。
       </p>
-      <ElButton :disabled="busy" @click="loadConnectors">刷新连接器</ElButton>
+      <ElButton :disabled="busy" :loading="connectorsLoading" @click="refreshConnectorSettings">
+        刷新连接器及工具
+      </ElButton>
       <RouterLink
         v-if="allowed('foundation.connectors.read')"
         to="/admin/connectors"

@@ -123,6 +123,15 @@ class SessionAttachmentHttpContractTest {
         verify(access).authorizeWritableCurrent("7", "session-7");
     }
 
+    @Test void invalidContentReturnsPreWriteRejectionCode() throws Exception {
+        mvc.perform(multipart(PATH + "/upload")
+                        .file(new MockMultipartFile("file", "broken.txt", "text/plain", new byte[]{(byte) 0xff}))
+                        .param("session_id", "session-7").param("upload_id", ID))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("SESSION_ATTACHMENT_UPLOAD_REJECTED"));
+        verifyNoInteractions(mapper, bodies);
+    }
+
     @Test void authorizationFailureStopsUploadAndListBeforeMapperAccess() throws Exception {
         doThrow(new ApiException(HttpStatus.NOT_FOUND, "会话不可用"))
                 .when(access).authorizeCurrent("7", "denied");

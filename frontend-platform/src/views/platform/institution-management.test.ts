@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   impact: vi.fn(),
   previewContent: vi.fn(),
   previewSaved: vi.fn(),
+  create: vi.fn(),
   update: vi.fn(),
   publish: vi.fn(),
   deprecate: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('../../api', () => ({
       impact: mocks.impact,
       previewContent: mocks.previewContent,
       previewSaved: mocks.previewSaved,
+      create: mocks.create,
       update: mocks.update,
       publish: mocks.publish,
       deprecate: mocks.deprecate,
@@ -73,6 +75,7 @@ const permissions = [
   'platform.institution_relations.move',
   'platform.institution_relations.detach',
   'platform.agent_definitions.read',
+  'platform.agent_definitions.create',
   'platform.agent_definitions.edit',
   'platform.agent_definitions.validate',
   'platform.agent_definitions.publish',
@@ -218,6 +221,43 @@ async function open(component: Component, path = '/platform/tenants', stubSetup 
   await flushPromises()
   return wrapper
 }
+async function openNewDefinition() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/platform/agent-templates', component: { template: '<div />' } },
+      { path: '/platform/agent-templates/new', component: AgentTemplateDetailPage },
+      { path: '/platform/agent-templates/:id', component: AgentTemplateDetailPage }
+    ]
+  })
+  await router.push('/platform/agent-templates/new?list_page=2')
+  await router.isReady()
+  const wrapper = mount(defineComponent({ template: '<RouterView :key="$route.fullPath" />' }), {
+    attachTo: document.body,
+    global: {
+      plugins: [router],
+      directives: {
+        permission: createPermissionDirective(() => computed(() => mocks.auth.user.permissions))
+      }
+    }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  return { wrapper, router }
+}
+async function fillNewDefinition(wrapper: VueWrapper) {
+  wrapper.getComponent(AgentConfigFields).vm.$emit('update:modelValue', {
+    name: '示例助手',
+    description: '',
+    system_prompt: '遵守事实',
+    model_config_id: formModel(wrapper).model_config_id
+  })
+  wrapper
+    .findAllComponents(ElSelect)
+    .find((item) => item.props('placeholder') === '请选择分发方式')!
+    .vm.$emit('update:modelValue', 'OPEN_INSTALL')
+  await flushPromises()
+}
 function button(wrapper: VueWrapper, label: string) {
   const result = wrapper.findAllComponents(ElButton).find((item) => item.text() === label)
   if (!result) throw Error(label)
@@ -255,6 +295,7 @@ beforeEach(() => {
     validation: { valid: true, issues: [] },
     impact: impact()
   })
+  mocks.create.mockResolvedValue(detail())
   mocks.models.mockResolvedValue([{ id: 'model-1', name: '当前模型', kind: 'LLM', enabled: true }])
   mocks.update.mockResolvedValue(detail(3))
   mocks.publish.mockResolvedValue(detail(3))
@@ -441,6 +482,156 @@ describe('平台公共定义精确修订管理', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('请绑定就诊记录工具')
     expect(mocks.publish).not.toHaveBeenCalled()
+  })
+  it('新建时仅预选唯一启用的文本模型，刷新目录不覆盖手动选择', async () => {
+    mocks.models.mockResolvedValueOnce([
+      { id: 'model-1', name: '当前模型', kind: 'LLM', enabled: true },
+      { id: 'disabled', name: '已停用', kind: 'LLM', enabled: false },
+      { id: 'embedding', name: '向量模型', kind: 'EMBEDDING', enabled: true }
+    ])
+    const { wrapper } = await openNewDefinition()
+    expect(formModel(wrapper).model_config_id).toBe('model-1')
+    expect(wrapper.text()).toContain('请确认模型符合用途和费用要求')
+    wrapper.getComponent(AgentConfigFields).vm.$emit('update:modelValue', {
+      ...formModel(wrapper),
+      model_config_id: null
+    })
+    await flushPromises()
+    await button(wrapper, '刷新编辑选项').trigger('click')
+    await flushPromises()
+    expect(formModel(wrapper).model_config_id).toBeNull()
+  })
+  it('多个启用文本模型时不预选，已有模板的失效引用不被替换', async () => {
+    mocks.models.mockResolvedValueOnce([
+      { id: 'model-1', name: '模型一', kind: 'LLM', enabled: true },
+      { id: 'model-2', name: '模型二', kind: 'LLM', enabled: true }
+    ])
+    const { wrapper } = await openNewDefinition()
+    expect(formModel(wrapper).model_config_id).toBeNull()
+    const old = detail()
+    old.definition.model_config_id = 'retired'
+    mocks.detail.mockResolvedValueOnce(old)
+    const existing = await open(AgentTemplateDetailPage, definitionPath)
+    expect(formModel(existing).model_config_id).toBe('retired')
+  })
+  it('新建时一次保存并验证，详情展示服务端精确修订的验证与影响', async () => {
+    const { wrapper, router } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({ model_config_id: 'model-1' })
+      }),
+      expect.any(String)
+    )
+    expect(router.currentRoute.value.path).toBe(definitionPath)
+    expect(router.currentRoute.value.query).toEqual({ list_page: '2' })
+    expect(router.options.history.state.validate_revision).toBeNull()
+    expect(mocks.previewSaved).toHaveBeenCalledWith(
+      definitionId,
+      2,
+      expect.objectContaining({ silent: true })
+    )
+    expect(button(wrapper, '发布').props('disabled')).toBe(false)
+    expect(mocks.publish).not.toHaveBeenCalled()
+    await router.push(definitionPath + '?list_page=3')
+    await flushPromises()
+    expect(mocks.previewSaved).toHaveBeenCalledTimes(1)
+  })
+  it('新建后读回不同修订时保留草稿，不验证或发布其他修订', async () => {
+    const { wrapper } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    mocks.detail.mockResolvedValueOnce(detail(3))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+    expect(button(wrapper, '发布').props('disabled')).toBe(true)
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+  it('新建成功后详情读取失败，重读成功继续验证原修订', async () => {
+    const { wrapper } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    mocks.detail.mockRejectedValueOnce(new Error('详情暂不可用'))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('.el-message--error')?.textContent).toContain('模板已保存')
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+    await button(wrapper, '重新读取模板').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).toHaveBeenCalledWith(
+      definitionId,
+      2,
+      expect.objectContaining({ silent: true })
+    )
+    expect(button(wrapper, '发布').props('disabled')).toBe(false)
+  })
+  it('重读后修订已变化时不继续验证其他草稿', async () => {
+    const { wrapper } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    mocks.detail.mockRejectedValueOnce(new Error('详情暂不可用')).mockResolvedValueOnce(detail(3))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    await button(wrapper, '重新读取模板').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+    expect(button(wrapper, '发布').props('disabled')).toBe(true)
+  })
+  it('新建成功但验证失败后只需重试验证，不重复创建', async () => {
+    const { wrapper } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    mocks.previewSaved.mockRejectedValueOnce(new Error('验证暂不可用'))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('.el-message--error')?.textContent).toContain(
+      '模板已保存，但验证未完成'
+    )
+    expect(button(wrapper, '发布').props('disabled')).toBe(true)
+    await button(wrapper, '验证').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).toHaveBeenCalledTimes(2)
+    expect(button(wrapper, '发布').props('disabled')).toBe(false)
+  })
+  it('新建成功但详情导航被阻止时保留已保存事实并禁止重复提交', async () => {
+    const { wrapper, router } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    router.beforeEach((to) => (to.path === definitionPath ? false : true))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/platform/agent-templates/new')
+    expect(wrapper.text()).toContain('模板已保存，请从模板列表进入详情后继续')
+    expect(button(wrapper, '保存模板').props('disabled')).toBe(true)
+    expect(button(wrapper, '重读服务端草稿').props('disabled')).toBe(true)
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+  })
+  it('创建回执未知时保留原意图，不自动创建或验证', async () => {
+    const { wrapper, router } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    mocks.create.mockRejectedValueOnce(failure(503))
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/platform/agent-templates/new')
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+    expect(button(wrapper, '核对原操作回执').exists()).toBe(true)
+    expect(button(wrapper, '保存并验证').props('disabled')).toBe(true)
+  })
+  it('缺少读取或验证权限时新建页面只提供保存', async () => {
+    mocks.auth.user.permissions = ['platform.agent_definitions.create']
+    const { wrapper } = await openNewDefinition()
+    expect(button(wrapper, '保存模板').exists()).toBe(true)
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '保存并验证')).toBe(
+      false
+    )
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
   })
   it('保存并验证使用保存后的精确修订，一次操作准备发布但不自动发布', async () => {
     const wrapper = await open(AgentTemplateDetailPage, definitionPath)

@@ -28,6 +28,8 @@ vi.mock('../../api/tools', () => ({
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     user: {
+      tenant_id: 'tenant-1',
+      sub: 'member-1',
       permissions: [
         'foundation.connectors.read',
         'foundation.connectors.update',
@@ -46,11 +48,13 @@ let wrapper: VueWrapper | undefined
 afterEach(() => {
   wrapper?.unmount()
   clearFeedback()
+  sessionStorage.clear()
   vi.resetAllMocks()
   document.body.innerHTML = ''
 })
 
 it('真实路由取消离开保留未知选择，当前可用也不能确认原请求', async () => {
+  sessionStorage.clear()
   calls.onboard.mockRejectedValue(new HttpClientError({ status: 408, userMessage: '超时' }))
   calls.onboarding.mockResolvedValue({ items: [{ tool_name: 'read_alpha', status: 'AVAILABLE' }] })
   vi.mocked(confirm).mockResolvedValue(false)

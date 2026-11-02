@@ -270,6 +270,86 @@ it('仅一个可部署定义时预选定义和授权，自动值不构成未保�
   expect(mocks.createDeployment).not.toHaveBeenCalled()
 })
 
+it.each(['新增可部署定义', '原授权失效'])(
+  '目录刷新时%s，清除自动定义并保留其他输入',
+  async (change) => {
+    const grant = (id: string) => ({
+      grant_id: 'g' + id,
+      definition_id: id,
+      definition_name: '助手',
+      target_tenant_id: '77',
+      status: 'active',
+      actions: ['deploy', 'execute'],
+      expires_at: null
+    })
+    mocks.definitions.mockResolvedValue({
+      items: [
+        { id: '91', name: '一', version: '1' },
+        { id: '92', name: '二', version: '1' }
+      ]
+    })
+    mocks.deploymentGrants.mockReset().mockResolvedValue({ items: [grant('91')] })
+    wrapper = mount(AgentDeploymentsPage, { global })
+    await wrapper.get('input[placeholder="搜索机构名称"]').setValue('77')
+    await flushPromises()
+    const field = (label: string) =>
+      wrapper!.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+    expect(field('公共定义').getComponent(ElSelect).props('modelValue')).toBe('91')
+    await field('外部智能体标识').get('input').setValue('external-1')
+    mocks.deploymentGrants.mockResolvedValue({
+      items: change === '新增可部署定义' ? [grant('91'), grant('92')] : []
+    })
+    await wrapper
+      .findAllComponents(ElForm)
+      .find((item) => !item.props('model'))!
+      .trigger('submit')
+    await flushPromises()
+    expect(field('公共定义').getComponent(ElSelect).props('modelValue')).toBe('')
+    expect(field('直接授权').getComponent(ElSelect).props('modelValue')).toBe('')
+    expect((field('外部智能体标识').get('input').element as HTMLInputElement).value).toBe(
+      'external-1'
+    )
+    expect(wrapper.text()).not.toContain('已预选唯一有有效授权的公共定义')
+    expect(mocks.createDeployment).not.toHaveBeenCalled()
+  }
+)
+
+it('刷新目录时保留用户明确选择的可用定义', async () => {
+  const grant = (id: string) => ({
+    grant_id: 'g' + id,
+    definition_id: id,
+    definition_name: '助手',
+    target_tenant_id: '77',
+    status: 'active',
+    actions: ['deploy', 'execute'],
+    expires_at: null
+  })
+  mocks.definitions.mockResolvedValue({
+    items: [
+      { id: '91', name: '一', version: '1' },
+      { id: '92', name: '二', version: '1' }
+    ]
+  })
+  mocks.deploymentGrants.mockReset().mockResolvedValue({ items: [grant('91')] })
+  wrapper = mount(AgentDeploymentsPage, { global })
+  await wrapper.get('input[placeholder="搜索机构名称"]').setValue('77')
+  await flushPromises()
+  const definition = () =>
+    wrapper!
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '公共定义')!
+      .getComponent(ElSelect)
+  definition().vm.$emit('change', '91')
+  mocks.deploymentGrants.mockResolvedValue({ items: [grant('91'), grant('92')] })
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => !item.props('model'))!
+    .trigger('submit')
+  await flushPromises()
+  expect(definition().props('modelValue')).toBe('91')
+  expect(wrapper.text()).not.toContain('已预选唯一有有效授权的公共定义')
+})
+
 it('仅有自动预选时切换机构不触发草稿确认，并按新机构重新预选', async () => {
   mocks.definitions.mockResolvedValue({
     items: [

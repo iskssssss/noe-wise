@@ -613,6 +613,57 @@ describe('按挂载类型加载实际关联', () => {
     expect(mocks.onboard).toHaveBeenCalledTimes(1)
     expect(mocks.create).not.toHaveBeenCalled()
   })
+  it('恢复工具接入回执后刷新挂载选项并保留用户已有选择', async () => {
+    const existing = {
+      definition_id: '30',
+      default_version_id: '31',
+      name: '已有',
+      description: '',
+      tool_name: 'existing',
+      deployments: [
+        { deployment_key: 'service-one', provider_label: '服务', environment: 'PRODUCTION' }
+      ]
+    }
+    const another = { ...existing, definition_id: '32', name: '其他', tool_name: 'other' }
+    const added = { ...existing, definition_id: '40', name: '新工具', tool_name: 'new_tool' }
+    mocks.availableTools
+      .mockResolvedValueOnce({ items: [existing, another] })
+      .mockResolvedValue({ items: [existing, another, added] })
+    const requestId = '12345678-1234-4234-8234-123456789abc'
+    const key = `skillforge.tool-onboarding.${JSON.stringify(['1', 'actor-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ requestId, connectorId: 'server', names: ['new_tool'] })
+    )
+    mocks.onboarding.mockResolvedValueOnce({
+      request_id: requestId,
+      connector_id: 'server',
+      status: 'SUCCEEDED',
+      tool_names: ['new_tool'],
+      items: [
+        {
+          tool_name: 'new_tool',
+          definition_id: '40',
+          version_id: '31',
+          deployment_key: 'service-one',
+          environment: 'PRODUCTION'
+        }
+      ]
+    })
+    const { drawer } = await open('TOOL')
+    const select = drawer.findAllComponents(ElSelect)[1]!
+    select.vm.$emit('update:modelValue', '30')
+    await flushPromises()
+    await button(drawer, '接入可用工具').trigger('click')
+    await flushPromises()
+    expect(mocks.onboarding).toHaveBeenCalledExactlyOnceWith(requestId)
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.availableTools).toHaveBeenCalledTimes(2)
+    expect(select.props('modelValue')).toBe('30')
+    expect(mocks.onboard).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
   it('非空目录内接入工具后刷新选项，保留原选择且不自动挂载或发布', async () => {
     const original = {
       definition_id: '30',
@@ -1798,6 +1849,52 @@ describe('能力挂载关联一致性', () => {
     expect(mocks.templateDetail).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).toContain('服务流程')
     expect(name.props('modelValue')).toBe('重试前填写的名称')
+    expect(mocks.installTemplate).not.toHaveBeenCalled()
+  })
+  it('手动选模板读取失败时保留名称，取消切换后可重读原模板', async () => {
+    mocks.templates.mockResolvedValue({
+      items: [
+        { id: 'template-1', name: '客服模板', version: '1' },
+        { id: 'template-2', name: '服务模板', version: '1' }
+      ]
+    })
+    mocks.templateDetail.mockRejectedValueOnce(Error('读取失败'))
+    const wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { directives: { permission: () => {} }, stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await button(wrapper, '从模板安装').trigger('click')
+    await flushPromises()
+    const drawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((value) => value.props('title') === '从模板安装')!
+    const field = (label: string) =>
+      drawer.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+    const select = field('模板').getComponent(ElSelect)
+    select.vm.$emit('update:modelValue', 'template-1')
+    select.vm.$emit('change', 'template-1')
+    await flushPromises()
+    const name = field('智能体名称').getComponent(ElInput)
+    await name.get('input').setValue('自定义名称')
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel')
+    select.vm.$emit('update:modelValue', 'template-2')
+    select.vm.$emit('change', 'template-2')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(select.props('modelValue')).toBe('template-1')
+    expect(name.props('modelValue')).toBe('自定义名称')
+    await button(drawer, '重新读取模板').trigger('click')
+    await flushPromises()
+    expect(mocks.templateDetail).toHaveBeenLastCalledWith('template-1')
+    expect(name.props('modelValue')).toBe('自定义名称')
+    confirm.mockResolvedValueOnce('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+    mocks.templateDetail.mockResolvedValueOnce({ name: '服务模板', definition: {} })
+    select.vm.$emit('update:modelValue', 'template-2')
+    select.vm.$emit('change', 'template-2')
+    await flushPromises()
+    expect(name.props('modelValue')).toBe('服务模板')
     expect(mocks.installTemplate).not.toHaveBeenCalled()
   })
   it('无资源槽的模板可直接安装，无需读取无关资源目录', async () => {

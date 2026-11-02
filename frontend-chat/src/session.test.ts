@@ -56,7 +56,7 @@ beforeEach(() => {
   uploadAttachment = async (body) => {
     const file = body.get('file') as File
     return response({
-      id: `a-${body.get('upload_id')}`,
+      id: String(body.get('upload_id')),
       name: file.name,
       input_path: `inputs/${file.name}`,
       size: file.size,
@@ -191,7 +191,7 @@ it('没有智能体时自动选择唯一可用团队并读取其会话', async (
   expect(createdSessions).toBe(0)
 })
 
-it('图片上传结果未知时只读核对原标识，确认后由用户加入草稿', async () => {
+it('图片上传结果未知时只读核对原标识，确认后加入草稿', async () => {
   await connect()
   const original = vi.mocked(fetch).getMockImplementation()!
   let found = false
@@ -234,9 +234,7 @@ it('图片上传结果未知时只读核对原标识，确认后由用户加入�
   found = true
   await state.checkUnconfirmedUpload(pending.uploadId)
   expect(state.currentUnconfirmedUploads.value).toHaveLength(0)
-  expect(state.currentConfirmedUploads.value).toHaveLength(1)
-  expect(state.images.value).toHaveLength(0)
-  await state.claimConfirmedUpload(pending.uploadId)
+  expect(state.currentConfirmedUploads.value).toHaveLength(0)
   expect(state.images.value[0]?.media_id).toBe('image-1')
   expect(
     vi
@@ -246,6 +244,40 @@ it('图片上传结果未知时只读核对原标识，确认后由用户加入�
       )
   ).toHaveLength(1)
 })
+it('核对图片期间切换补充输入时保留已确认结果，待用户加入', async () => {
+  await connect()
+  const original = vi.mocked(fetch).getMockImplementation()!
+  let finish!: (value: Response) => void
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    const path = new URL(String(input)).pathname
+    if (path === '/api/v1/chat/sessions/media/upload')
+      return Promise.reject(new TypeError('offline'))
+    if (path === '/api/v1/chat/sessions/media/upload-receipt')
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    return original(input, init)
+  })
+  await state.upload([new File(['png'], '图片.png', { type: 'image/png' })])
+  const id = state.currentUnconfirmedUploads.value[0]!.uploadId
+  const checking = state.checkUnconfirmedUpload(id)
+  await vi.waitFor(() => expect(finish).toBeDefined())
+  state.inputMode.value = 'supplement'
+  finish(
+    response({
+      status: 'FOUND',
+      media: { media_id: 'image-1', mime_type: 'image/png', byte_length: 3, width: 1, height: 1 }
+    })
+  )
+  await checking
+  expect(state.images.value).toEqual([])
+  expect(state.currentConfirmedUploads.value).toHaveLength(1)
+  state.inputMode.value = 'message'
+  await state.claimConfirmedUpload(id)
+  expect(state.images.value[0]?.media_id).toBe('image-1')
+  expect(state.currentConfirmedUploads.value).toEqual([])
+})
+
 it('多个可用团队或仅停用团队时不代用户选择', async () => {
   agentCatalog = []
   teamCatalog = [
@@ -866,12 +898,12 @@ describe('长粘贴文本草稿生命周期', () => {
     expect(await fileText(cached)).toBe(raw)
     expect(JSON.parse(posts[0]!)).toMatchObject({
       content: [],
-      context: { attachment_ids: [`a-${local.id}`] }
+      context: { attachment_ids: [local.id] }
     })
     expect(state.history.value.messages[0]).toMatchObject({
       role: 'user',
       content: '',
-      metadata: { attachment_ids: [`a-${local.id}`] }
+      metadata: { attachment_ids: [local.id] }
     })
     expect(state.attachments.value).toEqual([])
     expect(state.attachmentFiles.value).toEqual({})
@@ -889,7 +921,7 @@ describe('长粘贴文本草稿生命周期', () => {
       return originalUpload(body)
     }
     await state.submit()
-    const uploadedId = `a-${first!.id}`,
+    const uploadedId = first!.id,
       originalFile = state.attachmentFiles.value[uploadedId]
     expect(posts).toHaveLength(0)
     expect(state.pendingInput.value).toBeUndefined()
@@ -1050,12 +1082,12 @@ describe('长粘贴文本草稿生命周期', () => {
     state.references.value[0]!.source.nested = { value: 2 }
     finish(
       response({
-        id: 'uploaded',
-        name: '粘贴文本.txt',
+        id: String(uploadedForms[0]!.get('upload_id')),
+        name: (uploadedForms[0]!.get('file') as File).name,
         size: 2000,
         input_path: 'inputs/text',
         sha256: 'h',
-        expires_at: ''
+        expires_at: '2027-01-01T00:00:00Z'
       })
     )
     await pending

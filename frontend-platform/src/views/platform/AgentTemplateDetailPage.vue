@@ -134,6 +134,7 @@ const listContext = computed(() => ({
 const current = ref<AgentTemplateDetail>()
 const conflict = ref(false)
 const refreshRequired = ref(false)
+const pendingValidationRevision = ref<string>()
 const previewStale = ref(true)
 const candidatePreview = ref<AgentDefinitionImpact>()
 const candidateSnapshot = ref('')
@@ -163,7 +164,12 @@ const catalogs = useResource(async (signal) => {
   }
 })
 function acceptCatalogs(value: NonNullable<typeof catalogs.data.value>) {
-  if (value.modelList) models.value = value.modelList
+  if (value.modelList) {
+    models.value = value.modelList
+    const enabledModels = value.modelList.filter((model) => model.kind === 'LLM' && model.enabled)
+    if (isNew && !ready.value && !form.value.model_config_id && enabledModels.length === 1)
+      form.value.model_config_id = enabledModels[0]!.id
+  }
   if (value.defs) definitions.value = value.defs
   catalogError.value = value.error
 }
@@ -432,6 +438,7 @@ function validateEntries() {
   }
 }
 async function reload(expectedRevision?: number) {
+  if (isNew && item.value) return
   const requested = snapshot()
   const result = await load.reload()
   if (!result) return
@@ -489,12 +496,17 @@ async function commit(command: NonNullable<typeof pending.value>) {
   if (isNew) {
     committedNavigation.value = true
     try {
-      await router.replace({
+      const failure = await router.replace({
         path: '/platform/agent-templates/' + result.definition_id,
-        query: listContext.value
+        query: listContext.value,
+        ...(command.validateAfterSave
+          ? { state: { validate_revision: String(result.draft_revision) } }
+          : {})
       })
+      if (failure) throw failure
     } catch {
-      message.warning('模板已保存，详情导航失败，可从模板列表重新进入。')
+      refreshRequired.value = true
+      message.warning('模板已保存，详情导航失败，请从模板列表重新进入。')
     } finally {
       committedNavigation.value = false
     }
@@ -560,7 +572,7 @@ function save(validateAfterSave = false) {
     const command = {
       permission: target ? 'platform.agent_definitions.edit' : 'platform.agent_definitions.create',
       label: '模板已保存',
-      validateAfterSave: !!target && validateAfterSave,
+      validateAfterSave,
       definition: payload.definition,
       run: () =>
         target
@@ -771,11 +783,46 @@ watch(
     historyOpen.value = false
     ready.value = false
     pending.value = undefined
+    pendingValidationRevision.value = undefined
     item.value = undefined
   },
   { flush: 'sync' }
 )
-onMounted(reload)
+async function reloadAfterCreate() {
+  await reload()
+  const requestedRevision = pendingValidationRevision.value
+  if (!item.value || requestedRevision === undefined) return
+  pendingValidationRevision.value = undefined
+  if (
+    requestedRevision !== String(item.value.draft_revision) ||
+    dirty.value ||
+    conflict.value ||
+    !allowed('platform.agent_definitions.validate') ||
+    !allowed('platform.agent_definitions.read')
+  ) {
+    message.warning('模板已保存，请核对当前草稿和权限后重新验证。')
+    return
+  }
+  await action.run(async () => {
+    try {
+      await validateCurrent(true)
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      action.error.value = `模板已保存，但验证未完成：${reason instanceof Error ? reason.message : '请重新验证'}。`
+    }
+  })
+}
+onMounted(async () => {
+  const requestedRevision = router.options.history.state?.validate_revision
+  if (!isNew && typeof requestedRevision === 'string') {
+    pendingValidationRevision.value = requestedRevision
+    router.options.history.replace(route.fullPath, {
+      ...router.options.history.state,
+      validate_revision: null
+    })
+  }
+  await reloadAfterCreate()
+})
 
 const optionalSections = ref<string[]>([])
 watch(issues, (values) => {
@@ -812,7 +859,7 @@ const formTipId = useId()
       <ElButton
         v-if="item"
         :loading="load.loading.value"
-        :disabled="action.busy.value"
+        :disabled="action.busy.value || (isNew && refreshRequired)"
         @click="reload()"
         >重读服务端草稿</ElButton
       >
@@ -934,7 +981,11 @@ const formTipId = useId()
     </section>
     <FeedbackNotice
       v-if="load.error.value || action.error.value || setupAction.error.value"
-      :title="load.error.value || action.error.value || setupAction.error.value"
+      :title="
+        load.error.value && pendingValidationRevision
+          ? `模板已保存，但详情读取失败：${load.error.value}。请重新读取后继续验证。`
+          : load.error.value || action.error.value || setupAction.error.value
+      "
       :closable="false"
       type="error"
     />
@@ -944,7 +995,10 @@ const formTipId = useId()
       type="warning"
       :closable="false"
     />
-    <ElButton v-if="load.error.value && !ready" :loading="load.loading.value" @click="reload()"
+    <ElButton
+      v-if="load.error.value && !ready"
+      :loading="load.loading.value"
+      @click="reloadAfterCreate()"
       >重新读取模板</ElButton
     >
     <ElAlert
@@ -958,7 +1012,11 @@ const formTipId = useId()
     >
     <ElAlert
       v-if="refreshRequired"
-      title="操作回执已确认，但当前服务端草稿尚未刷新。请重读服务端草稿后继续；不要重复提交已确认操作。"
+      :title="
+        isNew
+          ? '模板已保存，请从模板列表进入详情后继续；不要重复创建。'
+          : '操作回执已确认，但当前服务端草稿尚未刷新。请重读服务端草稿后继续；不要重复提交已确认操作。'
+      "
       type="warning"
       :closable="false"
     />
@@ -1033,6 +1091,9 @@ const formTipId = useId()
             ) || action.busy.value
           "
         />
+        <p v-if="isNew" class="admin-field-help">
+          新建时若只有一个已启用文本模型，将自动选中；请确认模型符合用途和费用要求。
+        </p>
         <p class="admin-field-help">
           <RouterLink
             v-if="allowed('foundation.models.read')"
@@ -1450,8 +1511,7 @@ const formTipId = useId()
             item ? 'platform.agent_definitions.edit' : 'platform.agent_definitions.create'
           ]"
           :type="
-            item &&
-            dirty &&
+            (item ? dirty && allowed('platform.agent_definitions.edit') : isNew) &&
             allowed('platform.agent_definitions.validate') &&
             allowed('platform.agent_definitions.read')
               ? undefined
@@ -1464,9 +1524,9 @@ const formTipId = useId()
         >
         <ElButton
           v-if="
-            item &&
-            dirty &&
-            allowed('platform.agent_definitions.edit') &&
+            (item
+              ? dirty && allowed('platform.agent_definitions.edit')
+              : isNew && allowed('platform.agent_definitions.create')) &&
             allowed('platform.agent_definitions.validate') &&
             allowed('platform.agent_definitions.read')
           "

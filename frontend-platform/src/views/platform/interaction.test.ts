@@ -804,7 +804,7 @@ describe('新平台直接 Element Plus 交互', () => {
       storage.mockRestore()
     }
   })
-  it('模板创建成功后导航失败保留资源身份，再次保存只更新', async () => {
+  it('模板创建成功后导航失败保留回执并禁止重复提交', async () => {
     mocks.createTemplate.mockImplementation(async (payload) => ({
       ...payload,
       definition_id: 'template-1',
@@ -844,12 +844,8 @@ describe('新平台直接 Element Plus 交互', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(mocks.createTemplate).toHaveBeenCalledTimes(1)
-    expect(mocks.updateTemplate).toHaveBeenCalledWith(
-      'template-1',
-      1,
-      expect.anything(),
-      expect.any(String)
-    )
+    expect(wrapper.text()).toContain('模板已保存，请从模板列表进入详情后继续')
+    expect(mocks.updateTemplate).not.toHaveBeenCalled()
   })
   it('机构接入编辑抽屉保持右侧顶层且禁止遮罩关闭', async () => {
     const wrapper = await open(InstitutionOnboardingFlow, '/platform/tenants', {

@@ -64,8 +64,6 @@ watch(
       !appliedTenant.value ||
       targetChanged.value ||
       uncertain.value ||
-      hasDraft.value ||
-      form.definition_id ||
       !list.data.value ||
       !definitions.data.value ||
       !grants.data.value ||
@@ -82,7 +80,15 @@ watch(
         usableGrant(grant, appliedTenant.value, String(definition.id))
       )
     )
-    if (candidates.length === 1) {
+    if (automaticDefinitionId.value) {
+      if (candidates.length !== 1 || String(candidates[0]!.id) !== automaticDefinitionId.value) {
+        automaticDefinitionId.value = ''
+        form.definition_id = ''
+        message.warning('可部署定义已变化，请重新选择；其他输入已保留。')
+      }
+      return
+    }
+    if (!hasDraft.value && !form.definition_id && candidates.length === 1) {
       automaticDefinitionId.value = String(candidates[0]!.id)
       form.definition_id = automaticDefinitionId.value
     }

@@ -16,6 +16,7 @@ import {
   type UploadRawFile
 } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
+import { prepareInitialFile } from './knowledgeInitialFile'
 import SkillWorkbenchPage from './SkillWorkbenchPage.vue'
 import ConversationTasksPage from './ConversationTasksPage.vue'
 import HomePage from './HomePage.vue'
@@ -219,6 +220,58 @@ afterEach(() => {
 })
 
 describe('Element Plus 控件与业务交互', () => {
+  it('首个文件保存请求记录失败时保留文件，恢复后无需重新选择', async () => {
+    const owner = JSON.stringify(['tenant-1', 'institution-member'])
+    const file = new File(['内容'], '首个文件.txt')
+    prepareInitialFile(owner, currentAuth.identityVersion, 'kb-1', file)
+    currentAuth.user.permissions.push('foundation.knowledge.create')
+    const originalSet = Storage.prototype.setItem
+    let fail = true
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      key,
+      value
+    ) {
+      if (key.startsWith('skillforge.knowledge-upload.') && fail) {
+        fail = false
+        throw Error('存储不可用')
+      }
+      return originalSet.call(this, key, value)
+    })
+    try {
+      const wrapper = render(KnowledgeManagePage)
+      await flushPromises()
+      expect(wrapper.text()).toContain('已选择“首个文件.txt”，尚未上传')
+      expect(wrapper.text()).toContain('无法保存上传记录')
+      expect(mocks.uploadFile).not.toHaveBeenCalled()
+      await button(wrapper, '重新读取并继续').trigger('click')
+      await flushPromises()
+      expect(mocks.uploadFile).toHaveBeenCalledTimes(1)
+      expect(wrapper.text()).not.toContain('已选择“首个文件.txt”，尚未上传')
+      expect(wrapper.text()).not.toContain('无法保存上传记录')
+    } finally {
+      storage.mockRestore()
+      currentAuth.user.permissions.pop()
+    }
+  })
+  it('首个文件请求结果未知时只核对原回执，不重复上传', async () => {
+    const owner = JSON.stringify(['tenant-1', 'institution-member'])
+    prepareInitialFile(owner, currentAuth.identityVersion, 'kb-1', new File(['x'], '资料.txt'))
+    currentAuth.user.permissions.push('foundation.knowledge.create')
+    mocks.uploadFile.mockRejectedValueOnce(new Error('网络中断'))
+    try {
+      const wrapper = render(KnowledgeManagePage)
+      await flushPromises()
+      expect(wrapper.text()).toContain('上传结果尚未确认')
+      expect(wrapper.text()).not.toContain('已选择“资料.txt”，尚未上传')
+      expect(mocks.uploadFile).toHaveBeenCalledTimes(1)
+      await button(wrapper, '刷新文档列表').trigger('click')
+      await flushPromises()
+      expect(mocks.uploadFile).toHaveBeenCalledTimes(1)
+    } finally {
+      currentAuth.user.permissions.pop()
+    }
+  })
   it('重新进入知识库时自动核对原上传并恢复文档列表', async () => {
     const requestId = 'd4999064-006f-4af4-af0f-04344f345ca5'
     const key = `skillforge.knowledge-upload.${JSON.stringify(['tenant-1', 'institution-member', 'kb-1'])}`

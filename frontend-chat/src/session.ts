@@ -1501,13 +1501,14 @@ export function useConversation() {
         if (
           unconfirmedUploads.value.some(
             (item) =>
-              item.uploadId === uploadId &&
               item.session === id &&
               item.base === pending.base &&
-              item.clientRef === pending.clientRef
+              item.clientRef === pending.clientRef &&
+              (item.uploadId === uploadId ||
+                (!item.receipt && item.name === file.name && item.kind === pending.kind))
           )
         )
-          throw new Error(`文件 ${file.name} 的原上传结果尚未确认，无法再次上传。`)
+          throw new Error(`文件 ${file.name} 的原上传结果尚未确认，请先核对原上传。`)
         if (pasted) retainedPastedUploads.set(uploadKey(pending), pasted)
         unconfirmedUploads.value.push(pending)
         if (uploadStorageUnavailable.value) {
@@ -1529,12 +1530,58 @@ export function useConversation() {
             sessionAbort.signal
           )
         } catch (cause) {
+          if (
+            cause instanceof RequestError &&
+            cause.code ===
+              (image ? 'SESSION_MEDIA_UPLOAD_REJECTED' : 'SESSION_ATTACHMENT_UPLOAD_REJECTED')
+          ) {
+            const previous = unconfirmedUploads.value
+            unconfirmedUploads.value = previous.filter(
+              (item) => uploadKey(item) !== uploadKey(pending)
+            )
+            if (uploadStorageUnavailable.value) unconfirmedUploads.value = previous
+            else retainedPastedUploads.delete(uploadKey(pending))
+            throw cause
+          }
           throw new UploadUnconfirmedError(
             `文件 ${file.name} 的上传结果尚未确认，后续文件未上传；当前无法自动确认。`,
             { cause }
           )
         } finally {
           inFlightUploads.delete(uploadKey(pending))
+        }
+        if (image) {
+          const media = value as Media | null
+          if (
+            !media ||
+            typeof media.media_id !== 'string' ||
+            !media.media_id ||
+            typeof media.mime_type !== 'string' ||
+            !media.mime_type ||
+            !Number.isSafeInteger(media.byte_length) ||
+            media.byte_length <= 0 ||
+            !Number.isSafeInteger(media.width) ||
+            media.width <= 0 ||
+            !Number.isSafeInteger(media.height) ||
+            media.height <= 0
+          )
+            throw new UploadUnconfirmedError(`图片 ${file.name} 的上传回执不完整，请核对原上传。`)
+        } else {
+          const attachment = value as Attachment | null
+          if (
+            !attachment ||
+            attachment.id !== uploadId ||
+            attachment.name !== file.name ||
+            typeof attachment.input_path !== 'string' ||
+            !attachment.input_path ||
+            !Number.isSafeInteger(attachment.size) ||
+            attachment.size <= 0 ||
+            typeof attachment.sha256 !== 'string' ||
+            !attachment.sha256 ||
+            typeof attachment.expires_at !== 'string' ||
+            !attachment.expires_at
+          )
+            throw new UploadUnconfirmedError(`附件 ${file.name} 的上传回执不完整，请核对原上传。`)
         }
         if (version !== selection) {
           const record = unconfirmedUploads.value.find(
@@ -1649,7 +1696,8 @@ export function useConversation() {
           return
         }
         pending.receipt = receipt.media
-        notice.value = `已确认图片 ${pending.name}，可加入当前草稿。`
+        if (!locked.value && inputMode.value === 'message') await claimConfirmedUpload(uploadId)
+        else notice.value = `已确认图片 ${pending.name}，可加入当前草稿。`
         return
       }
       const items = await api.json<Attachment[]>(
@@ -1664,6 +1712,11 @@ export function useConversation() {
       if (pending.pastedWithdrawn) {
         pending.receipt = found
         notice.value = `已确认附件 ${found.name}；原粘贴项已移除，未自动加入草稿。`
+        return
+      }
+      if (locked.value || inputMode.value !== 'message') {
+        pending.receipt = found
+        notice.value = `已确认附件 ${found.name}，可加入当前草稿。`
         return
       }
       if (!attachments.value.some((item) => item.id === found.id)) {

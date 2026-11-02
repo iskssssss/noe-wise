@@ -64,6 +64,20 @@ it('机构定义预览发送当前编辑内容与原草稿修订', async () => {
   })
 })
 
+it('会话图片回执按原会话和上传标识只读查询', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(apiResponse({ status: 'UNKNOWN', media: null }))
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(api.chat.mediaUploadReceipt('session-1', 'upload-1')).resolves.toEqual({
+    status: 'UNKNOWN',
+    media: null
+  })
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0]![0]).toBe(
+    '/api/v1/chat/sessions/media/upload-receipt?session_id=session-1&upload_id=upload-1'
+  )
+  expect(fetchMock.mock.calls[0]![1].method).toBe('GET')
+})
+
 describe('登录请求认证边界', () => {
   it('知识文档上传遇到 401 不自动重发文件', async () => {
     localStorage.setItem('skillforge.access_token', 'expired-token')
@@ -78,6 +92,16 @@ describe('登录请求认证边界', () => {
     ).rejects.toMatchObject({ status: 401 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]![0]).toContain('/api/v1/knowledge/bases/documents/upload?')
+  })
+  it.each(['file', 'image'] as const)('会话%s上传遇到401不自动重发', async (kind) => {
+    localStorage.setItem('skillforge.access_token', 'expired-token')
+    localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+    const fetchMock = vi.fn().mockResolvedValue(apiResponse(null, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new File(['内容'], kind === 'file' ? '资料.txt' : '图片.png')
+    const upload = kind === 'file' ? api.chat.uploadAttachment : api.chat.uploadMedia
+    await expect(upload('session-1', 'upload-1', file)).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
   it('浏览器保留旧令牌时登录不携带 Authorization', async () => {
     localStorage.setItem('skillforge.access_token', 'expired-access-token')

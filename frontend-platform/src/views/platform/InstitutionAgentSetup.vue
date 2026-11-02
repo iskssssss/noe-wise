@@ -175,6 +175,11 @@ const availableGrants = computed(() =>
   )
 )
 const grantSelectionRequired = ref(false)
+const automaticGrantId = ref('')
+function onGrantChange() {
+  grantSelectionRequired.value = false
+  automaticGrantId.value = ''
+}
 let prefillPending = false
 function prefillContext() {
   if (!props.definitionId) return
@@ -190,13 +195,28 @@ watch(action.busy, (busy) => {
 })
 watch([() => form.definition_id, availableGrants], ([definition], [previousDefinition]) => {
   if (progress.grant || progress.unknown) return
-  if (definition !== previousDefinition) grantSelectionRequired.value = false
+  if (definition !== previousDefinition) {
+    grantSelectionRequired.value = false
+    automaticGrantId.value = ''
+  }
+  if (
+    automaticGrantId.value &&
+    definition === previousDefinition &&
+    (availableGrants.value.length !== 1 ||
+      availableGrants.value[0]!.grant_id !== automaticGrantId.value)
+  ) {
+    automaticGrantId.value = ''
+    form.grant_id = ''
+    grantSelectionRequired.value = true
+    return
+  }
   if (!availableGrants.value.some((item) => item.grant_id === form.grant_id)) {
     if (form.grant_id && definition === previousDefinition) grantSelectionRequired.value = true
-    form.grant_id =
+    automaticGrantId.value =
       !grantSelectionRequired.value && availableGrants.value.length === 1
         ? availableGrants.value[0]!.grant_id
         : ''
+    form.grant_id = automaticGrantId.value
   }
 })
 watch(
@@ -514,7 +534,7 @@ onMounted(() => {
         <ElFormItem v-if="form.mode === 'existing'" label="部署与执行授权" required>
           <ElSelect
             v-model="form.grant_id"
-            @change="grantSelectionRequired = false"
+            @change="onGrantChange"
             :loading="catalogue.loading.value"
             :disabled="!form.definition_id"
             placeholder="选择明确授权"

@@ -23,6 +23,10 @@
         >核对创建结果</ElButton
       >
     </section>
+    <section v-if="recoveryConnector && canOnboard" class="admin-card" role="status">
+      连接器已保存，可继续接入工具。
+      <ElButton link @click="navigateToTools(recoveryConnector)">继续接入原连接器</ElButton>
+    </section>
     <div class="admin-toolbar admin-card">
       <ElInput
         v-model="query"
@@ -214,6 +218,7 @@ const auth = useAuthStore()
 type PendingCreate = { requestId: string; name: string; onboard: boolean }
 const pendingCreate = ref<PendingCreate>()
 const storageError = ref('')
+const recoveryConnector = ref('')
 const actor = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? `${auth.user.tenant_id}:${auth.user.sub}` : ''
 )
@@ -240,6 +245,7 @@ watch(
   () => {
     pendingCreate.value = undefined
     storageError.value = ''
+    recoveryConnector.value = ''
     if (!actor.value) return
     try {
       const raw = sessionStorage.getItem(storageKey(actor.value))
@@ -393,13 +399,21 @@ async function save(onboard = false) {
   if (onboard && connectorId) await navigateToTools(connectorId)
 }
 async function navigateToTools(connectorId: string) {
+  const identity = auth.identityVersion
   try {
-    if (await router.push({ path: '/admin/tools', query: { connectorId } }))
-      message.warning('连接器已保存，未能进入工具接入，请从列表继续。')
-    else message.success('连接器已保存，请选择要接入的工具')
+    const failure = await router.push({ path: '/admin/tools', query: { connectorId } })
+    if (identity !== auth.identityVersion) return
+    if (!failure) {
+      if (!disposed) recoveryConnector.value = ''
+      message.success('连接器已保存，请选择要接入的工具')
+      return
+    }
+    if (disposed) return
   } catch {
-    message.warning('连接器已保存，未能进入工具接入，请从列表继续。')
+    if (disposed || identity !== auth.identityVersion) return
   }
+  recoveryConnector.value = connectorId
+  message.warning('连接器已保存，未能进入工具接入，请使用原连接器入口继续。')
 }
 async function checkCreation(automatic = false) {
   const operation = pendingCreate.value,
@@ -444,6 +458,7 @@ async function remove(row: ConnectorInstanceItem) {
   )
     await run(async () => {
       await api.connectors.removeInstance(row.instance_id)
+      if (recoveryConnector.value === row.instance_id) recoveryConnector.value = ''
       message.success('连接器已删除')
       await reload()
     })

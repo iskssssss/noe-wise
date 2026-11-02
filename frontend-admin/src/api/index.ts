@@ -353,6 +353,12 @@ export interface HandoffTicket {
   revision: number
   resolution_note?: string
 }
+export interface HandoffActionReceipt {
+  command_id: string
+  ticket_id: string
+  action: 'accept' | 'resolve'
+  status: 'assigned' | 'resolved'
+}
 export interface HandoffReply {
   command_id: string
   ticket_id: string
@@ -1484,9 +1490,17 @@ export const api = {
       form.append('file', file, file.name)
       return post<import('@skillforge/shared/components/chatMedia').ChatMedia>(
         '/chat/sessions/media/upload',
-        form
+        form,
+        { retryOnUnauthorized: false }
       )
     },
+    mediaUploadReceipt: (sessionId: string, uploadId: string) =>
+      get<{
+        status: 'FOUND' | 'UNKNOWN'
+        media: import('@skillforge/shared/components/chatMedia').ChatMedia | null
+      }>(
+        `/chat/sessions/media/upload-receipt?${new URLSearchParams({ session_id: sessionId, upload_id: uploadId })}`
+      ),
     mediaLimits: (signal?: AbortSignal) =>
       get<import('@skillforge/shared/components/chatMedia').ChatMediaLimits>(
         '/chat/sessions/media/limits',
@@ -1502,7 +1516,9 @@ export const api = {
       form.append('session_id', sessionId)
       form.append('upload_id', uploadId)
       form.append('file', file, file.name)
-      return post<SessionAttachment>('/chat/sessions/attachments/upload', form)
+      return post<SessionAttachment>('/chat/sessions/attachments/upload', form, {
+        retryOnUnauthorized: false
+      })
     },
     attachments: (sessionId: string) =>
       get<SessionAttachment[]>(
@@ -1705,17 +1721,31 @@ export const api = {
         },
         { retryOnUnauthorized: false }
       ),
-    accept: (id: string, revision: number) =>
-      post<{ id: string; status: string }>(`/handoff/tickets/accept`, {
-        ticket_id: id,
-        expected_revision: revision
-      }),
-    resolve: (id: string, revision: number, note: string) =>
-      post<{ id: string; status: string }>(`/handoff/tickets/resolve`, {
-        ticket_id: id,
-        expected_revision: revision,
-        payload: { resolution_note: note }
-      })
+    actionReceipt: (ticketId: string, commandId: string) =>
+      get<HandoffActionReceipt | null>(
+        `/handoff/tickets/action-receipt?ticket_id=${encodeURIComponent(ticketId)}&command_id=${encodeURIComponent(commandId)}`
+      ),
+    accept: (id: string, revision: number, commandId: string) =>
+      post<HandoffActionReceipt>(
+        `/handoff/tickets/accept`,
+        {
+          ticket_id: id,
+          expected_revision: revision,
+          command_id: commandId
+        },
+        { retryOnUnauthorized: false }
+      ),
+    resolve: (id: string, revision: number, commandId: string, note: string) =>
+      post<HandoffActionReceipt>(
+        `/handoff/tickets/resolve`,
+        {
+          ticket_id: id,
+          expected_revision: revision,
+          command_id: commandId,
+          payload: { resolution_note: note }
+        },
+        { retryOnUnauthorized: false }
+      )
   },
 
   knowledge: {

@@ -66,6 +66,7 @@ function toolRows(table: VueWrapper) {
   return (table.props() as { data: AvailableTool[] }).data
 }
 beforeEach(() => {
+  sessionStorage.clear()
   vi.resetAllMocks()
   calls.routeConnector = 'server'
   calls.available.mockResolvedValue({ items: [] })
@@ -197,6 +198,59 @@ it('只响应同一机构账号的连接器创建通知', async () => {
     vi.unstubAllGlobals()
   }
 })
+it.each(['成功', '失败'])('修改连接器后重读工具%s，保留选择并防止使用旧目录', async (outcome) => {
+  wrapper = mount(ToolsPage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } }
+  })
+  await flushPromises()
+  const onboarding = wrapper.findComponent(ToolOnboarding)
+  onboarding.findComponent(ElTable).vm.$emit('selection-change', [alpha])
+  await flushPromises()
+  if (outcome === '成功')
+    calls.discover.mockResolvedValueOnce({ items: [alpha, { name: 'new_tool' }] })
+  else calls.discover.mockRejectedValueOnce(new Error('工具目录不可用'))
+  await wrapper.get('a[href="/admin/connectors"]').trigger('click')
+  window.dispatchEvent(new Event('focus'))
+  await flushPromises()
+  expect(calls.connectors).toHaveBeenCalledTimes(2)
+  expect(calls.discover).toHaveBeenCalledTimes(2)
+  expect(button('确认接入并授权调用 1 项工具').props('disabled')).toBe(outcome === '失败')
+  if (outcome === '成功') expect(onboarding.text()).toContain('new_tool')
+  else {
+    expect(onboarding.text()).toContain('工具目录未刷新')
+    await button('刷新连接器及工具').trigger('click')
+    await flushPromises()
+    expect(calls.connectors).toHaveBeenCalledTimes(3)
+    expect(calls.discover).toHaveBeenCalledTimes(3)
+    expect(button('确认接入并授权调用 1 项工具').props('disabled')).toBe(false)
+  }
+  expect(calls.onboard).not.toHaveBeenCalled()
+})
+
+it('返回时连接器读取失败后，一次刷新恢复连接器和原工具目录', async () => {
+  wrapper = mount(ToolsPage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } }
+  })
+  await flushPromises()
+  const onboarding = wrapper.findComponent(ToolOnboarding)
+  onboarding.findComponent(ElTable).vm.$emit('selection-change', [alpha])
+  await flushPromises()
+  calls.connectors.mockRejectedValueOnce(new Error('连接器目录不可用'))
+  await wrapper.get('a[href="/admin/connectors"]').trigger('click')
+  window.dispatchEvent(new Event('focus'))
+  await flushPromises()
+  expect(button('确认接入并授权调用 1 项工具').props('disabled')).toBe(true)
+  expect(calls.discover).toHaveBeenCalledTimes(1)
+  await button('刷新连接器及工具').trigger('click')
+  await flushPromises()
+  expect(calls.connectors).toHaveBeenCalledTimes(3)
+  expect(calls.discover).toHaveBeenCalledTimes(2)
+  expect(button('确认接入并授权调用 1 项工具').props('disabled')).toBe(false)
+  expect(calls.onboard).not.toHaveBeenCalled()
+})
+
 it('通知通道不可用时仍可在返回页面后刷新', async () => {
   vi.stubGlobal(
     'BroadcastChannel',
@@ -225,7 +279,7 @@ it('连接器目录失败时不误报空目录，刷新成功后继续', async (
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
   expect(wrapper.text()).not.toContain('当前没有可选的 MCP 连接器')
-  await button('刷新连接器').trigger('click')
+  await button('刷新连接器及工具').trigger('click')
   await flushPromises()
   expect(calls.connectors).toHaveBeenCalledTimes(2)
   expect(wrapper.text()).not.toContain('当前没有可选的 MCP 连接器')
@@ -384,6 +438,75 @@ it.each([new Error('连接中断'), new HttpClientError({ status: 408, userMessa
     expect(calls.onboard).toHaveBeenCalledTimes(1)
   }
 )
+
+it('重新进入自动核对原接入，成功后清除记录而不重复写入', async () => {
+  calls.onboard.mockRejectedValueOnce(new Error('连接中断'))
+  await choose()
+  const requestId = calls.onboard.mock.calls[0]![0]
+  const key = `skillforge.tool-onboarding.${JSON.stringify(['tenant-1', 'member-1'])}`
+  expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual({
+    requestId,
+    connectorId: 'server',
+    names: ['read_alpha']
+  })
+  wrapper!.unmount()
+  calls.discover.mockClear()
+  calls.onboarding.mockResolvedValueOnce(success(requestId))
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.onboarding).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(calls.onboard).toHaveBeenCalledTimes(1)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(wrapper.text()).not.toContain('接入结果尚未确认')
+  expect(calls.discover).toHaveBeenCalledExactlyOnceWith('server')
+})
+
+it('自动核对未找到回执时保留原记录和手动入口', async () => {
+  const requestId = 'ee2debea-46c1-4dd1-a508-193f53e27291'
+  const key = `skillforge.tool-onboarding.${JSON.stringify(['tenant-1', 'member-1'])}`
+  const pending = JSON.stringify({ requestId, connectorId: 'server', names: ['read_alpha'] })
+  sessionStorage.setItem(key, pending)
+  calls.onboarding.mockResolvedValueOnce(undefined)
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.onboarding).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(sessionStorage.getItem(key)).toBe(pending)
+  expect(button('核对接入结果').exists()).toBe(true)
+  expect(calls.onboard).not.toHaveBeenCalled()
+})
+
+it('不能保存原接入请求时不发送工具接入', async () => {
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  wrapper.findComponent(ToolOnboarding).findComponent(ElTable).vm.$emit('selection-change', [alpha])
+  await flushPromises()
+  const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+    throw Error('blocked')
+  })
+  await button('确认接入并授权调用 1 项工具').trigger('click')
+  await flushPromises()
+  expect(calls.onboard).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('尚未发送请求')
+  storage.mockRestore()
+})
+
+it('回执已确认但存储清除失败时保留记录，恢复后只读核对', async () => {
+  const storage = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+    throw Error('blocked')
+  })
+  await choose()
+  const requestId = calls.onboard.mock.calls[0]![0]
+  const key = `skillforge.tool-onboarding.${JSON.stringify(['tenant-1', 'member-1'])}`
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+  expect(wrapper!.text()).toContain('无法清除原工具接入记录')
+  storage.mockRestore()
+  calls.onboarding.mockResolvedValueOnce(success(requestId))
+  await button('核对接入结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(calls.onboard).toHaveBeenCalledTimes(1)
+  expect(calls.onboarding).toHaveBeenCalledExactlyOnceWith(requestId)
+})
 
 it('重新进入后可显式按原请求 ID 查询，不调用接入写入', async () => {
   const requestId = 'ee2debea-46c1-4dd1-a508-193f53e27291'

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.skillforge.core.foundation.access.RequirePermission;
 import com.skillforge.core.chat.dto.handoff.CreateHandoffTicketRequest;
 import com.skillforge.core.chat.dto.handoff.ResolveTicketRequest;
-import com.skillforge.core.chat.dto.handoff.HandoffActionResponse;
 import com.skillforge.core.chat.dto.handoff.HandoffTicketListResponse;
 import com.skillforge.core.chat.dto.handoff.HandoffTicketResponse;
 import com.skillforge.core.chat.enums.HandoffTicketStatus;
@@ -39,9 +38,12 @@ public class HandoffController {
     private final AgentSessionRegistry sessions;
     private final com.skillforge.institution.service.HandoffReplyService replies;
     private final com.skillforge.core.chat.ChatSessionService chat;
+    private final com.skillforge.institution.service.HandoffActionService actions;
 
     public HandoffController(HandoffApplicationService handoffs, AgentSessionRegistry sessions,
-            com.skillforge.institution.service.HandoffReplyService replies, com.skillforge.core.chat.ChatSessionService chat) {
+            com.skillforge.institution.service.HandoffReplyService replies, com.skillforge.core.chat.ChatSessionService chat,
+            com.skillforge.institution.service.HandoffActionService actions) {
+        this.actions = actions;
         this.handoffs = handoffs;
         this.sessions = sessions;
         this.replies = replies;
@@ -77,32 +79,30 @@ public class HandoffController {
     /** 只有管理员和开发者可执行 pending -> assigned。 */
     @RequirePermission("foundation.handoff.update")
     @PostMapping("/tickets/accept")
-    public ApiResponse<HandoffActionResponse> acceptEndpoint(
+    public ApiResponse<com.skillforge.institution.service.HandoffActionService.Receipt> acceptEndpoint(
             @Valid @RequestBody AcceptCommand command) {
-        return ApiResponses.wrap(accept(command.ticketId(), command.expectedRevision()));
-    }
-
-    public HandoffActionResponse accept(String ticketId, long revision) {
-        String tenantId = TenantIds.requireTenantId();
-        HandoffActionResponse result = handoffs.accept(
-                Long.parseLong(tenantId), ticketId, Long.parseLong(StpUtil.getLoginIdAsString()), revision);
-        sessions.notifyTicketChanged(tenantId, result.id());
-        return result;
+        var result = actions.execute(tenantId(), Long.parseLong(StpUtil.getLoginIdAsString()), command.ticketId(),
+                command.expectedRevision(), command.commandId(), "accept", null);
+        if (result.created()) sessions.notifyTicketChanged(TenantIds.requireTenantId(), result.ticketId());
+        return ApiResponses.wrap(result);
     }
 
     /** 只有管理员和开发者可执行 assigned -> resolved。 */
     @RequirePermission("foundation.handoff.update")
     @PostMapping("/tickets/resolve")
-    public ApiResponse<HandoffActionResponse> resolveEndpoint(
+    public ApiResponse<com.skillforge.institution.service.HandoffActionService.Receipt> resolveEndpoint(
             @Valid @RequestBody ResolveCommand command) {
-        return ApiResponses.wrap(resolve(command.ticketId(), command.expectedRevision(), command.payload()));
+        var result = actions.execute(tenantId(), Long.parseLong(StpUtil.getLoginIdAsString()), command.ticketId(),
+                command.expectedRevision(), command.commandId(), "resolve", command.payload() == null ? null : command.payload().resolutionNote());
+        if (result.created()) sessions.notifyTicketChanged(TenantIds.requireTenantId(), result.ticketId());
+        return ApiResponses.wrap(result);
     }
 
-    public HandoffActionResponse resolve(String ticketId, long revision, ResolveTicketRequest request) {
-        String tenantId = TenantIds.requireTenantId();
-        HandoffActionResponse result = handoffs.resolve(Long.parseLong(tenantId), ticketId, Long.parseLong(StpUtil.getLoginIdAsString()), revision, request);
-        sessions.notifyTicketChanged(tenantId, result.id());
-        return result;
+    @RequirePermission("foundation.handoff.read")
+    @GetMapping("/tickets/action-receipt")
+    public ApiResponse<com.skillforge.institution.service.HandoffActionService.Receipt> actionReceipt(
+            @RequestParam("ticket_id") String ticket, @RequestParam("command_id") String command) {
+        return ApiResponses.wrap(actions.receipt(tenantId(), Long.parseLong(StpUtil.getLoginIdAsString()), ticket, command));
     }
 
     /** 产品公开对话的只读脱敏上下文；不返回系统消息、私有 checkpoint 或内部子会话。 */
@@ -172,13 +172,15 @@ public class HandoffController {
 
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */
     public record AcceptCommand(@JsonProperty("ticket_id") @NotNull String ticketId,
-            @JsonProperty("expected_revision") @jakarta.validation.constraints.Positive long expectedRevision) {
+            @JsonProperty("expected_revision") @jakarta.validation.constraints.Positive long expectedRevision,
+            @JsonProperty("command_id") @jakarta.validation.constraints.NotBlank String commandId) {
     }
 
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */
     public record ResolveCommand(
             @JsonProperty("ticket_id") @NotNull String ticketId,
             @JsonProperty("expected_revision") @jakarta.validation.constraints.Positive long expectedRevision,
+            @JsonProperty("command_id") @jakarta.validation.constraints.NotBlank String commandId,
             @JsonProperty("payload") @Valid ResolveTicketRequest payload) {
     }
 }
