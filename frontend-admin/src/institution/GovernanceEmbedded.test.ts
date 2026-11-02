@@ -20,6 +20,8 @@ const fixture = vi.hoisted(() => ({
   statusResult: vi.fn(),
   confirm: vi.fn(),
   webhooks: vi.fn(),
+  webhookCreate: vi.fn(),
+  webhookResult: vi.fn(),
   audit: vi.fn()
 }))
 vi.mock('../stores/auth', () => ({ useAuthStore: () => reactive(fixture.auth) }))
@@ -36,7 +38,11 @@ vi.mock('../api', () => ({
         changeStatusWithReceipt: fixture.changeStatusWithReceipt,
         statusResult: fixture.statusResult
       },
-      webhooks: { list: fixture.webhooks },
+      webhooks: {
+        list: fixture.webhooks,
+        createWithReceipt: fixture.webhookCreate,
+        createResult: fixture.webhookResult
+      },
       auditLogs: fixture.audit
     }
   }
@@ -54,6 +60,8 @@ beforeEach(() => {
   fixture.rotationResult.mockResolvedValue(undefined)
   fixture.issueResult.mockResolvedValue(undefined)
   fixture.statusResult.mockResolvedValue(undefined)
+  fixture.webhookResult.mockResolvedValue(undefined)
+  fixture.webhooks.mockResolvedValue([])
   fixture.auth.identityVersion++
   fixture.auth.user.permissions = ['foundation.service_principals.read']
   fixture.list.mockResolvedValue([])
@@ -607,5 +615,184 @@ describe('工作台内嵌凭证维护', () => {
     expect(
       Array.from(document.body.querySelectorAll('.el-message__content')).at(-1)?.textContent
     ).toContain('账号或授权已变化')
+  })
+})
+
+describe('Webhook 原订阅核对', () => {
+  const key = 'skillforge.webhook-create:["10","member"]'
+  const request = '00000000-0000-4000-8000-000000000001'
+  async function openWebhooks() {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/admin/governance', component: GovernancePage }]
+    })
+    await router.push('/admin/governance')
+    await router.isReady()
+    const wrapper = mount(GovernancePage, { global: { plugins: [router] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    return wrapper
+  }
+  it('仅有 Webhook 读取权限时默认展示 Webhook，不读取其他区域', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    const wrapper = await openWebhooks()
+    expect(fixture.webhooks).toHaveBeenCalled()
+    expect(fixture.list).not.toHaveBeenCalled()
+    expect(fixture.audit).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('订阅回调')
+    expect(wrapper.text()).not.toContain('创建服务身份')
+  })
+  it('页面重建只读核对原订阅，匹配后展示订阅编号', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    sessionStorage.setItem(key, request)
+    fixture.webhookResult.mockResolvedValue({ request_id: request, subscription_id: '42' })
+    const wrapper = await openWebhooks()
+    expect(fixture.webhookResult).toHaveBeenCalledWith(request)
+    expect(fixture.webhookCreate).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(wrapper.text()).toContain('订阅 ID：42')
+  })
+  it.each([undefined, { request_id: 'other', subscription_id: '42' }])(
+    '未查到或不匹配回执时保留原请求',
+    async (receipt) => {
+      fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+      sessionStorage.setItem(key, request)
+      fixture.webhookResult.mockResolvedValue(receipt)
+      const wrapper = await openWebhooks()
+      expect(sessionStorage.getItem(key)).toBe(request)
+      expect(wrapper.text()).toContain('创建结果尚未确认')
+      expect(fixture.webhookCreate).not.toHaveBeenCalled()
+      expect(
+        wrapper
+          .findAll('button')
+          .find((button) => button.text() === '订阅回调')
+          ?.attributes('disabled')
+      ).toBeDefined()
+    }
+  )
+  it('没有读取权限时保留原请求而不自动核对', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.webhooks.create'
+    ]
+    sessionStorage.setItem(key, request)
+    const wrapper = await openWebhooks()
+    expect(fixture.webhookResult).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('没有 Webhook 读取权限')
+    expect(sessionStorage.getItem(key)).toBe(request)
+  })
+  it('提交断连保留原请求且不保存密钥，重建后只查询回执', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    fixture.webhookCreate.mockRejectedValueOnce(Error('connection closed'))
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '订阅回调')!
+      .trigger('click')
+    await flushPromises()
+    const endpoint = document.querySelector('input[placeholder="https://"]') as HTMLInputElement
+    const secret = document.querySelector('input[type="password"]') as HTMLInputElement
+    endpoint.value = 'https://127.0.0.1:1/callback'
+    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
+    secret.value = 'fixture-secret'
+    secret.dispatchEvent(new Event('input', { bubbles: true }))
+    const createButton = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === '创建'
+    )!
+    createButton.click()
+    await flushPromises()
+    expect(fixture.webhookCreate).toHaveBeenCalledTimes(1)
+    const original = fixture.webhookCreate.mock.calls[0]![0]
+    expect(sessionStorage.getItem(key)).toBe(original)
+    expect(JSON.stringify(sessionStorage)).not.toContain('fixture-secret')
+    wrapper.unmount()
+    fixture.webhookResult.mockResolvedValue({ request_id: original, subscription_id: '42' })
+    const restored = await openWebhooks()
+    expect(fixture.webhookResult).toHaveBeenCalledWith(original)
+    expect(fixture.webhookCreate).toHaveBeenCalledTimes(1)
+    expect(restored.text()).toContain('订阅 ID：42')
+  })
+  it.each(['storage', 'rejected'] as const)('订阅创建 %s 时不丢失结果边界', async (mode) => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '订阅回调')!
+      .trigger('click')
+    await flushPromises()
+    const endpoint = document.querySelector('input[placeholder="https://"]') as HTMLInputElement
+    const secret = document.querySelector('input[type="password"]') as HTMLInputElement
+    endpoint.value = 'https://127.0.0.1:1/callback'
+    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
+    secret.value = 'fixture-secret'
+    secret.dispatchEvent(new Event('input', { bubbles: true }))
+    if (mode === 'storage')
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+        throw Error('storage unavailable')
+      })
+    else
+      fixture.webhookCreate.mockRejectedValueOnce(
+        new HttpClientError({
+          status: 400,
+          code: 'WEBHOOK_CREATE_REJECTED',
+          traceId: 'trace',
+          userMessage: '已拒绝'
+        })
+      )
+    ;[...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === '创建')!
+      .click()
+    await flushPromises()
+    if (mode === 'storage') {
+      expect(fixture.webhookCreate).not.toHaveBeenCalled()
+      expect(document.body.textContent).toContain('无法保存订阅操作记录')
+      vi.restoreAllMocks()
+      const reloadButton = [...document.querySelectorAll('.el-drawer button')].find(
+        (button) => button.textContent?.trim() === '重新读取订阅记录'
+      ) as HTMLButtonElement
+      expect(reloadButton).toBeTruthy()
+      reloadButton.click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('无法保存订阅操作记录')
+      expect(fixture.webhookCreate).not.toHaveBeenCalled()
+    } else {
+      expect(fixture.webhookCreate).toHaveBeenCalledTimes(1)
+      expect(sessionStorage.getItem(key)).toBeNull()
+    }
+  })
+  it.each(['endpoint', 'secret'] as const)('超长 %s 派发前阻止提交', async (field) => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '订阅回调')!
+      .trigger('click')
+    await flushPromises()
+    const endpoint = document.querySelector('input[placeholder="https://"]') as HTMLInputElement
+    const secret = document.querySelector('input[type="password"]') as HTMLInputElement
+    endpoint.value =
+      field === 'endpoint' ? 'https://' + 'a'.repeat(2042) : 'https://127.0.0.1:1/callback'
+    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
+    secret.value = field === 'secret' ? 'x'.repeat(4097) : 'fixture-secret'
+    secret.dispatchEvent(new Event('input', { bubbles: true }))
+    ;[...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === '创建')!
+      .click()
+    await flushPromises()
+    expect(fixture.webhookCreate).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBeNull()
+  })
+  it('损坏的本地记录禁止创建', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.create']
+    sessionStorage.setItem(key, 'broken')
+    const wrapper = await openWebhooks()
+    expect(wrapper.text()).toContain('无法读取订阅操作记录')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '订阅回调')
+        ?.attributes('disabled')
+    ).toBeDefined()
+    expect(fixture.webhookCreate).not.toHaveBeenCalled()
   })
 })

@@ -70,8 +70,21 @@ export function routePermission(path: string, permissions?: readonly string[]): 
   const segment = parts[1]
   if (!segment || segment === 'home') return undefined
   if (!platform && segment === 'tools') {
-    return ['foundation.capabilities.read', 'foundation.connectors.read']
-      .find((permission) => permissions?.includes(permission)) ?? 'foundation.capabilities.read'
+    return (
+      ['foundation.capabilities.read', 'foundation.connectors.read'].find((permission) =>
+        permissions?.includes(permission)
+      ) ?? 'foundation.capabilities.read'
+    )
+  }
+  if (!platform && segment === 'governance') {
+    return (
+      [
+        'foundation.audit.read',
+        'foundation.service_principals.read',
+        'foundation.webhooks.read',
+        'foundation.knowledge.read'
+      ].find((permission) => permissions?.includes(permission)) ?? 'foundation.audit.read'
+    )
   }
   // 工作台是已有动作的聚合入口，不要求额外的机构总目录权限。
   if ((platform && segment === 'tenants') || (!platform && segment === 'institutions')) {

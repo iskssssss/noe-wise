@@ -5,11 +5,21 @@ import { routePermission, useFoundationNavigation, type NavigationItem } from '.
 
 const stop: Array<() => void> = []
 it('工具入口沿用当前拥有的能力或连接器读取权限，不改变高级路由权限', () => {
-  expect(routePermission('/admin/tools', ['foundation.capabilities.read'])).toBe('foundation.capabilities.read')
-  expect(routePermission('/admin/tools', ['foundation.connectors.read'])).toBe('foundation.connectors.read')
-  expect(routePermission('/admin/tools', ['foundation.agents.read'])).toBe('foundation.capabilities.read')
-  expect(routePermission('/admin/tool-deployments', ['foundation.connectors.read'])).toBe('foundation.capabilities.read')
-  expect(routePermission('/admin/connectors', ['foundation.capabilities.read'])).toBe('foundation.connectors.read')
+  expect(routePermission('/admin/tools', ['foundation.capabilities.read'])).toBe(
+    'foundation.capabilities.read'
+  )
+  expect(routePermission('/admin/tools', ['foundation.connectors.read'])).toBe(
+    'foundation.connectors.read'
+  )
+  expect(routePermission('/admin/tools', ['foundation.agents.read'])).toBe(
+    'foundation.capabilities.read'
+  )
+  expect(routePermission('/admin/tool-deployments', ['foundation.connectors.read'])).toBe(
+    'foundation.capabilities.read'
+  )
+  expect(routePermission('/admin/connectors', ['foundation.capabilities.read'])).toBe(
+    'foundation.connectors.read'
+  )
 })
 afterEach(() => {
   stop.splice(0).forEach((dispose) => dispose())
@@ -118,4 +128,24 @@ describe('current account navigation', () => {
     expect(routePermission('/admin/foundation/security')).toBe('foundation.security.self')
     expect(routePermission('/platform/foundation/jobs')).toBe('foundation.jobs.read')
   })
+})
+
+it('治理入口仅接受实际分区读取权限，不能扩大其他页面权限', () => {
+  for (const permission of [
+    'foundation.audit.read',
+    'foundation.service_principals.read',
+    'foundation.webhooks.read',
+    'foundation.knowledge.read'
+  ]) {
+    expect(routePermission('/admin/governance', [permission])).toBe(permission)
+  }
+  expect(routePermission('/admin/governance', ['foundation.webhooks.create'])).toBe(
+    'foundation.audit.read'
+  )
+  expect(routePermission('/admin/api-docs', ['foundation.webhooks.read'])).toBe(
+    'foundation.service_principals.read'
+  )
+  expect(routePermission('/platform/governance', ['foundation.webhooks.read'])).toBe(
+    'foundation.audit.read'
+  )
 })

@@ -23,6 +23,10 @@ import org.springframework.test.context.DynamicPropertySource;
 class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
 
     private static final KnowledgeBrowserServer FRONTEND = KnowledgeBrowserServer.startIsolated("chat-process-browser-");
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.skillforge.core.foundation.persistence.TenantMemberMapper webhookMembers;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.security.crypto.password.PasswordEncoder webhookPasswords;
 
     @DynamicPropertySource
     static void allowIsolatedBrowserOrigin(DynamicPropertyRegistry registry) {
@@ -49,6 +53,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     }
 
     private void runBrowser(boolean live) throws Exception {
+        createWebhookOnlyMember();
         Path repoRoot = findRepoRoot();
         Path adminRoot = repoRoot.resolve("frontend-admin");
         Path playwright = adminRoot.resolve("node_modules/.bin")
@@ -76,6 +81,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         environment.put("E2E_BACKEND_URL", baseUrl());
         environment.put("E2E_TENANT_SLUG", fixtureTenantSlug());
         environment.put("E2E_USERNAME", "runtime-e2e-admin");
+        environment.put("E2E_WEBHOOK_USERNAME", "webhook-only");
         environment.put("E2E_PASSWORD", PASSWORD);
         environment.put("E2E_AGENT_ID", fixtureAgentId());
         String expectedReply = live ? "LIVE_BROWSER_" + fixtureRunId() : "fixture-answer-" + fixtureRunId();
@@ -113,6 +119,25 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         } finally {
             terminateOwnedProcesses(owned);
         }
+    }
+
+    private void createWebhookOnlyMember() {
+        String tenant = fixtureTenantId();
+        com.skillforge.common.context.TenantContext.setTenantId(tenant);
+        try {
+            var member = new com.skillforge.core.foundation.persistence.TenantMemberDO();
+            member.setId(com.skillforge.core.shared.config.SnowflakeIds.nextId());
+            member.setTenantId(Long.parseLong(tenant)); member.setUsername("webhook-only");
+            member.setRole("member"); member.setPermissions(List.of()); member.setStatus("active");
+            member.setPasswordHash(webhookPasswords.encode(PASSWORD)); member.setCreatedAt(java.time.Instant.now());
+            webhookMembers.insert(member);
+            jdbc.update("INSERT INTO nw_foundation_member_profiles(scope_key,member_id,display_name) VALUES(?,?,?)", tenant, member.getId(), "Webhook 测试成员");
+            long role = com.skillforge.core.shared.config.SnowflakeIds.nextId();
+            jdbc.update("INSERT INTO nw_foundation_roles(id,scope_key,code,name,data_scope) VALUES(?,?,?,'Webhook 测试角色','all')", role, tenant, "webhook_" + role);
+            for (String permission : List.of("foundation.webhooks.read", "foundation.webhooks.create"))
+                jdbc.update("INSERT INTO nw_foundation_role_permissions(scope_key,role_id,permission_code) VALUES(?,?,?)", tenant, role, permission);
+            jdbc.update("INSERT INTO nw_foundation_member_roles(scope_key,member_id,role_id) VALUES(?,?,?)", tenant, member.getId(), role);
+        } finally { com.skillforge.common.context.TenantContext.clear(); }
     }
 
     /** 核对浏览器受理身份对应的新执行链；独立保存真实模型用量证据。 */

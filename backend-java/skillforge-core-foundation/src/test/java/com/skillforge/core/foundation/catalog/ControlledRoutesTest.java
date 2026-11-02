@@ -53,4 +53,14 @@ class ControlledRoutesTest {
         assertThat(ControlledRoutes.visiblePermission(ControlledRoutes.require("connectors", false),
                 Set.of("foundation.capabilities.read"))).isNull();
     }
+    @Test void governanceEntryAcceptsOnlyItsActualReadPermissions() {
+        var governance = ControlledRoutes.require("governance", false);
+        for (String permission : Set.of("foundation.audit.read", "foundation.service_principals.read",
+                "foundation.webhooks.read", "foundation.knowledge.read")) {
+            assertThat(ControlledRoutes.visiblePermission(governance, Set.of(permission))).isEqualTo(permission);
+        }
+        assertThat(ControlledRoutes.visiblePermission(governance, Set.of("foundation.webhooks.create"))).isNull();
+        assertThat(ControlledRoutes.visiblePermission(ControlledRoutes.require("api_docs", false),
+                Set.of("foundation.webhooks.read"))).isNull();
+    }
 }

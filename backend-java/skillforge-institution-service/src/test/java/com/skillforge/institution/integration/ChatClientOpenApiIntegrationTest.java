@@ -62,6 +62,8 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactions;
+    @Autowired com.skillforge.core.foundation.persistence.TenantMemberMapper webhookMembers;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder webhookPasswords;
     @Autowired com.skillforge.core.chat.session.SessionMailboxService historyMailbox;
     @LocalServerPort int port;
     final HttpClient http = HttpClient.newHttpClient();
@@ -377,6 +379,122 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals("CHANNEL_ONBOARDING_REJECTED", json.readTree(rejected.body()).path("code").asText());
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channels WHERE tenant_id=? AND name=?", Long.valueOf(tenant), "回滚渠道"));
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
+    }
+
+    @Test void webhookCreateReceiptIsAtomicAndOwnedByOriginalMember() throws Exception {
+        String slug = "webhook-receipt-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "WebhookManagement123";
+        createTestTenantAdministrator(tenant, "webhook-owner", password);
+        String owner = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "webhook-owner", "password", password), null).path("access_token").asText();
+        String requestId = UUID.randomUUID().toString();
+        String path = "/api/v1/webhook-subscriptions/create-with-receipt";
+        String signingSecret = "synthetic-webhook-secret-" + UUID.randomUUID();
+        String endpoint = "https://127.0.0.1:1/receipt-test";
+        var command = Map.of("request_id", requestId, "endpoint_url", endpoint, "signing_secret", signingSecret);
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + owner).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var a = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var b = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var first = a.get(30, TimeUnit.SECONDS); var second = b.get(30, TimeUnit.SECONDS);
+        assertEquals(200, first.statusCode()); assertEquals(200, second.statusCode());
+        var receipt = json.readTree(first.body()).path("data");
+        assertEquals(receipt, json.readTree(second.body()).path("data"));
+        assertEquals(requestId, receipt.path("request_id").asText());
+        String subscriptionId = receipt.path("subscription_id").asText();
+        assertFalse(subscriptionId.isBlank());
+        assertFalse(first.body().contains(signingSecret)); assertFalse(second.body().contains(signingSecret));
+        assertEquals(receipt, managementHttp("GET", path + "/result?request_id=" + requestId, null, owner));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_webhook_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_chat_session_event_subscriptions WHERE tenant_id=? AND endpoint_url=?", Long.valueOf(tenant), endpoint));
+        assertFalse(queryRows(jdbc, tenant, "SELECT * FROM nw_webhook_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId).toString().contains(signingSecret));
+        for (var altered : List.of(
+                Map.of("request_id", requestId, "endpoint_url", endpoint + "-other", "signing_secret", signingSecret),
+                Map.of("request_id", requestId, "endpoint_url", endpoint, "signing_secret", signingSecret + "-other"),
+                Map.of("request_id", requestId, "endpoint_url", endpoint, "signing_secret", signingSecret, "session_id", "other-session"))) {
+            var conflict = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .header("Authorization", "Bearer " + owner).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(altered))).build();
+            assertEquals(409, http.send(conflict, HttpResponse.BodyHandlers.ofString()).statusCode());
+        }
+        String rejectedId = UUID.randomUUID().toString();
+        var invalid = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + owner).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", rejectedId,
+                        "endpoint_url", "not-a-url", "signing_secret", signingSecret)))).build();
+        var rejected = http.send(invalid, HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, rejected.statusCode());
+        assertEquals("WEBHOOK_CREATE_REJECTED", json.readTree(rejected.body()).path("code").asText());
+        assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_webhook_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), rejectedId));
+
+        var member = new com.skillforge.core.foundation.persistence.TenantMemberDO();
+        member.setId(SnowflakeIds.nextId()); member.setTenantId(Long.valueOf(tenant)); member.setUsername("webhook-other");
+        member.setRole("member"); member.setPermissions(List.of()); member.setStatus("active");
+        member.setPasswordHash(webhookPasswords.encode(password)); member.setCreatedAt(java.time.Instant.now());
+        webhookMembers.insert(member);
+        jdbc.update("INSERT INTO nw_foundation_member_profiles(scope_key,member_id,display_name) VALUES(?,?,?)", tenant, member.getId(), "其他测试成员");
+        long role = SnowflakeIds.nextId();
+        jdbc.update("INSERT INTO nw_foundation_roles(id,scope_key,code,name,data_scope) VALUES(?,?,?,'Webhook 测试角色','all')", role, tenant, "webhook_" + role);
+        for (String permission : List.of("foundation.webhooks.read", "foundation.webhooks.create"))
+            jdbc.update("INSERT INTO nw_foundation_role_permissions(scope_key,role_id,permission_code) VALUES(?,?,?)", tenant, role, permission);
+        jdbc.update("INSERT INTO nw_foundation_member_roles(scope_key,member_id,role_id) VALUES(?,?,?)", tenant, member.getId(), role);
+        String other = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "webhook-other", "password", password), null).path("access_token").asText();
+        var foreignRead = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                .header("Authorization", "Bearer " + other).GET().build();
+        assertEquals(204, http.send(foreignRead, HttpResponse.BodyHandlers.ofString()).statusCode());
+        var foreignReplay = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + other).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        assertEquals(409, http.send(foreignReplay, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        String foreignSlug = "webhook-other-" + SnowflakeIds.nextId();
+        TenantContext.clear();
+        String foreignTenant = createTenant(tenants, plans, foreignSlug);
+        TenantContext.setTenantId(foreignTenant);
+        createTestTenantAdministrator(foreignTenant, "webhook-foreign", password);
+        String foreign = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", foreignSlug,
+                "username", "webhook-foreign", "password", password), null).path("access_token").asText();
+        var crossTenantRead = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                .header("Authorization", "Bearer " + foreign).GET().build();
+        assertEquals(204, http.send(crossTenantRead, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String roleName = "webhook_receipt_rls_" + SnowflakeIds.nextId();
+        boolean roleCreated = false;
+        try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection()) {
+            connection.setAutoCommit(false);
+            try (var statement = connection.createStatement()) {
+                var current = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(current.next());
+                if (current.getBoolean(1)) {
+                    statement.execute("CREATE ROLE " + roleName + " NOLOGIN NOSUPERUSER NOBYPASSRLS");
+                    statement.execute("GRANT USAGE ON SCHEMA public TO " + roleName);
+                    statement.execute("GRANT SELECT ON nw_webhook_create_receipts TO " + roleName);
+                    connection.commit(); roleCreated = true;
+                    statement.execute("SET LOCAL ROLE " + roleName);
+                }
+                var restricted = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(restricted.next()); assertFalse(restricted.getBoolean(1));
+            }
+            try (var bind = connection.prepareStatement("SELECT set_config('app.tenant_id',?,true)");
+                 var count = connection.prepareStatement("SELECT count(*) FROM nw_webhook_create_receipts WHERE request_id=CAST(? AS uuid)")) {
+                count.setString(1, requestId);
+                bind.setString(1, foreignTenant); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
+                bind.setString(1, tenant); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(1, rows.getLong(1)); }
+            }
+            connection.rollback();
+        } finally {
+            if (roleCreated) {
+                try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection(); var statement = connection.createStatement()) {
+                    statement.execute("DROP OWNED BY " + roleName);
+                    statement.execute("DROP ROLE " + roleName);
+                }
+            }
+        }
     }
 
     @Test void principalStatusReceiptRecordsActualChangeAndRevokesSuspendedIdentity() throws Exception {

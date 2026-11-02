@@ -55,13 +55,14 @@ public final class ControlledRoutes {
     }
     /** 未注册 key 或另一宿主 key 明确拒绝。 */
     public static Route require(String key,boolean platform) { return list(platform).stream().filter(r->r.key().equals(key)).findFirst().orElseThrow(()->CatalogValidation.invalid("路由不在受控目录中")); }
-    /** 用量入口允许任一独立读取动作；投影返回实际获准动作，不推导其他读取权。 */
+    /** 聚合入口允许已有的独立读取动作；投影返回实际获准动作，不推导其他读取权。 */
     public static String visiblePermission(Route route,Set<String> permissions) {
         List<String> candidates;
         if(route.platform() && route.key().equals("usage")) candidates=List.of("platform.usage.summary.read","platform.usage.details.read","platform.usage.events.read");
         else if(!route.platform() && route.key().equals("headquarters_usage")) candidates=List.of(HeadquartersUsageActions.SUMMARY,HeadquartersUsageActions.DETAILS,HeadquartersUsageActions.EVENTS);
         else if(route.key().equals("foundation.messaging")) candidates=MESSAGING_PERMISSIONS;
         else if(!route.platform() && route.key().equals("tools")) candidates=List.of("foundation.capabilities.read","foundation.connectors.read");
+        else if(!route.platform() && route.key().equals("governance")) candidates=List.of("foundation.audit.read","foundation.service_principals.read","foundation.webhooks.read","foundation.knowledge.read");
         else candidates=List.of(route.permission());
         return candidates.stream().filter(permissions::contains).findFirst().orElse(null);
     }

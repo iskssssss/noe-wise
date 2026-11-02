@@ -787,6 +787,10 @@ export interface IssuedServicePrincipal {
   api_key: string
   signing_secret: string
 }
+export interface WebhookCreateReceipt {
+  request_id: string
+  subscription_id: string
+}
 export interface WebhookSubscription {
   id: number
   session_id?: string | null
@@ -2116,7 +2120,20 @@ export const api = {
     webhooks: {
       list: () => get<WebhookSubscription[]>('/webhook-subscriptions'),
       create: (data: { session_id?: string; endpoint_url: string; signing_secret: string }) =>
-        post<WebhookSubscription>('/webhook-subscriptions', data),
+        post<WebhookSubscription>('/webhook-subscriptions', data, { retryOnUnauthorized: false }),
+      createWithReceipt: (
+        requestId: string,
+        data: { session_id?: string; endpoint_url: string; signing_secret: string }
+      ) =>
+        post<WebhookCreateReceipt>(
+          '/webhook-subscriptions/create-with-receipt',
+          { request_id: requestId, ...data },
+          { retryOnUnauthorized: false }
+        ),
+      createResult: (requestId: string) =>
+        get<WebhookCreateReceipt | undefined>(
+          `/webhook-subscriptions/create-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+        ),
       pause: (id: number) =>
         patch<{ id: number; paused: boolean }>(`/webhook-subscriptions/pause`, {
           subscription_id: id

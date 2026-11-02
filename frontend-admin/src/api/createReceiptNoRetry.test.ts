@@ -154,3 +154,21 @@ it.each(['suspend', 'revoke'] as const)('服务身份带回执%s收到 401 不�
   ).rejects.toMatchObject({ status: 401 })
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
+
+it.each(['receipt', 'legacy'] as const)('Webhook %s 创建收到 401 不自动重发', async (kind) => {
+  localStorage.setItem('skillforge.access_token', 'expired-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  const payload = { endpoint_url: 'https://127.0.0.1:1/callback', signing_secret: 'fixture' }
+  await expect(
+    kind === 'receipt'
+      ? api.governance.webhooks.createWithReceipt('request', payload)
+      : api.governance.webhooks.create(payload)
+  ).rejects.toMatchObject({ status: 401 })
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})

@@ -431,3 +431,107 @@ test('已暂停服务身份可明确吊销', async ({ page }) => {
     )
   )
 })
+
+test('Webhook 创建响应中断后刷新核对原订阅而不重复创建', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('tab', { name: 'Webhook', exact: true }).click()
+  await page.getByRole('button', { name: '订阅回调', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '新增 Webhook' })
+  const endpoint = `https://127.0.0.1:1/noe-fixture-${Date.now()}`
+  await drawer.getByLabel('回调地址').fill(endpoint)
+  await drawer.getByLabel('签名密钥').fill('isolated-fixture-signing-secret')
+  let operations = 0
+  const path = '/api/v1/webhook-subscriptions/create-with-receipt'
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === path) operations++
+  })
+  let finishInterception!: () => void
+  const intercepted = new Promise<void>((resolve) => {
+    finishInterception = resolve
+  })
+  await page.route('**' + path, async (route) => {
+    const committed = await route.fetch()
+    expect(committed.status()).toBe(200)
+    await route.abort('failed')
+    finishInterception()
+  })
+  await page.route('**' + path + '/result?*', (route) => route.fulfill({ status: 204 }))
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  await intercepted
+  expect(operations).toBe(1)
+  await expect(drawer.getByRole('button', { name: '创建', exact: true })).toBeDisabled()
+  await page.unroute('**' + path)
+  await page.unroute('**' + path + '/result?*')
+  page.on('dialog', (dialog) => void dialog.accept())
+  await page.reload()
+  await expect(page.locator('p[role="status"]').filter({ hasText: '原订阅已确认' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Webhook', exact: true }).click()
+  await expect(page.getByRole('row').filter({ hasText: endpoint })).toBeVisible()
+  await expect(page.getByRole('button', { name: '订阅回调', exact: true })).toBeEnabled()
+  expect(operations).toBe(1)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({ path: join(evidence, 'webhook-create-recovered.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'webhook-create-recovered.json'),
+    JSON.stringify(
+      {
+        completed_server_creates: operations,
+        recovered_after_reload: true
+      },
+      null,
+      2
+    )
+  )
+})
+
+test('Webhook 专属授权可通过页面创建订阅', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_WEBHOOK_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('skillforge.user') || '{}').permissions)
+    )
+    .toContain('foundation.webhooks.create')
+  const permissions = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('skillforge.user') || '{}').permissions as string[]
+  )
+  expect(permissions).toContain('foundation.webhooks.create')
+  expect(permissions).not.toContain('foundation.service_principals.create')
+  await expect(page.getByRole('tab', { name: '服务身份', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Webhook', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '订阅回调', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '新增 Webhook' })
+  const endpoint = `https://127.0.0.1:1/webhook-permission-${Date.now()}`
+  await drawer.getByLabel('回调地址').fill(endpoint)
+  await drawer.getByLabel('签名密钥').fill('synthetic-permission-secret')
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByRole('row').filter({ hasText: endpoint })).toBeVisible()
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({
+    path: join(evidence, 'webhook-permission-recovered.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(evidence, 'webhook-permission-recovered.json'),
+    JSON.stringify(
+      {
+        webhook_create_permission: true,
+        principal_create_permission: false,
+        page_create_succeeded: true
+      },
+      null,
+      2
+    )
+  )
+})

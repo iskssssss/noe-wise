@@ -27,6 +27,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         com.skillforge.institution.skill.SkillPublishReceiptMapper.class,
         com.skillforge.institution.channel.ChannelCreateReceiptMapper.class,
         com.skillforge.institution.principal.PrincipalRotationReceiptMapper.class,
+        com.skillforge.institution.webhook.WebhookCreateReceiptMapper.class,
         com.skillforge.institution.knowledge.JdbcKnowledgeWriteProposalSourceMapper.class,
         com.skillforge.institution.controller.HealthMapper.class,
         SessionMediaMapper.class, BrowserMapper.class, com.skillforge.institution.browser.BrowserConnectionMapper.class, com.skillforge.institution.service.HandoffReplyMapper.class,

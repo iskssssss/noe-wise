@@ -100,23 +100,55 @@
         >重新读取状态操作记录</ElButton
       >
     </div>
-    <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload"
-      ><ElTabPane name="principals" label="服务身份" /><ElTabPane
+    <div v-if="pendingWebhook || webhookStorageError" class="admin-card" role="status">
+      <p v-if="pendingWebhook">
+        回调订阅创建结果尚未确认，请求 ID：{{ pendingWebhook }}。未查到回执不表示失败。
+      </p>
+      <p v-if="webhookStorageError">{{ webhookStorageError }}</p>
+      <p v-if="pendingWebhook && !identity.allowed('foundation.webhooks.read')">
+        当前账号没有 Webhook 读取权限，请联系管理员授权后核对原操作。
+      </p>
+      <ElButton
+        v-if="pendingWebhook && identity.allowed('foundation.webhooks.read')"
+        :disabled="busy"
+        @click="checkWebhook()"
+        >核对原订阅</ElButton
+      >
+      <ElButton v-if="webhookStorageError && !pendingWebhook" :disabled="busy" @click="loadWebhook"
+        >重新读取订阅记录</ElButton
+      >
+    </div>
+    <p v-if="webhookRecovered" class="admin-field-help" role="status">
+      原订阅已确认（订阅 ID：{{ webhookRecovered }}），请在 Webhook 列表中查看。
+    </p>
+    <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload">
+      <ElTabPane
+        v-if="identity.allowed('foundation.service_principals.read')"
+        name="principals"
+        label="服务身份"
+      />
+      <ElTabPane
+        v-if="identity.allowed('foundation.webhooks.read')"
         name="webhooks"
-        label="Webhook" /><ElTabPane name="audit" label="审计日志" /><ElTabPane
+        label="Webhook"
+      />
+      <ElTabPane v-if="identity.allowed('foundation.audit.read')" name="audit" label="审计日志" />
+      <ElTabPane
+        v-if="identity.allowed('foundation.knowledge.read')"
         name="proposals"
         label="知识写入审批"
-    /></ElTabs>
+      />
+    </ElTabs>
     <div class="admin-toolbar admin-card">
       <ElButton
         v-if="
           (tab === 'principals' &&
             auth.user?.permissions.includes('foundation.service_principals.create')) ||
-          tab === 'webhooks'
+          (tab === 'webhooks' && identity.allowed('foundation.webhooks.create'))
         "
         type="primary"
         @click="openCreate"
-        :disabled="busy || credentialUncertain"
+        :disabled="busy || (tab === 'principals' ? credentialUncertain : webhookUncertain)"
         >{{ tab === 'principals' ? '创建服务身份' : '订阅回调' }}</ElButton
       ><ElInput
         v-described-by="formTipId + '-group-0'"
@@ -322,8 +354,8 @@
       append-to-body
       direction="rtl"
       :close-on-click-modal="false"
-      :close-on-press-escape="!busy && !credentialUncertain"
-      :show-close="!busy && !credentialUncertain"
+      :close-on-press-escape="!busy && !drawerUncertain"
+      :show-close="!busy && !drawerUncertain"
       class="admin-drawer"
       size="680px"
       ><FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
@@ -337,12 +369,28 @@
         >
         <span v-else>请联系管理员授权后核对原签发。</span>
       </div>
+      <div v-if="tab === 'webhooks' && pendingWebhook" role="status">
+        回调订阅创建结果尚未确认，原请求 ID：{{ pendingWebhook }}。
+        <ElButton
+          v-if="identity.allowed('foundation.webhooks.read')"
+          :disabled="busy"
+          @click="checkWebhook()"
+          >核对原订阅</ElButton
+        >
+        <span v-else>请联系管理员授权后核对原操作。</span>
+      </div>
+      <div v-if="tab === 'webhooks' && webhookStorageError" role="status">
+        {{ webhookStorageError }}
+        <ElButton v-if="!pendingWebhook" :disabled="busy" @click="loadWebhook"
+          >重新读取订阅记录</ElButton
+        >
+      </div>
       <ElForm
         ref="formRef"
         :model="form"
         label-position="top"
         @submit.prevent="create"
-        :disabled="busy || credentialUncertain"
+        :disabled="busy || drawerUncertain"
         scroll-to-error
         @keydown.capture="guardFormEnter"
         ><template v-if="tab === 'principals'"
@@ -397,7 +445,8 @@
             label="回调地址"
             prop="endpoint_url"
             :rules="[
-              { required: true, whitespace: true, message: '请输入回调地址', trigger: 'blur' }
+              { required: true, whitespace: true, message: '请输入回调地址', trigger: 'blur' },
+              { max: 2048, message: '回调地址不能超过 2048 个字符', trigger: 'blur' }
             ]"
             ><ElInput
               v-described-by="formTipId + '-field-2'"
@@ -423,7 +472,8 @@
             label="签名密钥"
             prop="signing_secret"
             :rules="[
-              { required: true, whitespace: true, message: '请输入签名密钥', trigger: 'blur' }
+              { required: true, whitespace: true, message: '请输入签名密钥', trigger: 'blur' },
+              { max: 4096, message: '签名密钥不能超过 4096 个字符', trigger: 'blur' }
             ]"
             ><ElInput
               v-described-by="'webhook-secret-help'"
@@ -440,10 +490,14 @@
       ><template #footer
         ><ElButton @click="requestClose" :disabled="busy">取消</ElButton
         ><ElButton
-          v-permission="['foundation.service_principals.create']"
+          v-permission="[
+            tab === 'principals'
+              ? 'foundation.service_principals.create'
+              : 'foundation.webhooks.create'
+          ]"
           type="primary"
           :loading="busy"
-          :disabled="credentialUncertain"
+          :disabled="drawerUncertain"
           @click="create"
           >创建</ElButton
         ></template
@@ -531,7 +585,20 @@ async function loadSessions() {
 }
 const formRef = ref<FormInstance>()
 const auth = useAuthStore(),
-  tab = ref(props.embedded ? 'principals' : (props.initialTab ?? 'principals')),
+  tabPermissions: Record<string, string> = {
+    principals: 'foundation.service_principals.read',
+    webhooks: 'foundation.webhooks.read',
+    audit: 'foundation.audit.read',
+    proposals: 'foundation.knowledge.read'
+  },
+  tab = ref(
+    props.embedded
+      ? 'principals'
+      : props.initialTab && identity.allowed(tabPermissions[props.initialTab] ?? '')
+        ? props.initialTab
+        : (Object.keys(tabPermissions).find((key) => identity.allowed(tabPermissions[key]!)) ??
+          'principals')
+  ),
   action = ref(''),
   principals = ref<ServicePrincipal[]>([]),
   webhooks = ref<WebhookSubscription[]>([]),
@@ -549,8 +616,12 @@ const {
     const value = await api.governance.servicePrincipals.list()
     identity.requirePermission('foundation.service_principals.read')
     principals.value = value
-  } else if (tab.value === 'webhooks') webhooks.value = await api.governance.webhooks.list()
-  else if (tab.value === 'audit')
+  } else if (tab.value === 'webhooks') {
+    identity.requirePermission('foundation.webhooks.read')
+    const value = await api.governance.webhooks.list()
+    identity.requirePermission('foundation.webhooks.read')
+    webhooks.value = value
+  } else if (tab.value === 'audit')
     audit.value = (
       await api.governance.auditLogs({ action: action.value || undefined, limit: 100 })
     ).items
@@ -766,11 +837,70 @@ function saveRotation(value?: { requestId: string; principalId: string }) {
     return false
   }
 }
+const pendingWebhook = ref<string>()
+const webhookStorageError = ref('')
+const webhookRecovered = ref('')
+const webhookStorageKey = `skillforge.webhook-create:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
+const webhookUncertain = computed(() => !!pendingWebhook.value || !!webhookStorageError.value)
+const drawerUncertain = computed(() =>
+  tab.value === 'principals' ? credentialUncertain.value : webhookUncertain.value
+)
+function loadWebhook() {
+  if (!auth.user?.tenant_id || !auth.user?.sub) {
+    webhookStorageError.value = '无法确认当前机构和成员，请重新登录。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(webhookStorageKey)
+    if (
+      raw !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
+    )
+      throw Error('invalid')
+    pendingWebhook.value = raw ?? undefined
+    webhookStorageError.value = ''
+  } catch {
+    webhookStorageError.value = '无法读取订阅操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function saveWebhook(value?: string) {
+  try {
+    if (value) sessionStorage.setItem(webhookStorageKey, value)
+    else sessionStorage.removeItem(webhookStorageKey)
+    pendingWebhook.value = value
+    webhookStorageError.value = ''
+    return true
+  } catch {
+    webhookStorageError.value = '无法保存订阅操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+async function checkWebhook(automatic = false) {
+  const original = pendingWebhook.value
+  if (!original || !identity.allowed('foundation.webhooks.read')) return
+  await run(async () => {
+    const receipt = await api.governance.webhooks.createResult(original)
+    if (!identity.current() || pendingWebhook.value !== original) return
+    if (!receipt || receipt.request_id !== original || !/^\d+$/.test(receipt.subscription_id)) {
+      if (!automatic) message.warning('尚未查到匹配的订阅回执，结果仍未确认。')
+      return
+    }
+    if (!saveWebhook()) return
+    webhookRecovered.value = receipt.subscription_id
+    if (open.value && tab.value === 'webhooks') open.value = false
+    form.signing_secret = ''
+    message.success('原订阅已确认')
+    if (tab.value === 'webhooks') await reload()
+  })
+}
 onMounted(() => {
+  loadWebhook()
   loadIssue()
   loadRotation()
   loadStatus()
   void (async () => {
+    if (pendingWebhook.value && identity.allowed('foundation.webhooks.read'))
+      await checkWebhook(true)
     if (pendingIssue.value && identity.allowed('foundation.service_principals.read'))
       await checkIssue(true)
     if (pendingRotation.value && identity.allowed('foundation.service_principals.read'))
@@ -807,7 +937,7 @@ useUnsavedChanges({
 })
 const { requestClose } = useDrawerClose({
   open: () => open.value,
-  busy: () => busy.value || credentialUncertain.value,
+  busy: () => busy.value || drawerUncertain.value,
   dirty: () =>
     open.value &&
     !!(
@@ -890,11 +1020,34 @@ async function create() {
     } else {
       if (!/^https?:\/\//.test(form.endpoint_url) || !form.signing_secret)
         throw Error('请填写有效回调地址和签名密钥')
-      await api.governance.webhooks.create({
-        endpoint_url: form.endpoint_url,
-        session_id: form.session_id || undefined,
-        signing_secret: form.signing_secret
-      })
+      identity.requirePermission('foundation.webhooks.create')
+      if (webhookUncertain.value) throw Error('原订阅操作结果尚未核实，不能再次派发')
+      const requestId = crypto.randomUUID()
+      if (!saveWebhook(requestId)) return
+      webhookRecovered.value = ''
+      try {
+        const receipt = await api.governance.webhooks.createWithReceipt(requestId, {
+          endpoint_url: form.endpoint_url,
+          session_id: form.session_id || undefined,
+          signing_secret: form.signing_secret
+        })
+        identity.requirePermission('foundation.webhooks.create')
+        if (!receipt || receipt.request_id !== requestId || !/^\d+$/.test(receipt.subscription_id))
+          throw Error('订阅响应不完整，请核对原请求。')
+        webhookRecovered.value = receipt.subscription_id
+        if (!saveWebhook())
+          message.warning('原订阅已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
+      } catch (reason) {
+        if (
+          identity.current() &&
+          reason instanceof HttpClientError &&
+          reason.code === 'WEBHOOK_CREATE_REJECTED'
+        )
+          saveWebhook()
+        throw reason
+      } finally {
+        form.signing_secret = ''
+      }
     }
     open.value = false
     form.signing_secret = ''
