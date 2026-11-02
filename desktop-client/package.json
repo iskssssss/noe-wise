@@ -23,7 +23,7 @@
     "package:dir": "corepack pnpm build && corepack pnpm stage && electron-builder --dir"
   },
   "dependencies": {
-    "dompurify": "^3.4.13",
+    "dompurify": "3.4.17",
     "marked": "^18.0.9",
     "vue": "catalog:"
   },

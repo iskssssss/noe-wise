@@ -23,9 +23,9 @@ catalog:
   sass: ^1.99.0
   typescript: ^6.0.3
   unplugin-element-plus: ^0.11.2
-  vite: ^8.0.13
+  vite: 8.3.3
   vue: ^3.5.34
-  vue-i18n: ^11.4.4
+  vue-i18n: 11.4.14
   vue-router: ^5.0.7
   vue-tsc: ^3.3.1
 
@@ -34,6 +34,7 @@ overrides:
   pinia: 'catalog:'
   vue-router: 'catalog:'
   vue-i18n: 'catalog:'
+  source-map-js: 1.2.2
 
 onlyBuiltDependencies:
   - electron
