@@ -115,7 +115,7 @@ describe('工作流测试资源公开API', () => {
         parameters: input.parameters,
         budget
       },
-      undefined
+      { retryOnUnauthorized: false }
     )
     expect(result.testSessionId).toBe('9007199254740993')
     expect(result.initialInputId).toBe('initial:reserved')
@@ -138,8 +138,48 @@ describe('工作流测试资源公开API', () => {
     expect(post).toHaveBeenCalledExactlyOnceWith(
       '/builder/workflows/test-sessions/close',
       { test_session_id: '9007199254740993' },
-      undefined
+      { retryOnUnauthorized: false }
     )
+  })
+  it('原回复回执保留精确身份与十进制修订，204 保持未知', async () => {
+    const identity = {
+      testSessionId: 'test:1',
+      inputId: 'input:1',
+      runId: 'run:1',
+      actionId: 'action:1',
+      generation: '9007199254740993',
+      kind: 'workflow' as const,
+      executionId: 'exec:1',
+      suspendRef: 'suspend:1',
+      actionKey: 'node',
+      executionRevision: '9007199254740995'
+    }
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({
+        test_session_id: identity.testSessionId,
+        session_id: 'session:1',
+        input_id: identity.inputId,
+        run_id: identity.runId,
+        action_id: identity.actionId,
+        generation: identity.generation,
+        kind: identity.kind,
+        execution_id: identity.executionId,
+        suspend_ref: identity.suspendRef,
+        action_key: identity.actionKey,
+        execution_revision: identity.executionRevision,
+        accepted_revision: '9007199254740997'
+      })
+      .mockResolvedValueOnce(undefined)
+    const client = createWorkflowTestsApi({ get, post: vi.fn() })
+    expect(await client.replyReceipt(identity)).toEqual({
+      ...identity,
+      sessionId: 'session:1',
+      acceptedRevision: '9007199254740997'
+    })
+    const url = new URL(get.mock.calls[0]![0], 'https://example.invalid')
+    expect(Object.fromEntries(url.searchParams)).toEqual({ ...identity })
+    expect(await client.replyReceipt(identity)).toBeUndefined()
   })
   it('损失精度的数值身份不转换成看似有效的字符串', async () => {
     const client = createWorkflowTestsApi({

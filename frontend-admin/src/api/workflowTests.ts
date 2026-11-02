@@ -64,6 +64,22 @@ export interface WorkflowTestReceipt {
   closeStatus: string
   blockingReason: string | null
 }
+export interface WorkflowReplyIdentity {
+  testSessionId: string
+  sessionId: string
+  inputId: string
+  runId: string
+  actionId: string
+  generation: string
+  kind: 'human' | 'workflow'
+  executionId?: string
+  suspendRef?: string
+  actionKey?: string
+  executionRevision?: string
+}
+export interface WorkflowReplyReceipt extends WorkflowReplyIdentity {
+  acceptedRevision: string
+}
 type SourceWire = {
   kind: string
   workflow_id: string
@@ -244,6 +260,58 @@ export function createWorkflowTestsApi(http: {
       http
         .get<ReceiptWire>(root + '/by-request?' + new URLSearchParams({ requestId }), options)
         .then(receiptFromWire),
+    replyReceipt: async (identity: WorkflowReplyIdentity, options?: RequestOptions) => {
+      const query = new URLSearchParams({
+        testSessionId: identity.testSessionId,
+        inputId: identity.inputId,
+        runId: identity.runId,
+        actionId: identity.actionId,
+        generation: identity.generation,
+        kind: identity.kind
+      })
+      if (identity.kind === 'workflow') {
+        query.set('executionId', identity.executionId!)
+        query.set('suspendRef', identity.suspendRef!)
+        query.set('actionKey', identity.actionKey!)
+        query.set('executionRevision', identity.executionRevision!)
+      }
+      const result = await http.get<
+        | {
+            test_session_id: string
+            session_id: string
+            input_id: string
+            run_id: string
+            action_id: string
+            generation: string
+            kind: 'human' | 'workflow'
+            execution_id?: string | null
+            suspend_ref?: string | null
+            action_key?: string | null
+            execution_revision?: string | null
+            accepted_revision: string
+          }
+        | undefined
+      >(root + '/reply-receipt?' + query, options)
+      if (!result) return undefined
+      return {
+        testSessionId: result.test_session_id,
+        sessionId: result.session_id,
+        inputId: result.input_id,
+        runId: result.run_id,
+        actionId: result.action_id,
+        generation: result.generation,
+        kind: result.kind,
+        ...(result.kind === 'workflow'
+          ? {
+              executionId: result.execution_id ?? undefined,
+              suspendRef: result.suspend_ref ?? undefined,
+              actionKey: result.action_key ?? undefined,
+              executionRevision: result.execution_revision ?? undefined
+            }
+          : {}),
+        acceptedRevision: result.accepted_revision
+      } satisfies WorkflowReplyReceipt
+    },
     get: (testSessionId: string, options?: RequestOptions) =>
       http
         .get<ReceiptWire>(root + '?' + new URLSearchParams({ testSessionId }), options)

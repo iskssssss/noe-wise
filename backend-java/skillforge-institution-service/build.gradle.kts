@@ -125,6 +125,7 @@ tasks.named<Test>("test") {
     exclude("**/StagingRuntimeE2E.class")
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
+    exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
 }
 
@@ -277,6 +278,19 @@ tasks.register<Test>("chatProcessBrowserE2E") {
         fileTree("../../frontend-vendor/vben") { include("packages/**/src/**", "packages/**/package.json", "internal/**/src/**", "internal/**/package.json") },
         files("../../package.json", "../../pnpm-lock.yaml", "../../pnpm-workspace.yaml"),
     ).withPropertyName("chatProcessBrowserFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("workflowHitlReplyBrowserE2E") {
+    description = "验证工作流测试待办回复的真实浏览器与运行时链路"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.WorkflowHitlReplyBrowserE2ETest.realWorkflowReplyAfterResponseInterruption")
+    }
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("liveToolConversationE2E") {

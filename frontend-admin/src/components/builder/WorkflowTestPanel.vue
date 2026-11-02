@@ -24,7 +24,9 @@ import type {
   WorkflowTestBudget,
   WorkflowTestOptions,
   WorkflowTestReceipt,
-  WorkflowTestSource
+  WorkflowTestSource,
+  WorkflowReplyIdentity,
+  WorkflowReplyReceipt
 } from '../../api/workflowTests'
 import { workflowConfigFields, workflowInstallationConfig } from '../../utils/workflow'
 
@@ -71,8 +73,19 @@ interface Recovery {
   initial: 'not_sent' | 'sending' | 'submitted' | 'unknown'
   closing: boolean
   replyAttempts?: string[]
+  replyOperations?: ReplyOperation[]
 }
+interface ReplyOperation extends WorkflowReplyIdentity {
+  waitKey: string
+  runRevision: string
+  accepted?: boolean
+}
+const replyReceiptBusy = ref(false)
+const replyReceiptOutcome = ref('')
+let replyReceiptOwner = 0
+let replySubmitOwner = 0
 const recovery = ref<Recovery>()
+const recoveryStorageError = ref(false)
 let disposed = false,
   epoch = 0,
   controller: AbortController | undefined,
@@ -126,7 +139,12 @@ const sourceLabel = computed(() => {
 const closed = computed(() => receipt.value?.closeStatus === 'closed')
 const savingAndTesting = ref(false)
 const locked = computed(
-  () => busy.value || savingAndTesting.value || !!recovery.value || !!props.disabled
+  () =>
+    busy.value ||
+    savingAndTesting.value ||
+    !!recovery.value ||
+    recoveryStorageError.value ||
+    !!props.disabled
 )
 const statusLabels: Record<string, string> = {
   preparing: '准备中',
@@ -238,16 +256,49 @@ function restoreRecovery() {
   const text = sessionStorage.getItem(storageKey())
   if (!text) return
   const value: unknown = JSON.parse(text)
-  if (
+  if (!(
     value &&
     typeof value === 'object' &&
     'requestId' in value &&
     typeof value.requestId === 'string' &&
     'initial' in value &&
     ['not_sent', 'sending', 'submitted', 'unknown'].includes(String(value.initial))
+  ))
+    throw Error('invalid')
+  const candidate = value as Recovery
+  if (
+    candidate.replyAttempts !== undefined &&
+    (!Array.isArray(candidate.replyAttempts) ||
+      candidate.replyAttempts.some((item) => typeof item !== 'string'))
   )
-    recovery.value = value as Recovery
-  for (const key of recovery.value?.replyAttempts ?? []) replyUnknown[key] = true
+    throw Error('invalid')
+  if (
+    candidate.replyOperations !== undefined &&
+    (!Array.isArray(candidate.replyOperations) ||
+      candidate.replyOperations.some(
+        (item) =>
+          !item ||
+          typeof item.waitKey !== 'string' ||
+          typeof item.inputId !== 'string' ||
+          typeof item.runId !== 'string' ||
+          typeof item.testSessionId !== 'string' ||
+          typeof item.sessionId !== 'string' ||
+          typeof item.actionId !== 'string' ||
+          !/^[1-9]\d*$/.test(item.generation) ||
+          !['human', 'workflow'].includes(item.kind) ||
+          typeof item.runRevision !== 'string' ||
+          (item.accepted !== undefined && typeof item.accepted !== 'boolean') ||
+          (item.kind === 'workflow' &&
+            (!item.executionId ||
+              !item.suspendRef ||
+              !item.actionKey ||
+              !/^[1-9]\d*$/.test(item.executionRevision ?? '')))
+      ))
+  )
+    throw Error('invalid')
+  recovery.value = candidate
+  for (const key of candidate.replyAttempts ?? []) replyUnknown[key] = true
+  for (const operation of candidate.replyOperations ?? []) replyUnknown[operation.waitKey] = true
 }
 function errorText(reason: unknown, fallback: string) {
   if (reason instanceof HttpClientError) {
@@ -607,6 +658,8 @@ async function refresh() {
       : await api.workflowTests.byRequest(request, { signal: controller.signal, silent: true })
     if (disposed || version !== epoch || request !== recovery.value?.requestId) return
     applyReceipt(value)
+    await checkPendingReplies()
+    if (disposed || version !== epoch || request !== recovery.value?.requestId) return
     const results = await Promise.allSettled([
       ownedRead(api.chat.history(value.sessionId)),
       ownedRead(
@@ -838,6 +891,7 @@ async function saveAndTest() {
     busy.value ||
     loading.value ||
     savingAndTesting.value ||
+    recoveryStorageError.value ||
     recovery.value
   )
     return
@@ -854,7 +908,8 @@ async function saveAndTest() {
     props.workflowId === workflow &&
     props.identityVersion === identity &&
     sourceChoice.value === 'draft' &&
-    !recovery.value
+    !recovery.value &&
+    !recoveryStorageError.value
   const current = () => {
     if (!baseCurrent() || !authCaptured) return false
     try {
@@ -924,6 +979,7 @@ async function createAndTest() {
     props.disabled ||
     busy.value ||
     loading.value ||
+    recoveryStorageError.value ||
     recovery.value
   )
     return
@@ -1035,6 +1091,131 @@ function waitKey(item: RuntimePendingInteraction) {
     item.checkpoint_revision
   ])
 }
+function replyOperation(item: RuntimePendingInteraction) {
+  return recovery.value?.replyOperations?.find(
+    (operation) =>
+      operation.runId === item.execution_id &&
+      operation.actionId === item.tool_wait?.action_id &&
+      operation.generation === item.tool_wait?.generation
+  )
+}
+function replyLocked(item: RuntimePendingInteraction) {
+  if (replyUnknown[waitKey(item)] || replyOperation(item)) return true
+  return (recovery.value?.replyAttempts ?? []).some((key) => {
+    try {
+      const original: unknown = JSON.parse(key)
+      if (
+        !Array.isArray(original) ||
+        typeof original[0] !== 'string' ||
+        !original[2] ||
+        typeof original[2] !== 'object' ||
+        typeof original[2].action_id !== 'string' ||
+        typeof original[2].generation !== 'string'
+      )
+        return true
+      return (
+        original[0] === item.execution_id &&
+        original[2].action_id === item.tool_wait?.action_id &&
+        original[2].generation === item.tool_wait?.generation
+      )
+    } catch {
+      return true
+    }
+  })
+}
+const autoCheckedReplies = new Set<string>()
+function sameReply(receipt: WorkflowReplyReceipt | undefined, operation: ReplyOperation) {
+  return (
+    !!receipt &&
+    receipt.testSessionId === operation.testSessionId &&
+    receipt.sessionId === operation.sessionId &&
+    receipt.inputId === operation.inputId &&
+    receipt.runId === operation.runId &&
+    receipt.actionId === operation.actionId &&
+    receipt.generation === operation.generation &&
+    receipt.kind === operation.kind &&
+    /^[1-9]\d*$/.test(receipt.acceptedRevision) &&
+    (operation.kind === 'human' ||
+      (receipt.executionId === operation.executionId &&
+        receipt.suspendRef === operation.suspendRef &&
+        receipt.actionKey === operation.actionKey &&
+        receipt.executionRevision === operation.executionRevision))
+  )
+}
+async function checkReply(operation: ReplyOperation, automatic = false) {
+  if (
+    !props.modelValue ||
+    replyReceiptBusy.value ||
+    !receipt.value ||
+    operation.accepted ||
+    receipt.value.testSessionId !== operation.testSessionId ||
+    receipt.value.sessionId !== operation.sessionId
+  )
+    return
+  const identity = props.identityVersion,
+    workflow = props.workflowId,
+    request = recovery.value?.requestId,
+    version = epoch,
+    owner = ++replyReceiptOwner
+  let authSession: string | null
+  try {
+    authSession = localStorage.getItem(authSessionKey)
+  } catch {
+    if (!automatic) readError.value = '无法读取登录状态，请恢复浏览器存储后核对原回复。'
+    return
+  }
+  const current = () =>
+    owner === replyReceiptOwner &&
+    version === epoch &&
+    sameIdentity(identity, authSession, workflow) &&
+    props.modelValue &&
+    recovery.value?.requestId === request &&
+    receipt.value?.testSessionId === operation.testSessionId &&
+    recovery.value?.replyOperations?.some(
+      (item) => item.inputId === operation.inputId && item.waitKey === operation.waitKey
+    )
+  replyReceiptBusy.value = true
+  try {
+    const result = await api.workflowTests.replyReceipt(operation, { silent: true })
+    if (!current()) return
+    if (!sameReply(result, operation)) {
+      if (!automatic) readError.value = '尚未查到匹配的原回复回执，结果仍未确认。'
+      return
+    }
+    try {
+      persist({
+        ...recovery.value!,
+        replyOperations: recovery.value!.replyOperations!.map((item) =>
+          item.inputId === operation.inputId && item.waitKey === operation.waitKey
+            ? { ...item, accepted: true }
+            : item
+        )
+      })
+    } catch {
+      readError.value = '原回复已受理，但本地记录无法更新，请恢复浏览器存储后核对。'
+      return
+    }
+    replyReceiptOutcome.value = '原待办回复已受理，后续运行状态请以测试结果为准。'
+    readError.value = ''
+  } catch (reason) {
+    claim(reason)
+    if (current() && !automatic) readError.value = '原回复核对失败，结果仍未确认，请重试核对。'
+  } finally {
+    if (owner === replyReceiptOwner) {
+      replyReceiptBusy.value = false
+      if (!automatic && current()) void refresh()
+    }
+  }
+}
+async function checkPendingReplies() {
+  if (replyReceiptBusy.value) return
+  for (const operation of recovery.value?.replyOperations ?? []) {
+    if (!operation.accepted && !autoCheckedReplies.has(operation.inputId)) {
+      autoCheckedReplies.add(operation.inputId)
+      await checkReply(operation, true)
+    }
+  }
+}
 function actions(item: RuntimePendingInteraction) {
   return (item.card?.actions ?? []).filter(
     (action) => action.type !== 'link' && typeof action.id === 'string' && action.id
@@ -1048,8 +1229,12 @@ const canRespond = computed(
     !busy.value &&
     !closed.value
 )
-async function submitPending(response: ChatHitlResponse, key: string) {
-  if (!canRespond.value || replyUnknown[key]) return
+async function submitPending(
+  response: ChatHitlResponse,
+  key: string,
+  item: RuntimePendingInteraction
+) {
+  if (!canRespond.value || replyLocked(item)) return
   const value = receipt.value!
   const identity = props.identityVersion,
     workflow = props.workflowId
@@ -1060,16 +1245,47 @@ async function submitPending(response: ChatHitlResponse, key: string) {
     error.value = '无法读取登录状态，请恢复浏览器存储后核对原测试。'
     return
   }
+  const owner = ++replySubmitOwner
   const current = () =>
+    owner === replySubmitOwner &&
     sameIdentity(identity, authSession, workflow) &&
     receipt.value?.testSessionId === value.testSessionId
+  const supported =
+    'human_input' in response
+      ? response.human_input
+      : 'workflow_input' in response
+        ? response.workflow_input
+        : undefined
+  const operation: ReplyOperation | undefined = supported
+    ? {
+        waitKey: key,
+        testSessionId: value.testSessionId,
+        sessionId: value.sessionId,
+        inputId: crypto.randomUUID(),
+        runId: 'execution_id' in response ? response.execution_id : '',
+        runRevision: 'run_revision' in response ? String(response.run_revision) : '',
+        actionId: supported.wait.action_id,
+        generation: supported.wait.generation,
+        ...('workflow_input' in response
+          ? {
+              kind: 'workflow' as const,
+              executionId: response.workflow_input.execution_ref,
+              suspendRef: response.workflow_input.suspend_ref,
+              actionKey: response.workflow_input.action_key,
+              executionRevision: response.workflow_input.execution_revision
+            }
+          : { kind: 'human' as const })
+      }
+    : undefined
   busy.value = true
   error.value = ''
   replyUnknown[key] = true
   try {
     persist({
       ...recovery.value!,
-      replyAttempts: [...new Set([...(recovery.value!.replyAttempts ?? []), key])]
+      ...(operation
+        ? { replyOperations: [...(recovery.value!.replyOperations ?? []), operation] }
+        : { replyAttempts: [...new Set([...(recovery.value!.replyAttempts ?? []), key])] })
     })
   } catch {
     delete replyUnknown[key]
@@ -1080,6 +1296,8 @@ async function submitPending(response: ChatHitlResponse, key: string) {
   try {
     await api.chat.submit({
       session_id: value.sessionId,
+      agent_id: value.agentId,
+      ...(operation ? { client_message_id: operation.inputId } : {}),
       hitl_response: response,
       context: { end_user_id: value.endUserId }
     })
@@ -1087,8 +1305,10 @@ async function submitPending(response: ChatHitlResponse, key: string) {
   } catch (reason) {
     claim(reason)
   } finally {
-    busy.value = false
-    if (current() && props.modelValue) void refresh()
+    if (owner === replySubmitOwner) {
+      busy.value = false
+      if (current() && props.modelValue) void refresh()
+    }
   }
 }
 function respond(item: RuntimePendingInteraction, action?: string) {
@@ -1109,7 +1329,8 @@ function respond(item: RuntimePendingInteraction, action?: string) {
           run_revision: item.run_revision,
           human_input: { wait: { ...item.tool_wait }, text: replies[key]! }
         },
-        key
+        key,
+        item
       )
     } else {
       if (
@@ -1139,7 +1360,8 @@ function respond(item: RuntimePendingInteraction, action?: string) {
             }
           }
         },
-        key
+        key,
+        item
       )
     }
   } catch (reason) {
@@ -1174,9 +1396,15 @@ watch(
       busy.value = false
       recoveryScope = scope
       recovery.value = undefined
+      recoveryStorageError.value = false
       receipt.value = undefined
       history.value = undefined
       trace.value = undefined
+      replyReceiptOutcome.value = ''
+      replyReceiptOwner++
+      replySubmitOwner++
+      replyReceiptBusy.value = false
+      autoCheckedReplies.clear()
       for (const map of [replies, replyUnknown]) Object.keys(map).forEach((key) => delete map[key])
       if (formOwner && owner !== formOwner) {
         formDrafts.clear()
@@ -1187,13 +1415,18 @@ watch(
       formOwner = owner
     }
     if (!props.modelValue) {
+      replyReceiptOwner++
+      replyReceiptBusy.value = false
+      autoCheckedReplies.clear()
       loading.value = false
       return
     }
     activateForm()
     try {
       if (!recovery.value) restoreRecovery()
+      recoveryStorageError.value = false
     } catch {
+      recoveryStorageError.value = true
       error.value = '无法读取原测试请求，请检查站点存储后重试'
       return
     }
@@ -1511,6 +1744,28 @@ onBeforeUnmount(() => {
         <p v-if="receipt?.blockingReason" class="test-warning" role="status">
           {{ receipt.blockingReason }}
         </p>
+        <p v-if="replyReceiptOutcome" class="admin-field-help" role="status">
+          {{ replyReceiptOutcome }}
+        </p>
+        <div v-if="recovery.replyAttempts?.length" class="test-warning" role="status">
+          部分待办回复未记录可核对的原输入身份，请联系管理员核实，不要重复提交。
+        </div>
+        <div
+          v-for="operation in recovery.replyOperations ?? []"
+          :key="operation.inputId"
+          role="status"
+        >
+          <p v-if="operation.accepted">原待办回复已受理，正在更新待办状态。</p>
+          <template v-else>
+            <p>原待办回复结果尚未确认，请核对原回复；不会重复提交。</p>
+            <ElButton
+              :loading="replyReceiptBusy"
+              :disabled="replyReceiptBusy"
+              @click="checkReply(operation)"
+              >核对原回复</ElButton
+            >
+          </template>
+        </div>
         <div class="admin-actions">
           <ElButton :loading="loading" :disabled="busy && !recovery.closing" @click="refresh"
             >查询测试状态</ElButton
@@ -1574,19 +1829,23 @@ onBeforeUnmount(() => {
           </details>
           <section v-for="item in pending" :key="waitKey(item)" class="test-pending">
             <h3>{{ item.card?.title || item.question || '需要你的回复' }}</h3>
-            <p v-if="replyUnknown[waitKey(item)]" class="test-warning" role="status">
-              此回复已提交，请查询当前待办确认处理结果；不会重复提交。
+            <p v-if="replyLocked(item)" class="test-warning" role="status">
+              {{
+                replyOperation(item)?.accepted
+                  ? '原回复已受理，正在更新待办状态；不会重复提交。'
+                  : '此回复结果尚未确认，请核对原回复；不会重复提交。'
+              }}
             </p>
             <ToolInputForm
               v-if="item.interaction_type === 'tool_input'"
               :pending="item"
-              :busy="!canRespond || !!replyUnknown[waitKey(item)]"
-              @respond="submitPending($event, waitKey(item))"
+              :busy="!canRespond || replyLocked(item)"
+              @respond="submitPending($event, waitKey(item), item)"
             />
             <ElForm
               v-else
               label-position="top"
-              :disabled="!canRespond || !!replyUnknown[waitKey(item)]"
+              :disabled="!canRespond || replyLocked(item)"
               @submit.prevent="respond(item)"
               @keydown.capture="guardFormEnter"
             >

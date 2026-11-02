@@ -24,6 +24,14 @@ public final class WorkflowTestContracts {
             Bindings bindings, @JsonProperty("user_input") String userInput,
             Map<String, Object> parameters, Budget budget) {}
     public record Close(@JsonProperty("test_session_id") String testSessionId) {}
+    /** 原输入的受理事实；不包含用户回复正文。 */
+    public record ReplyReceipt(@JsonProperty("test_session_id") String testSessionId,
+            @JsonProperty("session_id") String sessionId, @JsonProperty("run_id") String runId,
+            @JsonProperty("input_id") String inputId, @JsonProperty("action_id") String actionId,
+            String generation, String kind, @JsonProperty("execution_id") String executionId,
+            @JsonProperty("suspend_ref") String suspendRef, @JsonProperty("action_key") String actionKey,
+            @JsonProperty("execution_revision") String executionRevision,
+            @JsonProperty("accepted_revision") String acceptedRevision) {}
     public record CapabilityIdentity(String type, @JsonProperty("capabilityId") String capabilityId,
             @JsonProperty("versionId") String versionId) {
         public com.skillforge.core.capability.CapabilityRef domain() {

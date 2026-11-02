@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   byRequest: vi.fn(),
   get: vi.fn(),
   close: vi.fn(),
+  replyReceipt: vi.fn(),
   submit: vi.fn(),
   history: vi.fn(),
   trace: vi.fn()
@@ -31,7 +32,8 @@ vi.mock('../../api', () => ({
       create: mocks.create,
       byRequest: mocks.byRequest,
       get: mocks.get,
-      close: mocks.close
+      close: mocks.close,
+      replyReceipt: mocks.replyReceipt
     },
     chat: { submit: mocks.submit, history: mocks.history },
     trajectories: { detail: mocks.trace }
@@ -179,6 +181,7 @@ beforeEach(() => {
   mocks.get.mockResolvedValue(receipt({ status: 'running', runId: 'run:1', runStatus: 'running' }))
   mocks.byRequest.mockResolvedValue(receipt())
   mocks.close.mockResolvedValue(receipt({ closeStatus: 'cancelling', status: 'cancelling' }))
+  mocks.replyReceipt.mockResolvedValue(undefined)
   mocks.submit.mockResolvedValue({ session_id: 'session:1', status: 'accepted' })
   mocks.history.mockResolvedValue({
     session_id: 'session:1',
@@ -1676,9 +1679,11 @@ describe('真实Workflow测试面板边界', () => {
       await flushPromises()
       expect(pendingFailure.hasFeedbackOwner).toBe(true)
       expect(dom().findAll('.el-alert--error')).toHaveLength(0)
-      expect(dom().text()).toContain('此回复已提交，请查询当前待办确认处理结果')
+      expect(dom().text()).toContain('此回复结果尚未确认，请核对原回复')
       expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
         session_id: 'session:1',
+        agent_id: 'agent:1',
+        context: { end_user_id: 'user:1' },
         hitl_response: {
           execution_id: 'run:1',
           run_revision: '9007199254740993',
@@ -1712,4 +1717,252 @@ describe('真实Workflow测试面板边界', () => {
       expect(dom().text()).not.toContain('旧查询失败')
     }
   )
+  it('已受理待办暂时消失后再次出现仍不能重复派发', async () => {
+    const item = {
+      interaction_type: 'user_input',
+      execution_id: 'run:1',
+      run_revision: '12',
+      tool_wait: { action_id: 'action:1', generation: '2' },
+      question: '请补充'
+    }
+    const waitKey = JSON.stringify(['run:1', '12', item.tool_wait, null, null, null, null, null])
+    const operation = {
+      waitKey,
+      inputId: 'input:1',
+      testSessionId: 'test:1',
+      sessionId: 'session:1',
+      runId: 'run:1',
+      runRevision: '12',
+      actionId: 'action:1',
+      generation: '2',
+      kind: 'human'
+    }
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false,
+        replyOperations: [operation]
+      })
+    )
+    mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+    mocks.replyReceipt.mockResolvedValue({ ...operation, acceptedRevision: '13' })
+    const wrapper = render()
+    await flushPromises()
+    expect(dom().text()).toContain('原待办回复已受理')
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      event_cursor: null,
+      messages: [],
+      pending_interactions: [{ ...item, run_revision: '13' }],
+      collaboration: {}
+    })
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(
+      dom().get<HTMLTextAreaElement>('textarea[aria-label="待办回复 run:1"]').element.disabled
+    ).toBe(true)
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('"accepted":true')
+  })
+  it.each(['missing', 'mismatch', 'error'])(
+    '原回复回执 %s 时重开仍锁定且不派发',
+    async (outcome) => {
+      const item = {
+        interaction_type: 'user_input',
+        execution_id: 'run:1',
+        run_revision: '12',
+        tool_wait: { action_id: 'action:1', generation: '2' },
+        question: '请补充'
+      }
+      const waitKey = JSON.stringify(['run:1', '12', item.tool_wait, null, null, null, null, null])
+      const operation = {
+        waitKey,
+        inputId: 'input:1',
+        testSessionId: 'test:1',
+        sessionId: 'session:1',
+        runId: 'run:1',
+        runRevision: '12',
+        actionId: 'action:1',
+        generation: '2',
+        kind: 'human'
+      }
+      sessionStorage.setItem(
+        'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+        JSON.stringify({
+          requestId: 'request-fixed',
+          testSessionId: 'test:1',
+          initial: 'submitted',
+          closing: false,
+          replyOperations: [operation]
+        })
+      )
+      mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+      mocks.history.mockResolvedValue({
+        session_id: 'session:1',
+        event_cursor: null,
+        messages: [],
+        pending_interactions: [item],
+        collaboration: {}
+      })
+      if (outcome === 'mismatch')
+        mocks.replyReceipt.mockResolvedValue({
+          ...operation,
+          inputId: 'other',
+          acceptedRevision: '13'
+        })
+      if (outcome === 'error') mocks.replyReceipt.mockRejectedValue(Error('offline'))
+      const wrapper = render()
+      await flushPromises()
+      await wrapper.setProps({ modelValue: false })
+      await wrapper.setProps({ modelValue: true })
+      await flushPromises()
+      expect(dom().text()).toContain('原待办回复结果尚未确认')
+      expect(
+        dom().get<HTMLTextAreaElement>('textarea[aria-label="待办回复 run:1"]').element.disabled
+      ).toBe(true)
+      expect(mocks.submit).not.toHaveBeenCalled()
+    }
+  )
+  it('回复记录无法保存时不发送原回复', async () => {
+    const item = {
+      interaction_type: 'user_input',
+      execution_id: 'run:1',
+      run_revision: '12',
+      tool_wait: { action_id: 'action:1', generation: '2' },
+      question: '请补充'
+    }
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      event_cursor: null,
+      messages: [],
+      pending_interactions: [item],
+      collaboration: {}
+    })
+    const wrapper = render()
+    await flushPromises()
+    await dom().get('textarea[aria-label="待办回复 run:1"]').setValue('保密回复')
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('unavailable')
+    })
+    await button(wrapper, '提交回复').trigger('click')
+    await flushPromises()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('无法保存回复记录')
+  })
+  it('旧回复记录在同一等待修订变化后仍保持未知锁定', async () => {
+    const item = {
+      interaction_type: 'user_input',
+      execution_id: 'run:1',
+      run_revision: '13',
+      tool_wait: { action_id: 'action:1', generation: '2' },
+      question: '请补充'
+    }
+    const oldKey = JSON.stringify(['run:1', '12', item.tool_wait, null, null, null, null, null])
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false,
+        replyAttempts: [oldKey]
+      })
+    )
+    mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      event_cursor: null,
+      messages: [],
+      pending_interactions: [item],
+      collaboration: {}
+    })
+    render()
+    await flushPromises()
+    expect(
+      dom().get<HTMLTextAreaElement>('textarea[aria-label="待办回复 run:1"]').element.disabled
+    ).toBe(true)
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(mocks.replyReceipt).not.toHaveBeenCalled()
+  })
+  it('损坏的恢复记录在关闭重开后仍阻止创建与派发', async () => {
+    const key = 'noewise:workflow-test:' + JSON.stringify(['actor', 'flow'])
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ requestId: 'original', initial: 'submitted', replyAttempts: {} })
+    )
+    const wrapper = render()
+    await flushPromises()
+    expect(dom().text()).toContain('无法读取原测试请求')
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(dom().text()).toContain('无法读取原测试请求')
+    const form = dom().find('form')
+    if (form.exists()) await form.trigger('submit')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('人工输入回复使用原测试会话的智能体与终端用户身份', async () => {
+    const item = {
+      interaction_type: 'user_input',
+      execution_id: 'run:1',
+      run_revision: '12',
+      tool_wait: { action_id: 'action:1', generation: '2' },
+      question: '请提供补充信息'
+    }
+    mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      event_cursor: null,
+      messages: [],
+      pending_interactions: [item],
+      collaboration: {}
+    })
+    const wrapper = render()
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    await dom().get('textarea[aria-label="待办回复 run:1"]').setValue('用户补充')
+    await button(wrapper, '提交回复').trigger('click')
+    await flushPromises()
+    const saved = sessionStorage.getItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow'])
+    )!
+    const operation = JSON.parse(saved).replyOperations[0]
+    expect(saved).not.toContain('用户补充')
+    expect(operation).toMatchObject({
+      inputId: 'request-fixed',
+      kind: 'human',
+      runId: 'run:1',
+      actionId: 'action:1',
+      generation: '2'
+    })
+    expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
+      session_id: 'session:1',
+      client_message_id: operation.inputId,
+      agent_id: 'agent:1',
+      context: { end_user_id: 'user:1' },
+      hitl_response: {
+        execution_id: 'run:1',
+        run_revision: '12',
+        human_input: { wait: item.tool_wait, text: '用户补充' }
+      }
+    })
+  })
 })

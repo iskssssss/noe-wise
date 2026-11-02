@@ -3,6 +3,7 @@ package com.skillforge.institution.workflowtest;
 import com.skillforge.core.foundation.access.RequirePermission;
 import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.core.shared.web.ApiResponses;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import static com.skillforge.institution.workflowtest.WorkflowTestContracts.*;
 
@@ -25,6 +26,21 @@ public class WorkflowTestSessionController {
     @RequirePermission("foundation.workflows.read")
     @GetMapping("/by-request")
     public ApiResponse<Receipt> byRequest(@RequestParam("requestId") String requestId) {return ApiResponses.wrap(service.byRequest(requestId));}
+    @RequirePermission("foundation.workflows.read")
+    @GetMapping("/reply-receipt")
+    public ResponseEntity<ApiResponse<ReplyReceipt>> replyReceipt(
+            @RequestParam("testSessionId") String testSessionId,
+            @RequestParam("inputId") String inputId, @RequestParam("runId") String runId,
+            @RequestParam("actionId") String actionId, @RequestParam("generation") long generation,
+            @RequestParam("kind") String kind,
+            @RequestParam(value="executionId",required=false) String executionId,
+            @RequestParam(value="suspendRef",required=false) String suspendRef,
+            @RequestParam(value="actionKey",required=false) String actionKey,
+            @RequestParam(value="executionRevision",required=false) Long executionRevision) {
+        var result=service.replyReceipt(testSessionId,inputId,runId,actionId,generation,kind,
+                executionId,suspendRef,actionKey,executionRevision);
+        return result==null?ResponseEntity.noContent().build():ResponseEntity.ok(ApiResponses.wrap(result));
+    }
     @RequirePermission("foundation.workflows.read")
     @GetMapping
     public ApiResponse<Receipt> get(@RequestParam("testSessionId") String id) {return ApiResponses.wrap(service.get(id));}

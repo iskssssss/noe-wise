@@ -20,6 +20,9 @@ import com.skillforge.core.workflow.execution.WorkflowDefinitionContract;
 import com.skillforge.institution.service.WorkflowManagementService;
 import com.skillforge.institution.runtime.AgentRuntimeRunControls;
 import com.skillforge.runtime.api.RunRef;
+import com.skillforge.runtime.api.InputId;
+import com.skillforge.runtime.api.SessionSubject;
+import com.skillforge.runtime.api.SessionTarget;
 import com.skillforge.runtime.api.TenantId;
 import com.skillforge.runtime.api.TypedPayload;
 import com.skillforge.runtime.session.SessionRuntimePayloads;
@@ -173,6 +176,46 @@ public class WorkflowTestSessionService {
     }
 
     public Receipt byRequest(String requestId) { var test=tests.byRequest(tenant(),member(),requestId);if(test==null)throw missing();return receipt(test); }
+    /** 仅确认原等待的输入已受理；无记录或身份不一致时不推断请求是否发生。 */
+    @Transactional(readOnly=true)
+    public ReplyReceipt replyReceipt(String testSessionId,String inputId,String runId,String actionId,long generation,
+            String kind,String executionId,String suspendRef,String actionKey,Long executionRevision) {
+        var test=require(testSessionId);
+        var session=sessions.require(test.getTenantId().toString(),test.getSessionId());
+        if(!Objects.equals(session.tenantId(),test.getTenantId())||!Objects.equals(session.sessionId(),test.getSessionId())
+                ||!Objects.equals(session.endUserId(),test.getEndUserId())||!Objects.equals(session.agentId(),test.getAgentId()))return null;
+        var expectedRun=runRef(test);
+        if(inputId==null||inputId.isBlank()||actionId==null||actionId.isBlank()||generation<=0
+                ||!expectedRun.runId().equals(runId))return null;
+        var run=store.load(expectedRun).orElse(null);
+        if(run==null)return null;
+        var owner=run.identity().owner();
+        if(!run.identity().runRef().equals(expectedRun)||!owner.sessionRef().tenantId().equals(expectedRun.tenantId())
+                ||!owner.sessionRef().sessionId().equals(test.getSessionId())
+                ||!(owner.subject() instanceof SessionSubject.User user)
+                ||user.endUserId().value()!=test.getEndUserId()
+                ||owner.target().kind()!=SessionTarget.Kind.AGENT
+                ||!owner.target().id().equals(test.getAgentId().toString())
+                ||!run.identity().agentId().value().equals(test.getAgentId().toString()))return null;
+        var waiting=store.response(expectedRun,new InputId(inputId)).orElse(null);
+        if(waiting==null||!waiting.run().equals(expectedRun)||!waiting.reference().action().actionId().equals(actionId)
+                ||waiting.reference().generation()!=generation||waiting.acceptedResponse().isEmpty()
+                ||!waiting.acceptedResponse().orElseThrow().input().value().equals(inputId))return null;
+        if("workflow".equals(kind)) {
+            if(waiting.kind()!=ExecutionStore.WaitKind.WORKFLOW
+                    ||!(waiting.internal().orElse(null) instanceof ExecutionStore.WorkflowWait workflow)
+                    ||!workflow.execution().executionId().equals(executionId)
+                    ||!workflow.suspendRef().equals(suspendRef)||!workflow.actionKey().equals(actionKey)
+                    ||executionRevision==null||workflow.executionRevision()!=executionRevision)return null;
+        } else if("human".equals(kind)) {
+            if(waiting.kind()!=ExecutionStore.WaitKind.HUMAN||executionId!=null||suspendRef!=null
+                    ||actionKey!=null||executionRevision!=null)return null;
+        } else return null;
+        return new ReplyReceipt(test.getId().toString(),test.getSessionId(),expectedRun.runId(),inputId,actionId,
+                Long.toString(generation),kind,executionId,suspendRef,actionKey,
+                executionRevision==null?null:executionRevision.toString(),
+                Long.toString(waiting.acceptedResponse().orElseThrow().acceptedRevision()));
+    }
     public Receipt get(String id) {
         var test=require(id);
         if("ready".equals(test.getStatus())&&!test.getExpiresAt().isAfter(Instant.now()))return close(id);
