@@ -111,6 +111,7 @@
         :closable="false"
       />
       <p v-if="replyStorageError" role="status">{{ replyStorageError }}</p>
+      <p v-if="replyObservationFailed" role="status">自动读取回复进展已停止，请手动刷新状态。</p>
       <p v-if="actionStorageError" role="status">{{ actionStorageError }}</p>
       <div
         v-if="
@@ -277,7 +278,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
-import { computed, onMounted, onScopeDispose, ref, useId } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -291,6 +292,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import MarkdownContent from '@skillforge/shared/components/MarkdownContent.vue'
 import {
   api,
+  getSessionId,
   type HandoffTicket,
   type HandoffDetail,
   type HandoffReply,
@@ -378,6 +380,7 @@ const { busy, error, run } = useTask(),
   pendingAction = ref<PendingAction>(),
   actionRecoveryText = ref(''),
   actionStorageError = ref('')
+let detailOwner: { subject: string; identity: number; session: string | null } | undefined
 const canHandleTicket = computed(
   () =>
     detail.value?.ticket.status === 'assigned' &&
@@ -407,13 +410,22 @@ async function viewTicket(id: string, expectedSession = '', recovering = false) 
     (pendingAction.value && (!recovering || pendingAction.value.id !== id))
   )
     return
-  const owner = subject()
+  const owner = subject(),
+    identity = auth.identityVersion,
+    session = getSessionId()
   return await run(async () => {
     const value = await api.handoff.detail(id)
-    if (disposed || subject() !== owner) return
+    if (
+      disposed ||
+      subject() !== owner ||
+      auth.identityVersion !== identity ||
+      getSessionId() !== session
+    )
+      return
     if (value.ticket.id !== id || (expectedSession && value.ticket.session_id !== expectedSession))
       throw Error('工单与原会话不匹配')
     detail.value = value
+    detailOwner = { subject: owner, identity, session }
     replyStorageError.value = ''
     try {
       const raw = sessionStorage.getItem(replyKey(id))
@@ -466,14 +478,24 @@ async function claim(row: HandoffTicket) {
 async function refreshDetail() {
   await run(async () => {
     await readDetail()
+    replyObservationFailed.value = false
   })
 }
 async function readDetail() {
   if (!detail.value) return
-  const owner = subject()
+  const owner = subject(),
+    identity = auth.identityVersion,
+    session = getSessionId()
   const next = await api.handoff.detail(detail.value.ticket.id)
-  if (disposed || subject() !== owner) return
+  if (
+    disposed ||
+    subject() !== owner ||
+    auth.identityVersion !== identity ||
+    getSessionId() !== session
+  )
+    return
   detail.value = next
+  detailOwner = { subject: owner, identity, session }
   refreshRequired.value = false
   if (pendingAction.value) {
     const action = pendingAction.value
@@ -511,6 +533,151 @@ async function older() {
     detail.value = { ...older, messages: [...older.messages, ...current.messages] }
   })
 }
+const replyObservationFailed = ref(false)
+const replyPageVisible = ref(document.visibilityState === 'visible')
+let replyTimer: ReturnType<typeof setTimeout> | undefined
+let replyReading = false
+let replyGeneration = 0
+let observedTicket = ''
+const observedReplies = new Set<string>()
+function stopReplyObservation() {
+  replyGeneration++
+  if (replyTimer) clearTimeout(replyTimer)
+  replyTimer = undefined
+}
+function scheduleReplyObservation() {
+  const current = detail.value
+  if (current?.ticket.id !== observedTicket) {
+    observedReplies.clear()
+    observedTicket = current?.ticket.id ?? ''
+    replyObservationFailed.value = false
+  }
+  if (current)
+    for (const reply of current.replies)
+      if (reply.status === 'accepted') observedReplies.add(reply.command_id)
+  const session = getSessionId()
+  if (
+    !current ||
+    !open.value ||
+    !replyPageVisible.value ||
+    busy.value ||
+    pendingReply.value ||
+    pendingAction.value ||
+    refreshRequired.value ||
+    replyStorageError.value ||
+    actionStorageError.value ||
+    replyObservationFailed.value ||
+    !can('foundation.handoff.read') ||
+    !session ||
+    detailOwner?.subject !== subject() ||
+    detailOwner?.identity !== auth.identityVersion ||
+    detailOwner?.session !== session ||
+    !observedReplies.size ||
+    replyReading ||
+    replyTimer
+  )
+    return
+  const owner = subject(),
+    identity = auth.identityVersion,
+    generation = replyGeneration
+  const valid = () =>
+    !disposed &&
+    generation === replyGeneration &&
+    open.value &&
+    replyPageVisible.value &&
+    !busy.value &&
+    !pendingReply.value &&
+    !pendingAction.value &&
+    !refreshRequired.value &&
+    can('foundation.handoff.read') &&
+    subject() === owner &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    detail.value?.ticket.id === current.ticket.id
+  replyTimer = setTimeout(async () => {
+    replyTimer = undefined
+    if (!valid()) return
+    replyReading = true
+    try {
+      const next = await api.handoff.detail(current.ticket.id)
+      if (!valid()) return
+      if (
+        next.ticket.id !== current.ticket.id ||
+        next.ticket.session_id !== current.ticket.session_id ||
+        next.ticket.revision < current.ticket.revision
+      ) {
+        replyObservationFailed.value = true
+        return
+      }
+      if (
+        current.messages.length &&
+        next.has_more &&
+        !next.messages.some((item) =>
+          current.messages.some((old) => old.message_id === item.message_id)
+        )
+      ) {
+        replyObservationFailed.value = true
+        return
+      }
+      const messagesById = new Map(current.messages.map((item) => [item.message_id, item]))
+      for (const item of next.messages) messagesById.set(item.message_id, item)
+      const messages = [...messagesById.values()]
+      for (const id of observedReplies) {
+        const reply = next.replies.find(
+          (item) => item.command_id === id && item.ticket_id === current.ticket.id
+        )
+        if (
+          reply?.status === 'rejected' ||
+          (reply?.status === 'committed' &&
+            reply.source_event_id &&
+            messages.some((item) => item.message_id === reply.source_event_id))
+        )
+          observedReplies.delete(id)
+      }
+      detail.value = {
+        ...next,
+        messages,
+        has_more: current.has_more,
+        next_before_message_id: current.next_before_message_id
+      }
+    } catch (cause) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      if (valid()) replyObservationFailed.value = true
+    } finally {
+      replyReading = false
+      scheduleReplyObservation()
+    }
+  }, 5000)
+}
+function updateReplyVisibility() {
+  replyPageVisible.value = document.visibilityState === 'visible'
+}
+document.addEventListener('visibilitychange', updateReplyVisibility)
+watch(
+  [
+    open,
+    busy,
+    pendingReply,
+    pendingAction,
+    refreshRequired,
+    replyStorageError,
+    actionStorageError,
+    replyPageVisible,
+    () => auth.identityVersion,
+    () => auth.sessionIdentity,
+    () => can('foundation.handoff.read'),
+    () => detail.value?.ticket.id
+  ],
+  () => {
+    stopReplyObservation()
+    scheduleReplyObservation()
+  },
+  { flush: 'sync' }
+)
+onScopeDispose(() => {
+  stopReplyObservation()
+  document.removeEventListener('visibilitychange', updateReplyVisibility)
+})
 function acceptActionReceipt(
   receipt: HandoffActionReceipt | null,
   pending: NonNullable<typeof pendingAction.value>,

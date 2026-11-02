@@ -9,6 +9,7 @@ import MarketplacePage from './MarketplacePage.vue'
 
 const mocks = vi.hoisted(() => ({
   routeQuery: {} as Record<string, string>,
+  session: 'test-session',
   permissions: ['foundation.handoff.read', 'foundation.handoff.update'],
   handoffList: vi.fn(),
   handoffDetail: vi.fn(),
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn()
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.session,
   api: {
     handoff: {
       list: mocks.handoffList,
@@ -91,6 +93,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
   mocks.routeQuery = {}
+  mocks.session = 'test-session'
   mocks.permissions = ['foundation.handoff.read', 'foundation.handoff.update']
   mocks.handoffList.mockResolvedValue({ items: [ticket] })
   mocks.handoffDetail.mockResolvedValue({
@@ -121,6 +124,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
+  vi.useRealTimers()
   document.body.innerHTML = ''
 })
 function render(component: typeof HandoffPage) {
@@ -133,6 +137,232 @@ function render(component: typeof HandoffPage) {
 }
 
 describe('机构日常任务简化', () => {
+  it('手动刷新覆盖在途自动读取，旧结果不能回写', async () => {
+    const current = {
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [],
+      replies: [{ ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }],
+      has_more: false
+    }
+    mocks.handoffDetail.mockResolvedValue(current)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    let finish!: (value: unknown) => void
+    mocks.handoffDetail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    mocks.handoffDetail.mockResolvedValueOnce({
+      ...current,
+      messages: [
+        {
+          message_id: 'fresh',
+          role: 'assistant',
+          content: '手动刷新结果',
+          created_at: '2026-01-01'
+        }
+      ]
+    })
+    await button(wrapper, '刷新状态').trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+    finish({
+      ...current,
+      messages: [
+        { message_id: 'stale', role: 'assistant', content: '过期结果', created_at: '2026-01-01' }
+      ]
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(document.body.textContent).toContain('手动刷新结果')
+    expect(document.body.textContent).not.toContain('过期结果')
+    expect(mocks.reply).not.toHaveBeenCalled()
+  })
+  it('失去读取权限后不再自动请求工单', async () => {
+    mocks.handoffDetail.mockResolvedValue({
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [],
+      replies: [{ ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }],
+      has_more: false
+    })
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+    mocks.permissions.splice(0)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(1)
+  })
+  it('会话变化后不以新身份读取旧工单，显式刷新成功才恢复观察', async () => {
+    const current = {
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [],
+      replies: [{ ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }],
+      has_more: false
+    }
+    mocks.handoffDetail.mockResolvedValue(current)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+    mocks.session = 'new-session'
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(1)
+    await button(wrapper, '刷新状态').trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(3)
+  })
+  it('最新消息窗口不连续时保留历史并停止自动读取', async () => {
+    const current = {
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [
+        { message_id: 'old', role: 'user', content: '已加载消息', created_at: '2026-01-01' }
+      ],
+      replies: [{ ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }],
+      has_more: true,
+      next_before_message_id: 'old'
+    }
+    mocks.handoffDetail.mockResolvedValue(current)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    mocks.handoffDetail.mockResolvedValueOnce({
+      ...current,
+      messages: [
+        { message_id: 'new', role: 'assistant', content: '最新窗口', created_at: '2026-01-02' }
+      ],
+      next_before_message_id: 'new'
+    })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(document.body.textContent).toContain('已加载消息')
+    expect(document.body.textContent).not.toContain('最新窗口')
+    expect(document.body.textContent).toContain('自动读取回复进展已停止')
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(2)
+  })
+  it('已受理回复自动读取原工单直至原消息出现，保留历史和草稿', async () => {
+    const accepted = { ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }
+    const current = {
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [
+        { message_id: 'older', role: 'user', content: '旧消息', created_at: '2026-01-01' }
+      ],
+      replies: [accepted],
+      has_more: true,
+      next_before_message_id: 'cursor'
+    }
+    mocks.handoffDetail.mockResolvedValue(current)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    const input = wrapper
+      .findAllComponents(ElInput)
+      .find((item) => item.props('type') === 'textarea')!
+    input.vm.$emit('update:modelValue', '未发送草稿')
+    await flushPromises()
+    vi.useFakeTimers()
+    // 切换可见性以在受控时钟下重新调度。
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    mocks.handoffDetail.mockResolvedValueOnce({
+      ...current,
+      messages: [],
+      has_more: false,
+      replies: [{ ...accepted, status: 'committed', source_event_id: 'event-1' }]
+    })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(2)
+    mocks.handoffDetail.mockResolvedValueOnce({
+      ...current,
+      messages: [
+        ...current.messages,
+        { message_id: 'event-1', role: 'assistant', content: '人工回复', created_at: '2026-01-01' }
+      ],
+      replies: [{ ...accepted, status: 'committed', source_event_id: 'event-1' }]
+    })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(document.body.textContent).toContain('旧消息')
+    expect(document.body.textContent).toContain('人工回复')
+    expect(input.props('modelValue')).toBe('未发送草稿')
+    expect(button(wrapper, '加载较早消息').exists()).toBe(true)
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(3)
+    expect(mocks.reply).not.toHaveBeenCalled()
+  })
+  it('隐藏页面时丢弃在途的回复状态读取，恢复显示后可继续查询', async () => {
+    const current = {
+      ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
+      messages: [],
+      replies: [{ ticket_id: 'ticket-1', command_id: 'command-1', status: 'accepted' }],
+      has_more: false
+    }
+    mocks.handoffDetail.mockResolvedValue(current)
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    let finish!: (value: unknown) => void
+    mocks.handoffDetail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    finish({
+      ...current,
+      messages: [
+        { message_id: 'stale', role: 'assistant', content: '过期响应', created_at: '2026-01-01' }
+      ]
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(document.body.textContent).not.toContain('过期响应')
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(2)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.handoffDetail).toHaveBeenCalledTimes(3)
+    expect(mocks.reply).not.toHaveBeenCalled()
+  })
   it('工单状态切换失败时保留旧列表和对应筛选，重试成功才切换', async () => {
     const wrapper = render(HandoffPage)
     await flushPromises()

@@ -41,14 +41,19 @@ test('real browser creates, replies, restores both clients and resolves a handof
   const text = `坐席已人工核实申请 ${runId}`
   const note = `人工核实完成并已通知用户 ${runId}`
   const evidence = fixture('E2E_ARTIFACT_DIR')
+  const mode = process.env.E2E_HANDOFF_PROGRESS_MODE ?? 'baseline'
   const chat = await context.newPage()
   const errors: string[] = []
   let chatSubmissions = 0
+  let replyPosts = 0
+  let detailReads = 0
   for (const client of [page, chat]) {
     client.on('pageerror', (error) => errors.push(error.message))
     client.on('request', (request) => {
-      if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat')
-        chatSubmissions++
+      const path = new URL(request.url()).pathname
+      if (request.method() === 'POST' && path === '/api/v1/chat') chatSubmissions++
+      if (request.method() === 'POST' && path === '/api/v1/handoff/tickets/replies') replyPosts++
+      if (request.method() === 'GET' && path === '/api/v1/handoff/tickets/detail') detailReads++
     })
   }
 
@@ -72,7 +77,7 @@ test('real browser creates, replies, restores both clients and resolves a handof
   const user = String(profile.end_user_id)
   const messageInput = chat.getByRole('textbox', { name: '消息', exact: true })
   await expect(messageInput).toBeEnabled()
-  await expect(chat.locator('.header-target')).toContainText('Handoff Browser Agent')
+  await expect(chat.locator('.header-target')).toContainText('Runtime E2E Agent')
 
   // /plan off 是本地控制命令，创建真实产品 Session，不提交模型输入。
   await messageInput.fill('/plan off')
@@ -87,6 +92,18 @@ test('real browser creates, replies, restores both clients and resolves a handof
   await dataOf(planResponse)
   await expect(chat.getByText('已选择普通模式。', { exact: true })).toBeVisible()
   expect(typeof sessionId).toBe('string')
+
+  // 在同一渠道会话中执行真实 Runtime；模型由本次隔离服务提供。
+  await messageInput.fill(`请简短说明处理流程 ${runId}`)
+  const runtimeResponse = responseAt(chat, '/api/v1/chat', 'POST')
+  await send.click()
+  const runtime = await dataOf(await runtimeResponse)
+  expect(String(runtime.session_id)).toBe(sessionId)
+  const runtimeRunId = String(runtime.execution_id)
+  expect(runtimeRunId).not.toBe('undefined')
+  await expect(
+    chat.locator('.message.assistant').filter({ hasText: fixture('E2E_EXPECTED_REPLY') })
+  ).toHaveCount(1, { timeout: 120_000 })
 
   // 登录走正式密码与安全 Session 入口；没有注入令牌或绕过 MFA。
   await page.goto('/login?redirect=/admin/chat')
@@ -124,18 +141,42 @@ test('real browser creates, replies, restores both clients and resolves a handof
     .locator('textarea')
   await replyInput.fill(text)
   const replyResponse = responseAt(page, '/api/v1/handoff/tickets/replies', 'POST')
+  const detailAfterReply = responseAt(page, '/api/v1/handoff/tickets/detail', 'GET')
   await drawer.getByRole('button', { name: '发送回复', exact: true }).click()
   const accepted = await dataOf(await replyResponse)
-  expect(['accepted', 'committed']).toContain(accepted.status)
+  expect(accepted.status).toBe('accepted')
   const commandId = String(accepted.command_id)
   expect(commandId).not.toBe('undefined')
+  const firstDetail = await dataOf(await detailAfterReply)
+  expect(
+    firstDetail.replies.find((reply: { command_id: string }) => reply.command_id === commandId)
+      ?.status
+  ).toBe('accepted')
+  const readsBeforeRelease = detailReads
+  await writeFile(join(evidence, 'release-reply.txt'), commandId, 'utf8')
 
-  // 等待真实 outbox/worker 投影；同一人工消息在会话端只出现一次。
+  // 等待原命令由服务端投影；同一人工消息在会话端只出现一次。
   const publicMessage = chat.locator('.message.assistant').filter({ hasText: text })
   await expect(publicMessage).toHaveCount(1)
   const sourceMessageId = await publicMessage.getAttribute('data-message-id')
   expect(sourceMessageId).toBeTruthy()
-  await drawer.getByRole('button', { name: '刷新状态', exact: true }).click()
+  const readsAfterCommit = detailReads
+  let manualRefreshes = 0
+  if (mode === 'baseline') {
+    await expect(drawer.locator('.el-card').filter({ hasText: text })).toHaveCount(0)
+    await page.waitForTimeout(6500)
+    expect(detailReads).toBe(readsAfterCommit)
+    await page.screenshot({ path: join(evidence, 'admin-before-refresh.png') })
+    await drawer.getByRole('button', { name: '刷新状态', exact: true }).click()
+    manualRefreshes++
+  } else {
+    expect(mode).toBe('candidate')
+    await expect(drawer.locator('.el-card').filter({ hasText: text })).toHaveCount(1, {
+      timeout: 30_000
+    })
+    expect(detailReads).toBeGreaterThan(readsBeforeRelease)
+  }
+  expect(replyPosts).toBe(1)
   await expect(drawer.locator('.el-card').filter({ hasText: text })).toHaveCount(1)
   await page.screenshot({ path: join(evidence, 'admin-reply.png') })
   await chat.screenshot({ path: join(evidence, 'chat-reply.png') })
@@ -173,7 +214,7 @@ test('real browser creates, replies, restores both clients and resolves a handof
   await expect(replyInput).toBeDisabled()
   await page.screenshot({ path: join(evidence, 'admin-resolved.png') })
   await chat.screenshot({ path: join(evidence, 'chat-restored.png') })
-  expect(chatSubmissions).toBe(0)
+  expect(chatSubmissions).toBe(1)
   expect(errors).toEqual([])
   await writeFile(
     join(evidence, 'browser-receipt.json'),
@@ -186,6 +227,13 @@ test('real browser creates, replies, restores both clients and resolves a handof
         text,
         note,
         chatSubmissions,
+        runtimeRunId,
+        replyPosts,
+        readsBeforeRelease,
+        readsAfterCommit,
+        detailReads,
+        mode,
+        manualRefreshes,
         sourceMessageId,
         restoredBothClients: true,
         errors

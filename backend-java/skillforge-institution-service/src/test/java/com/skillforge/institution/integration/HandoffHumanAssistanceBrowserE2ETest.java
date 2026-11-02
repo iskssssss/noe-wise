@@ -43,12 +43,11 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 
-/** 隔离 PG/Redis、随机后端/双前端端口的单次人工协助浏览器旅程，不调用模型。 */
-@TestPropertySource(properties={"skillforge.handoff-reply-delay-ms=1000", "skillforge.session-outbox-cron=*/1 * * * * *",
-        "agent-runtime.workers.auto-startup=false"})
-class HandoffHumanAssistanceBrowserE2ETest extends AbstractIntegrationTest {
+/** 隔离 PG/Redis 与双前端的人工协助及同会话运行时浏览器旅程。 */
+@TestPropertySource(properties={"skillforge.handoff-reply-delay-ms=3600000", "skillforge.session-outbox-cron=*/1 * * * * *"})
+class HandoffHumanAssistanceBrowserE2ETest extends ChatExecutionChainE2ETest {
     private static final int ADMIN_PORT=availablePort(), CHAT_PORT=availablePort();
-    private static final String PASSWORD="HandoffBrowser123", USERNAME="handoff-browser-admin";
+    private static final String USERNAME="runtime-e2e-admin";
     @DynamicPropertySource static void browserOrigins(DynamicPropertyRegistry registry) {
         registry.add("skillforge.web.allowed-origins",()->"http://127.0.0.1:"+ADMIN_PORT+",http://127.0.0.1:"+CHAT_PORT);
     }
@@ -57,24 +56,18 @@ class HandoffHumanAssistanceBrowserE2ETest extends AbstractIntegrationTest {
     @Autowired SessionMapper sessions; @Autowired PasswordEncoder passwords; @Autowired ObjectMapper json;
     @Autowired SessionLogPort log; @Autowired HandoffReplyMapper replies; @Autowired HandoffApplicationService handoffs;
     @Autowired FoundationAccess access; @Autowired FoundationOrganizationService organization;
-    @Autowired AgentPublicationService publications;
-    @LocalServerPort int port;
+    @Autowired AgentPublicationService publications; @Autowired com.skillforge.institution.service.HandoffReplyService replyService;
 
     @Test void realBrowserCreatesRepliesRestoresBothClientsAndResolvesTicket() throws Exception {
-        String run=Long.toString(SnowflakeIds.nextId()), slug="handoff-browser-"+run;
-        String tenant=createTenant(tenants,plans,slug), token="handoff-browser-token-"+UUID.randomUUID();
+        String run=Long.toString(SnowflakeIds.nextId()), slug=fixtureTenantSlug();
+        String tenant=tenantId, token="handoff-browser-token-"+UUID.randomUUID();
         TenantContext.setTenantId(tenant);
         try {
             long owner=Long.parseLong(tenant);
-            var member=new TenantMemberDO();member.setId(SnowflakeIds.nextId());member.setTenantId(owner);
-            member.setUsername(USERNAME);member.setRole("admin");member.setPermissions(List.of());member.setStatus("active");
-            member.setPasswordHash(passwords.encode(PASSWORD));member.setCreatedAt(Instant.now());members.insert(member);
-            organization.initializeTenant(tenant,member.getId().toString());
+            var member=members.selectOne(new LambdaQueryWrapper<TenantMemberDO>().eq(TenantMemberDO::getTenantId,owner).eq(TenantMemberDO::getUsername,USERNAME));
+            assertNotNull(member);
             var subject=new FoundationAccess.Subject(false,tenant,member.getId().toString());
-            var agent=new AgentDO();agent.setId(SnowflakeIds.nextId());agent.setTenantId(owner);agent.setAgentKey("handoff-browser-"+run);
-            agent.setName("Handoff Browser Agent");agent.setStatus("published");agent.setSystemPrompt("浏览器验收不调用模型");
-            agent.setTemplateVersion("1.0");agent.setRoleDescription("人工协助验收助手");agents.insert(agent);
-            access.withSubject(subject,()->{organization.registerResource("agent",agent.getId().toString());publications.publish(agent);return null;});
+            var agent=agents.selectById(Long.parseLong(agentId));assertNotNull(agent);
             var channel=new ChannelDO();channel.setId(SnowflakeIds.nextId());channel.setTenantId(owner);
             channel.setName("Handoff isolated browser");channel.setChannelType("openapi");channel.setStatus("active");
             channel.setChannelTokenHash(TokenHash.sha256Hex(token));channel.setConfig(Map.of());channels.insert(channel);
@@ -92,11 +85,26 @@ class HandoffHumanAssistanceBrowserE2ETest extends AbstractIntegrationTest {
             env.put("E2E_BACKEND_URL","http://127.0.0.1:"+port);env.put("E2E_TENANT_SLUG",slug);
             env.put("E2E_USERNAME",USERNAME);env.put("E2E_PASSWORD",PASSWORD);env.put("E2E_AGENT_ID",agent.getId().toString());
             env.put("E2E_CHANNEL_TOKEN",token);env.put("E2E_RUN_ID",run);env.put("E2E_ARTIFACT_DIR",evidence.toString());
+            env.put("E2E_EXPECTED_REPLY","fixture-answer-"+this.runId);
             Process process=command.start();
             // try-with-resources 将清理失败作为 suppressed 保留，不能覆盖浏览器的原始断言。
             try(var owned=new OwnedBrowserProcesses(process.toHandle())) {
-                long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(5);boolean finished=false;
-                while(System.nanoTime()<deadline){owned.capture();if(process.waitFor(200,TimeUnit.MILLISECONDS)){finished=true;break;}}
+                long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(5);boolean finished=false, dispatched=false;
+                Path release=evidence.resolve("release-reply.txt");
+                while(System.nanoTime()<deadline){
+                    owned.capture();
+                    if(!dispatched && Files.isRegularFile(release)) {
+                        String id=Files.readString(release,StandardCharsets.UTF_8).trim();
+                        if(id.isBlank()) { process.waitFor(100,TimeUnit.MILLISECONDS); continue; }
+                        var accepted=replies.find(owner,id);assertNotNull(accepted);assertEquals("accepted",accepted.getStatus());
+                        replyService.dispatch(owner,id);
+                        var committed=replies.find(owner,id);assertNotNull(committed);assertEquals("committed",committed.getStatus());
+                        Files.writeString(evidence.resolve("committed-reply.txt"),id,StandardCharsets.UTF_8);
+                        dispatched=true;
+                    }
+                    if(process.waitFor(200,TimeUnit.MILLISECONDS)){finished=true;break;}
+                }
+                assertTrue(dispatched,"原回复未到达派发门控");
                 owned.capture();assertTrue(finished,"浏览器旅程超出5分钟；证据="+evidence);
                 String output=Files.readString(evidence.resolve("playwright-vite.log"),StandardCharsets.UTF_8);
                 assertEquals(0,process.exitValue(),"浏览器失败；证据="+evidence+"\n"+output.substring(Math.max(0,output.length()-7000)));
@@ -111,15 +119,17 @@ class HandoffHumanAssistanceBrowserE2ETest extends AbstractIntegrationTest {
             var human=facts.stream().filter(SessionHumanAssistance::supports).toList();assertEquals(1,human.size());
             assertEquals(commandId,SessionHumanAssistance.content(human.getFirst()).commandId());
             assertEquals(receipt.path("text").asText(),SessionHumanAssistance.content(human.getFirst()).text());
-            assertTrue(facts.stream().noneMatch(e->e.runRef().isPresent()),"浏览器人工旅程不得创建模型Run");
+            String browserRun=receipt.path("runtimeRunId").asText();assertFalse(browserRun.isBlank());
+            assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND agent_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenant,browserRun,agentId,sessionId));
+            assertTrue(countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? AND kind='MODEL' AND status='SUCCEEDED'",tenant,browserRun)>0);
             var reply=replies.find(owner,commandId);assertNotNull(reply);assertEquals("committed",reply.getStatus());
             assertEquals(human.getFirst().eventId().value(),reply.getSourceEventId());
             var ticket=access.withSubject(subject,()->handoffs.require(owner,ticketId));assertEquals("resolved",ticket.getStatus());
-            assertEquals(receipt.path("note").asText(),ticket.getResolutionNote());assertEquals(0,receipt.path("chatSubmissions").asInt());
+            assertEquals(receipt.path("note").asText(),ticket.getResolutionNote());assertEquals(1,receipt.path("chatSubmissions").asInt());
             Files.writeString(evidence.resolve("database-evidence.json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
                     "sessionId",sessionId,"ticketId",ticketId,"commandId",commandId,"sourceEventId",reply.getSourceEventId(),
                     "sourceSequence",reply.getSourceSequence(),"humanFactCount",human.size(),"replyStatus",reply.getStatus(),
-                    "ticketStatus",ticket.getStatus(),"modelRunCount",0)),StandardCharsets.UTF_8);
+                    "ticketStatus",ticket.getStatus(),"modelRunCount",1,"runtimeRunId",browserRun)),StandardCharsets.UTF_8);
         } finally {TenantContext.clear();}
     }
     private static String nodeExecutable(){String configured=System.getenv("NODE_BINARY");return configured==null||configured.isBlank()?"node":configured;}
