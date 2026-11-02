@@ -237,7 +237,7 @@ export function createWorkflowTestsApi(http: {
             parameters: value.parameters,
             budget: budgetToWire(value.budget)
           },
-          options
+          { ...options, retryOnUnauthorized: false }
         )
         .then(receiptFromWire),
     byRequest: (requestId: string, options?: RequestOptions) =>

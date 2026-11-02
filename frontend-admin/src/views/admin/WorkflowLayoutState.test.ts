@@ -6,10 +6,12 @@ import { createPermissionDirective } from '@skillforge/shared/directives/permiss
 import { ref } from 'vue'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import WorkflowDetailPage from './WorkflowDetailPage.vue'
+const testAuth = vi.hoisted(() => ({
+  identityVersion: 1,
+  user: { tenant_id: '7', sub: '8', permissions: ['foundation.workflows.read'] }
+}))
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({
-    user: { tenant_id: '7', sub: '8', permissions: ['foundation.workflows.read'] }
-  })
+  useAuthStore: () => testAuth
 }))
 import WorkflowGovernanceFields from '../../components/builder/WorkflowGovernanceFields.vue'
 import WorkflowScriptResources from '../../components/builder/WorkflowScriptResources.vue'
@@ -135,6 +137,8 @@ function useConnectedGroup() {
   })
 }
 beforeEach(() => {
+  testAuth.identityVersion = 1
+  testAuth.user.sub = '8'
   vi.resetAllMocks()
   sessionStorage.clear()
   mocks.confirm.mockResolvedValue(true)
@@ -1454,6 +1458,24 @@ describe('工作流布局保存与恢复', () => {
       { zoom: 1, panX: 24, panY: 24 }
     )
     expect(wrapper.find('.workflow-canvas-node').attributes('style')).toContain('left: 555px')
+  })
+  it('定义保存返回前身份变化时不向新身份写入布局', async () => {
+    let complete!: (result: typeof value) => void
+    mocks.save.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    await button('保存草稿').trigger('click')
+    await flushPromises()
+    testAuth.identityVersion++
+    testAuth.user.sub = 'other'
+    complete({ ...value, revision: 2 })
+    await flushPromises()
+    expect(mocks.snapshotSave).not.toHaveBeenCalled()
   })
   it('校验后自动显示问题，定位时选择对应节点', async () => {
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })

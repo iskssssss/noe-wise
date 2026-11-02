@@ -441,7 +441,8 @@ export function createWorkflowDraftApi({ get, post, put }: WorkflowDraftHttp) {
           `/builder/workflows/draft/snapshot`,
           { workflow_id: workflowId, payload: { layout, viewport } },
           {
-            headers: { 'If-Match': String(revision) }
+            headers: { 'If-Match': String(revision) },
+            retryOnUnauthorized: false
           }
         ).then(snapshotFromWire)
     },
@@ -450,7 +451,8 @@ export function createWorkflowDraftApi({ get, post, put }: WorkflowDraftHttp) {
         `/builder/workflows/draft`,
         { workflow_id: workflowId, payload: { definition } },
         {
-          headers: { 'If-Match': String(revision) }
+          headers: { 'If-Match': String(revision) },
+          retryOnUnauthorized: false
         }
       ).then(draftFromWire),
     fork: (workflowId: string, revision: number) =>

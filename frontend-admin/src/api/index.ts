@@ -1081,7 +1081,7 @@ async function openChatEvents(
 /** 对话按“建会话 → 一次提交 → GET 订阅”执行，重连只建立订阅。 */
 const chatTransport = createChatTransport({
   createSession: (body, signal) => post<{ session_id: string }>('/chat/sessions', body, { signal }),
-  submit: (body, signal) => post<ChatResult>('/chat', body, { signal }),
+  submit: (body, signal) => post<ChatResult>('/chat', body, { signal, retryOnUnauthorized: false }),
   fetchEvents: openChatEvents,
   fetchHistory: (sessionId, signal) =>
     get<ChatHistoryResponse>(`/chat/history?${new URLSearchParams({ session_id: sessionId })}`, {

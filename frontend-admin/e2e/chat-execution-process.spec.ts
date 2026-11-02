@@ -285,6 +285,79 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
       2
     )
   )
+  const message = '测试当前保存后的工作流'
+  await panel.getByLabel('测试消息').fill(message)
+  await panel.locator('.el-drawer__close-btn').click()
+  await expect(panel).toBeHidden()
+  await page.getByRole('tab', { name: '工作流信息' }).click()
+  await page
+    .locator('.el-form-item')
+    .filter({ hasText: '名称' })
+    .first()
+    .locator('input')
+    .fill('修改后的测试流程')
+  await page.getByRole('button', { name: '测试', exact: true }).click()
+  await expect(panel.getByLabel('测试消息')).toHaveValue(message)
+  await expect(panel).toContainText('当前草稿有未保存修改')
+  const update = responseAt(page, '/api/v1/builder/workflows/draft', 'PUT')
+  const updatedOptions = responseAt(page, '/api/v1/builder/workflows/test-sessions/options')
+  const testCreated = responseAt(page, '/api/v1/builder/workflows/test-sessions', 'POST')
+  const accepted = responseAt(page, '/api/v1/chat', 'POST')
+  await panel.getByRole('button', { name: '保存并测试', exact: true }).click()
+  const updated = await dataOf(await update)
+  const nextOptions = await updatedOptions
+  expect(nextOptions.status()).toBe(200)
+  expect(new URL(nextOptions.url()).searchParams.get('draftRevision')).toBe(
+    String(updated.revision)
+  )
+  const testCreatedResponse = await testCreated
+  const createdTest = await dataOf(testCreatedResponse)
+  await dataOf(await accepted)
+  expect(createdTest.source.draft_revision).toBe(updated.revision)
+  expect(testCreatedResponse.request().postDataJSON().user_input).toBe(message)
+  expect(testCreates).toBe(1)
+  let observedRun: { id: string; status: string } | undefined
+  await expect
+    .poll(
+      async () => {
+        observedRun = await page.evaluate(async (id) => {
+          const token = localStorage.getItem('skillforge.access_token')
+          const response = await fetch(
+            `/api/v1/builder/workflows/test-sessions?testSessionId=${encodeURIComponent(id)}`,
+            {
+              headers: { Authorization: `Bearer ${token}` }
+            }
+          )
+          if (!response.ok) return undefined
+          const result = await response.json()
+          return result.data?.run_id && result.data?.run_status
+            ? { id: String(result.data.run_id), status: String(result.data.run_status) }
+            : undefined
+        }, String(createdTest.test_session_id))
+        return !!observedRun
+      },
+      { timeout: 60_000 }
+    )
+    .toBe(true)
+  await page.screenshot({
+    path: join(evidence, 'workflow-save-test-candidate.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(evidence, 'workflow-save-test-candidate.json'),
+    JSON.stringify(
+      {
+        workflowId,
+        revision: updated.revision,
+        testSessionId: createdTest.test_session_id,
+        run: observedRun,
+        manualActions: 1,
+        testCreates
+      },
+      null,
+      2
+    )
+  )
 })
 
 test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {

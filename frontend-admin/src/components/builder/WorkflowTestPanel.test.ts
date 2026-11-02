@@ -920,6 +920,289 @@ describe('真实Workflow测试面板边界', () => {
     expect(button(wrapper, '创建并测试').props('disabled')).toBe(false)
     expect(dom().text()).toContain('不包含未保存的草稿修改')
   })
+  it('一次保存并测试使用新修订，保留消息并只提交一次', async () => {
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.create.mockImplementation(async (input) =>
+      receipt({ source: options(input.source).source })
+    )
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await dom().get('textarea[aria-label="测试消息"]').setValue('确定的测试消息')
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(saveDraft).toHaveBeenCalledOnce()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.create.mock.calls[0]![0]).toMatchObject({
+      source: { kind: 'draft', draftRevision: 8 },
+      userInput: '确定的测试消息'
+    })
+    expect(mocks.submit).toHaveBeenCalledOnce()
+  })
+  it('保存后测试选项变化时保留消息并要求重新核对', async () => {
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.options.mockImplementation(async (_workflow, source) => ({
+      ...options(source),
+      costNotice: source.draftRevision === 8 ? '费用已变化' : '原费用'
+    }))
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await dom().get('textarea[aria-label="测试消息"]').setValue('保留原消息')
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('测试选项已变化')
+    expect(dom().get<HTMLTextAreaElement>('textarea[aria-label="测试消息"]').element.value).toBe(
+      '保留原消息'
+    )
+  })
+  it('保存后选项读取失败时不创建测试，保留测试消息', async () => {
+    let failRead = true
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.options.mockImplementation(async (_workflow, source) => {
+      if (failRead && source.kind === 'draft' && source.draftRevision === 8)
+        throw Error('选项读取失败')
+      return options(source)
+    })
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await dom().get('textarea[aria-label="测试消息"]').setValue('保留原消息')
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('选项读取失败')
+    expect(mocks.submit).not.toHaveBeenCalled()
+    failRead = false
+    await button(wrapper, '重新读取测试选项').trigger('click')
+    await flushPromises()
+    expect(dom().get<HTMLTextAreaElement>('textarea[aria-label="测试消息"]').element.value).toBe(
+      '保留原消息'
+    )
+  })
+  it('保存期间身份变化不继续原测试意图', async () => {
+    let complete!: (revision: number) => void
+    const saveDraft = vi.fn(
+      () =>
+        new Promise<number>((resolve) => {
+          complete = resolve
+        })
+    )
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '保存并测试').trigger('click')
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2, draftRevision: 8, dirty: false })
+    complete(8)
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('保存未确认时不创建测试并说明后续处理', async () => {
+    const wrapper = render({
+      dirty: true,
+      saveDraft: vi.fn().mockResolvedValue(undefined),
+      identityVersion: 1
+    })
+    await flushPromises()
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('草稿保存尚未确认')
+  })
+  it('保存过程中关闭并重新打开面板，不继续先前测试意图', async () => {
+    let complete!: (revision: number) => void
+    const saveDraft = vi.fn(
+      () =>
+        new Promise<number>((resolve) => {
+          complete = resolve
+        })
+    )
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '保存并测试').trigger('click')
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true, draftRevision: 8, dirty: false })
+    complete(8)
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('测试创建返回前切换身份时保留原请求且不派发消息', async () => {
+    let complete!: (value: WorkflowTestReceipt) => void
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const wrapper = render({ identityVersion: 1 })
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2 })
+    complete(receipt())
+    await flushPromises()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('request-fixed')
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['other', 'flow']))
+    ).toBeNull()
+  })
+  it.each([400, 401, 403])('创建收到普通 %i 时保留原请求并禁止重复创建', async (status) => {
+    mocks.create.mockRejectedValueOnce(new HttpClientError({ status, userMessage: '未确认' }))
+    render()
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('request-fixed')
+    expect(dom().text()).toContain('查询原测试')
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('创建收到明确业务拒绝码时允许修正后重新提交', async () => {
+    mocks.create.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 400,
+        code: 'workflow_test_budget_invalid',
+        userMessage: '预算无效'
+      })
+    )
+    render()
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toBeNull()
+    expect(dom().text()).toContain('预算无效')
+  })
+  it('明确拒绝但无法清除原请求时保留记录并阻止重发', async () => {
+    mocks.create.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 400,
+        code: 'workflow_test_budget_invalid',
+        userMessage: '预算无效'
+      })
+    )
+    render()
+    await flushPromises()
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw Error('storage unavailable')
+    })
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('request-fixed')
+    expect(dom().text()).toContain('测试创建已明确拒绝，但无法清除本地记录')
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(dom().find('form').exists()).toBe(false)
+  })
+  it('初始消息发送期间切换工作流不将回执写入新工作流', async () => {
+    let complete!: (value: unknown) => void
+    mocks.submit.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const wrapper = render({ identityVersion: 1 })
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    await wrapper.setProps({ workflowId: 'other' })
+    const reads = mocks.get.mock.calls.length
+    complete({ session_id: 'session:1', status: 'accepted' })
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('sending')
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'other']))
+    ).toBeNull()
+    expect(mocks.get).toHaveBeenCalledTimes(reads)
+  })
+  it('登录状态存储无法读取时不派发测试创建', async () => {
+    render()
+    await flushPromises()
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation((key) => {
+      if (key === 'test.auth.session') throw Error('storage unavailable')
+      return null
+    })
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('无法读取登录状态')
+  })
+  it('无法保存原测试请求时不创建资源也不发送消息', async () => {
+    render()
+    await flushPromises()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('storage unavailable')
+    })
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('无法保存原测试请求，未发送')
+  })
+  it('无法保存初始发送记录时不派发消息且保留原测试', async () => {
+    const key = 'noewise:workflow-test:' + JSON.stringify(['actor', 'flow'])
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'not_sent',
+        closing: false
+      })
+    )
+    mocks.get.mockResolvedValue(receipt())
+    const wrapper = render({ identityVersion: 1 })
+    await flushPromises()
+    const original = sessionStorage.getItem(key)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('storage unavailable')
+    })
+    await button(wrapper, '开始已创建的测试').trigger('click')
+    await flushPromises()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBe(original)
+    expect(button(wrapper, '开始已创建的测试').props('loading')).toBe(false)
+    expect(dom().text()).toContain('无法保存初始输入记录')
+  })
+  it('仅在 JSON 中填写测试消息也可保存并测试', async () => {
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.create.mockImplementation(async (input) =>
+      receipt({ source: options(input.source).source })
+    )
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, 'JSON 输入').trigger('click')
+    await dom()
+      .get('textarea[aria-label="测试参数 JSON"]')
+      .setValue('{"user_input":"JSON 消息","count":0,"urgent":false}')
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.create.mock.calls[0]![0].userInput).toBe('JSON 消息')
+  })
   it('JSON消息与上方冲突时阻止创建，统一后只提交一个测试消息', async () => {
     const wrapper = render()
     await flushPromises()
@@ -1117,74 +1400,77 @@ describe('真实Workflow测试面板边界', () => {
       '草稿消息'
     )
   })
-  it('真实Pending按原wait与动作回复，迟到history错误仍接管反馈且不覆盖新来源', async () => {
-    const item = {
-      interaction_type: 'workflow_input',
-      execution_id: 'run:1',
-      run_revision: '9007199254740993',
-      tool_wait: { action_id: 'action:1', generation: '2' },
-      workflow_execution_id: 'workflow:1',
-      suspend_ref: 'suspend:1',
-      execution_revision: '9007199254740995',
-      resume_action_key: 'menu-node',
-      card: {
-        card_id: 'menu',
-        type: 'select',
-        title: '请选择测试路径',
-        actions: [{ id: 'continue', label: '继续此分支' }]
-      }
-    }
-    mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
-    mocks.history.mockResolvedValue({
-      session_id: 'session:1',
-      event_cursor: null,
-      messages: [],
-      pending_interactions: [item],
-      collaboration: {}
-    })
-    const wrapper = render()
-    await flushPromises()
-    await dom().get('form').trigger('submit')
-    await flushPromises()
-    const pendingFailure = new HttpClientError({ status: 503, userMessage: '受理暂未确认' })
-    mocks.submit.mockRejectedValueOnce(pendingFailure)
-    await button(wrapper, '继续此分支').trigger('click')
-    await flushPromises()
-    expect(pendingFailure.hasFeedbackOwner).toBe(true)
-    expect(dom().findAll('.el-alert--error')).toHaveLength(0)
-    expect(dom().text()).toContain('此回复已提交，请查询当前待办确认处理结果')
-    expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
-      session_id: 'session:1',
-      hitl_response: {
+  it.each([400, 503])(
+    '真实Pending收到 %i 时保留原wait，迟到history错误不覆盖新来源',
+    async (status) => {
+      const item = {
+        interaction_type: 'workflow_input',
         execution_id: 'run:1',
         run_revision: '9007199254740993',
-        workflow_input: {
-          wait: item.tool_wait,
-          execution_ref: 'workflow:1',
-          suspend_ref: 'suspend:1',
-          execution_revision: '9007199254740995',
-          action_key: 'menu-node',
-          response: {
-            schema_id: 'application/json',
-            canonical_json: '{"action":"continue","response":""}'
-          }
+        tool_wait: { action_id: 'action:1', generation: '2' },
+        workflow_execution_id: 'workflow:1',
+        suspend_ref: 'suspend:1',
+        execution_revision: '9007199254740995',
+        resume_action_key: 'menu-node',
+        card: {
+          card_id: 'menu',
+          type: 'select',
+          title: '请选择测试路径',
+          actions: [{ id: 'continue', label: '继续此分支' }]
         }
       }
-    })
-    let reject!: (reason: unknown) => void
-    mocks.history.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, no) => {
-          reject = no
-        })
-    )
-    await button(wrapper, '查询测试状态').trigger('click')
-    await flushPromises()
-    await wrapper.setProps({ modelValue: false })
-    const failure = new HttpClientError({ status: 500, userMessage: '旧查询失败' })
-    reject(failure)
-    await flushPromises()
-    expect(failure.hasFeedbackOwner).toBe(true)
-    expect(dom().text()).not.toContain('旧查询失败')
-  })
+      mocks.get.mockResolvedValue(receipt({ runId: 'run:1', status: 'waiting' }))
+      mocks.history.mockResolvedValue({
+        session_id: 'session:1',
+        event_cursor: null,
+        messages: [],
+        pending_interactions: [item],
+        collaboration: {}
+      })
+      const wrapper = render()
+      await flushPromises()
+      await dom().get('form').trigger('submit')
+      await flushPromises()
+      const pendingFailure = new HttpClientError({ status, userMessage: '受理暂未确认' })
+      mocks.submit.mockRejectedValueOnce(pendingFailure)
+      await button(wrapper, '继续此分支').trigger('click')
+      await flushPromises()
+      expect(pendingFailure.hasFeedbackOwner).toBe(true)
+      expect(dom().findAll('.el-alert--error')).toHaveLength(0)
+      expect(dom().text()).toContain('此回复已提交，请查询当前待办确认处理结果')
+      expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
+        session_id: 'session:1',
+        hitl_response: {
+          execution_id: 'run:1',
+          run_revision: '9007199254740993',
+          workflow_input: {
+            wait: item.tool_wait,
+            execution_ref: 'workflow:1',
+            suspend_ref: 'suspend:1',
+            execution_revision: '9007199254740995',
+            action_key: 'menu-node',
+            response: {
+              schema_id: 'application/json',
+              canonical_json: '{"action":"continue","response":""}'
+            }
+          }
+        }
+      })
+      let reject!: (reason: unknown) => void
+      mocks.history.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, no) => {
+            reject = no
+          })
+      )
+      await button(wrapper, '查询测试状态').trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ modelValue: false })
+      const failure = new HttpClientError({ status: 500, userMessage: '旧查询失败' })
+      reject(failure)
+      await flushPromises()
+      expect(failure.hasFeedbackOwner).toBe(true)
+      expect(dom().text()).not.toContain('旧查询失败')
+    }
+  )
 })

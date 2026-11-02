@@ -733,6 +733,8 @@
     :dirty="dirty"
     :disabled="busy || readonly || loadingDraft || creationBlocked"
     :publications="testPublications"
+    :identity-version="auth.identityVersion"
+    :save-draft="saveForTest"
     @save="saveForTest"
   />
 </template>
@@ -827,6 +829,10 @@ const route = useRoute(),
   canvas = ref<InstanceType<typeof WorkflowCanvas>>(),
   viewport = ref({ zoom: 1, panX: 24, panY: 24 })
 const auth = useAuthStore()
+let pageDisposed = false
+onScopeDispose(() => {
+  pageDisposed = true
+})
 const installOwner = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
 )
@@ -1497,6 +1503,16 @@ async function persistDraft() {
   const definition = workflowDefinition(nodes.value, edges.value, meta)
   const positions = Object.fromEntries(nodes.value.map((n) => [n.id, { x: n.x, y: n.y }]))
   const submittedDefinition = JSON.stringify(definition)
+  const owner = installOwner.value,
+    identity = auth.identityVersion,
+    originalRoute = route.params.workflowId
+  const current = () =>
+    !pageDisposed &&
+    !!owner &&
+    installOwner.value === owner &&
+    auth.identityVersion === identity &&
+    route.params.workflowId === originalRoute
+  if (!current()) throw Error('当前身份不可用，请重新登录')
   const value =
     pendingDefinition.value === submittedDefinition && draft.value
       ? draft.value
@@ -1505,6 +1521,7 @@ async function persistDraft() {
             api.workflowDrafts.save(draft.value!.workflowId, draft.value!.revision, definition)
           )
         : await createDraft(workflowId.value, definition)
+  if (!current()) throw Error('身份或页面已变更，草稿内容可能已保存，请重新读取后核对布局')
   // 内容已写入时保留身份；布局失败后只补写布局，不重复保存相同定义。
   draft.value = value
   pendingDefinition.value = submittedDefinition
@@ -1512,6 +1529,7 @@ async function persistDraft() {
   await revisionWrite(() =>
     api.workflowDrafts.snapshot.save(value.workflowId, value.revision, positions, viewport.value)
   )
+  if (!current()) throw Error('身份或页面已变更，请重新读取草稿和布局')
   accept(value, positions, viewport.value)
   message.success('工作流草稿已保存')
   return value
@@ -1533,10 +1551,22 @@ async function save() {
   return !!result
 }
 async function saveForTest() {
+  const owner = installOwner.value,
+    identity = auth.identityVersion,
+    originalWorkflow = workflowId.value,
+    isNew = !route.params.workflowId
   const result = await run(persistDraft)
-  if (!result) return
+  if (
+    !result ||
+    !owner ||
+    owner !== installOwner.value ||
+    identity !== auth.identityVersion ||
+    originalWorkflow !== workflowId.value
+  )
+    return
   await navigateSaved(result, false, true)
-  if (String(route.params.workflowId) === result.workflowId) testOpen.value = true
+  if (isNew && String(route.params.workflowId) === result.workflowId) testOpen.value = true
+  return result.revision
 }
 async function validate() {
   if (readonly.value || busy.value || draftConflict.value || creationBlocked.value) return

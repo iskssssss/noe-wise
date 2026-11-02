@@ -2,7 +2,7 @@
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 import { message } from '@skillforge/shared/feedback'
-import { computed, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
 import { guardFormEnter, useUnsavedChanges } from '@skillforge/shared/admin'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
@@ -34,6 +34,8 @@ const props = defineProps<{
   draftRevision?: number
   dirty: boolean
   disabled?: boolean
+  identityVersion?: number
+  saveDraft?: () => Promise<number | undefined>
   publications: Array<{ id: string; label: string }>
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; save: [] }>()
@@ -122,7 +124,10 @@ const sourceLabel = computed(() => {
     : '请选择已保存的测试目标'
 })
 const closed = computed(() => receipt.value?.closeStatus === 'closed')
-const locked = computed(() => busy.value || !!recovery.value || !!props.disabled)
+const savingAndTesting = ref(false)
+const locked = computed(
+  () => busy.value || savingAndTesting.value || !!recovery.value || !!props.disabled
+)
 const statusLabels: Record<string, string> = {
   preparing: '准备中',
   ready: '资源已创建',
@@ -216,6 +221,14 @@ function storageKey() {
     JSON.stringify([localStorage.getItem(authSessionKey), props.workflowId])
   )
 }
+function sameIdentity(identity: number | undefined, authSession: string | null, workflow: string) {
+  if (disposed || props.identityVersion !== identity || props.workflowId !== workflow) return false
+  try {
+    return localStorage.getItem(authSessionKey) === authSession
+  } catch {
+    return false
+  }
+}
 function persist(value: Recovery | undefined) {
   if (value) sessionStorage.setItem(storageKey(), JSON.stringify(value))
   else sessionStorage.removeItem(storageKey())
@@ -247,8 +260,22 @@ function errorText(reason: unknown, fallback: string) {
     ? reason.message
     : fallback
 }
-function definiteRejection(reason: unknown) {
-  return reason instanceof HttpClientError && [400, 401, 403, 404, 422].includes(reason.status)
+function definiteCreateRejection(reason: unknown) {
+  return (
+    reason instanceof HttpClientError &&
+    [
+      'workflow_test_budget_invalid',
+      'workflow_test_source_invalid',
+      'workflow_test_source_conflict',
+      'workflow_test_source_archived',
+      'workflow_test_binding_rejected',
+      'workflow_test_binding_drift',
+      'workflow_test_input_invalid',
+      'workflow_test_node_unsupported',
+      'workflow_test_definition_invalid',
+      'workflow_test_source_not_invocable'
+    ].includes(reason.code ?? '')
+  )
 }
 function claim(reason: unknown) {
   if (reason instanceof HttpClientError) reason.claimFeedback()
@@ -285,7 +312,7 @@ function matchesSource(value: WorkflowTestOptions['source'], target: WorkflowTes
   )
 }
 /** 比较实际提交内容，JSON 的缩进、键顺序和编辑追踪位不属于用户修改。 */
-function formFingerprint(value: FormSnapshot): string {
+function formFingerprint(value: unknown): string {
   return JSON.stringify(value, (_key, entry: unknown) =>
     entry && typeof entry === 'object' && !Array.isArray(entry)
       ? Object.fromEntries(
@@ -669,9 +696,25 @@ async function olderMessages() {
 async function startInitial() {
   const value = receipt.value
   if (!value || !canStartExisting.value || busy.value || props.disabled) return
+  const identity = props.identityVersion,
+    workflow = props.workflowId
+  let authSession: string | null
+  try {
+    authSession = localStorage.getItem(authSessionKey)
+  } catch {
+    error.value = '无法读取登录状态，请恢复浏览器存储后核对原测试。'
+    return
+  }
+  const current = () => sameIdentity(identity, authSession, workflow)
   busy.value = true
   error.value = ''
-  persist({ ...recovery.value!, initial: 'sending' })
+  try {
+    persist({ ...recovery.value!, initial: 'sending' })
+  } catch {
+    busy.value = false
+    error.value = '无法保存初始输入记录，请恢复浏览器存储后核对原测试。'
+    return
+  }
   try {
     await api.chat.submit({
       session_id: value.sessionId,
@@ -681,14 +724,194 @@ async function startInitial() {
       context: { end_user_id: value.endUserId },
       references: []
     })
-    if (receipt.value?.testSessionId === value.testSessionId)
-      persist({ ...recovery.value!, initial: 'submitted' })
+    if (current() && receipt.value?.testSessionId === value.testSessionId) {
+      try {
+        persist({ ...recovery.value!, initial: 'submitted' })
+      } catch {
+        error.value = '初始输入已受理，但本地记录未更新，请恢复浏览器存储后核对原测试。'
+      }
+    }
   } catch (reason) {
-    persist({ ...recovery.value!, initial: 'unknown' })
-    error.value = errorText(reason, '初始输入的受理结果尚未确认，请查询原测试状态')
+    if (current()) {
+      try {
+        persist({ ...recovery.value!, initial: 'unknown' })
+      } catch {
+        error.value = '无法更新初始输入记录，请恢复浏览器存储后核对原测试。'
+      }
+      if (!error.value)
+        error.value = errorText(reason, '初始输入的受理结果尚未确认，请查询原测试状态')
+    }
   } finally {
     busy.value = false
-    if (props.modelValue) void refresh()
+    if (current() && props.modelValue) void refresh()
+  }
+}
+function buildTestInput() {
+  if (!options.value || !source.value || !budget.value) throw Error('测试选项尚未就绪')
+  const parametersValue = useJson.value ? objectInput(parameterJson.value) : { ...parameters }
+  if (Object.hasOwn(parametersValue, 'user_input')) {
+    const message = parametersValue.user_input
+    if (typeof message !== 'string')
+      throw Error('JSON 中的测试消息必须为文本，请在上方“测试消息”中填写')
+    if (userInputEdited.value && userInput.value !== message)
+      throw Error(
+        'JSON 中的测试消息与上方内容不同，请统一在“测试消息”中填写，并从 JSON 参数中移除重复消息'
+      )
+    userInput.value = message
+    userInputEdited.value = true
+    delete parametersValue.user_input
+    parameterJson.value = JSON.stringify(parametersValue, null, 2)
+  }
+  if (!userInput.value.trim()) throw Error('请填写测试消息')
+  if (optionsKey !== sourceKey.value) throw Error('测试目标已变化，请重新读取测试选项')
+  for (const field of inputFields.value ?? []) {
+    const value = parametersValue[field.key]
+    if (field.required && (value === undefined || value === null || value === ''))
+      throw Error('请填写测试参数：' + field.label)
+    if (typeof value === 'number') {
+      if (field.minimum !== undefined && value < field.minimum)
+        throw Error(`${field.label}不能小于 ${field.minimum}`)
+      if (field.maximum !== undefined && value > field.maximum)
+        throw Error(`${field.label}不能大于 ${field.maximum}`)
+    }
+  }
+  for (const field of budgetFields)
+    if (
+      !Number.isSafeInteger(budget.value[field.key]) ||
+      budget.value[field.key] < 1 ||
+      budget.value[field.key] > options.value.budget.maximum[field.key]
+    )
+      throw Error(field.label + ' 必须在服务端允许的范围内')
+  const capabilities = options.value.capabilitySlots.flatMap((slot) => {
+    const selection = selections[slot.slot]
+    if (selection === undefined || selection === '') {
+      if (slot.required) throw Error('请选择测试能力：' + slot.slot)
+      return []
+    }
+    const candidate = slot.candidates.find((candidate) => candidateKey(candidate) === selection)
+    if (!candidate) throw Error('测试候选已变化，请重新选择：' + slot.slot)
+    return [
+      {
+        slot: slot.slot,
+        capability: { ...candidate.capability },
+        ...(candidate.toolDeploymentId !== null
+          ? { tool_deployment_id: candidate.toolDeploymentId }
+          : {}),
+        ...(candidate.toolDeploymentRevision !== null
+          ? { tool_deployment_revision: candidate.toolDeploymentRevision }
+          : {}),
+        ...(candidate.knowledgeRevision !== null
+          ? { knowledge_revision: candidate.knowledgeRevision }
+          : {})
+      }
+    ]
+  })
+  const input = {
+    requestId: crypto.randomUUID(),
+    workflowId: props.workflowId,
+    source: source.value,
+    config: workflowInstallationConfig(configFields.value, config),
+    bindings: { capabilities, workflows: [], agents: [] },
+    userInput: userInput.value,
+    parameters: parametersValue,
+    budget: { ...budget.value }
+  }
+  return { input, expectedHash: options.value.source.hash }
+}
+let saveIntentEpoch = 0
+watch(
+  [() => props.modelValue, () => props.workflowId, () => props.identityVersion, sourceChoice],
+  () => {
+    saveIntentEpoch++
+  },
+  { flush: 'sync' }
+)
+async function saveAndTest() {
+  if (
+    !props.saveDraft ||
+    !props.modelValue ||
+    !needsSave.value ||
+    !options.value ||
+    source.value?.kind !== 'draft' ||
+    props.disabled ||
+    busy.value ||
+    loading.value ||
+    savingAndTesting.value ||
+    recovery.value
+  )
+    return
+  error.value = ''
+  const intent = ++saveIntentEpoch,
+    workflow = props.workflowId,
+    identity = props.identityVersion
+  let authSession: string | null = null,
+    authCaptured = false
+  const baseCurrent = () =>
+    !disposed &&
+    intent === saveIntentEpoch &&
+    props.modelValue &&
+    props.workflowId === workflow &&
+    props.identityVersion === identity &&
+    sourceChoice.value === 'draft' &&
+    !recovery.value
+  const current = () => {
+    if (!baseCurrent() || !authCaptured) return false
+    try {
+      return localStorage.getItem(authSessionKey) === authSession
+    } catch {
+      return false
+    }
+  }
+  try {
+    authSession = localStorage.getItem(authSessionKey)
+    authCaptured = true
+    buildTestInput()
+    const form = formFingerprint(snapshotForm()),
+      { source: _source, ...originalOptions } = options.value,
+      originalOptionsFingerprint = formFingerprint(originalOptions)
+    savingAndTesting.value = true
+    const revision = await props.saveDraft()
+    await nextTick()
+    if (!current()) return
+    if (
+      revision === undefined ||
+      props.disabled ||
+      needsSave.value ||
+      source.value?.kind !== 'draft' ||
+      source.value.draftRevision !== revision
+    ) {
+      error.value = '草稿保存尚未确认，测试未启动；请核对草稿状态。'
+      return
+    }
+    if (formFingerprint(snapshotForm()) !== form) {
+      error.value = '测试输入已变化，请核对后再次启动测试。'
+      return
+    }
+    await loadOptions()
+    if (
+      !current() ||
+      props.disabled ||
+      !options.value ||
+      optionsKey !== sourceKey.value ||
+      source.value?.kind !== 'draft' ||
+      source.value.draftRevision !== revision
+    )
+      return
+    const { source: _savedSource, ...savedOptions } = options.value
+    if (
+      formFingerprint(savedOptions) !== originalOptionsFingerprint ||
+      formFingerprint(snapshotForm()) !== form
+    ) {
+      error.value = '保存后的测试选项已变化，请核对后再次启动测试。'
+      return
+    }
+    savingAndTesting.value = false
+    await createAndTest()
+  } catch (reason) {
+    if ((!authCaptured && baseCurrent()) || current())
+      error.value = errorText(reason, '保存并测试未完成，请核对当前状态')
+  } finally {
+    savingAndTesting.value = false
   }
 }
 async function createAndTest() {
@@ -704,86 +927,48 @@ async function createAndTest() {
   )
     return
   error.value = ''
+  const identity = props.identityVersion,
+    intent = saveIntentEpoch,
+    workflow = props.workflowId
+  let authSession: string | null
   try {
-    const parametersValue = useJson.value ? objectInput(parameterJson.value) : { ...parameters }
-    if (Object.hasOwn(parametersValue, 'user_input')) {
-      const message = parametersValue.user_input
-      if (typeof message !== 'string')
-        throw Error('JSON 中的测试消息必须为文本，请在上方“测试消息”中填写')
-      if (userInputEdited.value && userInput.value !== message)
-        throw Error(
-          'JSON 中的测试消息与上方内容不同，请统一在“测试消息”中填写，并从 JSON 参数中移除重复消息'
-        )
-      userInput.value = message
-      delete parametersValue.user_input
-      parameterJson.value = JSON.stringify(parametersValue, null, 2)
-    }
-    if (!userInput.value.trim()) throw Error('请填写测试消息')
-    if (optionsKey !== sourceKey.value) throw Error('测试目标已变化，请重新读取测试选项')
-    for (const field of inputFields.value ?? []) {
-      const value = parametersValue[field.key]
-      if (field.required && (value === undefined || value === null || value === ''))
-        throw Error('请填写测试参数：' + field.label)
-      if (typeof value === 'number') {
-        if (field.minimum !== undefined && value < field.minimum)
-          throw Error(`${field.label}不能小于 ${field.minimum}`)
-        if (field.maximum !== undefined && value > field.maximum)
-          throw Error(`${field.label}不能大于 ${field.maximum}`)
-      }
-    }
-    for (const field of budgetFields)
-      if (
-        !Number.isSafeInteger(budget.value[field.key]) ||
-        budget.value[field.key] < 1 ||
-        budget.value[field.key] > options.value.budget.maximum[field.key]
-      )
-        throw Error(field.label + ' 必须在服务端允许的范围内')
-    const capabilities = options.value.capabilitySlots.flatMap((slot) => {
-      const selection = selections[slot.slot]
-      if (selection === undefined || selection === '') {
-        if (slot.required) throw Error('请选择测试能力：' + slot.slot)
-        return []
-      }
-      const candidate = slot.candidates.find((candidate) => candidateKey(candidate) === selection)
-      if (!candidate) throw Error('测试候选已变化，请重新选择：' + slot.slot)
-      return [
-        {
-          slot: slot.slot,
-          capability: { ...candidate.capability },
-          ...(candidate.toolDeploymentId !== null
-            ? { tool_deployment_id: candidate.toolDeploymentId }
-            : {}),
-          ...(candidate.toolDeploymentRevision !== null
-            ? { tool_deployment_revision: candidate.toolDeploymentRevision }
-            : {}),
-          ...(candidate.knowledgeRevision !== null
-            ? { knowledge_revision: candidate.knowledgeRevision }
-            : {})
-        }
-      ]
-    })
-    const input = {
-      requestId: crypto.randomUUID(),
-      workflowId: props.workflowId,
-      source: source.value,
-      config: workflowInstallationConfig(configFields.value, config),
-      bindings: { capabilities, workflows: [], agents: [] },
-      userInput: userInput.value,
-      parameters: parametersValue,
-      budget: { ...budget.value }
-    }
-    const expectedHash = options.value.source.hash
+    authSession = localStorage.getItem(authSessionKey)
+  } catch {
+    error.value = '无法读取登录状态，请恢复浏览器存储后重试。'
+    return
+  }
+  const current = () =>
+    !disposed &&
+    props.modelValue &&
+    intent === saveIntentEpoch &&
+    sameIdentity(identity, authSession, workflow)
+  try {
+    const { input, expectedHash } = buildTestInput()
     submittedForm = { requestId: input.requestId, key: currentForm, snapshot: snapshotForm() }
-    persist({ requestId: input.requestId, initial: 'not_sent', closing: false })
+    try {
+      persist({ requestId: input.requestId, initial: 'not_sent', closing: false })
+    } catch {
+      submittedForm = undefined
+      throw Error('无法保存原测试请求，未发送；请恢复浏览器存储。')
+    }
     busy.value = true
     const value = await api.workflowTests.create(input, { silent: true })
+    if (!current()) return
     if (!matchesSource(value.source, input.source) || value.source.hash !== expectedHash)
       throw Error('测试回执目标与所选版本不一致，请查询原请求，勿重复创建')
     applyReceipt(value)
     busy.value = false
     await startInitial()
   } catch (reason) {
-    if (definiteRejection(reason) && !receipt.value) persist(undefined)
+    if (!current()) return
+    if (definiteCreateRejection(reason) && !receipt.value) {
+      try {
+        persist(undefined)
+      } catch {
+        error.value = '测试创建已明确拒绝，但无法清除本地记录，请恢复浏览器存储后核对。'
+        return
+      }
+    }
     error.value = errorText(
       reason,
       recovery.value ? '创建结果尚未确认，请按原请求查询测试状态' : '无法创建测试，请检查输入'
@@ -834,34 +1019,44 @@ const canRespond = computed(
 async function submitPending(response: ChatHitlResponse, key: string) {
   if (!canRespond.value || replyUnknown[key]) return
   const value = receipt.value!
+  const identity = props.identityVersion,
+    workflow = props.workflowId
+  let authSession: string | null
+  try {
+    authSession = localStorage.getItem(authSessionKey)
+  } catch {
+    error.value = '无法读取登录状态，请恢复浏览器存储后核对原测试。'
+    return
+  }
+  const current = () =>
+    sameIdentity(identity, authSession, workflow) &&
+    receipt.value?.testSessionId === value.testSessionId
   busy.value = true
   error.value = ''
   replyUnknown[key] = true
-  persist({
-    ...recovery.value!,
-    replyAttempts: [...new Set([...(recovery.value!.replyAttempts ?? []), key])]
-  })
+  try {
+    persist({
+      ...recovery.value!,
+      replyAttempts: [...new Set([...(recovery.value!.replyAttempts ?? []), key])]
+    })
+  } catch {
+    delete replyUnknown[key]
+    busy.value = false
+    error.value = '无法保存回复记录，请恢复浏览器存储后重试。'
+    return
+  }
   try {
     await api.chat.submit({
       session_id: value.sessionId,
       hitl_response: response,
       context: { end_user_id: value.endUserId }
     })
-    delete replies[key]
+    if (current()) delete replies[key]
   } catch (reason) {
-    if (definiteRejection(reason)) {
-      delete replyUnknown[key]
-      persist({
-        ...recovery.value!,
-        replyAttempts: recovery.value!.replyAttempts?.filter((value) => value !== key)
-      })
-      error.value = errorText(reason, '此回复未被受理，请检查输入后重新提交')
-    } else {
-      claim(reason)
-    }
+    claim(reason)
   } finally {
     busy.value = false
-    if (props.modelValue) void refresh()
+    if (current() && props.modelValue) void refresh()
   }
 }
 function respond(item: RuntimePendingInteraction, action?: string) {
@@ -931,11 +1126,30 @@ function newTest() {
   options.value = undefined
   void loadOptions()
 }
+let recoveryScope = ''
+let formOwner = ''
 watch(
-  [() => props.modelValue, sourceKey],
+  [() => props.modelValue, sourceKey, () => props.identityVersion],
   () => {
     stopReads()
     loading.value = false
+    const owner = JSON.stringify([props.identityVersion, localStorage.getItem(authSessionKey)])
+    const scope = JSON.stringify([owner, props.workflowId])
+    if (scope !== recoveryScope) {
+      recoveryScope = scope
+      recovery.value = undefined
+      receipt.value = undefined
+      history.value = undefined
+      trace.value = undefined
+      for (const map of [replies, replyUnknown]) Object.keys(map).forEach((key) => delete map[key])
+      if (formOwner && owner !== formOwner) {
+        formDrafts.clear()
+        formBaselines.clear()
+        cachedForms.clear()
+        currentForm = ''
+      }
+      formOwner = owner
+    }
     if (!props.modelValue) {
       loading.value = false
       return
@@ -1226,6 +1440,15 @@ onBeforeUnmount(() => {
               </ul>
             </details>
             <p class="test-cost" role="note">{{ options.costNotice }}</p>
+            <ElButton
+              v-if="needsSave && source?.kind === 'draft' && options && saveDraft"
+              v-permission="['foundation.workflows.update']"
+              type="primary"
+              :loading="savingAndTesting"
+              :disabled="disabled || busy || loading"
+              @click="saveAndTest"
+              >保存并测试</ElButton
+            >
             <ElButton
               type="primary"
               native-type="submit"
