@@ -70,6 +70,7 @@ const detail = (id: string) => ({
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
   sessionStorage.clear()
+  window.history.replaceState({ routeState: 'preserved' }, '')
   vi.resetAllMocks()
   mocks.query = {}
   mocks.auth.identityVersion = 1
@@ -143,6 +144,137 @@ describe('最近会话只读恢复', () => {
       expect(mocks.history).not.toHaveBeenCalled()
     }
   )
+  it.each<Record<string, string>>([{ agent_id: '101' }, { team_id: 'team-1' }])(
+    '当前试用历史条目 %s 刷新后恢复明确选中的会话并保留其他状态',
+    async (query) => {
+      mocks.query = query
+      await setup()
+      selected().vm.$emit('change', 'B')
+      await flushPromises()
+      expect(selected().props('modelValue')).toBe('B')
+      expect(window.history.state.routeState).toBe('preserved')
+      wrapper.unmount()
+      mocks.history.mockClear()
+      await setup()
+      expect(mocks.history).toHaveBeenCalledWith('B')
+      expect(selected().props('modelValue')).toBe('B')
+      expect(mocks.submit).not.toHaveBeenCalled()
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '新会话')!
+        .trigger('click')
+      await flushPromises()
+      expect(window.history.state.noeWiseTrialSession).toBeUndefined()
+      expect(sessionStorage.getItem(key)).toBeNull()
+    }
+  )
+  it('进入新的同目标试用条目不恢复旧会话', async () => {
+    mocks.query = { agent_id: '101' }
+    await setup()
+    selected().vm.$emit('change', 'B')
+    await flushPromises()
+    wrapper.unmount()
+    window.history.pushState({ routeState: 'new-entry' }, '')
+    mocks.history.mockClear()
+    await setup()
+    expect(mocks.history).not.toHaveBeenCalled()
+    expect(selected().props('modelValue')).toBe('')
+  })
+  it('试用目标或身份不同的条目标记不会恢复', async () => {
+    sessionStorage.setItem(key, 'B')
+    window.history.replaceState(
+      {
+        noeWiseTrialSession: {
+          actor: '1:other',
+          trialContext: JSON.stringify(['101', '']),
+          session: 'B'
+        }
+      },
+      ''
+    )
+    mocks.query = { agent_id: '101' }
+    await setup()
+    expect(mocks.history).not.toHaveBeenCalled()
+    wrapper.unmount()
+    window.history.replaceState(
+      {
+        noeWiseTrialSession: {
+          actor: '1:member-1',
+          trialContext: JSON.stringify(['other', '']),
+          session: 'B'
+        }
+      },
+      ''
+    )
+    await setup()
+    expect(mocks.history).not.toHaveBeenCalled()
+  })
+  it('旧条目标记与最近确认会话不一致时不恢复', async () => {
+    sessionStorage.setItem(key, 'B')
+    window.history.replaceState(
+      {
+        noeWiseTrialSession: {
+          actor: '1:member-1',
+          trialContext: JSON.stringify(['101', '']),
+          session: 'A'
+        }
+      },
+      ''
+    )
+    mocks.query = { agent_id: '101' }
+    await setup()
+    expect(mocks.history).not.toHaveBeenCalled()
+  })
+  it('历史条目不可写不阻断手动读取会话', async () => {
+    mocks.query = { agent_id: '101' }
+    vi.spyOn(window.history, 'replaceState').mockImplementation(() => {
+      throw new Error('unavailable')
+    })
+    await setup()
+    selected().vm.$emit('change', 'B')
+    await flushPromises()
+    expect(selected().props('modelValue')).toBe('B')
+    expect(wrapper.text()).toContain('B历史')
+  })
+  it('手动历史读取期间身份变化不写入新身份的缓存或试用条目', async () => {
+    let resolveHistory!: (value: ReturnType<typeof history>) => void
+    mocks.history.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve
+        })
+    )
+    mocks.query = { agent_id: '101' }
+    await setup()
+    selected().vm.$emit('change', 'B')
+    await flushPromises()
+    mocks.auth.identityVersion++
+    mocks.auth.user.sub = 'member-2'
+    resolveHistory(history('B'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('B历史')
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(sessionStorage.getItem('skillforge.chat-recent-session:1:member-2')).toBeNull()
+    expect(window.history.state.noeWiseTrialSession).toBeUndefined()
+  })
+  it('手动历史读取期间离开页面不写入试用条目', async () => {
+    let resolveHistory!: (value: ReturnType<typeof history>) => void
+    mocks.history.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve
+        })
+    )
+    mocks.query = { agent_id: '101' }
+    await setup()
+    selected().vm.$emit('change', 'B')
+    await flushPromises()
+    wrapper.unmount()
+    resolveHistory(history('B'))
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(window.history.state.noeWiseTrialSession).toBeUndefined()
+  })
   it('待核对的会话创建优先，不读取旧会话', async () => {
     sessionStorage.setItem(key, 'A')
     sessionStorage.setItem(

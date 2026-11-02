@@ -24,7 +24,10 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn()
 }))
 vi.mock('../stores/auth', () => ({
-  useAuthStore: () => ({ user: { permissions: mocks.permissions } })
+  useAuthStore: () => ({
+    identityVersion: 1,
+    user: { tenant_id: '1', sub: 'member-1', permissions: mocks.permissions }
+  })
 }))
 vi.mock('../api', () => ({
   api: {
@@ -55,6 +58,7 @@ let wrapper: ReturnType<typeof mount>
 const select = (placeholder: string) =>
   wrapper.findAllComponents(ElSelect).find((item) => item.props('placeholder') === placeholder)!
 beforeEach(() => {
+  sessionStorage.clear()
   vi.clearAllMocks()
   mocks.query = { agent_id: 'agent-1' }
   mocks.permissions.splice(

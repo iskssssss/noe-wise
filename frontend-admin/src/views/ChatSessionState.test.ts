@@ -4,7 +4,10 @@ import { ElSelect, ElInput, ElInputNumber, ElFormItem } from 'element-plus'
 import ChatPage from './ChatPage.vue'
 vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({
+    identityVersion: 1,
     user: {
+      tenant_id: '1',
+      sub: 'member-1',
       permissions: [
         'foundation.sessions.read',
         'foundation.sessions.create',
@@ -64,11 +67,13 @@ vi.mock('@skillforge/shared/components/MarkdownContent.vue', () => ({
 }))
 let wrapper: ReturnType<typeof mount>
 const history = (id: string) => ({
+  session_id: id,
   messages: [{ message_id: id, role: 'assistant', content: id + '消息' }],
   pending_interactions: [],
   has_more: false
 })
 beforeEach(() => {
+  sessionStorage.clear()
   vi.resetAllMocks()
   mocks.sessions.mockResolvedValue([{ session_id: 'A' }, { session_id: 'B' }])
   mocks.detail.mockImplementation(async (id: string) => ({

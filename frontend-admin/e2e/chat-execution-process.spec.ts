@@ -142,6 +142,80 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   )
 })
 
+test('智能体试用刷新恢复当前会话，重新进入时开启新试用', async ({ page }) => {
+  test.setTimeout(180_000)
+  const agentId = required('E2E_AGENT_ID')
+  const expectedReply = required('E2E_EXPECTED_REPLY')
+  let submissions = 0
+  let historyReads = 0
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat')
+      submissions++
+    if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/chat/history')
+      historyReads++
+  })
+  await page.goto(`/login?redirect=${encodeURIComponent('/admin/agents/' + agentId)}`)
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/agents\//)
+  const usersReady = responseAt(page, '/api/v1/chat/end-users')
+  await page.getByRole('button', { name: '试用当前发布版本' }).click()
+  await expect(page).toHaveURL(/\/admin\/chat\?agent_id=/)
+  const users = await dataOf(await usersReady)
+  expect(
+    users.some((user: { display_name: string }) => user.display_name === 'Runtime E2E User')
+  ).toBe(true)
+  await page.locator('.el-select').filter({ hasText: '终端用户' }).getByRole('combobox').click()
+  await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
+  await page.getByPlaceholder('输入消息', { exact: true }).fill('请简短说明当前系统能力。')
+  const created = responseAt(page, '/api/v1/chat/sessions/create-with-receipt', 'POST')
+  const accepted = responseAt(page, '/api/v1/chat', 'POST')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  const session = await dataOf(await created)
+  await dataOf(await accepted)
+  await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(1, {
+    timeout: 120_000
+  })
+  const historyList = responseAt(page, '/api/v1/chat/sessions')
+  const restored = responseAt(page, '/api/v1/chat/history')
+  await page.reload()
+  const sessions = await dataOf(await historyList)
+  const sessionId = String(session.session_id)
+  const selected = sessions.find((item: { session_id: string }) => item.session_id === sessionId)
+  expect(selected).toBeTruthy()
+  expect((await dataOf(await restored)).session_id).toBe(sessionId)
+  await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(1)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({ path: join(evidence, 'trial-refresh-restored.png'), fullPage: true })
+  const readsAfterReload = historyReads
+  await page.goto('/admin/agents/' + agentId)
+  const newUsersReady = responseAt(page, '/api/v1/chat/end-users')
+  await page.getByRole('button', { name: '试用当前发布版本' }).click()
+  await expect(page).toHaveURL(/\/admin\/chat\?agent_id=/)
+  await dataOf(await newUsersReady)
+  await expect(page.getByText('已预选智能体的当前发布版本', { exact: false })).toBeVisible()
+  await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(0)
+  expect(historyReads).toBe(readsAfterReload)
+  await writeFile(
+    join(evidence, 'trial-refresh-restored.json'),
+    JSON.stringify(
+      {
+        sessionId,
+        agentId,
+        restoredAutomatically: true,
+        manualSelectionActions: 0,
+        freshTrialHasNoPriorHistory: true,
+        submissions
+      },
+      null,
+      2
+    )
+  )
+  expect(submissions).toBe(1)
+})
+
 test('服务身份轮换断连后通过原回执恢复', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto('/login?redirect=/admin/governance')

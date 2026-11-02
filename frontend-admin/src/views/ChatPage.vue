@@ -1028,6 +1028,7 @@ const restoreSessionError = ref(false),
   restoringSession = ref(false)
 let restoreEpoch = 0
 const recentSessionKey = (actor: string) => `skillforge.chat-recent-session:${actor}`
+const trialContext = trialAgentId || trialTeamId ? JSON.stringify([trialAgentId, trialTeamId]) : ''
 function rememberSession(session?: string) {
   if (!creationActor.value) return
   try {
@@ -1035,6 +1036,15 @@ function rememberSession(session?: string) {
     else sessionStorage.removeItem(recentSessionKey(creationActor.value))
   } catch {
     // 最近会话只是导航偏好，存储故障不能影响已完成的会话操作。
+  }
+  try {
+    const state = { ...window.history.state }
+    if (session && trialContext)
+      state.noeWiseTrialSession = { actor: creationActor.value, trialContext, session }
+    else delete state.noeWiseTrialSession
+    window.history.replaceState(state, '')
+  } catch {
+    // 当前历史条目不可写时，保持原会话操作结果。
   }
 }
 function cancelSessionRestore() {
@@ -1689,8 +1699,19 @@ function clearSessionView() {
 }
 async function newSession() {
   cancelSessionRestore()
+  const actor = creationActor.value,
+    identity = auth.identityVersion,
+    epoch = restoreEpoch
   await run(async () => {
     if (!(await confirmSessionSwitch())) return
+    if (
+      !actor ||
+      pageDisposed ||
+      actor !== creationActor.value ||
+      identity !== auth.identityVersion ||
+      epoch !== restoreEpoch
+    )
+      return
     rememberSession()
     clearSessionView()
     sessionId.value = ''
@@ -1700,14 +1721,27 @@ async function newSession() {
 async function loadSession(target: string) {
   cancelSessionRestore()
   if (!target || target === sessionId.value) return
+  const actor = creationActor.value,
+    identity = auth.identityVersion,
+    epoch = restoreEpoch
+  const current = () =>
+    !!actor &&
+    !pageDisposed &&
+    actor === creationActor.value &&
+    identity === auth.identityVersion &&
+    epoch === restoreEpoch
   await run(async () => {
     if (!(await confirmSessionSwitch())) return
+    if (!current()) return
     citationSelection.value = undefined
     // 新会话读取成功后一次切换，失败时保留当前身份、内容及未发送输入。
     const [value, detail] = await Promise.all([
       api.chat.history(target),
       api.chat.sessionDetail(target)
     ])
+    if (!current()) return
+    if (value.session_id !== target || detail.session.session_id !== target)
+      throw Error('会话读取结果不匹配')
     clearSessionView()
     sessionId.value = target
     selectedSession.value = target
@@ -1729,8 +1763,6 @@ async function restoreRecentSession() {
   if (
     !actor ||
     !can('foundation.sessions.read') ||
-    trialAgentId ||
-    trialTeamId ||
     sessionId.value ||
     pendingSession.value ||
     pendingUploads.value.length ||
@@ -1742,6 +1774,15 @@ async function restoreRecentSession() {
   let target: string | null
   try {
     target = sessionStorage.getItem(recentSessionKey(actor))
+    if (trialContext) {
+      const marker = window.history.state?.noeWiseTrialSession
+      if (
+        marker?.actor !== actor ||
+        marker?.trialContext !== trialContext ||
+        marker?.session !== target
+      )
+        return
+    }
   } catch {
     return
   }
