@@ -259,6 +259,7 @@ import {
 } from '@skillforge/shared/admin'
 import PackageFileWorkbench from '@skillforge/shared/components/PackageFileWorkbench.vue'
 import { confirm, message } from '@skillforge/shared/feedback'
+import { notifySkillPublished } from './skillPublicationEvents'
 import {
   api,
   type SkillDraftContent,
@@ -287,6 +288,29 @@ const owner = computed(() =>
     : ''
 )
 const storageKey = (value: string) => `skillforge.skill-publication.${value}`
+function noticeIdentity() {
+  return {
+    actor:
+      auth.user?.tenant_id && auth.user?.sub
+        ? JSON.stringify([auth.user.tenant_id, auth.user.sub])
+        : '',
+    owner: owner.value,
+    identity: auth.identityVersion,
+    session: auth.sessionIdentity
+  }
+}
+function notifyConfirmedSkill(original: ReturnType<typeof noticeIdentity>) {
+  const now = noticeIdentity()
+  if (
+    !disposed &&
+    original.actor &&
+    original.actor === now.actor &&
+    original.owner === now.owner &&
+    original.identity === now.identity &&
+    original.session === now.session
+  )
+    notifySkillPublished(original.actor)
+}
 type Pending = { requestId: string; draftId: string; definitionId: string; revision: number }
 const pending = ref<Pending>()
 const storageError = ref('')
@@ -475,6 +499,7 @@ async function validate() {
   })
 }
 async function publish() {
+  const notice = noticeIdentity()
   await run(async () => {
     if (!draft.value || !definition.value || dirty.value || readonly.value) return
     if (
@@ -503,6 +528,7 @@ async function publish() {
       }
       throw reason
     }
+    notifyConfirmedSkill(notice)
     publicationRefreshRequired.value = true
     message.success('技能版本已发布')
     await reload()
@@ -517,7 +543,8 @@ async function acceptPublication(
   value: SkillSaveAndPublishReceipt | undefined,
   requestId: string,
   subject: string,
-  operation?: Pending
+  operation?: Pending,
+  notice?: ReturnType<typeof noticeIdentity>
 ) {
   if (
     !value ||
@@ -541,6 +568,7 @@ async function acceptPublication(
     return
   }
   if (disposed || owner.value !== subject) return
+  if (value.status === 'SUCCEEDED' && notice) notifyConfirmedSkill(notice)
   if (operation?.requestId === requestId) {
     try {
       sessionStorage.removeItem(storageKey(subject))
@@ -580,6 +608,7 @@ async function saveAndPublish() {
   )
     return
   const subject = owner.value
+  const notice = noticeIdentity()
   await run(async () => {
     const current = draft.value!
     try {
@@ -634,7 +663,7 @@ async function saveAndPublish() {
         current.revision,
         payload
       )
-      await acceptPublication(result, operation.requestId, subject, operation)
+      await acceptPublication(result, operation.requestId, subject, operation, notice)
     } catch (cause) {
       if (disposed || owner.value !== subject) {
         if (cause instanceof HttpClientError) cause.claimFeedback()
@@ -657,6 +686,7 @@ async function saveAndPublish() {
 }
 async function checkPublication() {
   const subject = owner.value
+  const notice = noticeIdentity()
   const operation = pending.value
   const requestId = operation?.requestId ?? receiptRequestId.value.trim()
   if (
@@ -671,7 +701,8 @@ async function checkPublication() {
       await api.skillDrafts.saveAndPublishResult(requestId),
       requestId,
       subject,
-      operation
+      operation,
+      notice
     )
   )
 }
@@ -709,6 +740,7 @@ async function download() {
 }
 async function setDefault() {
   if (pending.value || storageError.value) return
+  const notice = noticeIdentity()
   await run(async () => {
     if (!definition.value) return
     if (
@@ -719,11 +751,13 @@ async function setDefault() {
       }))
     )
       return
-    await api.capabilities.setSkillDefault(
+    const result = await api.capabilities.setSkillDefault(
       id.value,
       selectedVersion.value,
       definition.value.revision
     )
+    if (result.id === id.value && result.defaultVersionId === selectedVersion.value)
+      notifyConfirmedSkill(notice)
     await reload()
     message.success('默认技能版本已更新，已固定版本的 Agent 需显式更新挂载')
   })

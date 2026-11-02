@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton } from 'element-plus'
+import { ElButton, ElSelect } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import SkillWorkbenchPage from './SkillWorkbenchPage.vue'
 const mocks = vi.hoisted(() => ({
@@ -13,22 +13,36 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
   combine: vi.fn(),
   result: vi.fn(),
-  confirm: vi.fn()
+  confirm: vi.fn(),
+  notify: vi.fn(),
+  setDefault: vi.fn(),
+  getVersion: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
-    user: { tenant_id: 'tenant', sub: mocks.member, permissions: mocks.permissions }
+    user: {
+      tenant_id: 'tenant',
+      get sub() {
+        return mocks.member
+      },
+      get permissions() {
+        return mocks.permissions
+      }
+    }
   })
 }))
+vi.mock('./skillPublicationEvents', () => ({ notifySkillPublished: mocks.notify }))
 vi.mock('../../api', () => ({
   api: {
     capabilities: {
       getDefinition: mocks.definition,
       listSkillVersionSummaries: mocks.versions,
-      listRequirementOptions: vi.fn()
+      listRequirementOptions: vi.fn(),
+      setSkillDefault: mocks.setDefault
     },
     skillDrafts: {
       getActive: mocks.active,
+      getVersion: mocks.getVersion,
       save: mocks.save,
       publish: mocks.publish,
       saveAndPublish: mocks.combine,
@@ -107,6 +121,93 @@ async function edit(text = '编辑文件') {
   await flushPromises()
 }
 describe('技能保存并发布', () => {
+  it('成功回执已确认但存储清理失败时仍通知，并保留待核对记录防止重复提交', async () => {
+    mocks.combine.mockImplementation(async (request_id: string) => ({
+      request_id,
+      status: 'SUCCEEDED',
+      draft_id: '12',
+      definition_id: '11',
+      revision: 3,
+      publication: { version_id: '42', definition_revision: 8 }
+    }))
+    await open()
+    await edit()
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw Error('storage')
+    })
+    await click('保存并发布')
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
+    expect(document.body.textContent).toContain('无法清除原发布记录')
+    expect(sessionStorage.length).toBe(1)
+    expect(mocks.combine).toHaveBeenCalledOnce()
+    const submit = wrapper.findAllComponents(ElButton).find((item) => item.text() === '保存并发布')
+    expect(submit?.props('disabled')).toBe(true)
+  })
+  it('普通发布成功才通知同账号；失败不通知', async () => {
+    mocks.publish.mockRejectedValueOnce(Error('发布失败'))
+    await open()
+    await click('发布')
+    expect(mocks.notify).not.toHaveBeenCalled()
+    mocks.publish.mockResolvedValueOnce({ versionId: '42', definitionRevision: 8 })
+    await click('发布')
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
+  })
+  it('设为当前发布只有确认同一技能与版本后通知', async () => {
+    mocks.versions.mockResolvedValueOnce([{ id: '42', versionKey: '1', status: 'PUBLISHED' }])
+    mocks.getVersion.mockResolvedValue(structuredClone(draft))
+    await open()
+    wrapper.findComponent(ElSelect).vm.$emit('change', '42')
+    await flushPromises()
+    mocks.setDefault.mockResolvedValueOnce({ id: '11', defaultVersionId: 'other' })
+    await click('设为当前发布')
+    expect(mocks.notify).not.toHaveBeenCalled()
+    mocks.setDefault.mockResolvedValueOnce({ id: '11', defaultVersionId: '42' })
+    await click('设为当前发布')
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
+  })
+  it('组合发布在途时更换账号，迟到成功不通知新账号', async () => {
+    let finish!: (value: unknown) => void
+    mocks.combine.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await open()
+    await edit()
+    await click('保存并发布')
+    const request = mocks.combine.mock.calls[0]![0] as string
+    mocks.member = 'other'
+    finish({
+      request_id: request,
+      status: 'SUCCEEDED',
+      draft_id: '12',
+      definition_id: '11',
+      revision: 3,
+      publication: { version_id: '42', definition_revision: 8 }
+    })
+    await flushPromises()
+    expect(mocks.notify).not.toHaveBeenCalled()
+  })
+  it('原请求只读核对成功才发送发布通知', async () => {
+    mocks.combine.mockRejectedValueOnce(Error('断连'))
+    await open()
+    await edit()
+    await click('保存并发布')
+    const request = mocks.combine.mock.calls[0]![0] as string
+    expect(mocks.notify).not.toHaveBeenCalled()
+    mocks.result.mockResolvedValueOnce({
+      request_id: request,
+      status: 'SUCCEEDED',
+      draft_id: '12',
+      definition_id: '11',
+      revision: 3,
+      publication: { version_id: '42', definition_revision: 8 }
+    })
+    await click('核对原操作')
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
+    expect(mocks.combine).toHaveBeenCalledOnce()
+  })
   it('一次组合调用绑定两项修订并显示回执', async () => {
     mocks.combine.mockImplementation(async (request_id: string) => ({
       request_id,
@@ -131,6 +232,7 @@ describe('技能保存并发布', () => {
     )
     expect(mocks.save).not.toHaveBeenCalled()
     expect(mocks.publish).not.toHaveBeenCalled()
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
     expect(document.body.textContent).toContain('版本 42')
   })
   it('UNKNOWN 重建后仅原主体恢复并只读核对', async () => {
@@ -152,6 +254,7 @@ describe('技能保存并发布', () => {
     expect(mocks.result).toHaveBeenCalledExactlyOnceWith(request)
     expect(document.body.textContent).toContain(request)
     expect(mocks.combine).toHaveBeenCalledTimes(1)
+    expect(mocks.notify).not.toHaveBeenCalled()
   })
   it('确定拒绝显示校验并保留正文；非法编码不提交也不锁定', async () => {
     mocks.combine.mockImplementationOnce(async (request_id: string) => ({

@@ -1250,7 +1250,110 @@ describe('按挂载类型加载实际关联', () => {
     expect(document.body.textContent).toContain('请联系管理员创建并发布技能')
     expect(document.querySelector('a[href="/admin/skills"]')).toBeNull()
   })
-  it('已有技能时刷新目录保留选择与预算，并采用当前发布版本', async () => {
+  it('同账号发布技能后自动刷新目录，不为其他账号刷新或自动挂载', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      mocks.definitions.mockResolvedValueOnce([])
+      const { drawer } = await open('SKILL')
+      const channel = channels.find((item) => item.name === 'skillforge.skill.published')!
+      expect(channel).toBeDefined()
+      expect(document.body.textContent).toContain('当前没有可选的已发布技能')
+      const before = mocks.definitions.mock.calls.length
+      channel.onmessage!({ data: JSON.stringify(['other', 'actor-1']) })
+      await flushPromises()
+      expect(mocks.definitions).toHaveBeenCalledTimes(before)
+      channel.onmessage!({ data: JSON.stringify(['1', 'actor-1']) })
+      await flushPromises()
+      expect(mocks.definitions).toHaveBeenCalledTimes(before + 1)
+      expect(drawer.findAllComponents(ElOption).some((item) => item.props('value') === '10')).toBe(
+        true
+      )
+      expect(mocks.create).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+  it('技能目录读取忙碌时暂存同账号通知并在结束后刷新', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      const { drawer } = await open('SKILL')
+      let finish!: (value: unknown) => void
+      mocks.definitions.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      )
+      await button(drawer, '刷新技能选项').trigger('click')
+      await flushPromises()
+      const before = mocks.definitions.mock.calls.length
+      channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
+        data: JSON.stringify(['1', 'actor-1'])
+      })
+      expect(mocks.definitions).toHaveBeenCalledTimes(before)
+      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      await flushPromises()
+      expect(mocks.definitions).toHaveBeenCalledTimes(before + 1)
+      expect(mocks.create).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+  it('通知排队后安全会话已改变时不读取新上下文', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      const { drawer } = await open('SKILL')
+      let finish!: (value: unknown) => void
+      mocks.definitions.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      )
+      await button(drawer, '刷新技能选项').trigger('click')
+      await flushPromises()
+      const before = mocks.definitions.mock.calls.length
+      channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
+        data: JSON.stringify(['1', 'actor-1'])
+      })
+      mocks.browserSession = 'another-session'
+      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      await flushPromises()
+      expect(mocks.definitions).toHaveBeenCalledTimes(before)
+      expect(mocks.create).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+  it('手动刷新目录保留选择与预算，版本变化后需确认', async () => {
     mocks.versions.mockResolvedValue([
       { id: '21', definitionId: '10', capabilityType: 'SKILL', name: '技能', versionKey: '1' }
     ])
@@ -1285,6 +1388,10 @@ describe('按挂载类型加载实际关联', () => {
     expect(
       drawer.findAllComponents(ElOption).some((option) => option.props('value') === '11')
     ).toBe(true)
+    expect(document.body.textContent).toContain('所选技能的当前发布版本已变化')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    await button(drawer, '确认当前发布版本').trigger('click')
+    await flushPromises()
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
@@ -1294,6 +1401,157 @@ describe('按挂载类型加载实际关联', () => {
         skillConfig: expect.objectContaining({ tokenBudget: 3000 })
       })
     )
+  })
+  it('通知触发刷新失败时禁止添加，手动刷新成功后恢复', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      const { drawer } = await open('SKILL')
+      mocks.definitions.mockRejectedValueOnce(new Error('目录读取失败'))
+      channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
+        data: JSON.stringify(['1', 'actor-1'])
+      })
+      await flushPromises()
+      expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+      expect(document.body.textContent).toContain('技能目录需要重新核对')
+      mocks.requirementOptions.mockResolvedValueOnce([
+        { id: '10', name: '服务流程', versionId: '22', versionKey: '3' }
+      ])
+      await button(drawer, '刷新技能选项').trigger('click')
+      await flushPromises()
+      expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+      expect(document.body.textContent).toContain('所选技能的当前发布版本已变化')
+      await button(drawer, '确认当前发布版本').trigger('click')
+      await flushPromises()
+      expect(button(drawer, '添加能力').props('disabled')).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+  it('首次读取技能目录期间浏览器会话改变时不采用迟到结果', async () => {
+    let finish!: (value: unknown) => void
+    mocks.definitions.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const wrapper = mount(AgentManagePage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await button(wrapper, '添加能力').trigger('click')
+    await flushPromises()
+    mocks.browserSession = 'another-session'
+    finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+    await flushPromises()
+    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('打开抽屉首次读取期间收到发布通知，打开后重新读取目录', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      let finish!: (value: unknown) => void
+      mocks.definitions.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      )
+      const wrapper = mount(AgentManagePage, {
+        attachTo: document.body,
+        global: { stubs: { RouterLink: true } }
+      })
+      wrappers.push(wrapper)
+      await flushPromises()
+      await button(wrapper, '添加能力').trigger('click')
+      await flushPromises()
+      channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
+        data: JSON.stringify(['1', 'actor-1'])
+      })
+      mocks.requirementOptions.mockResolvedValueOnce([
+        { id: '10', name: '服务流程', versionId: '22', versionKey: '3' }
+      ])
+      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      await flushPromises()
+      expect(mocks.definitions).toHaveBeenCalledTimes(2)
+      expect(document.body.textContent).toContain('所选技能的当前发布版本已变化')
+      expect(button(wrapper.findComponent(ElDrawer), '添加能力').props('disabled')).toBe(true)
+      expect(mocks.create).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+  it('通知刷新期间切换选择仍更新目录，并要求确认变化的版本', async () => {
+    const channels: FakeChannel[] = []
+    class FakeChannel {
+      onmessage?: (event: { data: string }) => void
+      close = vi.fn()
+      name: string
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel)
+    try {
+      mocks.definitions.mockResolvedValueOnce([
+        { id: '10', defaultVersionId: '21', name: '技能一' },
+        { id: '11', defaultVersionId: '23', name: '技能二' }
+      ])
+      mocks.requirementOptions.mockResolvedValueOnce([
+        { id: '10', name: '技能一', versionId: '21', versionKey: '1' },
+        { id: '11', name: '技能二', versionId: '23', versionKey: '1' }
+      ])
+      const { drawer } = await open('SKILL')
+      let finish!: (value: unknown) => void
+      mocks.definitions.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      )
+      mocks.requirementOptions.mockResolvedValueOnce([
+        { id: '10', name: '技能一', versionId: '21', versionKey: '1' },
+        { id: '11', name: '技能二', versionId: '24', versionKey: '2' }
+      ])
+      channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
+        data: JSON.stringify(['1', 'actor-1'])
+      })
+      drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '11')
+      await flushPromises()
+      finish([
+        { id: '10', name: '技能一' },
+        { id: '11', name: '技能二' }
+      ])
+      await flushPromises()
+      expect(drawer.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe('11')
+      expect(document.body.textContent).toContain('所选技能的当前发布版本已变化')
+      expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+      await button(drawer, '确认当前发布版本').trigger('click')
+      await flushPromises()
+      expect(button(drawer, '添加能力').props('disabled')).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
   it('刷新技能目录失败后保留已选技能，允许重试', async () => {
     const { drawer } = await open('SKILL')

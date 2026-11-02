@@ -508,6 +508,15 @@
             >所选技能已不在可用目录中，请重新选择。</span
           >
         </p>
+        <p v-if="skillSelectionStale" role="status" class="admin-field-help">
+          <template v-if="skillCatalogNeedsRefresh"
+            >技能目录需要重新核对，请刷新技能选项。</template
+          >
+          <template v-else>
+            所选技能的当前发布版本已变化，请确认后再添加。
+            <ElButton link :disabled="busy" @click="confirmCurrentSkill">确认当前发布版本</ElButton>
+          </template>
+        </p>
         <p
           v-if="
             mountType === 'WORKFLOW' &&
@@ -743,7 +752,7 @@
             onboardingOpen ||
             workflowOnboardingOpen ||
             (mountType === 'WORKFLOW' && (!selectedDefinition || !workflowInstanceId)) ||
-            (mountType === 'SKILL' && !selectedDefinition) ||
+            (mountType === 'SKILL' && (!selectedDefinition || skillSelectionStale)) ||
             (mountType === 'TOOL' &&
               !(advancedToolMount ? selectedDefinition : selectedAvailableTool)) ||
             (mountType === 'KNOWLEDGE_SOURCE' &&
@@ -858,6 +867,7 @@ import { useAuthStore } from '../../stores/auth'
 import { toolsApi, type AvailableTool, type ToolOnboardingReceipt } from '../../api/tools'
 import WorkflowOnboarding from '../../components/WorkflowOnboarding.vue'
 import { listenKnowledgePublished } from './knowledgePublicationEvents'
+import { listenSkillPublished } from './skillPublicationEvents'
 const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const canSaveAndPublish = computed(
@@ -1514,6 +1524,58 @@ const availableTools = ref<AvailableTool[]>([])
 const mountOptionsState = ref<'loading' | 'ready' | 'failed'>('loading')
 const toolSearch = ref('')
 const definitionSearch = ref('')
+const skillCatalogNeedsRefresh = ref(false)
+let skillNoticeGeneration = 0
+type SkillNotice = { actor: string; owner: string; session: string; browserSession: string | null }
+let pendingSkillNotice: SkillNotice | undefined
+let openingSkillNotice: SkillNotice | undefined
+function skillNoticeCurrent(notice: SkillNotice, includeOpening = false) {
+  const actor =
+    auth.user?.tenant_id && auth.user?.sub
+      ? JSON.stringify([auth.user.tenant_id, auth.user.sub])
+      : ''
+  return (
+    !publicationDisposed &&
+    !!actor &&
+    actor === notice.actor &&
+    publicationOwner.value === notice.owner &&
+    auth.sessionIdentity === notice.session &&
+    getSessionId() === notice.browserSession &&
+    (mountOpen.value ||
+      (includeOpening &&
+        openingSkillNotice?.actor === notice.actor &&
+        openingSkillNotice.owner === notice.owner &&
+        openingSkillNotice.session === notice.session &&
+        openingSkillNotice.browserSession === notice.browserSession)) &&
+    mountType.value === 'SKILL' &&
+    can('foundation.capabilities.read')
+  )
+}
+function acceptSkillNotice(actor: string) {
+  const notice = {
+    actor,
+    owner: publicationOwner.value,
+    session: auth.sessionIdentity,
+    browserSession: getSessionId()
+  }
+  if (!skillNoticeCurrent(notice, true)) return
+  skillCatalogNeedsRefresh.value = true
+  skillNoticeGeneration++
+  if (busy.value || onboardingBusy.value) {
+    pendingSkillNotice = notice
+    return
+  }
+  pendingSkillNotice = undefined
+  void refreshSkills()
+}
+const stopSkillNotifications = listenSkillPublished(acceptSkillNotice)
+watch([busy, onboardingBusy], ([working, onboarding]) => {
+  if (working || onboarding || !pendingSkillNotice) return
+  const notice = pendingSkillNotice
+  pendingSkillNotice = undefined
+  if (skillNoticeCurrent(notice)) void refreshSkills()
+})
+onScopeDispose(stopSkillNotifications)
 const filteredKnowledgeBases = computed(() => {
   const keyword = knowledgeSearch.value.trim().toLocaleLowerCase()
   return knowledgeBases.value.filter((base) =>
@@ -1568,6 +1630,17 @@ const selectedAvailableTool = computed(() =>
 const selectedDefinition = computed(() =>
   mountableDefinitions.value.find((d) => d.id === definitionId.value)
 )
+const skillSelectionStale = computed(
+  () =>
+    mountType.value === 'SKILL' &&
+    !!selectedDefinition.value &&
+    (skillCatalogNeedsRefresh.value ||
+      (!!versionId.value && selectedDefinition.value.defaultVersionId !== versionId.value))
+)
+function confirmCurrentSkill() {
+  if (mountType.value === 'SKILL' && selectedDefinition.value)
+    versionId.value = selectedDefinition.value.defaultVersionId ?? undefined
+}
 const versionBelongsToDefinition = (versionId: string | null) =>
   versions.value.some((v) => v.id === versionId && v.definitionId === definitionId.value)
 const matchingInstances = computed(() =>
@@ -1693,10 +1766,18 @@ async function selectOnlyKnowledge(
     throw cause
   }
 }
-async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW') {
+async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW', current?: () => boolean) {
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((cause: unknown) => {
+      if (current && !current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    })
   const [defs, options] = await Promise.all([
-    api.capabilities.definitions(type, 'PUBLISHED'),
-    api.capabilities.listRequirementOptions(type)
+    guard(api.capabilities.definitions(type, 'PUBLISHED')),
+    guard(api.capabilities.listRequirementOptions(type))
   ])
   const byDefinition = new Map(options.map((option) => [option.id, option]))
   return {
@@ -1716,10 +1797,12 @@ async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW') {
 }
 async function readMountOptions() {
   mountOptionsState.value = 'loading'
+  const generation = skillNoticeGeneration
   const owner = publicationOwner.value
   const session = auth.sessionIdentity
   const type = mountType.value
-  const browserSession = type === 'KNOWLEDGE_SOURCE' ? getSessionId() : undefined
+  const browserSession =
+    type === 'KNOWLEDGE_SOURCE' || type === 'SKILL' ? getSessionId() : undefined
   const current = () =>
     !publicationDisposed &&
     publicationOwner.value === owner &&
@@ -1760,9 +1843,11 @@ async function readMountOptions() {
       return
     }
     if (type === 'SKILL') {
-      const options = await readCurrentOptions('SKILL')
+      const options = await readCurrentOptions('SKILL', current)
+      if (!current()) return
       definitions.value = options.definitions
       versions.value = options.versions
+      if (generation === skillNoticeGeneration) skillCatalogNeedsRefresh.value = false
       if (mountableDefinitions.value.length === 1)
         definitionId.value = mountableDefinitions.value[0]!.id
       mountOptionsState.value = 'ready'
@@ -1821,12 +1906,23 @@ async function loadVersions() {
 }
 async function refreshSkills() {
   const owner = publicationOwner.value
+  const generation = skillNoticeGeneration
+  const session = auth.sessionIdentity
+  const browserSession = getSessionId()
+  const current = () =>
+    !publicationDisposed &&
+    publicationOwner.value === owner &&
+    auth.sessionIdentity === session &&
+    getSessionId() === browserSession &&
+    mountOpen.value &&
+    mountType.value === 'SKILL' &&
+    can('foundation.capabilities.read')
   await run(async () => {
-    const options = await readCurrentOptions('SKILL')
-    if (publicationOwner.value !== owner || !mountOpen.value || mountType.value !== 'SKILL') return
+    const options = await readCurrentOptions('SKILL', current)
+    if (!current()) return
     definitions.value = options.definitions
     versions.value = options.versions
-    versionId.value = selectedDefinition.value?.defaultVersionId ?? undefined
+    if (generation === skillNoticeGeneration) skillCatalogNeedsRefresh.value = false
   })
 }
 async function refreshKnowledgeBases() {
@@ -1963,7 +2059,19 @@ async function openMount() {
   if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
   const owner = publicationOwner.value
   const session = auth.sessionIdentity
-  const browserSession = mountType.value === 'KNOWLEDGE_SOURCE' ? getSessionId() : undefined
+  const browserSession =
+    mountType.value === 'KNOWLEDGE_SOURCE' || mountType.value === 'SKILL'
+      ? getSessionId()
+      : undefined
+  openingSkillNotice =
+    mountType.value === 'SKILL' && auth.user?.tenant_id && auth.user?.sub
+      ? {
+          actor: JSON.stringify([auth.user.tenant_id, auth.user.sub]),
+          owner,
+          session,
+          browserSession: browserSession ?? null
+        }
+      : undefined
   await run(async () => {
     priority.value = 0
     onboardingOpen.value = false
@@ -1982,9 +2090,12 @@ async function openMount() {
     mountSaved.value = mountSnapshot()
     mountOpen.value = true
   })
+  openingSkillNotice = undefined
 }
 async function addMount() {
   await run(async () => {
+    if (mountType.value === 'SKILL' && skillSelectionStale.value)
+      throw Error('所选技能的当前发布版本已变化，请先确认')
     if (mountType.value === 'WORKFLOW' && !selectedDefinition.value)
       throw Error('请选择可添加的工作流')
     const tool =
