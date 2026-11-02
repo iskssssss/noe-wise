@@ -59,6 +59,8 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         Path evidence = Path.of("build", "runtime-e2e", "chat-process-browser-" + fixtureRunId())
                 .toAbsolutePath();
         Files.createDirectories(evidence);
+        // Playwright 启动时会清空自己的 outputDir，宿主日志不能放进该清理范围。
+        Path browserEvidence = evidence.resolve("playwright");
         Path log = evidence.resolve("playwright-vite.log");
         ProcessBuilder command = new ProcessBuilder(
                 playwright.toString(), "test", "e2e/chat-execution-process.spec.ts");
@@ -86,7 +88,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             environment.remove("E2E_MESSAGE");
         }
         environment.put("E2E_INTERNAL_REASONING", "fixture-reasoning-" + fixtureRunId());
-        environment.put("E2E_ARTIFACT_DIR", evidence.toString());
+        environment.put("E2E_ARTIFACT_DIR", browserEvidence.toString());
 
         Process process = command.start();
         Set<ProcessHandle> owned = new LinkedHashSet<>();
@@ -105,7 +107,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             String tail = output.length() > 6000 ? output.substring(output.length() - 6000) : output;
             assertEquals(0, process.exitValue(), "Chat process browser E2E failed; evidence=" + evidence
                     + "\n" + tail);
-            var receipt = objectMapper.readTree(Files.readString(evidence.resolve("browser-receipt.json"), StandardCharsets.UTF_8));
+            var receipt = objectMapper.readTree(Files.readString(browserEvidence.resolve("browser-receipt.json"), StandardCharsets.UTF_8));
             assertExecutionPersistence(receipt.path("sessionId").asText(), receipt.path("runId").asText(),
                     receipt.path("inputId").asText(), expectedReply, evidence, live);
         } finally {

@@ -63,12 +63,9 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   expect(user).toBeTruthy()
   await page.locator('.el-select').filter({ hasText: '终端用户' }).getByRole('combobox').click()
   await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
-  await page
-    .locator('.el-select')
-    .filter({ hasText: '选择智能体或团队' })
-    .getByRole('combobox')
-    .click()
-  await page.getByRole('option', { name: 'Runtime E2E Agent', exact: true }).click()
+  // 隔离夹具只有一个可用对象，页面会自动选中；选中后不再显示占位文案。
+  const target = page.locator('.el-select').filter({ hasText: 'Runtime E2E Agent' })
+  await expect(target.locator('.el-select__selected-item')).toHaveText('Runtime E2E Agent')
   const input = page.getByPlaceholder('输入消息', { exact: true })
   await input.fill(message)
   const created = responseAt(page, '/api/v1/chat/sessions', 'POST')
