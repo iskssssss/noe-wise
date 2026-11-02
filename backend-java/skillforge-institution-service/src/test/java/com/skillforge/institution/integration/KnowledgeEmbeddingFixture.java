@@ -89,4 +89,5 @@ final class KnowledgeEmbeddingFixture implements AutoCloseable {
 
     @Override public void close() { server.stop(0); }
     int calls() { return calls.get(); }
+    String endpoint() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
 }

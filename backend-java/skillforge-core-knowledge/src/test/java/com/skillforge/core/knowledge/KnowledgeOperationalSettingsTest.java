@@ -3,6 +3,7 @@ package com.skillforge.core.knowledge;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.skillforge.core.foundation.settings.OperationalSettingsService;
 import java.math.BigDecimal;
@@ -33,5 +34,17 @@ class KnowledgeOperationalSettingsTest {
         assertThat(snapshot.defaultRetrievalMode()).isEqualTo("hybrid");
         assertThat(snapshot.defaultVectorWeight()).isEqualTo(.7);
         assertThat(snapshot.maxChunksPerDocument()).isEqualTo(3000);
+    }
+
+    @Test void effectiveIndexingUsesFrozenDefaultOnlyForEmptyStoredValue() {
+        OperationalSettingsService service=mock(OperationalSettingsService.class);
+        var resolver=new KnowledgeOperationalSettings(service);
+        assertThat(resolver.effectiveIndexingMode("economical")).isEqualTo("economical");
+        assertThat(resolver.effectiveIndexingMode("invalid-mode")).isEqualTo("invalid-mode");
+        verifyNoInteractions(service);
+        var snapshot=new KnowledgeOperationalSettings.Snapshot(1,700,70,20,3000,"high_quality","hybrid",8,.6,.7);
+        assertThat(KnowledgeOperationalSettings.resolveIndexingMode(null,snapshot)).isEqualTo("high_quality");
+        assertThat(KnowledgeOperationalSettings.resolveIndexingMode("  ",snapshot)).isEqualTo("high_quality");
+        assertThat(KnowledgeOperationalSettings.resolveIndexingMode("economical",snapshot)).isEqualTo("economical");
     }
 }

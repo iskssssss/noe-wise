@@ -554,9 +554,70 @@ class KnowledgeServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired private com.skillforge.core.knowledge.KnowledgeRebuildService rebuilds;
     @Autowired private com.skillforge.core.knowledge.mapper.KnowledgeRebuildJobMapper rebuildJobs;
+    @Autowired private com.skillforge.core.foundation.settings.OperationalSettingsService knowledgeSettings;
     @Autowired private org.apache.ibatis.session.SqlSessionFactory knowledgeSqlSessions;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private com.skillforge.core.capability.CapabilityProducerPublicationBridge catalogPublication;
+
+    @Test
+    void economicalRebuildIsRejectedBeforeAnyJobOrModelWork() {
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"经济索引",null,"economical","full_text",false);
+            knowledgeService.uploadFile(tenantId,base.id(),"keyword",textFile("keyword.txt","经济索引仅全文检索"));
+            var detail=knowledgeService.getBase(tenantId,base.id());
+            assertEquals("economical",detail.indexingMode());assertEquals("economical",detail.effectiveIndexingMode());
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            var before=rebuilds.latest(tenantId,base.id());
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                    ()->rebuilds.create(tenantId,base.id(),"nonexistent-model",1,"economical-key",before.baseRevision()));
+            assertEquals(422,rejected.getStatus().value());assertEquals("KNOWLEDGE_REBUILD_ECONOMICAL_UNSUPPORTED",rejected.getCode());
+            assertEquals("经济索引仅支持全文检索，不支持向量重建。",rejected.getMessage());
+            assertEquals("IDLE",rebuilds.latest(tenantId,base.id()).status());
+            assertEquals(0,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_jobs where tenant_id=? and kb_id=?",Integer.class,Long.parseLong(tenantId),base.id()));
+            assertEquals(before.baseRevision(),rebuilds.latest(tenantId,base.id()).baseRevision());
+            org.mockito.Mockito.verifyNoInteractions(embeddingProvider);
+        } finally {TenantContext.clear();}
+    }
+
+    @Test
+    void legacyEmptyIndexModeFollowsCurrentPlatformDefaultAndValidatesSourceModel() {
+        float[] vector=new float[1536];vector[0]=1;whenEmbeddingIsAvailable(vector);
+        long actor=SnowflakeIds.nextId();
+        jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",actor,"knowledge-default-test-"+actor,"unused");
+        var original=knowledgeSettings.read("knowledge");long changedRevision=0;
+        try {
+            TenantContext.setTenantId(tenantId);
+            var base=knowledgeService.createBase(tenantId,"旧索引默认",null,"high_quality","hybrid",false);
+            knowledgeService.uploadFile(tenantId,base.id(),"legacy",textFile("legacy.txt","旧知识库向量来源"));
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var economicalDefaults=new java.util.LinkedHashMap<>(original.values());economicalDefaults.put("default_indexing_mode","economical");
+            changedRevision=knowledgeSettings.update("knowledge",original.revision(),economicalDefaults,actor).revision();
+            var economical=knowledgeService.getBase(tenantId,base.id());assertEquals(null,economical.indexingMode());assertEquals("economical",economical.effectiveIndexingMode());
+            org.mockito.Mockito.clearInvocations(embeddingProvider);
+            var rejected=assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                    ()->rebuilds.create(tenantId,base.id(),"nonexistent-model",1,"legacy-economical",rebuilds.latest(tenantId,base.id()).baseRevision()));
+            assertEquals("KNOWLEDGE_REBUILD_ECONOMICAL_UNSUPPORTED",rejected.getCode());
+            assertEquals(0,queryValue(jdbc,tenantId,"select count(*) from nw_knowledge_rebuild_jobs where tenant_id=? and kb_id=?",Integer.class,Long.parseLong(tenantId),base.id()));
+            org.mockito.Mockito.verifyNoInteractions(embeddingProvider);
+            var qualityDefaults=new java.util.LinkedHashMap<>(original.values());qualityDefaults.put("default_indexing_mode","high_quality");
+            changedRevision=knowledgeSettings.update("knowledge",changedRevision,qualityDefaults,actor).revision();
+            var quality=knowledgeService.getBase(tenantId,base.id());assertEquals(null,quality.indexingMode());assertEquals("high_quality",quality.effectiveIndexingMode());
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode='invalid-mode' WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            assertEquals("invalid-mode",knowledgeService.getBase(tenantId,base.id()).effectiveIndexingMode());
+            var invalid=assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                    ()->rebuilds.create(tenantId,base.id(),"nonexistent-model",1,"legacy-invalid",rebuilds.latest(tenantId,base.id()).baseRevision()));
+            assertEquals("KNOWLEDGE_INDEXING_MODE_INVALID",invalid.getCode());
+            jdbc.update("UPDATE nw_knowledge_bases SET indexing_mode=NULL WHERE tenant_id=? AND id=?",Long.parseLong(tenantId),base.id());
+            var model=rebuildModel(768);
+            var queued=rebuilds.create(tenantId,base.id(),model.id(),model.revision(),"legacy-quality",rebuilds.latest(tenantId,base.id()).baseRevision());
+            assertEquals("QUEUED",queued.status());
+            org.mockito.Mockito.verifyNoInteractions(embeddingProvider);
+        } finally {
+            TenantContext.clear();
+            if(changedRevision!=0)knowledgeSettings.update("knowledge",changedRevision,original.values(),actor);
+        }
+    }
 
     @Test
     void wholeBaseRebuildFreezesWritesThenManuallySwitchesDimensionsAndKeepsPinnedOldModel() {

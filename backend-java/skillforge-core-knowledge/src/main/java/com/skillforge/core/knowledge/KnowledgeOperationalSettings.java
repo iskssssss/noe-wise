@@ -27,6 +27,14 @@ public class KnowledgeOperationalSettings {
                 source.decimal("default_vector_weight").doubleValue());
     }
 
+    /** 原列为空时沿用当前运营默认；非空原值不被覆盖。 */
+    public String effectiveIndexingMode(String configured) {
+        return resolveIndexingMode(configured,configured==null||configured.isBlank()?capture():null);
+    }
+    static String resolveIndexingMode(String configured,Snapshot snapshot) {
+        return configured==null||configured.isBlank()?snapshot.defaultIndexingMode():configured;
+    }
+
     /** 单个知识库任务使用的不可变参数快照。 */
     public record Snapshot(
             long revision,

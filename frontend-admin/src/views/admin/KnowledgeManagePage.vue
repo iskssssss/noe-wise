@@ -486,6 +486,16 @@
         ><p class="admin-muted">
           更换向量模型时重建全库索引，期间文档写入锁定；重建完成后需发布结果。
         </p>
+        <p v-if="effectiveIndexingMode === 'economical'" role="status" class="admin-field-help">
+          当前为经济索引，仅支持全文检索，不支持更换向量模型或发起向量重建。
+        </p>
+        <p
+          v-else-if="base && effectiveIndexingMode !== 'high_quality'"
+          role="status"
+          class="admin-field-help"
+        >
+          当前索引方式无法确认，请重新读取知识库信息或联系管理员。
+        </p>
         <ElAlert
           v-if="rebuild?.write_locked"
           title="重建期间知识库写入已锁定。"
@@ -549,7 +559,13 @@
           <ElButton :disabled="busy" @click="refreshRebuild">刷新重建进展</ElButton>
           <ElButton
             v-permission="['foundation.knowledge.create']"
-            :disabled="busy || rebuildRefresh || rebuild?.write_locked || !modelId"
+            :disabled="
+              busy ||
+              rebuildRefresh ||
+              rebuild?.write_locked ||
+              !modelId ||
+              effectiveIndexingMode !== 'high_quality'
+            "
             @click="startRebuild"
             >开始重建</ElButton
           ><ElButton
@@ -1521,7 +1537,10 @@ const query = ref(''),
   results = ref<Array<{ content: string; score: number; chunk_id: string; document_id: string }>>(
     []
   )
-const economicalIndex = computed(() => base.value?.indexing_mode === 'economical')
+const effectiveIndexingMode = computed(
+  () => base.value?.effective_indexing_mode ?? base.value?.indexing_mode
+)
+const economicalIndex = computed(() => effectiveIndexingMode.value === 'economical')
 const effectiveSearchMode = computed(() =>
   economicalIndex.value ? 'full_text' : searchMode.value || base.value?.retrieval_mode
 )
@@ -1946,6 +1965,7 @@ async function publishRevision(row: KnowledgeBaseRevision) {
   })
 }
 async function startRebuild() {
+  if (effectiveIndexingMode.value !== 'high_quality') return
   await run(async () => {
     const model = models.value?.find((m) => m.id === modelId.value)
     if (!model || !rebuild.value) throw Error('请选择目标模型')

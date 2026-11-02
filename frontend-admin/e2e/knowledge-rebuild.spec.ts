@@ -33,7 +33,7 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await dataOf(await login)
   await expect(page).toHaveURL(new RegExp(`/admin/knowledge/${kb}$`))
-  await page.getByRole('tab', { name: '模型重建', exact: true }).click()
+  await page.getByRole('tab', { name: '索引与模型', exact: true }).click()
   const pane = page
     .getByRole('tabpanel')
     .filter({ has: page.getByText('目标向量模型', { exact: true }) })
@@ -68,6 +68,10 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
     new URL(r.url()).pathname.endsWith('/knowledge/bases/rebuilds/publish')
   )
   await pane.getByRole('button', { name: '发布重建结果', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '发布重建结果' })
+    .getByRole('button', { name: '发布重建结果', exact: true })
+    .click()
   const published = await dataOf(await publishResponse)
   expect(published.status).toBe('PUBLISHED')
   expect(published.write_locked).toBe(false)
@@ -81,7 +85,7 @@ test('knowledge rebuild locks writes, publishes explicitly and cancels a later j
   const cancelResponse = page.waitForResponse((r) =>
     new URL(r.url()).pathname.endsWith('/knowledge/bases/rebuilds/cancel')
   )
-  await pane.getByRole('button', { name: '取消', exact: true }).click()
+  await pane.getByRole('button', { name: '取消重建', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '取消重建', exact: true }).click()
   const cancelled = await dataOf(await cancelResponse)
   expect(cancelled.status).toBe('CANCELLED')

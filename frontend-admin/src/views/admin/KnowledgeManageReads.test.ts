@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElTabs } from 'element-plus'
+import { ElButton, ElFormItem, ElSelect, ElTabs } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -124,6 +124,94 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('经济索引禁止新建向量重建，现有就绪任务仍能查看、取消和发布', async () => {
+    mocks.base.mockResolvedValue({
+      id: 'kb-1',
+      name: '知识库',
+      indexing_mode: null,
+      effective_indexing_mode: 'economical'
+    })
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    mocks.models.mockResolvedValue([{ id: 'model-1', name: '向量模型', kind: 'EMBEDDING' }])
+    await open()
+    await rebuildTab()
+    wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '目标向量模型')!
+      .getComponent(ElSelect)
+      .vm.$emit('update:modelValue', 'model-1')
+    await flushPromises()
+    const start = wrapper.findAllComponents(ElButton).find((item) => item.text() === '开始重建')!
+    expect(start.props('disabled')).toBe(true)
+    expect(wrapper.text()).toContain('当前为经济索引，仅支持全文检索')
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '刷新重建进展')).toBe(
+      true
+    )
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '取消重建')).toBe(
+      true
+    )
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '发布重建结果')).toBe(
+      true
+    )
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '取消重建')!
+        .props('disabled')
+    ).toBe(false)
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '发布重建结果')!
+        .props('disabled')
+    ).toBe(false)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('经济索引的已有失败任务仍可显式重试', async () => {
+    mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: 'economical' })
+    mocks.rebuild.mockResolvedValue(job('FAILED'))
+    mocks.post.mockResolvedValue(job('QUEUED'))
+    await open()
+    await rebuildTab()
+    await click('重试失败批次')
+    expect(mocks.post).toHaveBeenCalledOnce()
+    expect(mocks.post.mock.calls[0]![0]).toBe('/knowledge/bases/rebuilds/retry')
+  })
+  it('索引方式未确定时不推断为向量索引', async () => {
+    mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: null })
+    await open()
+    await rebuildTab()
+    expect(wrapper.text()).toContain('当前索引方式无法确认')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '开始重建')!
+        .props('disabled')
+    ).toBe(true)
+  })
+  it('高质量索引仍可使用目标模型发起重建', async () => {
+    mocks.base.mockResolvedValue({
+      id: 'kb-1',
+      name: '知识库',
+      indexing_mode: null,
+      effective_indexing_mode: 'high_quality'
+    })
+    mocks.models.mockResolvedValue([
+      { id: 'model-1', name: '向量模型', kind: 'EMBEDDING', revision: 2 }
+    ])
+    mocks.post.mockResolvedValue(job('QUEUED'))
+    await open()
+    await rebuildTab()
+    wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '目标向量模型')!
+      .getComponent(ElSelect)
+      .vm.$emit('update:modelValue', 'model-1')
+    await flushPromises()
+    await click('开始重建')
+    expect(mocks.post).toHaveBeenCalledOnce()
+    expect(mocks.post.mock.calls[0]![0]).toBe('/knowledge/bases/rebuilds/create')
+  })
   it.each(['重新索引', '删除'])(
     '%s成功但读取失败时保留旧目录并只允许读取恢复',
     async (operation) => {

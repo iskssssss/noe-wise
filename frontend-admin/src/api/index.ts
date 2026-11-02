@@ -416,6 +416,7 @@ export interface KnowledgeBaseDetail extends KnowledgeBase {
   chunk_size?: number | null
   chunk_overlap?: number | null
   indexing_mode?: string | null
+  effective_indexing_mode?: string | null
   retrieval_mode?: string | null
   top_k?: number | null
   score_threshold_enabled?: boolean | null

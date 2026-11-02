@@ -25,7 +25,7 @@ class KnowledgeRebuildServiceTest {
   when(jobs.selectOne(any(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class))).thenReturn(job);
   var service=new KnowledgeRebuildService(bases,mock(KnowledgeBaseRevisionMapper.class),mock(KnowledgeDocumentMapper.class),
     mock(KnowledgeDocumentVersionMapper.class),mock(KnowledgeChunkMapper.class),jobs,items,batches,
-    mock(com.skillforge.core.model.PlatformModelCatalogService.class),mock(EmbeddingProvider.class),mock(KnowledgeBaseRevisionService.class),mock(KnowledgeStorageService.class),new TestTransactionManager());
+    mock(com.skillforge.core.model.PlatformModelCatalogService.class),mock(EmbeddingProvider.class),mock(KnowledgeBaseRevisionService.class),mock(KnowledgeStorageService.class),mock(KnowledgeOperationalSettings.class),new TestTransactionManager());
   for(var expected:List.of(new KnowledgeRebuildJobMapper.Progress(0,0,0),new KnowledgeRebuildJobMapper.Progress(200,171,12))){
    when(jobs.progress(7,20)).thenReturn(expected);var result=service.latest("7",10);
    assertEquals(expected.documentCount(),result.documentCount());assertEquals(expected.readyDocuments(),result.readyDocuments());assertEquals(expected.unknownBatches(),result.unknownBatches());

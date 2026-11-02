@@ -37,23 +37,23 @@ public class KnowledgeRebuildService {
     private final KnowledgeBaseRevisionService publications;
     /** 知识领域唯一正文/向量所有者与暂存引用入口。 */
     private final KnowledgeStorageService storage;
+    private final KnowledgeOperationalSettings operationalSettings;
     private final TransactionTemplate tx;
 
     public KnowledgeRebuildService(KnowledgeBaseMapper bases,KnowledgeBaseRevisionMapper revisions,
             KnowledgeDocumentMapper documents,KnowledgeDocumentVersionMapper versions,KnowledgeChunkMapper chunks,
             KnowledgeRebuildJobMapper jobs,KnowledgeRebuildItemMapper items,KnowledgeRebuildBatchMapper batches,
             PlatformModelCatalogService models,EmbeddingProvider embedding,KnowledgeBaseRevisionService publications,
-            KnowledgeStorageService storage,
+            KnowledgeStorageService storage,KnowledgeOperationalSettings operationalSettings,
             PlatformTransactionManager transactionManager) {
         this.bases=bases;this.revisions=revisions;this.documents=documents;this.versions=versions;this.chunks=chunks;
         this.jobs=jobs;this.items=items;this.batches=batches;this.models=models;this.embedding=embedding;
-        this.publications=publications;this.storage=storage;this.tx=new TransactionTemplate(transactionManager);
+        this.publications=publications;this.storage=storage;this.operationalSettings=operationalSettings;this.tx=new TransactionTemplate(transactionManager);
     }
 
     /** 幂等受理并冻结全部未删除current来源；与所有内容写共享KB行锁。 */
     public Snapshot create(String tenantId,long kbId,String modelId,long modelRevision,String key,long expectedBaseRevision) {
         if(key==null||key.isBlank()||key.length()>128) throw invalid("knowledge_rebuild_key_invalid");
-        PlatformModelConfig model=target(modelId,modelRevision);
         return tx.execute(status->{
             long tenant=Long.parseLong(tenantId);KnowledgeBaseDO base=lockBase(tenant,kbId);
             String fingerprint=TokenHash.sha256Hex(kbId+":"+modelId+":"+modelRevision);
@@ -64,6 +64,12 @@ public class KnowledgeRebuildService {
             if(!Objects.equals(base.getControlRevision(),expectedBaseRevision))throw conflict("knowledge_base_revision_conflict");
             if(base.getRebuildJobId()!=null)throw conflict("knowledge_rebuild_write_locked");
             if(!"active".equals(base.getStatus()))throw conflict("knowledge_base_archived");
+            String indexingMode=operationalSettings.effectiveIndexingMode(base.getIndexingMode());
+            if(com.skillforge.core.knowledge.constant.KnowledgeConstants.INDEXING_MODE_ECONOMICAL.equals(indexingMode))
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"KNOWLEDGE_REBUILD_ECONOMICAL_UNSUPPORTED","经济索引仅支持全文检索，不支持向量重建。",false);
+            if(!"high_quality".equals(indexingMode))
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"KNOWLEDGE_INDEXING_MODE_INVALID","知识库索引方式无效，无法创建向量重建。",false);
+            PlatformModelConfig model=target(modelId,modelRevision);
             List<KnowledgeDocumentDO> source=documents.selectList(new LambdaQueryWrapper<KnowledgeDocumentDO>()
                     .eq(KnowledgeDocumentDO::getTenantId,tenant).eq(KnowledgeDocumentDO::getKbId,kbId)
                     .isNull(KnowledgeDocumentDO::getDeletedAt).orderByAsc(KnowledgeDocumentDO::getId));

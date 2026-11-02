@@ -130,6 +130,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
+    exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
@@ -345,6 +346,19 @@ tasks.register<Test>("agentKnowledgeSingleBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.AgentKnowledgeSingleBrowserE2ETest.singlePublishedKnowledgeMountFeedsSameAgentRuntime")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("economicalKnowledgeRebuildBrowserE2E") {
+    description = "验证经济知识库拒绝向量重建及运行时检索"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.EconomicalKnowledgeRebuildBrowserE2ETest.economicalRebuildRejectedAndOriginalSourceFeedsRuntime")
     }
     outputs.upToDateWhen { false }
 }

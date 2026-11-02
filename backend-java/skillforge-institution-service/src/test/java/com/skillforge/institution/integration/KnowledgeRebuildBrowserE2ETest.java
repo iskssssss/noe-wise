@@ -54,6 +54,10 @@ class KnowledgeRebuildBrowserE2ETest extends AbstractIntegrationTest {
         var executor=Executors.newVirtualThreadPerTaskExecutor();control.setExecutor(executor);
         Set<ProcessHandle> owned=new LinkedHashSet<>();
         try (var seedEmbedding=new KnowledgeEmbeddingFixture(models,tenant)) {
+            var seed=models.create(new ModelWrite(null,"Browser seed embedding","EMBEDDING",true,"custom","custom-embedding","custom-v1","openai-embeddings","bearer-api-key",seedEmbedding.endpoint(),"browser-seed","fixture-key",null,null,null,null,null,30,1536,null,java.math.BigDecimal.ZERO,java.math.BigDecimal.ZERO,java.math.BigDecimal.ZERO,"CNY"),"knowledge-browser-fixture");
+            models.publish(seed.id(),seed.revision(),"knowledge-browser-fixture");
+            var selections=models.selections(tenant);
+            models.select(tenant,new com.skillforge.core.model.ModelSelections(selections.llmModelConfigId(),seed.id(),selections.rerankModelConfigId()));
             var member=new TenantMemberDO();member.setId(SnowflakeIds.nextId());member.setTenantId(Long.parseLong(tenant));
             member.setUsername("knowledge-browser-admin");member.setRole("admin");member.setPermissions(List.of());
             member.setStatus("active");member.setPasswordHash(passwords.encode("KnowledgeBrowser123"));member.setCreatedAt(Instant.now());members.insert(member);
@@ -71,6 +75,7 @@ class KnowledgeRebuildBrowserE2ETest extends AbstractIntegrationTest {
                 assertEquals(1, upload.chunks());
                 originalSources.add(upload.sourceVersion());
             }
+            assertEquals(documentContents.size(),seedEmbedding.calls());
             var draft=revisions.create(tenant,base.id());
             var ready=revisions.markReady(tenant,base.id(),draft.revision(),originalSources,new KnowledgeCapabilityPolicyRequest(true,false,Set.of("VECTOR"),"PINNED",true));
             revisions.publish(tenant,base.id(),ready.revision());
@@ -89,7 +94,7 @@ class KnowledgeRebuildBrowserE2ETest extends AbstractIntegrationTest {
                 exchange.sendResponseHeaders(200,-1);
             }});
             control.createContext("/release",exchange->{try(exchange){gate.countDown();exchange.sendResponseHeaders(200,-1);}});control.start();
-            var targetModel = models.create(new ModelWrite(null,"Browser target embedding","EMBEDDING",true,"custom",null,null,"openai-embeddings","bearer-api-key",url,"browser-target","fixture-key",null,null,null,null,null,120,1536,null,java.math.BigDecimal.valueOf(0L),java.math.BigDecimal.valueOf(0L),java.math.BigDecimal.valueOf(0L),"CNY"),"knowledge-browser-fixture");
+            var targetModel = models.create(new ModelWrite(null,"Browser target embedding","EMBEDDING",true,"custom","custom-embedding","custom-v1","openai-embeddings","bearer-api-key",url,"browser-target","fixture-key",null,null,null,null,null,120,1536,null,java.math.BigDecimal.valueOf(0L),java.math.BigDecimal.valueOf(0L),java.math.BigDecimal.valueOf(0L),"CNY"),"knowledge-browser-fixture");
             models.publish(targetModel.id(), targetModel.revision(), "knowledge-browser-fixture");
             Path root=repoRoot(),admin=root.resolve("frontend-admin"),cli=admin.resolve("node_modules/@playwright/test/cli.js");assertTrue(Files.isRegularFile(cli));
             Path evidence=FRONTEND.evidence();

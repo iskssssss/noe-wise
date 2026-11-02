@@ -56,7 +56,7 @@ class KnowledgeControllerCoverageTest {
         when(management.create("7", "FAQ", "help", null, null, null, null)).thenReturn(new CreateKnowledgeBaseResponse(31L, "FAQ"));
         assertThat(controller.createBase(new CreateKnowledgeBaseRequest("FAQ", "help", null, null, null, null, null, null, null, null, null)).data().id()).isEqualTo(31L);
         var detail = new KnowledgeBaseDetailResponse(31L, "FAQ", null, "active", 4L, 500, 50,
-                "high_quality", "hybrid", 5, true, 0.5, 0.7, false, 2, 9, Instant.parse("2026-08-25T00:00:00Z"));
+                "high_quality", "hybrid", 5, true, 0.5, 0.7, false, 2, 9, Instant.parse("2026-08-25T00:00:00Z"), "high_quality");
         when(knowledge.getBase("7", 31L)).thenReturn(detail);
         when(knowledge.updateBase(any(), any(), any(), any(), any(), any())).thenReturn(detail);
         assertThat(controller.getBase(31L).data().name()).isEqualTo("FAQ");

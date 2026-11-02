@@ -178,7 +178,8 @@ public class KnowledgeService {
                 base.getStatus(), base.getActiveRevisionId(), base.getChunkSize(), base.getChunkOverlap(),
                 base.getIndexingMode(), base.getRetrievalMode(), base.getTopK(), base.getScoreThresholdEnabled(),
                 base.getScoreThreshold(), base.getVectorWeight(), base.getRerankEnabled(),
-                documents.getOrDefault(base.getId(), 0L), chunks.getOrDefault(base.getId(), 0L), base.getCreatedAt());
+                documents.getOrDefault(base.getId(), 0L), chunks.getOrDefault(base.getId(), 0L), base.getCreatedAt(),
+                operationalSettings.effectiveIndexingMode(base.getIndexingMode()));
     }
 
     /**
@@ -1250,8 +1251,7 @@ public class KnowledgeService {
      */
     private String indexingModeOf(
             KnowledgeBaseDO base, KnowledgeOperationalSettings.Snapshot settings) {
-        return base.getIndexingMode() == null || base.getIndexingMode().isBlank()
-                ? settings.defaultIndexingMode() : base.getIndexingMode();
+        return KnowledgeOperationalSettings.resolveIndexingMode(base.getIndexingMode(),settings);
     }
 
     /**
