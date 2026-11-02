@@ -3,6 +3,9 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# 补丁的上下文行包含统一格式前缀与原始缩进。
+/patches/*.patch whitespace=-space-before-tab
+
 # 真实评估套件按原始字节冻结，跨平台检出保持同一 SHA-256。
 /tools/memory_evaluation/semantic-c/dev.json text eol=lf
 /tools/memory_evaluation/semantic-c/heldout.json text eol=lf

@@ -50,11 +50,16 @@ catalogs:
       version: 3.3.11
 
 overrides:
-  vue: ^3.5.34
   pinia: ^3.0.4
-  vue-router: ^5.0.7
-  vue-i18n: 11.4.14
   source-map-js: 1.2.2
+  vue: ^3.5.34
+  vue-i18n: 11.4.14
+  vue-router: ^5.0.7
+
+patchedDependencies:
+  element-plus@2.14.6:
+    hash: 21265bd6eb1ae41a2cea802f3d030fc829f8a4710c238ef0c03526c29d0ef78f
+    path: patches/element-plus@2.14.6.patch
 
 importers:
 
@@ -150,7 +155,7 @@ importers:
         version: link:../frontend-shared
       element-plus:
         specifier: 'catalog:'
-        version: 2.14.6(vue@3.5.43(typescript@6.0.3))
+        version: 2.14.6(patch_hash=21265bd6eb1ae41a2cea802f3d030fc829f8a4710c238ef0c03526c29d0ef78f)(vue@3.5.43(typescript@6.0.3))
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
@@ -281,7 +286,7 @@ importers:
         version: link:../frontend-shared
       element-plus:
         specifier: 'catalog:'
-        version: 2.14.6(vue@3.5.43(typescript@6.0.3))
+        version: 2.14.6(patch_hash=21265bd6eb1ae41a2cea802f3d030fc829f8a4710c238ef0c03526c29d0ef78f)(vue@3.5.43(typescript@6.0.3))
       pinia:
         specifier: ^3.0.4
         version: 3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3))
@@ -369,7 +374,7 @@ importers:
         version: 3.4.17
       element-plus:
         specifier: 'catalog:'
-        version: 2.14.6(vue@3.5.43(typescript@6.0.3))
+        version: 2.14.6(patch_hash=21265bd6eb1ae41a2cea802f3d030fc829f8a4710c238ef0c03526c29d0ef78f)(vue@3.5.43(typescript@6.0.3))
       lucide-vue-next:
         specifier: 1.0.0
         version: 1.0.0(vue@3.5.43(typescript@6.0.3))
@@ -5604,7 +5609,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  element-plus@2.14.6(vue@3.5.43(typescript@6.0.3)):
+  element-plus@2.14.6(patch_hash=21265bd6eb1ae41a2cea802f3d030fc829f8a4710c238ef0c03526c29d0ef78f)(vue@3.5.43(typescript@6.0.3)):
     dependencies:
       '@ctrl/tinycolor': 4.2.1
       '@element-plus/icons-vue': 2.3.2(vue@3.5.43(typescript@6.0.3))

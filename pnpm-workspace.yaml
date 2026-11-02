@@ -41,3 +41,6 @@ onlyBuiltDependencies:
   - esbuild
   - vue-demi
   - '@tailwindcss/oxide'
+
+patchedDependencies:
+  element-plus@2.14.6: patches/element-plus@2.14.6.patch

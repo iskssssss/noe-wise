@@ -11,6 +11,103 @@ function required(name: string): string {
 
 test.describe.configure({ retries: 0 })
 
+test('共享定义预算控件的可访问性状态随保存同步', async ({ page }) => {
+  const evidence = required('E2E_ARTIFACT_DIR')
+  const definitionId = required('E2E_DEFINITION_ID')
+  const prompt = required('E2E_DEFINITION_PROMPT')
+  const mode = required('E2E_DEFINITION_BUDGET_A11Y_MODE')
+  expect(['baseline', 'candidate']).toContain(mode)
+  let writes = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'PUT' &&
+      new URL(request.url()).pathname === '/api/v1/tenant/agent-definitions/update'
+    )
+      writes++
+  })
+  await page.goto(`/login?redirect=${encodeURIComponent('/admin/agent-definitions')}`)
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page
+    .getByRole('row')
+    .filter({ hasText: definitionId })
+    .getByRole('button', { name: '查看与维护', exact: true })
+    .click()
+  const drawer = page.getByRole('dialog', { name: '维护机构共享定义' })
+  await drawer.getByLabel('系统提示词').fill(prompt)
+  await drawer.getByText('执行预算（可选）', { exact: true }).click()
+  const input = drawer.getByLabel('活跃执行时长（秒）')
+  const state = () =>
+    input.evaluate((element: HTMLInputElement) => ({
+      disabled: element.disabled,
+      readOnly: element.readOnly,
+      ariaDisabled: element.getAttribute('aria-disabled')
+    }))
+  await expect.poll(async () => (await state()).disabled).toBe(false)
+  const initial = await state()
+  expect(initial).toEqual({
+    disabled: false,
+    readOnly: false,
+    ariaDisabled: mode === 'baseline' ? 'true' : 'false'
+  })
+  // 基线 ARIA 属性错误，先核实原生输入未禁用，再以真实键盘输入。
+  await input.click({ force: mode === 'baseline' })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.type('300')
+  await input.blur()
+  await expect(input).toHaveValue('300')
+  await page.route(
+    '**/api/v1/tenant/agent-definitions/update',
+    async (route) => {
+      const key = (await route.request().allHeaders())['idempotency-key']
+      expect(key).toBeTruthy()
+      const command = route.request().postDataJSON()
+      expect(command.payload.definition.execution_config.max_wall_time_seconds).toBe(300)
+      const upstream = await route.fetch({ maxRetries: 0 })
+      expect(upstream.status()).toBe(200)
+      const receipt = (await upstream.json()).data
+      await writeFile(join(evidence, 'upstream.tmp'), JSON.stringify({ key, command, receipt }))
+      await rename(join(evidence, 'upstream.tmp'), join(evidence, 'upstream.json'))
+      await expect
+        .poll(() => existsSync(join(evidence, 'original-confirmed')), { timeout: 45_000 })
+        .toBe(true)
+      await route.fulfill({ response: upstream })
+    },
+    { times: 1 }
+  )
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PUT' &&
+      new URL(response.url()).pathname === '/api/v1/tenant/agent-definitions/update'
+  )
+  await drawer.getByRole('button', { name: '保存草稿', exact: true }).click()
+  await expect
+    .poll(() => existsSync(join(evidence, 'database-confirmed')), { timeout: 45_000 })
+    .toBe(true)
+  await expect.poll(async () => (await state()).disabled).toBe(true)
+  const busy = await state()
+  expect(busy.disabled).toBe(true)
+  expect(busy.ariaDisabled).toBe('true')
+  await writeFile(join(evidence, 'busy-observed'), 'observed')
+  expect((await saved).status()).toBe(200)
+  await expect.poll(async () => (await state()).disabled).toBe(false)
+  const after = await state()
+  expect(after).toEqual({
+    disabled: false,
+    readOnly: false,
+    ariaDisabled: mode === 'baseline' ? 'true' : 'false'
+  })
+  await expect(input).toHaveValue('300')
+  expect(writes).toBe(1)
+  await page.screenshot({ path: join(evidence, 'budget-a11y.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'budget-a11y.json'),
+    JSON.stringify({ mode, definitionId, initial, busy, after, writes })
+  )
+})
+
 test('原保存已提交但响应中断，刷新后核对原操作', async ({ page }) => {
   await verifyRecovery(page, 'refresh')
 })
@@ -48,14 +145,13 @@ test('原保存被服务端拒绝后封存原键并继续编辑', async ({ page 
   await drawer.getByLabel('系统提示词').fill(prompt)
   await drawer.getByText('执行预算（可选）', { exact: true }).click()
   const wallTime = drawer.getByLabel('活跃执行时长（秒）')
-  // InputNumber 在挂载时可能保留过时的 aria-disabled；只在原生输入确实可编辑时使用键盘。
   expect(
     await wallTime.evaluate((input: HTMLInputElement) => ({
       disabled: input.disabled,
       readOnly: input.readOnly
     }))
   ).toEqual({ disabled: false, readOnly: false })
-  await wallTime.click({ force: true })
+  await wallTime.click()
   await page.keyboard.press('Control+A')
   await page.keyboard.type('604801')
   await wallTime.blur()

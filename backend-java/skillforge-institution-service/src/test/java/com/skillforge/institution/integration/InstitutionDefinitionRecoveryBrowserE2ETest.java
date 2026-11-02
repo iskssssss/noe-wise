@@ -60,6 +60,12 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
         verifyScenario("fence");
     }
 
+    @Test void budgetInputAccessibilityTracksRealSaveAndOriginalRevisionRuns() throws Exception {
+        String mode=System.getenv("E2E_DEFINITION_BUDGET_A11Y_MODE");
+        org.junit.jupiter.api.Assumptions.assumeTrue(mode!=null&&Set.of("baseline","candidate").contains(mode));
+        verifyScenario("budget-a11y");
+    }
+
     private void verifyScenario(String scenario) throws Exception {
         login();
         String sourceTenant=tenantId, sourceToken=accessToken;
@@ -76,7 +82,7 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
         Path evidence=Path.of("build","runtime-e2e","institution-definition-recovery-"+SnowflakeIds.nextId()).toAbsolutePath();
         Files.createDirectories(evidence);Path browser=evidence.resolve("browser");Files.createDirectories(browser);
         Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");FRONTEND.bindBackend(baseUrl());
-        var selector=switch(scenario){case "refresh"->"刷新后核对原操作";case "in-page"->"抽屉内核对原保存";case "fence"->"原保存被服务端拒绝后封存原键";default->throw new IllegalArgumentException("unknown_browser_scenario");};
+        var selector=switch(scenario){case "refresh"->"刷新后核对原操作";case "in-page"->"抽屉内核对原保存";case "fence"->"原保存被服务端拒绝后封存原键";case "budget-a11y"->"预算控件的可访问性状态随保存同步";default->throw new IllegalArgumentException("unknown_browser_scenario");};
         var command=new ProcessBuilder("node",admin.resolve("node_modules/@playwright/test/cli.js").toString(),"test","--config=playwright.institution-definition-recovery.config.ts","--grep",selector);
         command.directory(admin.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("playwright.log").toFile());
         var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());
@@ -100,10 +106,28 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
                 assertEquals(definitionId,rows.getFirst().get("definition_id").toString());assertEquals(Long.toString(revision),rows.getFirst().get("revision"));
                 assertEquals(1,queryCount(jdbc,sourceTenant,"SELECT count(*) FROM nw_agent_templates WHERE id=CAST(? AS bigint) AND draft_revision=? AND definition::text LIKE ?",definitionId,revision,"%"+marker+"%"));
             }
+            if("budget-a11y".equals(scenario)) {
+                assertEquals(300,original.path("command").path("payload").path("definition").path("execution_config").path("max_wall_time_seconds").asLong());
+                Files.writeString(browser.resolve("database-confirmed"),"confirmed",StandardCharsets.UTF_8);
+                Path busy=browser.resolve("busy-observed");
+                while(process.isAlive()&&!Files.exists(busy)&&System.nanoTime()<deadline){owned.capture();process.waitFor(100,TimeUnit.MILLISECONDS);}
+                assertTrue(Files.isRegularFile(busy),"页面未确认保存中控件状态："+evidence);
+            }
             Files.writeString(browser.resolve("original-confirmed"),"confirmed",StandardCharsets.UTF_8);
             while(process.isAlive()&&System.nanoTime()<deadline){owned.capture();process.waitFor(200,TimeUnit.MILLISECONDS);}
             owned.capture();assertFalse(process.isAlive(),"浏览器验收超时："+evidence);
             assertEquals(0,process.exitValue(),()->"浏览器验收失败："+evidence+"\n"+readLog(evidence));
+        }
+        if("budget-a11y".equals(scenario)) {
+            var facts=objectMapper.readTree(Files.readString(browser.resolve("budget-a11y.json")));
+            String mode=System.getenv("E2E_DEFINITION_BUDGET_A11Y_MODE");assertEquals(mode,facts.path("mode").asText());
+            assertEquals(1,facts.path("writes").asInt());
+            assertFalse(facts.path("initial").path("disabled").asBoolean());assertTrue(facts.path("busy").path("disabled").asBoolean());assertFalse(facts.path("after").path("disabled").asBoolean());
+            assertEquals("true",facts.path("busy").path("ariaDisabled").asText());
+            assertEquals("baseline".equals(mode)?"true":"false",facts.path("initial").path("ariaDisabled").asText());
+            assertEquals("baseline".equals(mode)?"true":"false",facts.path("after").path("ariaDisabled").asText());
+            exerciseOriginalRevision(sourceTenant,sourceToken,definitionId,original.path("receipt").path("draft_revision").asLong(),model,marker,evidence,300L);
+            return;
         }
         if("fence".equals(scenario)) {
             var facts=objectMapper.readTree(Files.readString(browser.resolve("fence.json")));
@@ -143,6 +167,10 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
 
     /** 关系是隔离库前置条件；授权、部署和对话均使用正式 HTTP。 */
     private void exerciseOriginalRevision(String sourceTenant,String sourceToken,String definitionId,long revision,String model,String marker,Path evidence) throws Exception {
+        exerciseOriginalRevision(sourceTenant,sourceToken,definitionId,revision,model,marker,evidence,null);
+    }
+
+    private void exerciseOriginalRevision(String sourceTenant,String sourceToken,String definitionId,long revision,String model,String marker,Path evidence,Long wallTime) throws Exception {
         String childSlug="shared-definition-child-"+SnowflakeIds.nextId();
         String child=createTenant(tenants,plans,childSlug);
         TenantContext.setTenantId(child);
@@ -183,6 +211,7 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
             var binding=applicationContext.getBean(com.skillforge.institution.runtime.AgentRunBindings.class).find(new com.skillforge.runtime.api.RunRef(new com.skillforge.runtime.api.TenantId(child),run)).orElseThrow();
             assertEquals(Long.parseLong(deployment.path("deployment_id").asText()),binding.scope().authorizations().get(deployedAgent).deploymentId());
             assertEquals(published.path("version").asText(),binding.member().agentDefinitionVersion());
+            if(wallTime!=null)assertEquals(wallTime,binding.member().executionConfig().maxWallTimeSeconds());
             Files.writeString(evidence.resolve("runtime.json"),objectMapper.writeValueAsString(Map.of("definitionId",definitionId,"draftRevision",revision,"publishedVersion",published.path("version").asText(),"deploymentId",deployment.path("deployment_id").asText(),"agentId",deployedAgent,"runId",run,"matchedPrompt",true)));
         } finally {tenantId=previousTenant;accessToken=previousToken;}
     }
