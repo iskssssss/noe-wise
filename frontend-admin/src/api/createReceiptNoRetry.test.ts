@@ -139,3 +139,18 @@ it('服务身份带回执签发收到 401 不自动重发', async () => {
   ).rejects.toMatchObject({ status: 401 })
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
+
+it.each(['suspend', 'revoke'] as const)('服务身份带回执%s收到 401 不自动重发', async (action) => {
+  localStorage.setItem('skillforge.access_token', 'expired-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    api.governance.servicePrincipals.changeStatusWithReceipt('request', 42, action)
+  ).rejects.toMatchObject({ status: 401 })
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})

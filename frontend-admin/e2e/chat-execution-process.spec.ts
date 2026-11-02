@@ -281,3 +281,153 @@ test('服务身份签发响应中断后通过原回执恢复', async ({ page }) 
     )
   )
 })
+
+for (const action of ['suspend', 'revoke'] as const) {
+  test(`服务身份${action === 'suspend' ? '暂停' : '吊销'}响应中断后通过原回执恢复`, async ({
+    page
+  }) => {
+    test.setTimeout(120_000)
+    await page.goto('/login?redirect=/admin/governance')
+    await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+    await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+    await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await expect(page).toHaveURL(/\/admin\/governance$/)
+    await page.getByRole('button', { name: '创建服务身份', exact: true }).click()
+    const drawer = page.locator('.el-drawer').filter({ hasText: '签发服务身份' })
+    const integration = `state-recovery-${action}-${Date.now()}`
+    await drawer.getByLabel('集成标识').fill(integration)
+    await drawer
+      .locator('.el-form-item')
+      .filter({ hasText: '授权 Scope' })
+      .locator('.el-select')
+      .click()
+    await page.getByRole('option').filter({ hasText: 'sessions.read' }).first().click()
+    await drawer.getByRole('button', { name: '创建', exact: true }).click()
+    const secretDialog = page.getByRole('dialog', { name: '请保存本次签发凭据' })
+    await expect(secretDialog).toBeVisible()
+    await secretDialog.getByRole('button', { name: '已保存' }).click()
+    let operations = 0
+    const path = '/api/v1/service-principals/status-with-receipt'
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === path) operations++
+    })
+    let requestId = ''
+    let finishInterception!: () => void
+    const intercepted = new Promise<void>((resolve) => {
+      finishInterception = resolve
+    })
+    await page.route('**' + path, async (route) => {
+      const submitted = route.request().postDataJSON()
+      requestId = String(submitted.request_id)
+      expect(submitted.action).toBe(action)
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(200)
+      const body = await committed.json()
+      expect(body.data.changed).toBe(true)
+      await route.abort('failed')
+      finishInterception()
+    })
+    const label = action === 'suspend' ? '暂停' : '吊销'
+    await page
+      .getByRole('row')
+      .filter({ hasText: integration })
+      .getByRole('button', { name: label, exact: true })
+      .click()
+    await page
+      .getByRole('button', {
+        name: action === 'suspend' ? '暂停身份' : '吊销服务身份',
+        exact: true
+      })
+      .click()
+    await expect(page.getByText('本次服务身份状态操作结果未知')).toBeVisible()
+    await intercepted
+    expect(operations).toBe(1)
+    expect(requestId).toBeTruthy()
+    await page.unroute('**' + path)
+    page.on('dialog', (dialog) => void dialog.accept())
+    const receiptReady = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === path + '/result'
+    )
+    await page.reload()
+    const receipt = await receiptReady
+    expect(receipt.status()).toBe(200)
+    const statusNotice = page.locator('p[role=status]').filter({ hasText: `原${label}操作已确认` })
+    await expect(statusNotice).toContainText(integration)
+    const row = page.getByRole('row').filter({ hasText: integration })
+    await expect(row).toContainText(action === 'suspend' ? '已停用' : '已撤销')
+    await expect(row.getByRole('button', { name: label, exact: true })).toBeDisabled()
+    expect(operations).toBe(1)
+    const evidence = required('E2E_ARTIFACT_DIR')
+    await page.screenshot({
+      path: join(evidence, `principal-${action}-recovered.png`),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, `principal-${action}-receipt.json`),
+      JSON.stringify(
+        {
+          request_id: requestId,
+          posted: operations,
+          recovery_status: receipt.status()
+        },
+        null,
+        2
+      )
+    )
+  })
+}
+
+test('已暂停服务身份可明确吊销', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('button', { name: '创建服务身份', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '签发服务身份' })
+  const integration = 'suspend-then-revoke-' + Date.now()
+  await drawer.getByLabel('集成标识').fill(integration)
+  await drawer
+    .locator('.el-form-item')
+    .filter({ hasText: '授权 Scope' })
+    .locator('.el-select')
+    .click()
+  await page.getByRole('option').filter({ hasText: 'sessions.read' }).first().click()
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '请保存本次签发凭据' })
+    .getByRole('button', { name: '已保存' })
+    .click()
+  const row = page.getByRole('row').filter({ hasText: integration })
+  const paused = responseAt(page, '/api/v1/service-principals/status-with-receipt', 'POST')
+  await row.getByRole('button', { name: '暂停', exact: true }).click()
+  await page.getByRole('button', { name: '暂停身份', exact: true }).click()
+  expect((await dataOf(await paused)).changed).toBe(true)
+  await expect(row).toContainText('已停用')
+  const revoked = responseAt(page, '/api/v1/service-principals/status-with-receipt', 'POST')
+  await row.getByRole('button', { name: '吊销', exact: true }).click()
+  await page.getByRole('button', { name: '吊销服务身份', exact: true }).click()
+  expect((await dataOf(await revoked)).changed).toBe(true)
+  await expect(row).toContainText('已撤销')
+  await expect(row.getByRole('button', { name: '吊销', exact: true })).toBeDisabled()
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({
+    path: join(evidence, 'principal-revoke-after-suspend.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(evidence, 'principal-revoke-after-suspend.json'),
+    JSON.stringify(
+      {
+        suspend_changed: true,
+        revoke_changed: true,
+        final_status: 'revoked'
+      },
+      null,
+      2
+    )
+  )
+})

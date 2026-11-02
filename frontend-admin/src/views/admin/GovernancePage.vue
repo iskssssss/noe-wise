@@ -15,7 +15,9 @@
           ? '本次凭证签发结果未知，请核对原签发；确认前不能再次操作。'
           : pendingRotation
             ? '本次凭证轮换结果未知，请核对原轮换；确认前不能再次操作。'
-            : '本次凭证操作结果未知，请联系平台核对签发或变更审计；核实前不要重复操作。'
+            : pendingStatus
+              ? '本次服务身份状态操作结果未知，请核对原操作；确认前不能再次操作。'
+              : '凭证操作记录不可用，请恢复浏览器存储后重试。'
       "
       type="warning"
       :closable="false"
@@ -75,6 +77,27 @@
         :disabled="busy"
         @click="loadRotation"
         >重新读取操作记录</ElButton
+      >
+    </div>
+    <p v-if="statusOutcome" class="admin-field-help" role="status">{{ statusOutcome }}</p>
+    <div v-if="pendingStatus || statusStorageError" class="admin-card" role="status">
+      <p v-if="pendingStatus">
+        服务身份{{ pendingStatus.action === 'suspend' ? '暂停' : '吊销' }}结果尚未确认，请求 ID：{{
+          pendingStatus.requestId
+        }}。未查到回执不表示失败。
+      </p>
+      <p v-if="statusStorageError">{{ statusStorageError }}</p>
+      <p v-if="pendingStatus && !identity.allowed('foundation.service_principals.read')">
+        当前账号没有服务身份读取权限，请联系管理员授权后核对原操作。
+      </p>
+      <ElButton
+        v-if="pendingStatus && identity.allowed('foundation.service_principals.read')"
+        :disabled="busy"
+        @click="checkStatus()"
+        >核对原状态操作</ElButton
+      >
+      <ElButton v-if="statusStorageError && !pendingStatus" :disabled="busy" @click="loadStatus"
+        >重新读取状态操作记录</ElButton
       >
     </div>
     <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload"
@@ -154,21 +177,21 @@
           ><ElButton
             v-permission="['foundation.service_principals.update']"
             link
-            :disabled="busy || credentialUncertain"
+            :disabled="busy || credentialUncertain || row.status !== 'active'"
             @click="rotate(row as ServicePrincipal)"
             >轮换</ElButton
           ><ElButton
             v-permission="['foundation.service_principals.update']"
             link
-            :disabled="busy || credentialUncertain"
-            @click="suspend(row as ServicePrincipal)"
+            :disabled="busy || credentialUncertain || row.status !== 'active'"
+            @click="changeStatus(row as ServicePrincipal, 'suspend')"
             >暂停</ElButton
           ><ElButton
             v-permission="['foundation.service_principals.update']"
             link
             type="danger"
-            :disabled="busy || credentialUncertain"
-            @click="revoke(row as ServicePrincipal)"
+            :disabled="busy || credentialUncertain || row.status === 'revoked'"
+            @click="changeStatus(row as ServicePrincipal, 'revoke')"
             >吊销</ElButton
           ></template
         ></ElTableColumn
@@ -483,7 +506,9 @@ import {
   type WebhookSubscription,
   type AuditLog,
   type KnowledgeWriteProposal,
-  type IssuedServicePrincipal
+  type IssuedServicePrincipal,
+  type ServicePrincipalStatusAction,
+  type ServicePrincipalStatusReceipt
 } from '../../api'
 const scopeDescriptions: Record<string, string> = {
   'control.operations.read': '读取控制操作结果',
@@ -544,7 +569,97 @@ const { busy, error, run } = useTask(),
     session_id: '',
     signing_secret: ''
   })
-const legacyUncertain = ref(false)
+type PendingStatus = {
+  requestId: string
+  principalId: string
+  action: ServicePrincipalStatusAction
+}
+const pendingStatus = ref<PendingStatus>()
+const statusStorageError = ref('')
+const statusReceipt = ref<ServicePrincipalStatusReceipt>()
+const statusOutcome = computed(() => {
+  const receipt = statusReceipt.value
+  if (!receipt) return ''
+  const principal = principals.value.find((item) => String(item.id) === receipt.principal_id)
+  const subject = principal
+    ? `集成“${principal.integration_id}”`
+    : `服务身份 ${receipt.principal_id}`
+  const label = receipt.action === 'suspend' ? '暂停' : '吊销'
+  return receipt.changed
+    ? `原${label}操作已确认（${subject}）；当前状态以列表为准。`
+    : `原${label}操作未改变服务身份（${subject}），请核对当前状态。`
+})
+const statusStorageKey = `skillforge.principal-status:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
+function loadStatus() {
+  if (!auth.user?.tenant_id || !auth.user?.sub) {
+    statusStorageError.value = '无法确认当前机构和成员，请重新登录。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(statusStorageKey)
+    const value = raw !== null ? JSON.parse(raw) : undefined
+    if (
+      raw !== null &&
+      (!value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        typeof value.principalId !== 'string' ||
+        !/^\d+$/.test(value.principalId) ||
+        typeof value.requestId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+        (value.action !== 'suspend' && value.action !== 'revoke'))
+    )
+      throw Error('invalid')
+    pendingStatus.value = value
+    statusStorageError.value = ''
+  } catch {
+    statusStorageError.value = '无法读取状态操作记录，请恢复浏览器存储后重试。'
+  }
+}
+function saveStatus(value?: PendingStatus) {
+  try {
+    if (value) sessionStorage.setItem(statusStorageKey, JSON.stringify(value))
+    else sessionStorage.removeItem(statusStorageKey)
+    pendingStatus.value = value
+    statusStorageError.value = ''
+    return true
+  } catch {
+    statusStorageError.value = '无法保存状态操作记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+function matchesStatus(
+  receipt: ServicePrincipalStatusReceipt | undefined,
+  original: PendingStatus
+) {
+  return (
+    !!receipt &&
+    receipt.request_id === original.requestId &&
+    receipt.principal_id === original.principalId &&
+    receipt.action === original.action &&
+    typeof receipt.changed === 'boolean'
+  )
+}
+function showStatusOutcome(receipt: ServicePrincipalStatusReceipt) {
+  statusReceipt.value = receipt
+  if (receipt.changed) message.success(statusOutcome.value)
+  else message.warning(statusOutcome.value)
+}
+async function checkStatus(automatic = false) {
+  const original = pendingStatus.value
+  if (!original || !identity.allowed('foundation.service_principals.read')) return
+  await run(async () => {
+    const receipt = await api.governance.servicePrincipals.statusResult(original.requestId)
+    if (!identity.current() || pendingStatus.value?.requestId !== original.requestId) return
+    if (!matchesStatus(receipt, original)) {
+      if (!automatic) message.warning('尚未查到匹配的状态操作回执，结果仍未确认。')
+      return
+    }
+    if (!saveStatus()) return
+    showStatusOutcome(receipt!)
+    await reload()
+  })
+}
 const pendingIssue = ref<string>()
 const issueRecovered = ref('')
 const recoveredPrincipal = computed(() =>
@@ -607,7 +722,8 @@ const rotationStorageError = ref('')
 const rotationStorageKey = `skillforge.principal-rotation:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
 const credentialUncertain = computed(
   () =>
-    legacyUncertain.value ||
+    !!pendingStatus.value ||
+    !!statusStorageError.value ||
     !!pendingIssue.value ||
     !!issueStorageError.value ||
     !!pendingRotation.value ||
@@ -653,11 +769,14 @@ function saveRotation(value?: { requestId: string; principalId: string }) {
 onMounted(() => {
   loadIssue()
   loadRotation()
+  loadStatus()
   void (async () => {
     if (pendingIssue.value && identity.allowed('foundation.service_principals.read'))
       await checkIssue(true)
     if (pendingRotation.value && identity.allowed('foundation.service_principals.read'))
       await checkRotation(true)
+    if (pendingStatus.value && identity.allowed('foundation.service_principals.read'))
+      await checkStatus(true)
   })()
 })
 async function checkRotation(automatic = false) {
@@ -686,23 +805,6 @@ useUnsavedChanges({
   dirty: () => secretOpen.value,
   busy: () => busy.value || credentialUncertain.value
 })
-/** 原生凭证接口没有可重放意图回执，未知结果只能核对，不能借刷新或重试再次派发。 */
-async function credentialCommand<T>(permission: string, command: () => Promise<T>): Promise<T> {
-  if (credentialUncertain.value) throw Error('原凭证操作结果尚未核实，不能再次派发')
-  identity.requirePermission(permission)
-  try {
-    const result = await command()
-    identity.requirePermission(permission)
-    return result
-  } catch (reason) {
-    const status =
-      typeof reason === 'object' && reason !== null && 'status' in reason
-        ? Number(reason.status)
-        : 0
-    if (status === 0 || status === 408 || status >= 500) legacyUncertain.value = true
-    throw reason
-  }
-}
 const { requestClose } = useDrawerClose({
   open: () => open.value,
   busy: () => busy.value || credentialUncertain.value,
@@ -861,42 +963,43 @@ async function rotate(row: ServicePrincipal) {
     await reload()
   })
 }
-async function suspend(row: ServicePrincipal) {
+async function changeStatus(row: ServicePrincipal, action: ServicePrincipalStatusAction) {
+  if (credentialUncertain.value) return
+  identity.requirePermission('foundation.service_principals.update')
+  const label = action === 'suspend' ? '暂停' : '吊销'
   if (
     !(await confirm({
-      title: '暂停服务身份',
-      content: `暂停“${row.integration_id}”的服务身份？该身份将暂时无法继续调用 API。`,
-      confirmText: '暂停身份',
-      danger: true
+      title: `${label}服务身份`,
+      confirmText: action === 'suspend' ? '暂停身份' : '吊销服务身份',
+      danger: true,
+      content:
+        action === 'suspend'
+          ? `暂停“${row.integration_id}”的服务身份？该身份将暂时无法继续调用 API。`
+          : `集成“${row.integration_id}”的凭据将失效，调用方将无法继续调用 API。`
     }))
   )
     return
+  identity.requirePermission('foundation.service_principals.update')
   await run(async () => {
-    identity.requirePermission('foundation.service_principals.update')
-    await credentialCommand('foundation.service_principals.update', () =>
-      api.governance.servicePrincipals.suspend(row.id)
+    const original: PendingStatus = {
+      requestId: crypto.randomUUID(),
+      principalId: String(row.id),
+      action
+    }
+    if (!saveStatus(original)) return
+    statusReceipt.value = undefined
+    const receipt = await api.governance.servicePrincipals.changeStatusWithReceipt(
+      original.requestId,
+      row.id,
+      action
     )
+    identity.requirePermission('foundation.service_principals.update')
+    if (!matchesStatus(receipt, original)) throw Error('状态操作响应不完整，请核对原请求。')
+    const cleared = saveStatus()
+    showStatusOutcome(receipt)
+    if (!cleared) message.warning('原操作已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
     await reload()
-    message.success('服务身份已暂停')
   })
-}
-async function revoke(row: ServicePrincipal) {
-  if (
-    await confirm({
-      title: '吊销服务身份',
-      confirmText: '吊销服务身份',
-      danger: true,
-      content: `集成“${row.integration_id}”的凭据将失效，调用方将无法继续调用 API。`
-    })
-  )
-    await run(async () => {
-      identity.requirePermission('foundation.service_principals.update')
-      await credentialCommand('foundation.service_principals.update', () =>
-        api.governance.servicePrincipals.revoke(row.id)
-      )
-      message.success('服务身份已吊销')
-      await reload()
-    })
 }
 async function pauseWebhook(row: WebhookSubscription) {
   if (

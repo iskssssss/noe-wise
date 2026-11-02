@@ -154,7 +154,8 @@ public class ServicePrincipalService {
 
     private boolean setStatus(String tenantId, long id, String status) {
         return principals.update(null, new UpdateWrapper<ServicePrincipalDO>()
-                .eq("tenant_id", tenant(tenantId)).eq("id", id).eq("status", ACTIVE)
+                .eq("tenant_id", tenant(tenantId)).eq("id", id)
+                .in("status", REVOKED.equals(status) ? List.of(ACTIVE, SUSPENDED) : List.of(ACTIVE))
                 .set("status", status).set("updated_at", Instant.now())) > 0;
     }
 

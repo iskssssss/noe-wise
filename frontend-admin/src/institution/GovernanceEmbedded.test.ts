@@ -16,6 +16,8 @@ const fixture = vi.hoisted(() => ({
   issueWithReceipt: vi.fn(),
   issueResult: vi.fn(),
   rotationResult: vi.fn(),
+  changeStatusWithReceipt: vi.fn(),
+  statusResult: vi.fn(),
   confirm: vi.fn(),
   webhooks: vi.fn(),
   audit: vi.fn()
@@ -30,7 +32,9 @@ vi.mock('../api', () => ({
         rotateWithReceipt: fixture.rotateWithReceipt,
         rotationResult: fixture.rotationResult,
         issueWithReceipt: fixture.issueWithReceipt,
-        issueResult: fixture.issueResult
+        issueResult: fixture.issueResult,
+        changeStatusWithReceipt: fixture.changeStatusWithReceipt,
+        statusResult: fixture.statusResult
       },
       webhooks: { list: fixture.webhooks },
       auditLogs: fixture.audit
@@ -49,6 +53,7 @@ beforeEach(() => {
   sessionStorage.clear()
   fixture.rotationResult.mockResolvedValue(undefined)
   fixture.issueResult.mockResolvedValue(undefined)
+  fixture.statusResult.mockResolvedValue(undefined)
   fixture.auth.identityVersion++
   fixture.auth.user.permissions = ['foundation.service_principals.read']
   fixture.list.mockResolvedValue([])
@@ -380,6 +385,185 @@ describe('工作台内嵌凭证维护', () => {
         .attributes('disabled')
     ).toBeDefined()
     expect(fixture.issueWithReceipt).not.toHaveBeenCalled()
+  })
+  it.each(['suspend', 'revoke'] as const)('%s 断连后重建页面只读核对原操作', async (action) => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.update'
+    ]
+    fixture.list.mockResolvedValue([
+      {
+        id: 11,
+        principal_id: 'service-a',
+        integration_id: 'integration-a',
+        scopes: [],
+        status: 'active',
+        credential_version: 1
+      }
+    ])
+    fixture.changeStatusWithReceipt.mockRejectedValueOnce({ status: 503 })
+    let wrapper = await open()
+    await flushPromises()
+    const label = action === 'suspend' ? '暂停' : '吊销'
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === label)!
+      .trigger('click')
+    await flushPromises()
+    const request = fixture.changeStatusWithReceipt.mock.calls[0]![0]
+    expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toContain(request)
+    wrapper.unmount()
+    fixture.statusResult.mockResolvedValue({
+      request_id: request,
+      principal_id: '11',
+      action,
+      changed: true
+    })
+    wrapper = await open()
+    await flushPromises()
+    expect(fixture.statusResult).toHaveBeenCalledWith(request)
+    expect(fixture.changeStatusWithReceipt).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toBeNull()
+    expect(wrapper.text()).toContain(`原${label}操作已确认`)
+    expect(wrapper.text()).toContain('集成“integration-a”')
+  })
+  it.each([400, 401, 403, 409, 429, 503])(
+    '状态操作返回 %s 不能凭状态码解除未知',
+    async (status) => {
+      fixture.auth.user.permissions = [
+        'foundation.service_principals.read',
+        'foundation.service_principals.update'
+      ]
+      fixture.list.mockResolvedValue([
+        {
+          id: 11,
+          principal_id: 'service-a',
+          integration_id: 'integration-a',
+          scopes: [],
+          status: 'active',
+          credential_version: 1
+        }
+      ])
+      fixture.changeStatusWithReceipt.mockRejectedValueOnce(
+        new HttpClientError({
+          status,
+          code: 'UNCONFIRMED',
+          traceId: 'trace',
+          userMessage: '结果未知'
+        })
+      )
+      const wrapper = await open()
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '暂停')!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('暂停结果尚未确认')
+      expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toBeTruthy()
+      expect(fixture.changeStatusWithReceipt).toHaveBeenCalledTimes(1)
+    }
+  )
+  it('状态请求记录无法写入时不派发操作', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.update'
+    ]
+    fixture.list.mockResolvedValue([
+      {
+        id: 11,
+        principal_id: 'service-a',
+        integration_id: 'integration-a',
+        scopes: [],
+        status: 'active',
+        credential_version: 1
+      }
+    ])
+    const wrapper = await open()
+    await flushPromises()
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('storage unavailable')
+    })
+    try {
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '暂停')!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('无法保存状态操作记录')
+      expect(fixture.changeStatusWithReceipt).not.toHaveBeenCalled()
+    } finally {
+      storage.mockRestore()
+    }
+  })
+  it('不匹配的状态回执不解除原请求', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.update'
+    ]
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem(
+      'skillforge.principal-status:["10","member"]',
+      JSON.stringify({ requestId: request, principalId: '11', action: 'suspend' })
+    )
+    fixture.statusResult.mockResolvedValue({
+      request_id: request,
+      principal_id: '11',
+      action: 'revoke',
+      changed: true
+    })
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂停结果尚未确认')
+    expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toContain(request)
+    expect(fixture.changeStatusWithReceipt).not.toHaveBeenCalled()
+  })
+  it('状态未发生变更时明确提示，不报告成功', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.service_principals.update'
+    ]
+    fixture.list.mockResolvedValue([
+      {
+        id: 11,
+        principal_id: 'service-a',
+        integration_id: 'integration-a',
+        scopes: [],
+        status: 'active',
+        credential_version: 1
+      }
+    ])
+    fixture.changeStatusWithReceipt.mockImplementation(
+      async (requestId: string, id: number, action: string) => ({
+        request_id: requestId,
+        principal_id: String(id),
+        action,
+        changed: false
+      })
+    )
+    const wrapper = await open()
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '吊销')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('原吊销操作未改变服务身份')
+    expect(wrapper.text()).not.toContain('原吊销操作已确认')
+    expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toBeNull()
+  })
+  it('缺少读取权限时保留原状态请求且不自动核对', async () => {
+    fixture.auth.user.permissions = ['foundation.service_principals.update']
+    const request = 'd13c4df2-81ec-40f2-ae3b-f277bc177a3e'
+    sessionStorage.setItem(
+      'skillforge.principal-status:["10","member"]',
+      JSON.stringify({ requestId: request, principalId: '11', action: 'revoke' })
+    )
+    const wrapper = await open()
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前账号没有服务身份读取权限')
+    expect(fixture.statusResult).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('skillforge.principal-status:["10","member"]')).toContain(request)
   })
   it('只读本机构服务身份，不把工作台权限扩展到审计和Webhook', async () => {
     const wrapper = await open()

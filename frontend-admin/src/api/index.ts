@@ -774,6 +774,13 @@ export interface ServicePrincipal {
   credential_version: number
   created_at: string
 }
+export type ServicePrincipalStatusAction = 'suspend' | 'revoke'
+export interface ServicePrincipalStatusReceipt {
+  request_id: string
+  principal_id: string
+  action: ServicePrincipalStatusAction
+  changed: boolean
+}
 /** 明文凭证仅在签发或轮换响应中出现；页面不得缓存或重新请求。 */
 export interface IssuedServicePrincipal {
   principal: ServicePrincipal
@@ -2078,6 +2085,20 @@ export const api = {
           `/service-principals/rotate`,
           { id: id },
           { retryOnUnauthorized: false }
+        ),
+      changeStatusWithReceipt: (
+        requestId: string,
+        id: number,
+        action: ServicePrincipalStatusAction
+      ) =>
+        post<ServicePrincipalStatusReceipt>(
+          '/service-principals/status-with-receipt',
+          { request_id: requestId, principal_id: id, action },
+          { retryOnUnauthorized: false }
+        ),
+      statusResult: (requestId: string) =>
+        get<ServicePrincipalStatusReceipt | undefined>(
+          `/service-principals/status-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
         ),
       suspend: (id: number) =>
         post<{ id: number; suspended: boolean }>(

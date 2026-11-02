@@ -379,6 +379,100 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void principalStatusReceiptRecordsActualChangeAndRevokesSuspendedIdentity() throws Exception {
+        String slug = "principal-state-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "ChannelManagement123";
+        createTestTenantAdministrator(tenant, "state-admin", password);
+        String jwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "state-admin", "password", password), null).path("access_token").asText();
+        var issued = managementHttp("POST", "/api/v1/service-principals/issue-with-receipt", Map.of(
+                "request_id", UUID.randomUUID().toString(), "integration_id", "state-test", "scopes", List.of("sessions.read")), jwt);
+        long id = issued.path("principal_id").asLong();
+        assertTrue(id > 0);
+        String requestId = UUID.randomUUID().toString();
+        String path = "/api/v1/service-principals/status-with-receipt";
+        var command = Map.of("request_id", requestId, "principal_id", id, "action", "suspend");
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var firstFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var secondFuture = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var first = firstFuture.get(30, TimeUnit.SECONDS); var second = secondFuture.get(30, TimeUnit.SECONDS);
+        assertEquals(200, first.statusCode()); assertEquals(200, second.statusCode());
+        for (var response : List.of(first, second)) {
+            var result = json.readTree(response.body()).path("data");
+            assertEquals(requestId, result.path("request_id").asText());
+            assertEquals(Long.toString(id), result.path("principal_id").asText());
+            assertEquals("suspend", result.path("action").asText()); assertTrue(result.path("changed").asBoolean());
+        }
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_principal_status_receipts WHERE tenant_id=? AND request_id=?::uuid AND changed=true", Long.valueOf(tenant), requestId));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_service_principals WHERE tenant_id=? AND id=? AND status='suspended'", Long.valueOf(tenant), id));
+        var receipt = managementHttp("GET", path + "/result?request_id=" + requestId, null, jwt);
+        assertTrue(receipt.path("changed").asBoolean());
+        var conflict = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + jwt).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", requestId, "principal_id", id, "action", "revoke")))).build();
+        assertEquals(409, http.send(conflict, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String revokeId = UUID.randomUUID().toString();
+        var revoked = managementHttp("POST", path, Map.of("request_id", revokeId, "principal_id", id, "action", "revoke"), jwt);
+        assertTrue(revoked.path("changed").asBoolean());
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_service_principals WHERE tenant_id=? AND id=? AND status='revoked'", Long.valueOf(tenant), id));
+        String noChangeId = UUID.randomUUID().toString();
+        var noChange = managementHttp("POST", path, Map.of("request_id", noChangeId, "principal_id", id, "action", "suspend"), jwt);
+        assertTrue(noChange.has("changed")); assertFalse(noChange.path("changed").asBoolean());
+        var noChangeReceipt = managementHttp("GET", path + "/result?request_id=" + noChangeId, null, jwt);
+        assertTrue(noChangeReceipt.has("changed")); assertFalse(noChangeReceipt.path("changed").asBoolean());
+        var missing = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + UUID.randomUUID()))
+                .header("Authorization", "Bearer " + jwt).GET().build();
+        assertEquals(204, http.send(missing, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String foreignSlug = "principal-state-other-" + SnowflakeIds.nextId();
+        TenantContext.clear();
+        String foreign = createTenant(tenants, plans, foreignSlug);
+        TenantContext.setTenantId(foreign);
+        createTestTenantAdministrator(foreign, "foreign-state-admin", password);
+        String foreignJwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", foreignSlug,
+                "username", "foreign-state-admin", "password", password), null).path("access_token").asText();
+        var foreignRead = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                .header("Authorization", "Bearer " + foreignJwt).GET().build();
+        assertEquals(204, http.send(foreignRead, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String role = "principal_status_rls_" + SnowflakeIds.nextId();
+        boolean created = false;
+        try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection()) {
+            connection.setAutoCommit(false);
+            try (var statement = connection.createStatement()) {
+                var current = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(current.next());
+                if (current.getBoolean(1)) {
+                    statement.execute("CREATE ROLE " + role + " NOLOGIN NOSUPERUSER NOBYPASSRLS");
+                    statement.execute("GRANT USAGE ON SCHEMA public TO " + role);
+                    statement.execute("GRANT SELECT ON nw_principal_status_receipts TO " + role);
+                    connection.commit(); created = true;
+                    statement.execute("SET LOCAL ROLE " + role);
+                }
+                var restricted = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(restricted.next()); assertFalse(restricted.getBoolean(1));
+            }
+            try (var bind = connection.prepareStatement("SELECT set_config('app.tenant_id',?,true)");
+                 var count = connection.prepareStatement("SELECT count(*) FROM nw_principal_status_receipts WHERE request_id=CAST(? AS uuid)")) {
+                count.setString(1, requestId);
+                bind.setString(1, foreign); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
+                bind.setString(1, tenant); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(1, rows.getLong(1)); }
+            }
+            connection.rollback();
+        } finally {
+            if (created) {
+                try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection(); var statement = connection.createStatement()) {
+                    statement.execute("DROP OWNED BY " + role);
+                    statement.execute("DROP ROLE " + role);
+                }
+            }
+        }
+    }
+
     @Test void principalIssueReceiptCommitsOnceAndRejectsDifferentInputs() throws Exception {
         String slug = "principal-issue-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, slug);
