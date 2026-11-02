@@ -25,10 +25,15 @@ import type {
   WorkflowTestOptions,
   WorkflowTestReceipt,
   WorkflowTestSource,
-  WorkflowReplyIdentity,
   WorkflowReplyReceipt
 } from '../../api/workflowTests'
 import { workflowConfigFields, workflowInstallationConfig } from '../../utils/workflow'
+import {
+  parseWorkflowTestRecovery,
+  workflowTestRecoveryKey,
+  type Recovery,
+  type ReplyOperation
+} from './workflowTestRecovery'
 
 const props = defineProps<{
   modelValue: boolean
@@ -67,19 +72,6 @@ const budget = ref<WorkflowTestBudget>(),
   trace = ref<TrajectoryDetail>()
 const replies = reactive<Record<string, string>>({}),
   replyUnknown = reactive<Record<string, boolean>>({})
-interface Recovery {
-  requestId: string
-  testSessionId?: string
-  initial: 'not_sent' | 'sending' | 'submitted' | 'unknown'
-  closing: boolean
-  replyAttempts?: string[]
-  replyOperations?: ReplyOperation[]
-}
-interface ReplyOperation extends WorkflowReplyIdentity {
-  waitKey: string
-  runRevision: string
-  accepted?: boolean
-}
 const replyReceiptBusy = ref(false)
 const replyReceiptOutcome = ref('')
 let replyReceiptOwner = 0
@@ -234,10 +226,7 @@ const canStartExisting = computed(
     receipt.value.closeStatus === 'open'
 )
 function storageKey() {
-  return (
-    'noewise:workflow-test:' +
-    JSON.stringify([localStorage.getItem(authSessionKey), props.workflowId])
-  )
+  return workflowTestRecoveryKey(localStorage.getItem(authSessionKey), props.workflowId)
 }
 function sameIdentity(identity: number | undefined, authSession: string | null, workflow: string) {
   if (disposed || props.identityVersion !== identity || props.workflowId !== workflow) return false
@@ -255,47 +244,7 @@ function persist(value: Recovery | undefined) {
 function restoreRecovery() {
   const text = sessionStorage.getItem(storageKey())
   if (!text) return
-  const value: unknown = JSON.parse(text)
-  if (!(
-    value &&
-    typeof value === 'object' &&
-    'requestId' in value &&
-    typeof value.requestId === 'string' &&
-    'initial' in value &&
-    ['not_sent', 'sending', 'submitted', 'unknown'].includes(String(value.initial))
-  ))
-    throw Error('invalid')
-  const candidate = value as Recovery
-  if (
-    candidate.replyAttempts !== undefined &&
-    (!Array.isArray(candidate.replyAttempts) ||
-      candidate.replyAttempts.some((item) => typeof item !== 'string'))
-  )
-    throw Error('invalid')
-  if (
-    candidate.replyOperations !== undefined &&
-    (!Array.isArray(candidate.replyOperations) ||
-      candidate.replyOperations.some(
-        (item) =>
-          !item ||
-          typeof item.waitKey !== 'string' ||
-          typeof item.inputId !== 'string' ||
-          typeof item.runId !== 'string' ||
-          typeof item.testSessionId !== 'string' ||
-          typeof item.sessionId !== 'string' ||
-          typeof item.actionId !== 'string' ||
-          !/^[1-9]\d*$/.test(item.generation) ||
-          !['human', 'workflow'].includes(item.kind) ||
-          typeof item.runRevision !== 'string' ||
-          (item.accepted !== undefined && typeof item.accepted !== 'boolean') ||
-          (item.kind === 'workflow' &&
-            (!item.executionId ||
-              !item.suspendRef ||
-              !item.actionKey ||
-              !/^[1-9]\d*$/.test(item.executionRevision ?? '')))
-      ))
-  )
-    throw Error('invalid')
+  const candidate = parseWorkflowTestRecovery(text)
   recovery.value = candidate
   for (const key of candidate.replyAttempts ?? []) replyUnknown[key] = true
   for (const operation of candidate.replyOperations ?? []) replyUnknown[operation.waitKey] = true

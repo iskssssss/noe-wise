@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Response } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -13,6 +13,16 @@ test.describe.configure({ retries: 0 })
 test('工作流待办回复受理后断连，刷新核对原输入', async ({ page }) => {
   test.setTimeout(180_000)
   const workflowId = required('E2E_WORKFLOW_ID')
+  const mode = process.env.E2E_HITL_RESTORE_MODE || 'candidate'
+  expect(['baseline', 'candidate']).toContain(mode)
+  let createPosts = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/builder/workflows/test-sessions'
+    )
+      createPosts++
+  })
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/workflows/' + workflowId)}`)
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
   await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
@@ -89,18 +99,61 @@ test('工作流待办回复受理后断连，刷新核对原输入', async ({ pa
     fullPage: true
   })
   page.on('dialog', (dialog) => void dialog.accept())
-  await page.reload()
   await page.unroute('**/api/v1/builder/workflows/test-sessions/reply-receipt?*')
-  const lookup = page.waitForResponse((response) => {
+  const automaticReads: { inputId: string | null; status: number }[] = []
+  const observeReceipt = (response: Response) => {
     const url = new URL(response.url())
-    return (
-      url.pathname === '/api/v1/builder/workflows/test-sessions/reply-receipt' &&
-      url.searchParams.get('inputId') === replyInputId
-    )
-  })
-  await page.getByRole('button', { name: '测试', exact: true }).click()
-  await expect(panel).toBeVisible()
-  const response = await lookup
+    if (url.pathname !== '/api/v1/builder/workflows/test-sessions/reply-receipt') return
+    automaticReads.push({ inputId: url.searchParams.get('inputId'), status: response.status() })
+  }
+  page.on('response', observeReceipt)
+  const automaticLookup = page.waitForResponse(
+    (response) => {
+      const url = new URL(response.url())
+      return (
+        url.pathname === '/api/v1/builder/workflows/test-sessions/reply-receipt' &&
+        url.searchParams.get('inputId') === replyInputId &&
+        response.status() === 200
+      )
+    },
+    { timeout: 30_000 }
+  )
+  await page.reload()
+  await expect(page.getByRole('button', { name: '测试', exact: true })).toBeVisible()
+  let manualOpenClicks = 0
+  if (mode === 'baseline') {
+    // 基线只观察页面，不触发测试面板，再手动打开以读取原回执。
+    await page.waitForTimeout(5000)
+    expect(await panel.isVisible()).toBe(false)
+    expect(automaticReads).toEqual([])
+    await page.screenshot({
+      path: join(evidence, 'workflow-hitl-reply-after-reload-before-opening.png'),
+      fullPage: true
+    })
+    await page.getByRole('button', { name: '测试', exact: true }).click()
+    manualOpenClicks++
+  }
+  await expect(panel).toBeVisible({ timeout: 30_000 })
+  const response = await automaticLookup
+  page.off('response', observeReceipt)
+  const afterReload = {
+    mode,
+    automaticReads,
+    panelVisible: await panel.isVisible(),
+    retainedInput: await page.evaluate(
+      (id) =>
+        Object.entries(sessionStorage).some(
+          ([key, value]) => key.startsWith('noewise:workflow-test:') && value.includes(id)
+        ),
+      replyInputId
+    ),
+    manualOpenClicks,
+    replyPosts,
+    createPosts
+  }
+  expect(manualOpenClicks).toBe(mode === 'baseline' ? 1 : 0)
+  expect(createPosts).toBe(1)
+  expect(replyPosts).toBe(1)
   expect(response.status()).toBe(200)
   const receipt = (await response.json()).data
   expect(receipt.test_session_id).toBe(String(testReceipt.test_session_id))
@@ -114,6 +167,7 @@ test('工作流待办回复受理后断连，刷新核对原输入', async ({ pa
     panel.getByText('原待办回复已受理，后续运行状态请以测试结果为准。', { exact: true })
   ).toBeVisible()
   expect(replyPosts).toBe(1)
+  expect(createPosts).toBe(1)
   await page.screenshot({
     path: join(evidence, 'workflow-hitl-reply-after-reload.png'),
     fullPage: true
@@ -128,7 +182,11 @@ test('工作流待办回复受理后断连，刷新核对原输入', async ({ pa
         replyInputId,
         upstreamStatus,
         replyPosts,
+        createPosts,
+        manualOpenClicks,
+        mode,
         before,
+        afterReload,
         receipt
       },
       null,

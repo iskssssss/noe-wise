@@ -214,6 +214,87 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 describe('工作流布局保存与恢复', () => {
+  function pendingTestRecovery(overrides: Record<string, unknown> = {}) {
+    return {
+      requestId: 'original-request',
+      testSessionId: 'test:1',
+      initial: 'submitted',
+      closing: false,
+      replyOperations: [
+        {
+          waitKey: 'wait:1',
+          inputId: 'input:1',
+          testSessionId: 'test:1',
+          sessionId: 'session:1',
+          runId: 'run:1',
+          runRevision: '1',
+          actionId: 'action:1',
+          generation: '1',
+          kind: 'human'
+        }
+      ],
+      ...overrides
+    }
+  }
+  function saveTestRecovery(session: string, id: string, value: unknown) {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify([session, id]),
+      JSON.stringify(value)
+    )
+  }
+  it('原回复未决时等草稿加载成功后恢复测试面板，主动关闭后不再打开', async () => {
+    testAuth.user.permissions.push('foundation.workflows.update')
+    saveTestRecovery(testAuth.sessionId, 'flow', pendingTestRecovery())
+    let resolveDraft!: (draft: typeof value) => void
+    mocks.get.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDraft = resolve
+      })
+    )
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+    resolveDraft(value)
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(true)
+    wrapper.findComponent({ name: 'WorkflowTestPanel' }).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    reactiveTestAuth.identityVersion++
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it.each([
+    'no-permission',
+    'other-session',
+    'other-workflow',
+    'accepted',
+    'mismatch',
+    'malformed'
+  ])('不自动打开不满足恢复条件的记录：%s', async (reason) => {
+    if (reason !== 'no-permission') testAuth.user.permissions.push('foundation.workflows.update')
+    const record = pendingTestRecovery()
+    if (reason === 'accepted') Object.assign(record.replyOperations[0], { accepted: true })
+    if (reason === 'mismatch') record.replyOperations[0].testSessionId = 'test:other'
+    saveTestRecovery(
+      reason === 'other-session' ? 'other' : testAuth.sessionId,
+      reason === 'other-workflow' ? 'other' : 'flow',
+      reason === 'malformed' ? { ...record, replyOperations: ['invalid'] } : record
+    )
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+  })
+  it('自动恢复后权限或身份变化会关闭面板', async () => {
+    testAuth.user.permissions.push('foundation.workflows.update')
+    saveTestRecovery(testAuth.sessionId, 'flow', pendingTestRecovery())
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(true)
+    reactiveTestAuth.user.permissions = ['foundation.workflows.read']
+    await flushPromises()
+    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
+  })
   it('在知识查询节点选择来源后自动引用新声明', async () => {
     mocks.get.mockResolvedValue({
       ...value,
@@ -1856,7 +1937,7 @@ describe('工作流布局保存与恢复', () => {
     await flushPromises()
     await button('保存草稿').trigger('click')
     await flushPromises()
-    testAuth.identityVersion++
+    reactiveTestAuth.identityVersion++
     testAuth.user.sub = 'other'
     complete({ ...value, revision: 2 })
     await flushPromises()

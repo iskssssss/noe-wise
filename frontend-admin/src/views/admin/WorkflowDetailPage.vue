@@ -779,6 +779,10 @@ import WorkflowInstallationFields from '../../components/builder/WorkflowInstall
 import { defaultInstallationSlots } from '../../components/builder/workflowInstallationDefaults'
 import WorkflowScriptResources from '../../components/builder/WorkflowScriptResources.vue'
 import WorkflowCapabilityDeclarations from '../../components/builder/WorkflowCapabilityDeclarations.vue'
+import {
+  parseWorkflowTestRecovery,
+  workflowTestRecoveryKey
+} from '../../components/builder/workflowTestRecovery'
 import type {
   WorkflowInstallReceipt,
   WorkflowPublicationDetail,
@@ -1963,6 +1967,73 @@ if (testOpen.value) {
   delete state.workflowTestResume
   window.history.replaceState(state, '')
 }
+const checkedTestRecoveryScopes = new Set<string>()
+let automaticTestOwner: { id: string; session: string; identity: number } | undefined
+watch(
+  [
+    () => route.params.workflowId,
+    workflowId,
+    draft,
+    busy,
+    readonly,
+    loadingDraft,
+    creationBlocked,
+    draftConflict,
+    () => auth.identityVersion,
+    () => auth.sessionIdentity,
+    () => auth.user?.permissions.includes('foundation.workflows.update')
+  ],
+  () => {
+    const id = typeof route.params.workflowId === 'string' ? route.params.workflowId : ''
+    const session = publicationSession()
+    const permitted = !!auth.user?.permissions.includes('foundation.workflows.update')
+    if (
+      automaticTestOwner &&
+      (id !== automaticTestOwner.id ||
+        session !== automaticTestOwner.session ||
+        auth.identityVersion !== automaticTestOwner.identity ||
+        !permitted)
+    ) {
+      testOpen.value = false
+      automaticTestOwner = undefined
+    }
+    if (
+      !id ||
+      !session ||
+      !permitted ||
+      testOpen.value ||
+      busy.value ||
+      readonly.value ||
+      loadingDraft.value ||
+      creationBlocked.value ||
+      draftConflict.value ||
+      workflowId.value !== id ||
+      draft.value?.workflowId !== id
+    )
+      return
+    const scope = JSON.stringify([session, id])
+    if (checkedTestRecoveryScopes.has(scope)) return
+    checkedTestRecoveryScopes.add(scope)
+    try {
+      const text = sessionStorage.getItem(workflowTestRecoveryKey(session, id))
+      if (!text) return
+      const recovery = parseWorkflowTestRecovery(text)
+      if (
+        !recovery.requestId ||
+        !recovery.testSessionId ||
+        !recovery.replyOperations?.some(
+          (operation) => !operation.accepted && operation.testSessionId === recovery.testSessionId
+        )
+      )
+        return
+      automaticTestOwner = { id, session, identity: auth.identityVersion }
+      testOpen.value = true
+    } catch {
+      // 手动打开时由测试面板展示原记录读取错误。
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
 const testPublications = computed(() =>
   publications.value
     .filter((value) => /^[1-9]\d*$/.test(String(value.definitionVersionId)))
