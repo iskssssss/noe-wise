@@ -10,7 +10,8 @@ const calls = vi.hoisted(() => ({
   select: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
-  auth: undefined as unknown as { user: { tenant_id: string; sub: string } }
+  auth: undefined as unknown as { user: { tenant_id: string; sub: string } },
+  routeQuery: {} as Record<string, string>
 }))
 vi.mock('../../api', () => ({
   api: {
@@ -27,7 +28,7 @@ vi.mock('../../stores/auth', () => ({
   useAuthStore: () => calls.auth
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {} }),
+  useRoute: () => ({ query: calls.routeQuery }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
@@ -40,11 +41,77 @@ beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
   calls.auth = reactive({ user: { tenant_id: 'tenant-1', sub: 'user-1' } })
-  calls.sessions.mockResolvedValue([session])
+  calls.routeQuery = {}
+  calls.sessions.mockResolvedValue([session, { session_id: 'session-2', summary: '另一会话' }])
   calls.list.mockResolvedValue([])
   calls.receipt.mockResolvedValue({ status: 'UNKNOWN', task: null })
 })
 
+it('只有一个可见会话时自动读取任务，无需再选择', async () => {
+  calls.sessions.mockResolvedValue([session])
+  calls.list.mockResolvedValue([
+    { taskId: 'one', title: '当前任务', summary: '', status: 'OPEN', revision: 1 }
+  ])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
+  expect(calls.list).toHaveBeenCalledExactlyOnceWith('session-1', '', false, 0)
+  expect(wrapper.text()).toContain('当前任务')
+  expect(calls.select).not.toHaveBeenCalled()
+  expect(calls.update).not.toHaveBeenCalled()
+})
+it('会话读取失败后重试，如果只有一个会话则自动读取任务', async () => {
+  calls.sessions.mockRejectedValueOnce(new Error('会话不可用')).mockResolvedValueOnce([session])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.list).not.toHaveBeenCalled()
+  await button('刷新会话').trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
+  expect(calls.list).toHaveBeenCalledExactlyOnceWith('session-1', '', false, 0)
+})
+it('多个可见会话或链接指定会话时不覆盖用户目标', async () => {
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('')
+  expect(calls.list).not.toHaveBeenCalled()
+  wrapper.unmount()
+  calls.routeQuery = { sessionId: 'linked-session' }
+  calls.sessions.mockResolvedValue([session])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('linked-session')
+  expect(calls.list).toHaveBeenCalledExactlyOnceWith('linked-session', '', false, 0)
+})
+it('待核对操作优先于唯一候选会话并保留原请求', async () => {
+  const operationId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = `skillforge.task-operation.${JSON.stringify(['tenant-1', 'user-1'])}`
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({ sessionId: 'original-session', taskId: 'task-1', operationId })
+  )
+  calls.sessions.mockResolvedValue([session])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('original-session')
+  expect(calls.list).toHaveBeenCalledExactlyOnceWith('original-session', '', false, 0)
+  expect(calls.receipt).toHaveBeenCalledExactlyOnceWith('original-session', 'task-1', operationId)
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+  expect(calls.select).not.toHaveBeenCalled()
+})
+it('唯一会话的任务读取失败时保留目标并允许手动重试', async () => {
+  calls.sessions.mockResolvedValue([session])
+  calls.list.mockRejectedValueOnce(new Error('任务不可用')).mockResolvedValueOnce([])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.list).toHaveBeenCalledTimes(1)
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
+  expect(document.body.textContent).toContain('任务不可用')
+  await button('查询').trigger('click')
+  await flushPromises()
+  expect(calls.list).toHaveBeenCalledTimes(2)
+  expect(calls.list).toHaveBeenLastCalledWith('session-1', '', false, 0)
+})
 it('切换机构后清除旧任务和会话，忽略旧机构迟到的列表', async () => {
   let finish!: (value: unknown[]) => void
   calls.list.mockReturnValueOnce(

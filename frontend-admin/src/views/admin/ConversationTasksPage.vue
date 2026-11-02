@@ -51,7 +51,7 @@
       ><ElButton :disabled="!sessionId || loading || busy || open" @click="search">查询</ElButton>
 
       <FieldTip :id="formTipId + '-group-0'"
-        >先选择会话，再按任务关键词筛选；勾选包含已关闭可同时查看历史任务。</FieldTip
+        >仅有一个可见会话时自动选择；也可选择其他会话并按任务关键词筛选，勾选包含已关闭可查看历史任务。</FieldTip
       >
     </div>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
@@ -237,8 +237,8 @@ function requireCurrentSession() {
   if (refreshRequired.value) throw Error('请先刷新当前任务，再执行操作')
 }
 onMounted(async () => {
-  await loadSessions()
-  if (sessionId.value) await reload()
+  const selectedAutomatically = await loadSessions()
+  if (sessionId.value && !selectedAutomatically) await reload()
   if (active && pending.value) checkReceipt()
 })
 const { busy, error, run } = useTask()
@@ -364,14 +364,23 @@ function checkReceipt() {
 }
 async function loadSessions() {
   const subject = owner.value
-  await run(async () => {
+  const selectedAutomatically = await run(async () => {
     try {
       const value = await api.chat.sessions()
-      if (active && owner.value === subject) sessions.value = value
+      if (!active || owner.value !== subject) return false
+      sessions.value = value
+      if (!sessionId.value && !pending.value && value.length === 1) {
+        sessionId.value = value[0]!.session_id
+        return true
+      }
+      return false
     } catch (cause) {
       if (active && owner.value === subject) throw cause
+      return false
     }
   })
+  if (selectedAutomatically) await search()
+  return selectedAutomatically
 }
 const open = ref(false),
   selected = ref<ConversationTask>(),
