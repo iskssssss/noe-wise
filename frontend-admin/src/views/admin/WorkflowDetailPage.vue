@@ -952,7 +952,12 @@ function publicationSession() {
   }
 }
 watch(
-  [() => route.params.workflowId, installOwner, () => auth.identityVersion, () => auth.sessionId],
+  [
+    () => route.params.workflowId,
+    installOwner,
+    () => auth.identityVersion,
+    () => auth.sessionIdentity
+  ],
   ([value, owner]) => {
     publicationPending.value = ''
     publicationStorageError.value = false

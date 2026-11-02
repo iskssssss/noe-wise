@@ -144,6 +144,7 @@ describe('工作流测试资源公开API', () => {
   it('原回复回执保留精确身份与十进制修订，204 保持未知', async () => {
     const identity = {
       testSessionId: 'test:1',
+      sessionId: 'session:1',
       inputId: 'input:1',
       runId: 'run:1',
       actionId: 'action:1',
@@ -158,7 +159,7 @@ describe('工作流测试资源公开API', () => {
       .fn()
       .mockResolvedValueOnce({
         test_session_id: identity.testSessionId,
-        session_id: 'session:1',
+        session_id: identity.sessionId,
         input_id: identity.inputId,
         run_id: identity.runId,
         action_id: identity.actionId,
@@ -174,11 +175,12 @@ describe('工作流测试资源公开API', () => {
     const client = createWorkflowTestsApi({ get, post: vi.fn() })
     expect(await client.replyReceipt(identity)).toEqual({
       ...identity,
-      sessionId: 'session:1',
       acceptedRevision: '9007199254740997'
     })
     const url = new URL(get.mock.calls[0]![0], 'https://example.invalid')
-    expect(Object.fromEntries(url.searchParams)).toEqual({ ...identity })
+    const { sessionId, ...requestIdentity } = identity
+    expect(sessionId).toBe('session:1')
+    expect(Object.fromEntries(url.searchParams)).toEqual(requestIdentity)
     expect(await client.replyReceipt(identity)).toBeUndefined()
   })
   it('损失精度的数值身份不转换成看似有效的字符串', async () => {

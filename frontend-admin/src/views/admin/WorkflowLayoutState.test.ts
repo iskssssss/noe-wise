@@ -9,6 +9,9 @@ import WorkflowDetailPage from './WorkflowDetailPage.vue'
 const testAuth = vi.hoisted(() => ({
   identityVersion: 1,
   sessionId: 'workflow-test-session',
+  get sessionIdentity() {
+    return this.sessionId
+  },
   user: { tenant_id: '7', sub: '8', permissions: ['foundation.workflows.read'] }
 }))
 const reactiveTestAuth = reactive(testAuth)
