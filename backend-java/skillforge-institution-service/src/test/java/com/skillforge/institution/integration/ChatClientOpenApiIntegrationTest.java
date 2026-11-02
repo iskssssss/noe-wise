@@ -379,6 +379,37 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void credentialReceiptsCannotBeReadAcrossTenants() throws Exception {
+        String suffix = Long.toString(SnowflakeIds.nextId());
+        String ownerSlug = "receipt-owner-" + suffix;
+        String otherSlug = "receipt-other-" + suffix;
+        String owner = createTenant(tenants, plans, ownerSlug);
+        String other = createTenant(tenants, plans, otherSlug);
+        String password = "ChannelManagement123";
+        TenantContext.setTenantId(owner);
+        initializeChannelAdministrator(owner, "owner-admin", password);
+        String ownerJwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", ownerSlug,
+                "username", "owner-admin", "password", password), null).path("access_token").asText();
+        long id = managementHttp("POST", "/api/v1/channels", Map.of("name", "isolated receipt",
+                "channel_type", "openapi", "config", Map.of(), "ui_config", Map.of()), ownerJwt).path("id").asLong();
+        String keyRequest = UUID.randomUUID().toString();
+        String tokenRequest = UUID.randomUUID().toString();
+        String keyPath = "/api/v1/channels/api-keys/issue-with-receipt";
+        String tokenPath = "/api/v1/channels/tokens/rotate-with-receipt";
+        managementHttp("POST", keyPath, Map.of("request_id", keyRequest, "channel_id", id), ownerJwt);
+        managementHttp("POST", tokenPath, Map.of("request_id", tokenRequest, "channel_id", id), ownerJwt);
+        TenantContext.setTenantId(other);
+        initializeChannelAdministrator(other, "other-admin", password);
+        String otherJwt = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", otherSlug,
+                "username", "other-admin", "password", password), null).path("access_token").asText();
+        for (var pair : Map.of(keyPath, keyRequest, tokenPath, tokenRequest).entrySet()) {
+            var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + pair.getKey()
+                    + "/result?request_id=" + pair.getValue()))
+                    .header("Authorization", "Bearer " + otherJwt).GET().build();
+            assertEquals(204, http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+        }
+    }
+
     @Test void tokenRotationReceiptCommitsOnceWithoutPersistingOrReplayingPlaintext() throws Exception {
         String slug = "token-receipt-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, slug);
