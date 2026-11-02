@@ -57,6 +57,8 @@ const auth = useAuthStore()
 const workflows = ref<WorkflowDraftListItem[]>([])
 const instances = ref<BuilderWorkflowInstance[]>([])
 const selected = ref('')
+const selectionTouched = ref(false)
+const autoSelected = ref('')
 const mode = ref<'REUSE' | 'INSTALL' | 'UPDATE'>()
 const expectedDefinition = ref('')
 const slots = ref<Slot[]>([])
@@ -90,7 +92,17 @@ onScopeDispose(() => {
 })
 watch(
   owner,
-  (value) => {
+  (value, previous) => {
+    if (previous && previous !== value) {
+      selected.value = ''
+      autoSelected.value = ''
+      selectionTouched.value = false
+      workflows.value = []
+      instances.value = []
+      ready.value = false
+      dependenciesReady.value = false
+      catalogReady.value = false
+    }
     original.value = undefined
     pending.value = undefined
     storageError.value = ''
@@ -121,6 +133,17 @@ watch(
 const receipt = ref<WorkflowOnboardingReceipt>()
 const readRequestId = ref('')
 const manualUnknown = ref('')
+watch(
+  () => auth.identityVersion,
+  () => {
+    catalogReady.value = false
+    ready.value = false
+    dependenciesReady.value = false
+    if (selected.value) selectionStale.value = true
+    error.value = ''
+  },
+  { flush: 'sync' }
+)
 // 组合接入后端按 workflowId_机构ID 定位共享安装，其他实例由高级挂载选择。
 const currentInstance = computed(() =>
   instances.value.find(
@@ -175,14 +198,29 @@ useUnsavedChanges({
       ? `工作流接入结果尚未确认。请记录原请求 ID ${pending.value?.request_id ?? original.value?.request_id ?? manualUnknown.value}，之后只查询原回执。`
       : undefined
 })
+function claimStaleRead<T>(promise: Promise<T>, current: () => boolean): Promise<T> {
+  return promise.catch((reason: unknown) => {
+    if (!current() && reason instanceof HttpClientError) reason.claimFeedback()
+    throw reason
+  })
+}
 async function loadCatalog() {
   catalogReady.value = false
-  return await run(async () => {
+  const identity = auth.identityVersion
+  const subject = owner.value
+  const current = () => active && identity === auth.identityVersion && subject === owner.value
+  const loaded = await run(async () => {
     const previousInstance = JSON.stringify(currentInstance.value ?? null)
-    const [list, installed] = await Promise.all([
-      api.workflowDrafts.list(),
-      api.workflowDrafts.instances()
-    ])
+    const result = await Promise.all([
+      claimStaleRead(api.workflowDrafts.list(), current),
+      claimStaleRead(api.workflowDrafts.instances(), current)
+    ]).catch((reason: unknown) => {
+      if (!active || identity !== auth.identityVersion || subject !== owner.value) return undefined
+      throw reason
+    })
+    if (!result) return false
+    const [list, installed] = result
+    if (!active || identity !== auth.identityVersion || subject !== owner.value) return false
     workflows.value = list.items.filter(
       (item) => !!item.activeDefinitionVersionId && item.status !== 'archived'
     )
@@ -200,6 +238,23 @@ async function loadCatalog() {
     catalogReady.value = true
     return true
   })
+  if (
+    loaded &&
+    active &&
+    identity === auth.identityVersion &&
+    subject === owner.value &&
+    !selectionTouched.value &&
+    !selected.value &&
+    !locked.value &&
+    !props.receiptOnly &&
+    !receipt.value &&
+    workflows.value.length === 1
+  ) {
+    selected.value = workflows.value[0]!.workflowId
+    autoSelected.value = selected.value
+    await chooseWorkflow()
+  }
+  return loaded
 }
 async function refreshSelection() {
   if (refreshingSelection.value || busy.value) return
@@ -243,6 +298,13 @@ async function chooseWorkflow() {
   selectionStale.value = false
   if (!selected.value) return
   const workflowId = selected.value
+  const identity = auth.identityVersion
+  const subject = owner.value
+  const current = () =>
+    active &&
+    identity === auth.identityVersion &&
+    subject === owner.value &&
+    selected.value === workflowId
   await run(async () => {
     const versionId = workflows.value.find(
       (item) => item.workflowId === workflowId
@@ -251,8 +313,27 @@ async function chooseWorkflow() {
       selectionStale.value = true
       return
     }
-    const publication = await api.workflowDrafts.publicationDetail(workflowId, versionId)
-    if (selected.value !== workflowId) return
+    const publication = await claimStaleRead(
+      api.workflowDrafts.publicationDetail(workflowId, versionId),
+      current
+    ).catch((reason: unknown) => {
+      if (
+        !active ||
+        identity !== auth.identityVersion ||
+        subject !== owner.value ||
+        selected.value !== workflowId
+      )
+        return undefined
+      throw reason
+    })
+    if (!publication) return
+    if (
+      !active ||
+      identity !== auth.identityVersion ||
+      subject !== owner.value ||
+      selected.value !== workflowId
+    )
+      return
     if (
       !publication.current ||
       publication.workflowId !== workflowId ||
@@ -301,34 +382,65 @@ async function chooseWorkflow() {
     }
   })
 }
+function selectWorkflow() {
+  selectionTouched.value = true
+  autoSelected.value = ''
+  void chooseWorkflow()
+}
 async function readDependencies() {
   const owner = auth.identityVersion,
-    workflow = selected.value
-  const nextDefinitions = slots.value.length
-    ? (await api.capabilities.definitions(undefined, 'PUBLISHED')).filter(
-        (definition) =>
-          definition.defaultVersionId &&
-          slots.value.some(
-            (slot) =>
-              definition.capabilityType === slot.type.toUpperCase() &&
-              definition.capabilityKey === slot.capability_id
-          )
+    workflow = selected.value,
+    subject = props.agentId
+  const current = () =>
+    active &&
+    owner === auth.identityVersion &&
+    workflow === selected.value &&
+    subject === props.agentId
+  try {
+    const nextDefinitions = slots.value.length
+      ? (
+          await claimStaleRead(api.capabilities.definitions(undefined, 'PUBLISHED'), current)
+        ).filter(
+          (definition) =>
+            definition.defaultVersionId &&
+            slots.value.some(
+              (slot) =>
+                definition.capabilityType === slot.type.toUpperCase() &&
+                definition.capabilityKey === slot.capability_id
+            )
+        )
+      : []
+    const nextVersions = (
+      await Promise.all(
+        nextDefinitions.map((definition) =>
+          claimStaleRead(api.capabilities.versions(definition.id, 'PUBLISHED'), current)
+        )
       )
-    : []
-  const nextVersions = (
-    await Promise.all(
-      nextDefinitions.map((definition) => api.capabilities.versions(definition.id, 'PUBLISHED'))
+    ).flat()
+    const nextDeployments = slots.value.some((slot) => slot.type === 'tool')
+      ? await claimStaleRead(api.capabilities.deployments('ACTIVE'), current)
+      : []
+    if (
+      !active ||
+      owner !== auth.identityVersion ||
+      workflow !== selected.value ||
+      subject !== props.agentId
     )
-  ).flat()
-  const nextDeployments = slots.value.some((slot) => slot.type === 'tool')
-    ? await api.capabilities.deployments('ACTIVE')
-    : []
-  if (owner !== auth.identityVersion || workflow !== selected.value) return
-  definitions.value = nextDefinitions
-  versions.value = nextVersions
-  deployments.value = nextDeployments
-  slots.value = defaultInstallationSlots(slots.value, candidates, deployments.value)
-  dependenciesReady.value = true
+      return
+    definitions.value = nextDefinitions
+    versions.value = nextVersions
+    deployments.value = nextDeployments
+    slots.value = defaultInstallationSlots(slots.value, candidates, deployments.value)
+    dependenciesReady.value = true
+  } catch (reason) {
+    if (
+      active &&
+      owner === auth.identityVersion &&
+      workflow === selected.value &&
+      subject === props.agentId
+    )
+      throw reason
+  }
 }
 async function changeMode() {
   if (mode.value && mode.value !== 'REUSE' && !dependenciesReady.value) await run(readDependencies)
@@ -603,7 +715,7 @@ async function inspect(automatic = false) {
     >
     <ElForm v-if="!receiptOnly" label-position="top" :disabled="locked" @submit.prevent>
       <ElFormItem label="已发布工作流">
-        <ElSelect v-model="selected" :disabled="locked" filterable @change="chooseWorkflow">
+        <ElSelect v-model="selected" :disabled="locked" filterable @change="selectWorkflow">
           <ElOption
             v-for="workflow in workflows"
             :key="workflow.workflowId"
@@ -612,6 +724,9 @@ async function inspect(automatic = false) {
           />
         </ElSelect>
       </ElFormItem>
+      <p v-if="autoSelected && selected === autoSelected" class="admin-field-help" role="status">
+        已预选唯一可用的已发布工作流，可按需修改；接入仍需确认。
+      </p>
       <p v-if="catalogReady && !workflows.length" class="admin-field-help" role="status">
         当前没有可接入的已发布工作流。
         <template v-if="canInstall">可前往工作流创建并发布，然后返回刷新。</template>

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElFormItem, ElInput, ElRadioGroup, ElSelect } from 'element-plus'
-import { HttpClientError } from '@skillforge/shared/utils/http'
+import { createHttpClient, HttpClientError } from '@skillforge/shared/utils/http'
+import { useAuthStore } from '../stores/auth'
 import WorkflowOnboarding from './WorkflowOnboarding.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -39,9 +40,11 @@ vi.mock('../api', () => ({
 vi.mock('../api/workflowOnboarding', () => ({
   workflowOnboardingApi: { submit: mocks.submit, result: mocks.result }
 }))
-vi.mock('../stores/auth', () => ({
-  useAuthStore: () => ({ user: { tenant_id: '1', sub: 'member-1' }, identityVersion: 1 })
-}))
+vi.mock('../stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const auth = reactive({ user: { tenant_id: '1', sub: 'member-1' }, identityVersion: 1 })
+  return { useAuthStore: () => auth }
+})
 vi.mock('@skillforge/shared/feedback', () => ({
   confirm: mocks.confirm,
   message: { success: mocks.success, warning: mocks.warning, error: mocks.error }
@@ -51,6 +54,7 @@ const wrappers: VueWrapper[] = []
 beforeEach(() => {
   sessionStorage.clear()
   vi.resetAllMocks()
+  useAuthStore().identityVersion = 1
   mocks.list.mockResolvedValue({
     items: [
       {
@@ -74,6 +78,7 @@ beforeEach(() => {
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   document.body.innerHTML = ''
+  vi.unstubAllGlobals()
 })
 async function open(
   mounts: unknown[] = [],
@@ -98,15 +103,296 @@ async function open(
     .findAllComponents(ElFormItem)
     .find((item) => item.props('label') === '已发布工作流')!
     .getComponent(ElSelect)
-  select.vm.$emit('update:modelValue', 'flow')
-  select.vm.$emit('change', 'flow')
+  if (!select.props('modelValue')) {
+    select.vm.$emit('update:modelValue', 'flow')
+    select.vm.$emit('change', 'flow')
+  }
   await flushPromises()
   return wrapper
 }
 function button(wrapper: VueWrapper, name: string) {
   return wrapper.findAllComponents(ElButton).find((item) => item.text() === name)!
 }
+function mountPanel() {
+  const wrapper = mount(WorkflowOnboarding, {
+    attachTo: document.body,
+    props: {
+      agentId: 'agent-1',
+      mounts: [],
+      canCreate: true,
+      canUpdate: true,
+      canInstall: true,
+      refreshAgent: vi.fn().mockResolvedValue(true)
+    },
+    global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } }
+  })
+  wrappers.push(wrapper)
+  return wrapper
+}
+function workflowSelect(wrapper: VueWrapper) {
+  return wrapper
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '已发布工作流')!
+    .getComponent(ElSelect)
+}
 describe('智能体内工作流接入', () => {
+  it('唯一可用发布版本自动选择并只读加载，不自动接入', async () => {
+    mocks.list.mockResolvedValueOnce({
+      items: [
+        {
+          workflowId: 'flow',
+          name: '服务流程',
+          status: 'draft',
+          activeDefinitionVersionId: '9007199254740999'
+        },
+        { workflowId: 'archived', status: 'archived', activeDefinitionVersionId: '4' },
+        { workflowId: 'unpublished', status: 'draft', activeDefinitionVersionId: null }
+      ]
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('flow')
+    expect(wrapper.text()).toContain('已预选唯一可用的已发布工作流')
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('flow', '9007199254740999')
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(button(wrapper, '接入智能体').props('disabled')).toBe(false)
+  })
+  it('多个可用版本时保留用户选择，不自动读取发布版本', async () => {
+    mocks.list.mockResolvedValueOnce({
+      items: [
+        { workflowId: 'flow', status: 'published', activeDefinitionVersionId: '9007199254740999' },
+        { workflowId: 'other', status: 'published', activeDefinitionVersionId: '42' }
+      ]
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('')
+    expect(mocks.detail).not.toHaveBeenCalled()
+    workflowSelect(wrapper).vm.$emit('update:modelValue', 'flow')
+    workflowSelect(wrapper).vm.$emit('change', 'flow')
+    await flushPromises()
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('flow', '9007199254740999')
+    expect(wrapper.text()).not.toContain('已预选唯一可用的已发布工作流')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('存在待核对原请求时不预选或读取新工作流', async () => {
+    const request = 'abcdefab-1234-4234-8234-123456789012'
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'member-1', 'agent-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ request_id: request, agent_id: 'agent-1', workflow_id: 'flow' })
+    )
+    mocks.result.mockResolvedValue(undefined)
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(mocks.result).toHaveBeenCalledWith(request)
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('')
+    expect(mocks.detail).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('身份变化后丢弃迟到的唯一候选目录', async () => {
+    let resolveList!: (value: unknown) => void
+    mocks.list.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveList = resolve
+      })
+    )
+    const wrapper = mountPanel()
+    useAuthStore().identityVersion++
+    resolveList({
+      items: [
+        { workflowId: 'flow', status: 'published', activeDefinitionVersionId: '9007199254740999' }
+      ]
+    })
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('')
+    expect(mocks.detail).not.toHaveBeenCalled()
+    expect(button(wrapper, '重新读取工作流目录').exists()).toBe(true)
+  })
+  it('目录失败后只在成功重读时预选，不派发写操作', async () => {
+    mocks.list.mockRejectedValueOnce(new Error('读取失败'))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('')
+    expect(mocks.detail).not.toHaveBeenCalled()
+    await button(wrapper, '重新读取工作流目录').trigger('click')
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('flow')
+    expect(mocks.detail).toHaveBeenCalledOnce()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('发布详情在身份或智能体切换后到达时不展示旧配置', async () => {
+    let resolveDetail!: (value: unknown) => void
+    mocks.detail.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDetail = resolve
+      })
+    )
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('flow')
+    await wrapper.setProps({ agentId: 'agent-2' })
+    resolveDetail({
+      workflowId: 'flow',
+      current: true,
+      definitionVersionId: '9007199254740999',
+      definition: { nodes: [], meta: {} }
+    })
+    await flushPromises()
+    expect(workflowSelect(wrapper).props('modelValue')).toBe('')
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '接入智能体')).toBe(
+      false
+    )
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('同一成员重新认证后冻结已读结果，需按新身份重新读取', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(button(wrapper, '接入智能体').props('disabled')).toBe(false)
+    useAuthStore().identityVersion++
+    await flushPromises()
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '接入智能体')).toBe(
+      false
+    )
+    expect(button(wrapper, '重新读取工作流目录').exists()).toBe(true)
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('身份变化后的旧目录与发布详情失败不污染当前页面反馈', async () => {
+    let failList!: (reason: Error) => void
+    mocks.list.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failList = reject
+      })
+    )
+    const first = mountPanel()
+    useAuthStore().identityVersion++
+    await flushPromises()
+    failList(Error('旧目录失败'))
+    await flushPromises()
+    expect(mocks.error).not.toHaveBeenCalledWith('旧目录失败')
+    first.unmount()
+    let failDetail!: (reason: Error) => void
+    mocks.detail.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failDetail = reject
+      })
+    )
+    mountPanel()
+    await flushPromises()
+    useAuthStore().identityVersion++
+    await flushPromises()
+    failDetail(Error('旧详情失败'))
+    await flushPromises()
+    expect(mocks.error).not.toHaveBeenCalledWith('旧详情失败')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it.each(['目录', '发布详情', '依赖'] as const)(
+    '智能体切换后旧%s的真实 HTTP 错误不触发全局兜底',
+    async (stage) => {
+      let respond!: (response: Response) => void
+      let failure: HttpClientError | undefined
+      const onError = vi.fn()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          () =>
+            new Promise<Response>((resolve) => {
+              respond = resolve
+            })
+        )
+      )
+      const http = createHttpClient({
+        base: '/api/v1',
+        accessTokenKey: 'workflow-test.access',
+        refreshTokenKey: 'workflow-test.refresh',
+        authHeader: (token) => ({ Authorization: `Bearer ${token}` }),
+        refreshPath: '/auth/refresh',
+        isAuthPath: () => false,
+        onError
+      })
+      const failRead = () =>
+        http.get('/old-workflow').catch((reason: HttpClientError) => {
+          failure = reason
+          throw reason
+        })
+      if (stage === '目录') mocks.list.mockImplementationOnce(failRead)
+      if (stage === '发布详情') mocks.detail.mockImplementationOnce(failRead)
+      if (stage === '依赖') {
+        mocks.detail.mockResolvedValueOnce({
+          workflowId: 'flow',
+          current: true,
+          definitionVersionId: '9007199254740999',
+          definition: {
+            nodes: [],
+            meta: {
+              capability_requirements: [
+                { slot: 'tool', type: 'tool', capability_id: 'lookup', version_constraint: '*' }
+              ]
+            }
+          }
+        })
+        mocks.definitions.mockImplementationOnce(failRead)
+      }
+      const wrapper = mountPanel()
+      await flushPromises()
+      expect(respond).toBeTypeOf('function')
+      await wrapper.setProps({ agentId: 'agent-2' })
+      respond(
+        new Response(
+          JSON.stringify({ code: 'FAIL', message: 'old', data: null, trace_id: 'old-trace' }),
+          { status: 503 }
+        )
+      )
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(failure).toBeInstanceOf(HttpClientError)
+      expect(failure?.hasFeedbackOwner).toBe(true)
+      expect(onError).not.toHaveBeenCalled()
+      expect(mocks.submit).not.toHaveBeenCalled()
+    }
+  )
+  it('旧目录和旧安装列表先后失败时都接管各自的 HTTP 反馈', async () => {
+    const responders: ((response: Response) => void)[] = []
+    const failures: HttpClientError[] = []
+    const onError = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => responders.push(resolve)))
+    )
+    const http = createHttpClient({
+      base: '/api/v1',
+      accessTokenKey: 'workflow-test.access',
+      refreshTokenKey: 'workflow-test.refresh',
+      authHeader: (token) => ({ Authorization: `Bearer ${token}` }),
+      refreshPath: '/auth/refresh',
+      isAuthPath: () => false,
+      onError
+    })
+    const failRead = (path: string) =>
+      http.get(path).catch((reason: HttpClientError) => {
+        failures.push(reason)
+        throw reason
+      })
+    mocks.list.mockImplementationOnce(() => failRead('/old-list'))
+    mocks.instances.mockImplementationOnce(() => failRead('/old-instances'))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(responders).toHaveLength(2)
+    await wrapper.setProps({ agentId: 'agent-2' })
+    responders[0]!(
+      new Response(JSON.stringify({ code: 'FAIL', message: 'old', data: null }), { status: 503 })
+    )
+    await flushPromises()
+    responders[1]!(
+      new Response(JSON.stringify({ code: 'FAIL', message: 'old', data: null }), { status: 503 })
+    )
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(failures).toHaveLength(2)
+    expect(failures.every((failure) => failure.hasFeedbackOwner)).toBe(true)
+    expect(onError).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
   it('在组合接入中刷新依赖，失败保留配置并可重试', async () => {
     mocks.detail.mockResolvedValue({
       workflowId: 'flow',
@@ -325,9 +611,7 @@ describe('智能体内工作流接入', () => {
       .findAllComponents(ElFormItem)
       .find((item) => item.props('label') === '已发布工作流')!
       .getComponent(ElSelect)
-    select.vm.$emit('update:modelValue', 'flow')
-    select.vm.$emit('change', 'flow')
-    await flushPromises()
+    expect(select.props('modelValue')).toBe('flow')
     expect(mocks.detail).toHaveBeenCalledOnce()
     expect(button(wrapper, '接入智能体').props('disabled')).toBe(false)
   })

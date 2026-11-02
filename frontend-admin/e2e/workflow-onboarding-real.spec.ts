@@ -329,6 +329,9 @@ test('Agent 内安装并挂载工作流', async ({ page }) => {
       new URL(response.url()).pathname === '/api/v1/builder/workflows' &&
       response.request().method() === 'GET'
   )
+  const detail = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/v1/builder/workflows/history/detail'
+  )
   await drawer.getByRole('button', { name: '接入工作流', exact: true }).click()
   const listed = await workflowList
   expect(listed.status()).toBe(200)
@@ -343,15 +346,12 @@ test('Agent 内安装并挂载工作流', async ({ page }) => {
     ])
   )
   const panel = drawer.locator('section[aria-label="工作流接入"]')
-  await panel
-    .locator('.el-form-item')
-    .filter({ hasText: '已发布工作流' })
-    .locator('.el-select__wrapper')
-    .click()
-  const detail = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === '/api/v1/builder/workflows/history/detail'
+  await expect(
+    panel.getByText('已预选唯一可用的已发布工作流，可按需修改；接入仍需确认。')
+  ).toBeVisible()
+  await expect(panel.locator('.el-form-item').filter({ hasText: '已发布工作流' })).toContainText(
+    '浏览器工作流'
   )
-  await page.getByRole('option', { name: '浏览器工作流', exact: true }).click()
   const detailResponse = await detail
   expect(detailResponse.status()).toBe(200)
   const selectedWorkflow = directory.data.items.find(

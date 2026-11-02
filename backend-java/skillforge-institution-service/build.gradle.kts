@@ -127,6 +127,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
+    exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
 }
 
@@ -290,6 +291,19 @@ tasks.register<Test>("workflowHitlReplyBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.WorkflowHitlReplyBrowserE2ETest.realWorkflowReplyAfterResponseInterruption")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("workflowAgentSingleBrowserE2E") {
+    description = "验证唯一工作流接入及同一安装版本运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.WorkflowAgentSingleBrowserE2ETest.browserOnboardsSingleWorkflowAndRuntimeExecutesExactInstallation")
     }
     outputs.upToDateWhen { false }
 }
