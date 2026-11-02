@@ -11,6 +11,12 @@
         重新读取{{ entry.label }}
       </ElButton>
     </div>
+    <div v-if="restoreSessionError" class="admin-card" role="status">
+      上次会话读取失败，请重新读取或选择其他会话。
+      <ElButton :disabled="restoringSession" @click="restoreRecentSession"
+        >重新读取上次会话</ElButton
+      >
+    </div>
     <p v-if="!canRun" class="admin-field-help">
       当前账号没有会话执行权限，可以查看历史，但不能发送或回复。
     </p>
@@ -132,6 +138,8 @@
         "
         filterable
         placeholder="终端用户"
+        @visible-change="onRestoreSelectionVisible"
+        @change="cancelSessionRestore"
         style="width: 210px"
         ><ElOption
           v-for="user in endUsers"
@@ -142,7 +150,10 @@
         :disabled="
           busy || readOnly || !canCreate || usersTask.busy.value || sessionsTask.busy.value
         "
-        @click="userOpen = true"
+        @click="
+          cancelSessionRestore()
+          userOpen = true
+        "
         >新增用户</ElButton
       ><ElSelect
         v-described-by="formTipId + '-group-0'"
@@ -152,6 +163,7 @@
         filterable
         placeholder="选择智能体或团队"
         @change="markTargetTouched"
+        @visible-change="onRestoreSelectionVisible"
         style="width: 250px"
         ><ElOptionGroup label="智能体"
           ><ElOption
@@ -192,6 +204,7 @@
         style="width: 250px"
         filterable
         @change="loadSession"
+        @visible-change="onRestoreSelectionVisible"
         ><ElOption
           v-for="session in sessions"
           :key="session.session_id"
@@ -1014,6 +1027,29 @@ const { busy, error, run } = useTask(),
   pendingDrafts = ref<Record<string, string>>({}),
   attachments = ref<SessionAttachment[]>([]),
   mediaIds = ref<string[]>([])
+const restoreSessionError = ref(false),
+  restoringSession = ref(false)
+let restoreEpoch = 0
+const recentSessionKey = (actor: string) => `skillforge.chat-recent-session:${actor}`
+function rememberSession(session?: string) {
+  if (!creationActor.value) return
+  try {
+    if (session) sessionStorage.setItem(recentSessionKey(creationActor.value), session)
+    else sessionStorage.removeItem(recentSessionKey(creationActor.value))
+  } catch {
+    // 最近会话只是导航偏好，存储故障不能影响已完成的会话操作。
+  }
+}
+function cancelSessionRestore() {
+  restoreEpoch++
+  restoringSession.value = false
+  restoreSessionError.value = false
+}
+function onRestoreSelectionVisible(visible: boolean) {
+  if (visible) cancelSessionRestore()
+}
+watch(input, cancelSessionRestore, { flush: 'sync' })
+watch(() => auth.identityVersion, cancelSessionRestore, { flush: 'sync' })
 watch(
   () => auth.identityVersion,
   () => {
@@ -1186,6 +1222,7 @@ const agentCatalogReady = ref(false),
 const targetTouched = ref(false),
   autoTarget = ref('')
 function markTargetTouched() {
+  cancelSessionRestore()
   targetTouched.value = true
   autoTarget.value = ''
 }
@@ -1263,6 +1300,7 @@ onMounted(() => {
     if (pendingSession.value) void inspectSessionCreation(true)
     void loadUsers()
     void loadSessions()
+    void restoreRecentSession()
   }
   if (can('foundation.agents.read')) void loadAgents()
   if (canTeams.value) void loadTeams()
@@ -1480,6 +1518,7 @@ function acceptSessionCreation(operation: PendingSession, session: string, actor
   targetKey.value = operation.targetKey
   sessionId.value = session
   selectedSession.value = session
+  rememberSession(session)
   observe()
 }
 async function inspectSessionCreation(automatic = false) {
@@ -1648,14 +1687,17 @@ function clearSessionView() {
   confirmedSteering.value = undefined
 }
 async function newSession() {
+  cancelSessionRestore()
   await run(async () => {
     if (!(await confirmSessionSwitch())) return
+    rememberSession()
     clearSessionView()
     sessionId.value = ''
     selectedSession.value = ''
   })
 }
 async function loadSession(target: string) {
+  cancelSessionRestore()
   if (!target || target === sessionId.value) return
   await run(async () => {
     if (!(await confirmSessionSwitch())) return
@@ -1668,6 +1710,7 @@ async function loadSession(target: string) {
     clearSessionView()
     sessionId.value = target
     selectedSession.value = target
+    rememberSession(target)
     endUserId.value = detail.end_user_id ?? ''
     targetKey.value = detail.session.team_id
       ? `team:${detail.session.team_id}`
@@ -1678,6 +1721,70 @@ async function loadSession(target: string) {
     applyHistory(value)
     observe()
   })
+}
+async function restoreRecentSession() {
+  const actor = creationActor.value,
+    identity = auth.identityVersion
+  if (
+    !actor ||
+    !can('foundation.sessions.read') ||
+    trialAgentId ||
+    trialTeamId ||
+    sessionId.value ||
+    pendingSession.value ||
+    pendingUploads.value.length ||
+    sessionStorageError.value ||
+    hasSessionDraft() ||
+    userOpen.value
+  )
+    return
+  let target: string | null
+  try {
+    target = sessionStorage.getItem(recentSessionKey(actor))
+  } catch {
+    return
+  }
+  if (!target) return
+  const epoch = ++restoreEpoch
+  restoringSession.value = true
+  restoreSessionError.value = false
+  const current = () =>
+    !pageDisposed &&
+    epoch === restoreEpoch &&
+    creationActor.value === actor &&
+    auth.identityVersion === identity &&
+    !sessionId.value &&
+    !pendingSession.value &&
+    !pendingUploads.value.length &&
+    !sessionStorageError.value &&
+    !hasSessionDraft() &&
+    !userOpen.value
+  try {
+    const [value, detail] = await Promise.all([
+      api.chat.history(target),
+      api.chat.sessionDetail(target)
+    ])
+    if (!current()) return
+    if (value.session_id !== target || detail.session.session_id !== target)
+      throw Error('会话读取结果不匹配')
+    clearSessionView()
+    sessionId.value = target
+    selectedSession.value = target
+    endUserId.value = detail.end_user_id ?? ''
+    targetKey.value = detail.session.team_id
+      ? `team:${detail.session.team_id}`
+      : detail.target_agent_id
+        ? `agent:${detail.target_agent_id}`
+        : ''
+    sessionClosed.value = detail.closed
+    applyHistory(value)
+    observe()
+  } catch (cause) {
+    if (cause instanceof HttpClientError) cause.claimFeedback()
+    if (current()) restoreSessionError.value = true
+  } finally {
+    if (epoch === restoreEpoch) restoringSession.value = false
+  }
 }
 async function refreshSessions(scope: string = sessionScope.value) {
   requestedSessionScope = scope

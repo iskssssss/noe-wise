@@ -43,10 +43,16 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   const expectedReply = required('E2E_EXPECTED_REPLY')
   const errors: string[] = []
   let submissions = 0
+  let sessionCreations = 0
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
     if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat')
       submissions++
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/chat/sessions/create-with-receipt'
+    )
+      sessionCreations++
   })
   await page.goto('/login?redirect=/admin/chat')
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
@@ -88,24 +94,32 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   await expect(page.locator('body')).not.toContainText(required('E2E_INTERNAL_REASONING'))
   expect(submissions).toBe(1)
 
-  // 刷新后从真实历史目录按固定Session身份恢复；禁止再次POST业务输入。
+  // 刷新后自动以原会话身份读取持久历史，禁止再次 POST 业务输入。
   const historyReady = responseAt(page, '/api/v1/chat/sessions')
+  const restored = responseAt(page, '/api/v1/chat/history')
   await page.reload()
   const sessions = await dataOf(await historyReady)
   const selected = sessions.find((item: { session_id: string }) => item.session_id === sessionId)
   expect(selected).toBeTruthy()
-  await page.locator('.el-select').filter({ hasText: '历史会话' }).getByRole('combobox').click()
-  const restored = responseAt(page, '/api/v1/chat/history')
-  await page.getByRole('option', { name: selected.summary || sessionId, exact: true }).click()
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await mkdir(evidence, { recursive: true })
   const history = await dataOf(await restored)
   expect(history.session_id).toBe(sessionId)
   expect(history.messages.filter((item: { role: string }) => item.role === 'user')).toHaveLength(1)
   await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(1)
+  await page.screenshot({ path: join(evidence, 'session-reload-restored.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'session-reload-restored.json'),
+    JSON.stringify(
+      { sessionId, restoredAutomatically: true, manualSelectionActions: 0, submissions },
+      null,
+      2
+    )
+  )
   await expect(page.locator('body')).not.toContainText(required('E2E_INTERNAL_REASONING'))
   expect(submissions).toBe(1)
+  expect(sessionCreations).toBe(1)
   expect(errors).toEqual([])
-  const evidence = required('E2E_ARTIFACT_DIR')
-  await mkdir(evidence, { recursive: true })
   await page.screenshot({ path: join(evidence, 'chat-public-history.png'), fullPage: true })
   await writeFile(
     join(evidence, 'browser-receipt.json'),
