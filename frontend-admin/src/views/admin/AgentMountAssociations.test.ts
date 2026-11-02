@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   connectors: vi.fn(),
   discover: vi.fn(),
   instances: vi.fn(),
+  workflowList: vi.fn(),
   workflowOptions: vi.fn(),
   bases: vi.fn(),
   mountOption: vi.fn(),
@@ -97,7 +98,7 @@ vi.mock('../../api', () => ({
       getVersion: mocks.getVersion,
       deployments: mocks.deployments
     },
-    workflowDrafts: { instances: mocks.instances },
+    workflowDrafts: { instances: mocks.instances, list: mocks.workflowList },
     knowledge: {
       listBases: mocks.bases,
       mountOption: mocks.mountOption,
@@ -230,6 +231,7 @@ beforeEach(() => {
     { id: '20', definitionId: '10', capabilityType: 'WORKFLOW', name: '服务流程', versionKey: '1' },
     { id: '21', definitionId: '10', capabilityType: 'WORKFLOW', name: '服务流程', versionKey: '2' }
   ])
+  mocks.workflowList.mockResolvedValue({ items: [] })
   mocks.instances.mockResolvedValue({
     items: [
       {
@@ -513,6 +515,43 @@ describe('智能体主对象与辅助选项的读取归属', () => {
 })
 
 describe('按挂载类型加载实际关联', () => {
+  it('恢复工作流接入回执后刷新智能体并保留原挂载选择', async () => {
+    mocks.permissions.push(
+      'foundation.agents.read',
+      'foundation.workflows.read',
+      'foundation.agents.create',
+      'foundation.agents.update',
+      'foundation.workflows.create'
+    )
+    const id = 'abcdefab-1234-4234-8234-123456789012'
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'actor-1', 'agent-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ request_id: id, agent_id: 'agent-1', workflow_id: 'workflow' })
+    )
+    mocks.workflowResult.mockResolvedValue({
+      request_id: id,
+      agent_id: 'agent-1',
+      workflow_id: 'workflow',
+      status: 'SUCCEEDED',
+      instance_id: '9223372036854775807',
+      installation_revision: 1,
+      mount_id: 'm',
+      mount_revision: 1
+    })
+    const { drawer } = await open('WORKFLOW')
+    const selected = drawer.findAllComponents(ElSelect)[1]!
+    expect(selected.props('modelValue')).toBe('10')
+    await button(drawer, '接入工作流').trigger('click')
+    await flushPromises()
+    expect(mocks.workflowResult).toHaveBeenCalledWith(id)
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.get.mock.calls.length).toBeGreaterThan(1)
+    expect(selected.props('modelValue')).toBe('10')
+    expect(mocks.workflowSubmit).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
   it('已确认接入后的刷新失败保留选择，重开抽屉成功读取后清除提示', async () => {
     mocks.availableTools
       .mockResolvedValueOnce({ items: [] })

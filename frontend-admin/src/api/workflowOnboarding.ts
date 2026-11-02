@@ -27,10 +27,14 @@ export interface WorkflowOnboardingReceipt {
 }
 export const workflowOnboardingApi = {
   submit: (command: WorkflowOnboardingCommand) =>
-    post<WorkflowOnboardingReceipt>('/agents/workflows/onboard', {
-      ...command,
-      bindings: workflowBindingsToWire(command.bindings)
-    }),
+    post<WorkflowOnboardingReceipt>(
+      '/agents/workflows/onboard',
+      {
+        ...command,
+        bindings: workflowBindingsToWire(command.bindings)
+      },
+      { retryOnUnauthorized: false }
+    ),
   result: (requestId: string) =>
     get<WorkflowOnboardingReceipt | undefined>(
       `/agents/workflows/onboard/result?${new URLSearchParams({ requestId })}`

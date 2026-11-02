@@ -46,6 +46,7 @@ it('组合接入在 HTTP 边界序列化非空能力槽身份', async () => {
         workflows: [],
         agents: []
       }
-    })
+    }),
+    { retryOnUnauthorized: false }
   )
 })

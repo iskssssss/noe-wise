@@ -39,7 +39,9 @@ vi.mock('../api', () => ({
 vi.mock('../api/workflowOnboarding', () => ({
   workflowOnboardingApi: { submit: mocks.submit, result: mocks.result }
 }))
-vi.mock('../stores/auth', () => ({ useAuthStore: () => ({ user: { tenant_id: '1' } }) }))
+vi.mock('../stores/auth', () => ({
+  useAuthStore: () => ({ user: { tenant_id: '1', sub: 'member-1' }, identityVersion: 1 })
+}))
 vi.mock('@skillforge/shared/feedback', () => ({
   confirm: mocks.confirm,
   message: { success: mocks.success, warning: mocks.warning, error: mocks.error }
@@ -47,6 +49,7 @@ vi.mock('@skillforge/shared/feedback', () => ({
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
+  sessionStorage.clear()
   vi.resetAllMocks()
   mocks.list.mockResolvedValue({
     items: [
@@ -749,6 +752,143 @@ describe('智能体内工作流接入', () => {
     expect(mocks.result).toHaveBeenCalledWith(command.request_id)
     expect(mocks.submit).toHaveBeenCalledOnce()
     expect(button(wrapper, '接入智能体').props('disabled')).toBe(true)
+  })
+  it('刷新后自动核对原请求，仅保存身份且不重复发送', async () => {
+    mocks.submit.mockRejectedValueOnce(new Error('连接中断'))
+    const first = await open()
+    await button(first, '接入智能体').trigger('click')
+    await flushPromises()
+    const command = mocks.submit.mock.calls[0]![0]
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'member-1', 'agent-1'])}`
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual({
+      request_id: command.request_id,
+      agent_id: 'agent-1',
+      workflow_id: 'flow'
+    })
+    first.unmount()
+    wrappers.pop()
+    mocks.instances.mockResolvedValue({ items: [{ id: '7', workflowId: 'flow' }] })
+    mocks.result.mockResolvedValue({
+      request_id: command.request_id,
+      agent_id: 'agent-1',
+      workflow_id: 'flow',
+      status: 'SUCCEEDED',
+      instance_id: '7',
+      installation_revision: 1,
+      mount_id: 'm',
+      mount_revision: 1
+    })
+    const restored = mount(WorkflowOnboarding, {
+      attachTo: document.body,
+      props: {
+        agentId: 'agent-1',
+        mounts: [],
+        canCreate: true,
+        canUpdate: true,
+        canInstall: true,
+        refreshAgent: vi.fn()
+      }
+    })
+    wrappers.push(restored)
+    await flushPromises()
+    expect(mocks.result).toHaveBeenCalledOnce()
+    expect(mocks.result).toHaveBeenCalledWith(command.request_id)
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(restored.emitted('confirmed')).toHaveLength(1)
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(restored.text()).toContain('接入已确认')
+  })
+  it('自动核对未查到或回执不匹配时保留原身份和锁定', async () => {
+    const id = 'abcdefab-1234-4234-8234-123456789012'
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'member-1', 'agent-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ request_id: id, agent_id: 'agent-1', workflow_id: 'flow' })
+    )
+    mocks.result
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        request_id: id,
+        agent_id: 'agent-1',
+        workflow_id: 'flow',
+        status: 'PROCESSING'
+      })
+      .mockResolvedValueOnce({
+        request_id: id,
+        agent_id: 'agent-1',
+        workflow_id: 'other',
+        status: 'REJECTED',
+        error_message: '拒绝'
+      })
+    const wrapper = await open()
+    expect(mocks.result).toHaveBeenCalledWith(id)
+    expect(wrapper.text()).toContain(id)
+    expect(button(wrapper, '接入智能体').props('disabled')).toBe(true)
+    await button(wrapper, '核对原操作').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    await button(wrapper, '核对原操作').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    mocks.result.mockRejectedValueOnce(new Error('查询失败'))
+    await button(wrapper, '核对原操作').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(wrapper.emitted('confirmed')).toBeUndefined()
+  })
+  it('保存请求身份失败时不发送接入请求', async () => {
+    const wrapper = await open()
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('storage')
+    })
+    await button(wrapper, '接入智能体').trigger('click')
+    await flushPromises()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('本次未发送')
+    spy.mockRestore()
+  })
+  it('终态回执无法清除原身份时保持锁定并允许再次核对', async () => {
+    const id = 'abcdefab-1234-4234-8234-123456789012'
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'member-1', 'agent-1'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ request_id: id, agent_id: 'agent-1', workflow_id: 'flow' })
+    )
+    mocks.result.mockResolvedValue({
+      request_id: id,
+      agent_id: 'agent-1',
+      workflow_id: 'flow',
+      status: 'REJECTED',
+      error_message: '拒绝'
+    })
+    const spy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw Error('storage')
+    })
+    const wrapper = await open()
+    expect(wrapper.text()).toContain('无法清除原工作流接入记录')
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    expect(button(wrapper, '接入智能体').props('disabled')).toBe(true)
+    spy.mockRestore()
+    await button(wrapper, '核对原操作').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.result).toHaveBeenCalledTimes(2)
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('不同智能体不会读取原请求', async () => {
+    const key = `skillforge.workflow-onboarding.${JSON.stringify(['1', 'member-1', 'other-agent'])}`
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        request_id: 'abcdefab-1234-4234-8234-123456789012',
+        agent_id: 'other-agent',
+        workflow_id: 'flow'
+      })
+    )
+    await open()
+    expect(mocks.result).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
   })
   it('不支持的工作流节点明确阻止接入，不提交空绑定', async () => {
     mocks.detail.mockResolvedValue({

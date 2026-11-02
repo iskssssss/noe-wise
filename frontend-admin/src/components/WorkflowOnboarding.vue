@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useTask, useUnsavedChanges } from '@skillforge/shared/admin'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
@@ -75,6 +75,49 @@ const agentRefreshRequired = ref(false)
 const refreshingSelection = ref(false)
 const selectionStale = ref(false)
 const pending = ref<WorkflowOnboardingCommand>()
+type OperationIdentity = Pick<WorkflowOnboardingCommand, 'request_id' | 'agent_id' | 'workflow_id'>
+const original = ref<OperationIdentity>()
+const storageError = ref('')
+const owner = computed(() =>
+  auth.user?.tenant_id && auth.user?.sub && props.agentId
+    ? JSON.stringify([auth.user.tenant_id, auth.user.sub, props.agentId])
+    : ''
+)
+const storageKey = (value: string) => `skillforge.workflow-onboarding.${value}`
+let active = true
+onScopeDispose(() => {
+  active = false
+})
+watch(
+  owner,
+  (value) => {
+    original.value = undefined
+    pending.value = undefined
+    storageError.value = ''
+    if (props.receiptOnly) return
+    if (!value) {
+      storageError.value = '无法确认当前机构和成员，暂不能接入工作流。'
+      return
+    }
+    try {
+      const raw = sessionStorage.getItem(storageKey(value))
+      if (!raw) return
+      const saved: OperationIdentity = JSON.parse(raw)
+      if (
+        !saved ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.request_id) ||
+        saved.agent_id !== props.agentId ||
+        typeof saved.workflow_id !== 'string' ||
+        !saved.workflow_id
+      )
+        throw Error('invalid')
+      original.value = saved
+    } catch {
+      storageError.value = '无法读取原工作流接入记录，请恢复浏览器存储后重新进入。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
 const receipt = ref<WorkflowOnboardingReceipt>()
 const readRequestId = ref('')
 const manualUnknown = ref('')
@@ -105,6 +148,8 @@ const locked = computed(
     busy.value ||
     refreshingSelection.value ||
     !!pending.value ||
+    !!original.value ||
+    !!storageError.value ||
     !!manualUnknown.value ||
     instancesRefreshRequired.value ||
     agentRefreshRequired.value
@@ -114,16 +159,20 @@ watch(error, (value) => {
 })
 watch(locked, (value) => emit('locked', value), { immediate: true, flush: 'sync' })
 watch(busy, (value) => emit('busy', value), { immediate: true, flush: 'sync' })
-watch([pending, manualUnknown], ([value, manual]) => emit('unknown', !!value || !!manual), {
-  immediate: true,
-  flush: 'sync'
-})
+watch(
+  [pending, original, manualUnknown],
+  ([value, saved, manual]) => emit('unknown', !!value || !!saved || !!manual),
+  {
+    immediate: true,
+    flush: 'sync'
+  }
+)
 useUnsavedChanges({
-  dirty: () => !!pending.value || !!manualUnknown.value,
+  dirty: () => !!pending.value || !!original.value || !!manualUnknown.value,
   busy: () => busy.value,
   leaveMessage: () =>
-    pending.value || manualUnknown.value
-      ? `工作流接入结果尚未确认。请记录原请求 ID ${pending.value?.request_id ?? manualUnknown.value}，之后只查询原回执。`
+    pending.value || original.value || manualUnknown.value
+      ? `工作流接入结果尚未确认。请记录原请求 ID ${pending.value?.request_id ?? original.value?.request_id ?? manualUnknown.value}，之后只查询原回执。`
       : undefined
 })
 async function loadCatalog() {
@@ -168,8 +217,11 @@ async function refreshSelection() {
     refreshingSelection.value = false
   }
 }
-onMounted(() => {
-  if (!props.receiptOnly) void loadCatalog()
+onMounted(async () => {
+  if (!props.receiptOnly) {
+    await loadCatalog()
+    if (active && original.value) await inspect(true)
+  }
 })
 function candidates(slot: Slot) {
   return versions.value.filter((version) => {
@@ -323,7 +375,7 @@ async function bindings(): Promise<WorkflowInstallationBindings> {
   }
   return { capabilities, workflows: [], agents: [] }
 }
-function matches(value: WorkflowOnboardingReceipt | undefined, command: WorkflowOnboardingCommand) {
+function matches(value: WorkflowOnboardingReceipt | undefined, command: OperationIdentity) {
   if (
     !value ||
     value.request_id !== command.request_id ||
@@ -346,11 +398,25 @@ function matches(value: WorkflowOnboardingReceipt | undefined, command: Workflow
 }
 async function accept(
   value: WorkflowOnboardingReceipt | undefined,
-  command: WorkflowOnboardingCommand
+  command: OperationIdentity,
+  subject: string,
+  identity: number,
+  automatic = false
 ) {
+  if (!active || owner.value !== subject || auth.identityVersion !== identity) return
   if (!matches(value, command) || value?.status === 'PROCESSING') {
-    message.warning('原操作结果尚未确认，请稍后核对原回执')
+    if (!automatic) message.warning('原操作结果尚未确认，请稍后核对原回执')
     return
+  }
+  if (original.value?.request_id === command.request_id) {
+    try {
+      sessionStorage.removeItem(storageKey(subject))
+    } catch {
+      storageError.value = '无法清除原工作流接入记录，请恢复浏览器存储后重新核对。'
+      return
+    }
+    original.value = undefined
+    storageError.value = ''
   }
   pending.value = undefined
   receipt.value = value
@@ -390,6 +456,8 @@ async function refreshInstances() {
 }
 async function submit() {
   if (locked.value || !catalogReady.value || !ready.value || !mode.value || !allowed.value) return
+  const subject = owner.value
+  const identity = auth.identityVersion
   await run(async () => {
     const instance = currentInstance.value
     const revision = instance?.installationRevision ? Number(instance.installationRevision) : 0
@@ -426,12 +494,27 @@ async function submit() {
         mode.value === 'REUSE' ? { capabilities: [], workflows: [], agents: [] } : await bindings(),
       ...(mount ? { mount_id: mount.mountId, expected_mount_revision: mount.revision } : {})
     }
+    if (!active || owner.value !== subject || auth.identityVersion !== identity) return
+    const operation = {
+      request_id: command.request_id,
+      agent_id: command.agent_id,
+      workflow_id: command.workflow_id
+    }
+    try {
+      sessionStorage.setItem(storageKey(subject), JSON.stringify(operation))
+    } catch {
+      storageError.value = '无法保存原工作流接入记录，本次未发送。请恢复浏览器存储后重新进入。'
+      return
+    }
+    original.value = operation
     pending.value = command
-    await accept(await workflowOnboardingApi.submit(command), command)
+    await accept(await workflowOnboardingApi.submit(command), operation, subject, identity)
   })
 }
-async function inspect() {
-  const command = pending.value
+async function inspect(automatic = false) {
+  const command = original.value ?? pending.value
+  const subject = owner.value
+  const identity = auth.identityVersion
   const requestId = command?.request_id ?? manualUnknown.value ?? readRequestId.value.trim()
   const key = (requestId || readRequestId.value.trim()).toLowerCase()
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) {
@@ -441,8 +524,9 @@ async function inspect() {
   if (!command) manualUnknown.value = key
   await run(async () => {
     const value = await workflowOnboardingApi.result(key)
+    if (!active || owner.value !== subject || auth.identityVersion !== identity) return
     if (command) {
-      await accept(value, command)
+      await accept(value, command, subject, identity, automatic)
       return
     }
     if (
@@ -459,24 +543,18 @@ async function inspect() {
       message.warning('原操作结果尚未确认，请稍后再次核对')
       return
     }
-    const identity: WorkflowOnboardingCommand = {
+    const operation: OperationIdentity = {
       request_id: key,
       agent_id: value.agent_id,
-      workflow_id: value.workflow_id,
-      expected_definition_version_id: '',
-      mode: 'REUSE',
-      expected_installation_revision: 0,
-      config: {},
-      custom_prompt: '',
-      bindings: { capabilities: [], workflows: [], agents: [] }
+      workflow_id: value.workflow_id
     }
-    if (!matches(value, identity)) {
+    if (!matches(value, operation)) {
       message.warning('原回执不完整，结果仍未确认')
       return
     }
     manualUnknown.value = ''
     readRequestId.value = ''
-    await accept(value, identity)
+    await accept(value, operation, subject, identity)
   })
 }
 </script>
@@ -484,18 +562,19 @@ async function inspect() {
 <template>
   <section class="admin-card" aria-label="工作流接入">
     <p v-if="!receiptOnly">选择已发布工作流，完成安装后接入当前智能体草稿；发布仍需单独操作。</p>
-    <p v-if="pending || manualUnknown" role="status">
+    <p v-if="pending || original || manualUnknown" role="status">
       操作结果尚未确认，原请求 ID：{{
-        pending?.request_id || manualUnknown
+        pending?.request_id || original?.request_id || manualUnknown
       }}。未查到回执不代表失败，请勿重复提交。
     </p>
     <ElInput
-      v-if="!pending && !manualUnknown"
+      v-if="!pending && !original && !manualUnknown"
       v-model="readRequestId"
       placeholder="原请求 UUID"
       aria-label="原请求 UUID"
     />
-    <ElButton :disabled="busy" @click="inspect">核对原操作</ElButton>
+    <p v-if="storageError" role="status">{{ storageError }}</p>
+    <ElButton :disabled="busy" @click="inspect()">核对原操作</ElButton>
     <p v-if="receipt?.status === 'SUCCEEDED'" role="status">
       接入已确认，安装修订 {{ receipt.installation_revision }} · 挂载 {{ receipt.mount_id }}。
     </p>
@@ -507,7 +586,7 @@ async function inspect() {
     </p>
     <ElButton
       v-if="!receiptOnly && receipt?.status === 'REJECTED'"
-      :disabled="busy || refreshingSelection || !!pending || !!manualUnknown"
+      :disabled="busy || refreshingSelection || !!pending || !!original || !!manualUnknown"
       @click="refreshSelection"
       >重新读取并选择工作流</ElButton
     >
