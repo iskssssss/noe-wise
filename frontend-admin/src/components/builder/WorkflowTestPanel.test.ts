@@ -1346,6 +1346,245 @@ describe('真实Workflow测试面板边界', () => {
     await flushPromises()
     expect(button(wrapper, '开始新测试').exists()).toBe(true)
   })
+  it('关闭响应未知后保留原请求，查询 open 不能再次关闭，closed 才允许新测试', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    mocks.close.mockRejectedValueOnce(new TypeError('network disconnected'))
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    await flushPromises()
+    expect(mocks.close).toHaveBeenCalledOnce()
+    expect(button(wrapper, '取消并关闭测试').props('disabled')).toBe(true)
+    expect(dom().text()).toContain('正在确认运行是否结束')
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('"closing":true')
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '取消并关闭测试').props('disabled')).toBe(true)
+    expect(mocks.close).toHaveBeenCalledOnce()
+    mocks.get.mockResolvedValue(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+  })
+  it('关闭记录无法保存时不派发关闭，并允许恢复存储后重试', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    const wrapper = render()
+    await flushPromises()
+    const failedWrite = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('unavailable')
+    })
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    await flushPromises()
+    expect(mocks.close).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('无法保存关闭记录，未发送请求')
+    failedWrite.mockRestore()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    await flushPromises()
+    expect(mocks.close).toHaveBeenCalledOnce()
+  })
+  it('旧身份关闭响应迟到不写入新身份或更新新页面', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    let finish!: (value: WorkflowTestReceipt) => void
+    mocks.close.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const wrapper = render({ identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2 })
+    finish(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toContain('"closing":true')
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['other', 'flow']))
+    ).toBeNull()
+    expect(dom().text()).not.toContain('开始新测试')
+  })
+  it('旧关闭请求结束不能解除新身份在途创建的忙碌状态', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    let finishClose!: (value: WorkflowTestReceipt) => void
+    let finishCreate!: (value: WorkflowTestReceipt) => void
+    mocks.close.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClose = resolve
+        })
+    )
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve
+        })
+    )
+    const wrapper = render({ identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2 })
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(button(wrapper, '查询测试状态').props('disabled')).toBe(true)
+    finishClose(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await flushPromises()
+    expect(button(wrapper, '查询测试状态').props('disabled')).toBe(true)
+    finishCreate(receipt())
+    await flushPromises()
+  })
+  it('运行终态但关闭未完成时继续查询，直至资源关闭', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: true
+      })
+    )
+    mocks.get.mockResolvedValue(
+      receipt({ status: 'completed', runId: 'run:1', closeStatus: 'cancelling' })
+    )
+    const wrapper = render()
+    await flushPromises()
+    const reads = mocks.get.mock.calls.length
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(mocks.get.mock.calls.length).toBeGreaterThan(reads)
+    expect(button(wrapper, '取消并关闭测试').props('disabled')).toBe(true)
+    expect(mocks.close).not.toHaveBeenCalled()
+  })
+  it('关闭请求悬挂时查询到关闭，可立即开始新测试且忽略迟到响应', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    let finishClose!: (value: WorkflowTestReceipt) => void
+    mocks.close.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClose = resolve
+        })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    expect(button(wrapper, '查询测试状态').props('disabled')).toBe(false)
+    mocks.get.mockResolvedValue(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+    await button(wrapper, '开始新测试').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '创建并测试').props('loading')).toBe(false)
+    finishClose(receipt({ status: 'cancelling', closeStatus: 'cancelling' }))
+    await flushPromises()
+    expect(button(wrapper, '创建并测试').props('loading')).toBe(false)
+    expect(mocks.close).toHaveBeenCalledOnce()
+  })
+  it('已查询关闭后迟到的非终态回执不能覆盖关闭状态', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    let finishClose!: (value: WorkflowTestReceipt) => void
+    mocks.close.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClose = resolve
+        })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    mocks.get.mockResolvedValue(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+    finishClose(receipt({ status: 'cancelling', closeStatus: 'cancelling' }))
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+  })
+  it('关闭请求确认成功后迟到的旧查询不能让关闭状态回退', async () => {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    let finishRead!: (value: WorkflowTestReceipt) => void
+    const wrapper = render()
+    await flushPromises()
+    mocks.get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        })
+    )
+    mocks.close.mockResolvedValueOnce(receipt({ status: 'closed', closeStatus: 'closed' }))
+    await button(wrapper, '查询测试状态').trigger('click')
+    await button(wrapper, '取消并关闭测试').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+    finishRead(receipt({ status: 'running', closeStatus: 'open', runId: 'run:1' }))
+    await flushPromises()
+    expect(button(wrapper, '开始新测试').exists()).toBe(true)
+    expect(mocks.close).toHaveBeenCalledOnce()
+  })
   it('候选身份变化不沿用旧索引，切换来源保留各自输入草稿', async () => {
     mocks.options.mockImplementation(async (_workflow, source) => ({
       ...options(source),

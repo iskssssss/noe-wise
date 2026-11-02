@@ -559,6 +559,7 @@ function applyReceipt(value: WorkflowTestReceipt) {
     (recovery.value.testSessionId && value.testSessionId !== recovery.value.testSessionId)
   )
     throw Error('测试回执身份不匹配，请保留原请求并重新查询')
+  if (receipt.value?.closeStatus === 'closed' && value.closeStatus !== 'closed') return
   receipt.value = value
   if (submittedForm?.requestId === value.requestId) {
     formBaselines.set(submittedForm.key, submittedForm.snapshot)
@@ -586,7 +587,7 @@ function scheduleRefresh() {
     props.modelValue &&
     recovery.value &&
     !closed.value &&
-    !['completed', 'failed'].includes(receipt.value?.status ?? '')
+    (recovery.value.closing || !['completed', 'failed'].includes(receipt.value?.status ?? ''))
   )
     timer = setTimeout(() => void refresh(), POLL_MS)
 }
@@ -977,18 +978,49 @@ async function createAndTest() {
     busy.value = false
   }
 }
+let closeOwner = 0
 async function closeTest() {
-  if (!receipt.value || busy.value || closed.value) return
+  if (!receipt.value || !recovery.value || recovery.value.closing || busy.value || closed.value)
+    return
+  const identity = props.identityVersion,
+    workflow = props.workflowId,
+    request = recovery.value.requestId,
+    testSessionId = receipt.value.testSessionId,
+    version = epoch
+  let authSession: string | null
+  try {
+    authSession = localStorage.getItem(authSessionKey)
+  } catch {
+    error.value = '无法读取登录状态，请恢复浏览器存储后核对原测试。'
+    return
+  }
+  const current = () =>
+    operation === closeOwner &&
+    version === epoch &&
+    sameIdentity(identity, authSession, workflow) &&
+    recovery.value?.requestId === request &&
+    recovery.value.testSessionId === testSessionId
+  const operation = ++closeOwner
   busy.value = true
   error.value = ''
-  persist({ ...recovery.value!, closing: true })
   try {
-    applyReceipt(await api.workflowTests.close(receipt.value.testSessionId, { silent: true }))
-  } catch (reason) {
-    error.value = errorText(reason, '关闭结果尚未确认，请查询原测试状态')
-  } finally {
+    persist({ ...recovery.value, closing: true })
+  } catch {
     busy.value = false
-    if (props.modelValue) void refresh()
+    error.value = '无法保存关闭记录，未发送请求；请恢复浏览器存储后重试。'
+    return
+  }
+  try {
+    const value = await api.workflowTests.close(testSessionId, { silent: true })
+    if (current() && !closed.value) applyReceipt(value)
+  } catch (reason) {
+    claim(reason)
+    if (current()) error.value = '关闭结果尚未确认，请查询原测试状态。'
+  } finally {
+    if (operation === closeOwner) {
+      busy.value = false
+      if (current() && props.modelValue) void refresh()
+    }
   }
 }
 function waitKey(item: RuntimePendingInteraction) {
@@ -1116,6 +1148,8 @@ function respond(item: RuntimePendingInteraction, action?: string) {
 }
 function newTest() {
   if (!closed.value) return
+  closeOwner++
+  busy.value = false
   stopReads()
   persist(undefined)
   receipt.value = undefined
@@ -1136,6 +1170,8 @@ watch(
     const owner = JSON.stringify([props.identityVersion, localStorage.getItem(authSessionKey)])
     const scope = JSON.stringify([owner, props.workflowId])
     if (scope !== recoveryScope) {
+      closeOwner++
+      busy.value = false
       recoveryScope = scope
       recovery.value = undefined
       receipt.value = undefined
@@ -1476,11 +1512,17 @@ onBeforeUnmount(() => {
           {{ receipt.blockingReason }}
         </p>
         <div class="admin-actions">
-          <ElButton :loading="loading" :disabled="busy" @click="refresh">查询测试状态</ElButton>
+          <ElButton :loading="loading" :disabled="busy && !recovery.closing" @click="refresh"
+            >查询测试状态</ElButton
+          >
           <ElButton v-if="canStartExisting" type="primary" :loading="busy" @click="startInitial"
             >开始已创建的测试</ElButton
           >
-          <ElButton v-if="receipt && !closed" :loading="busy" @click="closeTest"
+          <ElButton
+            v-if="receipt && !closed"
+            :loading="busy"
+            :disabled="recovery.closing"
+            @click="closeTest"
             >取消并关闭测试</ElButton
           >
           <ElButton v-if="closed" @click="newTest">开始新测试</ElButton>

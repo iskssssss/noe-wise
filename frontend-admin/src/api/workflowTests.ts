@@ -250,7 +250,14 @@ export function createWorkflowTestsApi(http: {
         .then(receiptFromWire),
     close: (testSessionId: string, options?: RequestOptions) =>
       http
-        .post<ReceiptWire>(root + '/close', { test_session_id: testSessionId }, options)
+        .post<ReceiptWire>(
+          root + '/close',
+          { test_session_id: testSessionId },
+          {
+            ...options,
+            retryOnUnauthorized: false
+          }
+        )
         .then(receiptFromWire)
   }
 }

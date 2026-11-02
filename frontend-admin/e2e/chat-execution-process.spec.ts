@@ -16,6 +16,24 @@ function responseAt(page: Page, path: string, method = 'GET') {
       new URL(response.url()).pathname === path && response.request().method() === method
   )
 }
+function responseAfterReload(page: Page, path: string) {
+  let committed = false
+  const requests = new WeakSet<import('@playwright/test').Request>()
+  const onNavigation = (frame: import('@playwright/test').Frame) => {
+    if (frame === page.mainFrame()) committed = true
+  }
+  const onRequest = (request: import('@playwright/test').Request) => {
+    if (committed && new URL(request.url()).pathname === path) requests.add(request)
+  }
+  page.on('framenavigated', onNavigation)
+  page.on('request', onRequest)
+  return page
+    .waitForResponse((response) => requests.has(response.request()))
+    .finally(() => {
+      page.off('framenavigated', onNavigation)
+      page.off('request', onRequest)
+    })
+}
 /** 传输成功必须同时满足HTTP和公共信封，错误输出只记录非敏感路径。 */
 async function dataOf(response: Response) {
   expect(response.ok(), `HTTP ${response.status()}：${new URL(response.url()).pathname}`).toBe(true)
@@ -95,8 +113,8 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   expect(submissions).toBe(1)
 
   // 刷新后自动以原会话身份读取持久历史，禁止再次 POST 业务输入。
-  const historyReady = responseAt(page, '/api/v1/chat/sessions')
-  const restored = responseAt(page, '/api/v1/chat/history')
+  const historyReady = responseAfterReload(page, '/api/v1/chat/sessions')
+  const restored = responseAfterReload(page, '/api/v1/chat/history')
   await page.reload()
   const sessions = await dataOf(await historyReady)
   const selected = sessions.find((item: { session_id: string }) => item.session_id === sessionId)
@@ -178,8 +196,8 @@ test('智能体试用刷新恢复当前会话，重新进入时开启新试用',
   await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(1, {
     timeout: 120_000
   })
-  const historyList = responseAt(page, '/api/v1/chat/sessions')
-  const restored = responseAt(page, '/api/v1/chat/history')
+  const historyList = responseAfterReload(page, '/api/v1/chat/sessions')
+  const restored = responseAfterReload(page, '/api/v1/chat/history')
   await page.reload()
   const sessions = await dataOf(await historyList)
   const sessionId = String(session.session_id)
@@ -353,6 +371,76 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
         run: observedRun,
         manualActions: 1,
         testCreates
+      },
+      null,
+      2
+    )
+  )
+  let closeAttempts = 0
+  let upstreamCloses = 0
+  let refreshes = 0
+  let finishInterception!: () => void
+  const intercepted = new Promise<void>((resolve) => {
+    finishInterception = resolve
+  })
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/auth/refresh')
+      refreshes++
+  })
+  await page.route('**/api/v1/builder/workflows/test-sessions/close', async (route) => {
+    closeAttempts++
+    if (closeAttempts === 1) {
+      const upstream = await route.fetch()
+      upstreamCloses++
+      expect(upstream.status()).toBe(200)
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 'AUTH_EXPIRED',
+          message: 'isolated test',
+          trace_id: 'fixture'
+        })
+      })
+      finishInterception()
+    } else {
+      await route.abort('failed')
+    }
+  })
+  await panel.getByRole('button', { name: '取消并关闭测试', exact: true }).click()
+  await intercepted
+  let closeStatus = ''
+  await expect
+    .poll(
+      async () => {
+        closeStatus = await page.evaluate(async (id) => {
+          const token = localStorage.getItem('skillforge.access_token')
+          const response = await fetch(
+            `/api/v1/builder/workflows/test-sessions?testSessionId=${encodeURIComponent(id)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          if (!response.ok) return ''
+          return String((await response.json()).data?.close_status ?? '')
+        }, String(createdTest.test_session_id))
+        return closeStatus
+      },
+      { timeout: 60_000 }
+    )
+    .toBe('closed')
+  await expect(panel.getByRole('button', { name: '开始新测试', exact: true })).toBeVisible()
+  expect(closeAttempts).toBe(1)
+  expect(upstreamCloses).toBe(1)
+  expect(refreshes).toBe(0)
+  await page.screenshot({ path: join(evidence, 'workflow-close-candidate.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'workflow-close-candidate.json'),
+    JSON.stringify(
+      {
+        testSessionId: createdTest.test_session_id,
+        closeAttempts,
+        upstreamCloses,
+        refreshes,
+        closeStatus
       },
       null,
       2

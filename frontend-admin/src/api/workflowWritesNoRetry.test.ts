@@ -42,6 +42,12 @@ it.each([
       })
   },
   {
+    name: '关闭工作流测试',
+    method: 'POST',
+    path: '/api/v1/builder/workflows/test-sessions/close',
+    send: () => api.workflowTests.close('test-session-1')
+  },
+  {
     name: '对话输入',
     method: 'POST',
     path: '/api/v1/chat',
