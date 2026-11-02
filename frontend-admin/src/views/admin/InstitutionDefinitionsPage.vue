@@ -6,7 +6,8 @@ import {
   guardFormEnter,
   useDrawerClose,
   useResource,
-  useTask
+  useTask,
+  useUnsavedChanges
 } from '@skillforge/shared/admin'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
@@ -16,14 +17,45 @@ import type {
   AgentTemplateDefinition,
   AgentTemplateItem,
   AgentDefinitionImpact,
-  AgentTemplateValidation
+  AgentTemplateValidation,
+  AgentDefinitionSaveResolution
 } from '@skillforge/shared/integration/agentDefinitions'
-import { api } from '../../api'
+import { api, getSessionId } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import { useManagementIdentity } from '../../composables/managementIdentity'
 import { useManagementCommand } from '../../composables/managementCommand'
 const identity = useManagementIdentity(),
   page = ref(1),
   search = ref('')
+const auth = useAuthStore()
+type PendingSave = {
+  operation: 'create' | 'update'
+  key: string
+  definitionId?: string
+  expectedRevision?: number
+  fenceAttempted?: boolean
+}
+const pendingSave = ref<PendingSave>()
+const saveStorageError = ref('')
+const saveSession = getSessionId()
+const saveOwner = JSON.stringify([auth.user?.tenant_id, auth.user?.sub])
+const saveKey = `noewise:institution-definition-save:${saveOwner}`
+let pendingSnapshot = ''
+function currentSave() {
+  return (
+    identity.current() &&
+    !!auth.user?.tenant_id &&
+    !!auth.user?.sub &&
+    !!saveSession &&
+    getSessionId() === saveSession &&
+    JSON.stringify([auth.user.tenant_id, auth.user.sub]) === saveOwner
+  )
+}
+function clearSave() {
+  sessionStorage.removeItem(saveKey)
+  pendingSave.value = undefined
+  saveStorageError.value = ''
+}
 defineProps<{ tenantId?: string; embedded?: boolean }>()
 function changePage(value: number) {
   page.value = value
@@ -55,6 +87,9 @@ const options = useResource(async () => {
   }
 })
 const write = useManagementCommand()
+const commandPending = computed(
+  () => !!write.pending.value || !!pendingSave.value || !!saveStorageError.value
+)
 const action = useTask(),
   open = ref(false),
   item = ref<AgentTemplateDetail>(),
@@ -63,6 +98,8 @@ const action = useTask(),
 const validation = ref<AgentTemplateValidation>(),
   impact = ref<AgentDefinitionImpact>()
 const refreshRequired = ref(false)
+const saveRevisionConflict = ref(false)
+const saveRejectedConflict = ref(false)
 function blank(): AgentTemplateDefinition {
   return {
     system_prompt: '',
@@ -85,7 +122,7 @@ const definition = ref<AgentTemplateDefinition>(blank()),
 function onTagEnter(event: KeyboardEvent) {
   acceptUnhighlightedCreate(
     event,
-    canEdit.value && !action.busy.value && !write.pending.value,
+    canEdit.value && !action.busy.value && !commandPending.value,
     [],
     (value) => {
       if (!form.tags.includes(value)) form.tags.push(value)
@@ -95,6 +132,10 @@ function onTagEnter(event: KeyboardEvent) {
 const baseline = ref('')
 const snapshot = () => JSON.stringify({ form, definition: definition.value })
 const dirty = computed(() => snapshot() !== baseline.value)
+useUnsavedChanges({
+  dirty: () => open.value && dirty.value,
+  busy: () => action.busy.value || !!pendingSave.value
+})
 const previewSnapshot = ref('')
 const previewCurrent = computed(
   () => !!previewSnapshot.value && previewSnapshot.value === snapshot()
@@ -104,7 +145,7 @@ const canEdit = computed(() =>
 )
 const close = useDrawerClose({
   open: () => open.value,
-  busy: () => action.busy.value || !!write.pending.value,
+  busy: () => action.busy.value || !!commandPending.value,
   dirty: () => dirty.value,
   close: () => {
     open.value = false
@@ -131,9 +172,11 @@ function accept(value: AgentTemplateDetail) {
   impact.value = undefined
   previewSnapshot.value = ''
   refreshRequired.value = false
+  saveRevisionConflict.value = false
+  saveRejectedConflict.value = false
 }
 function begin(row?: AgentTemplateItem) {
-  if (action.busy.value) return
+  if (action.busy.value || commandPending.value) return
   void action.run(async () => {
     action.error.value = ''
     history.value = []
@@ -169,8 +212,229 @@ function selectCapability(index: number) {
   mount.skill_config =
     mount.capability_type === 'SKILL' ? { activation_mode: 'ON_DEMAND', token_budget: null } : null
 }
+async function executeSave(
+  operation: PendingSave['operation'],
+  targetId: string | undefined,
+  expectedRevision: number | undefined,
+  send: (key: string) => Promise<AgentTemplateItem>,
+  acceptResult: (value: AgentTemplateItem) => Promise<void>,
+  permission: string
+) {
+  if (commandPending.value) throw Error('原保存结果尚未确认，请先核对')
+  identity.requirePermission(permission)
+  if (!currentSave()) throw Error('无法确认当前账号会话，未发送保存请求')
+  const record: PendingSave = {
+    operation,
+    key: crypto.randomUUID(),
+    ...(targetId ? { definitionId: targetId, expectedRevision } : {})
+  }
+  try {
+    sessionStorage.setItem(saveKey, JSON.stringify(record))
+  } catch {
+    saveStorageError.value = '无法保存请求标识，未发送保存请求。'
+    return
+  }
+  pendingSave.value = record
+  pendingSnapshot = snapshot()
+  let result: AgentTemplateItem
+  try {
+    result = await send(record.key)
+  } catch (reason) {
+    if (
+      operation === 'update' &&
+      reason instanceof HttpClientError &&
+      reason.code === 'AGENT_DEFINITION_REVISION_CONFLICT' &&
+      currentSave()
+    ) {
+      try {
+        clearSave()
+        refreshRequired.value = true
+        saveRejectedConflict.value = true
+      } catch {
+        saveStorageError.value = '无法清除原保存记录，请恢复浏览器存储后核对。'
+      }
+    }
+    throw reason
+  }
+  if (!currentSave() || !identity.allowed(permission)) return
+  if (
+    !result?.definition_id ||
+    !Number.isSafeInteger(result.draft_revision) ||
+    result.draft_revision < 1 ||
+    (targetId && targetId !== result.definition_id)
+  )
+    return
+  try {
+    clearSave()
+  } catch {
+    saveStorageError.value = '无法清除原保存记录，请恢复浏览器存储后核对。'
+    return
+  }
+  await acceptResult(result)
+}
+async function checkOriginalSave() {
+  const operation = pendingSave.value
+  if (!operation || !currentSave()) return
+  identity.requirePermission('tenant.agent_definitions.read')
+  const resolution = await api.agentDefinitions.saveResolution(
+    operation.operation,
+    operation.key,
+    operation.definitionId,
+    { silent: true }
+  )
+  if (
+    !currentSave() ||
+    !identity.allowed('tenant.agent_definitions.read') ||
+    pendingSave.value !== operation
+  )
+    return
+  await acceptResolution(operation, resolution)
+}
+async function acceptResolution(
+  operation: PendingSave,
+  resolution: AgentDefinitionSaveResolution | null
+) {
+  if (
+    !currentSave() ||
+    !identity.allowed('tenant.agent_definitions.read') ||
+    pendingSave.value !== operation
+  )
+    return
+  if (resolution?.state === 'FENCED' && resolution.receipt === null) {
+    let detail: AgentTemplateDetail | undefined
+    if (operation.operation === 'update') {
+      detail = await api.agentDefinitions.detail(operation.definitionId!, { silent: true })
+      if (
+        !currentSave() ||
+        !identity.allowed('tenant.agent_definitions.read') ||
+        pendingSave.value !== operation
+      )
+        return
+      if (
+        detail.definition_id !== operation.definitionId ||
+        !Number.isSafeInteger(detail.draft_revision)
+      )
+        return
+    }
+    try {
+      clearSave()
+    } catch {
+      saveStorageError.value = '无法清除原保存记录，请恢复浏览器存储后核对。'
+      return
+    }
+    if (
+      detail &&
+      (operation.expectedRevision === undefined ||
+        detail.draft_revision !== operation.expectedRevision)
+    ) {
+      if (!item.value) item.value = detail
+      refreshRequired.value = true
+      saveRejectedConflict.value = true
+      open.value = true
+    } else if (detail && !item.value) {
+      accept(detail)
+      open.value = true
+    }
+    message.success(
+      pendingSnapshot
+        ? '原保存已结束，未写入；当前编辑内容已保留。'
+        : '原保存已结束且未写入；刷新前的未保存内容无法恢复。'
+    )
+    return
+  }
+  const receipt = resolution?.state === 'COMMITTED' ? resolution.receipt : null
+  if (
+    !receipt ||
+    !receipt.definition_id ||
+    !Number.isSafeInteger(receipt.draft_revision) ||
+    receipt.draft_revision < 1 ||
+    (operation.definitionId && operation.definitionId !== receipt.definition_id)
+  ) {
+    message.warning('尚未查到匹配的原保存回执，结果仍未确认')
+    return
+  }
+  const detail = await api.agentDefinitions.detail(receipt.definition_id, { silent: true })
+  if (
+    !currentSave() ||
+    !identity.allowed('tenant.agent_definitions.read') ||
+    pendingSave.value !== operation
+  )
+    return
+  if (
+    detail.definition_id !== receipt.definition_id ||
+    !Number.isSafeInteger(detail.draft_revision) ||
+    detail.draft_revision < receipt.draft_revision
+  ) {
+    message.warning('原保存已确认，但尚未读取到对应草稿修订，请稍后核对')
+    return
+  }
+  if (detail.draft_revision > receipt.draft_revision) {
+    try {
+      clearSave()
+    } catch {
+      saveStorageError.value = '无法清除原保存记录，请恢复浏览器存储后核对。'
+      return
+    }
+    if (!item.value) item.value = { ...receipt, definition: definition.value }
+    refreshRequired.value = true
+    saveRevisionConflict.value = true
+    open.value = true
+    message.warning('原保存已确认，但草稿已有更新修订；请保留当前内容后重新读取。')
+    return
+  }
+  if (open.value && pendingSnapshot && snapshot() !== pendingSnapshot) {
+    message.warning('原保存已确认，当前编辑内容已变化，请保留内容后核对')
+    return
+  }
+  try {
+    clearSave()
+  } catch {
+    saveStorageError.value = '无法清除原保存记录，请恢复浏览器存储后核对。'
+    return
+  }
+  accept(detail)
+  open.value = true
+  void list.reload()
+  message.success('原保存已确认')
+}
+async function fenceOriginalSave() {
+  const operation = pendingSave.value
+  if (!operation || !currentSave()) return
+  identity.requirePermission('tenant.agent_definitions.read')
+  if (
+    !(await confirm({
+      title: '结束未确认的保存',
+      content:
+        '服务端将阻止原请求之后生效；若原请求已经保存，将显示原结果。当前页面中的编辑内容会保留。',
+      confirmText: '结束原保存',
+      cancelText: '继续核对'
+    }))
+  )
+    return
+  if (
+    !currentSave() ||
+    pendingSave.value !== operation ||
+    !identity.allowed('tenant.agent_definitions.read')
+  )
+    return
+  const attempted = { ...operation, fenceAttempted: true }
+  try {
+    sessionStorage.setItem(saveKey, JSON.stringify(attempted))
+  } catch {
+    saveStorageError.value = '无法保存结束请求状态，未发送结束请求。'
+    return
+  }
+  pendingSave.value = attempted
+  const currentAttempt = pendingSave.value
+  const resolution = await api.agentDefinitions.fenceSave(
+    attempted.operation,
+    attempted.key,
+    attempted.definitionId
+  )
+  await acceptResolution(currentAttempt, resolution)
+}
 function save(validateAfterSave = false) {
-  if (refreshRequired.value) return
+  if (refreshRequired.value || commandPending.value) return
   void action.run(async () => {
     const permission = item.value
       ? 'tenant.agent_definitions.edit'
@@ -185,7 +449,10 @@ function save(validateAfterSave = false) {
     }
     identity.requirePermission(permission)
     const target = item.value
-    await write.execute(
+    await executeSave(
+      target ? 'update' : 'create',
+      target?.definition_id,
+      target?.draft_revision,
       (key) =>
         target
           ? api.agentDefinitions.update(target.definition_id, target.draft_revision, payload, key)
@@ -232,7 +499,7 @@ function save(validateAfterSave = false) {
           }
         }
       },
-      () => identity.requirePermission(permission)
+      permission
     )
   })
 }
@@ -406,6 +673,27 @@ function deprecate() {
 }
 onMounted(() => {
   void list.reload()
+  if (!currentSave()) return
+  try {
+    const raw = sessionStorage.getItem(saveKey)
+    if (!raw) return
+    const value: PendingSave = JSON.parse(raw)
+    if (
+      !value ||
+      !['create', 'update'].includes(value.operation) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.key) ||
+      (value.operation === 'update' && !value.definitionId) ||
+      (value.operation === 'create' && value.definitionId) ||
+      (value.expectedRevision !== undefined &&
+        (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 1)) ||
+      (value.fenceAttempted !== undefined && typeof value.fenceAttempted !== 'boolean')
+    )
+      throw Error('invalid')
+    pendingSave.value = value
+    if (identity.allowed('tenant.agent_definitions.read')) void action.run(checkOriginalSave)
+  } catch {
+    saveStorageError.value = '无法读取原保存记录，请恢复浏览器存储后重新进入。'
+  }
 })
 </script>
 <template>
@@ -418,11 +706,26 @@ onMounted(() => {
       ><ElButton
         v-if="identity.allowed('tenant.agent_definitions.create')"
         type="primary"
-        :disabled="action.busy.value || !!write.pending.value"
+        :disabled="action.busy.value || commandPending"
         @click="begin()"
         >新建共享定义</ElButton
       ></template
     >
+    <section v-if="!open && (pendingSave || saveStorageError)" role="status">
+      原保存结果尚未确认，已暂停新的写入。{{ saveStorageError }}
+      <ElButton
+        v-if="pendingSave && identity.allowed('tenant.agent_definitions.read')"
+        :loading="action.busy.value"
+        @click="action.run(checkOriginalSave)"
+        >核对原保存</ElButton
+      >
+      <ElButton
+        v-if="pendingSave && identity.allowed('tenant.agent_definitions.read')"
+        :disabled="action.busy.value"
+        @click="action.run(fenceOriginalSave)"
+        >结束未确认的保存</ElButton
+      >
+    </section>
     <FeedbackNotice
       v-if="list.error.value || (!open && action.error.value)"
       :title="action.error.value || '刷新失败，保留上次内容：' + list.error.value"
@@ -461,7 +764,7 @@ onMounted(() => {
         ><template #default="{ row }"
           ><ElButton
             link
-            :disabled="action.busy.value || !!write.pending.value"
+            :disabled="action.busy.value || commandPending"
             @click="begin(row as AgentTemplateItem)"
             >查看与维护</ElButton
           ></template
@@ -482,8 +785,8 @@ onMounted(() => {
       append-to-body
       :before-close="close.requestClose"
       :close-on-click-modal="false"
-      :show-close="!action.busy.value && !write.pending.value"
-      :close-on-press-escape="!action.busy.value && !write.pending.value"
+      :show-close="!action.busy.value && !commandPending"
+      :close-on-press-escape="!action.busy.value && !commandPending"
     >
       <FeedbackNotice
         v-if="action.error.value"
@@ -491,14 +794,35 @@ onMounted(() => {
         type="error"
         :closable="false"
       />
+      <section v-if="pendingSave || saveStorageError" role="status">
+        原保存结果尚未确认，已暂停新的写入；当前草稿已保留。{{ saveStorageError }}
+        <ElButton
+          v-if="pendingSave && identity.allowed('tenant.agent_definitions.read')"
+          :loading="action.busy.value"
+          @click="action.run(checkOriginalSave)"
+          >核对原保存</ElButton
+        >
+        <ElButton
+          v-if="pendingSave && identity.allowed('tenant.agent_definitions.read')"
+          :disabled="action.busy.value"
+          @click="action.run(fenceOriginalSave)"
+          >结束未确认的保存</ElButton
+        >
+      </section>
       <p v-if="item">
         定义 {{ item.definition_id }} · 草稿修订 {{ item.draft_revision }} · 当前发布
         {{ item.current_published_revision ?? '尚未发布' }}
       </p>
-      <p v-if="refreshRequired" role="status">草稿已保存，需重新读取保存结果后继续维护。</p>
+      <p v-if="saveRevisionConflict" role="status">
+        原保存已确认，草稿已有更新修订。当前编辑内容已保留；请确认后重新读取，继续维护最新修订。
+      </p>
+      <p v-else-if="saveRejectedConflict" role="status">
+        保存未受理，草稿修订已变化。当前编辑内容已保留；请确认后重新读取最新修订。
+      </p>
+      <p v-else-if="refreshRequired" role="status">草稿已保存，需重新读取保存结果后继续维护。</p>
       <ElButton
         v-if="item && identity.allowed('tenant.agent_definitions.read')"
-        :disabled="action.busy.value || !!write.pending.value"
+        :disabled="action.busy.value || commandPending"
         @click="reload"
         >重新读取草稿</ElButton
       >
@@ -521,7 +845,7 @@ onMounted(() => {
       ><ElForm
         :model="form"
         label-position="top"
-        :disabled="action.busy.value || !!write.pending.value || refreshRequired || !canEdit"
+        :disabled="action.busy.value || commandPending || refreshRequired || !canEdit"
         @submit.prevent="save()"
         @keydown.capture="guardFormEnter"
       >
@@ -665,7 +989,7 @@ onMounted(() => {
         <h3>校验与发布影响</h3>
         <ElButton
           v-if="identity.allowed('tenant.agent_definitions.validate')"
-          :disabled="action.busy.value || !!write.pending.value || refreshRequired"
+          :disabled="action.busy.value || commandPending || refreshRequired"
           @click="preview"
           >校验并预览影响</ElButton
         ><ElAlert
@@ -725,7 +1049,7 @@ onMounted(() => {
           type="primary"
           :disabled="
             action.busy.value ||
-            !!write.pending.value ||
+            commandPending ||
             refreshRequired ||
             dirty ||
             !previewCurrent ||
@@ -737,7 +1061,7 @@ onMounted(() => {
         >
         <ElCollapse
           ><ElCollapseItem title="发布历史与生命周期" name="history">
-            <ElButton :disabled="action.busy.value || !!write.pending.value" @click="loadHistory"
+            <ElButton :disabled="action.busy.value || commandPending" @click="loadHistory"
               >读取发布历史</ElButton
             ><ElSelect v-model="historyRevision" placeholder="选择历史发布"
               ><ElOption
@@ -749,15 +1073,13 @@ onMounted(() => {
                 " /></ElSelect
             ><ElButton
               v-if="identity.allowed('tenant.agent_definitions.restore')"
-              :disabled="
-                action.busy.value || !!write.pending.value || refreshRequired || !historyRevision
-              "
+              :disabled="action.busy.value || commandPending || refreshRequired || !historyRevision"
               @click="restore"
               >恢复为草稿</ElButton
             ><ElButton
               v-if="identity.allowed('tenant.agent_definitions.deprecate')"
               type="danger"
-              :disabled="action.busy.value || !!write.pending.value || refreshRequired"
+              :disabled="action.busy.value || commandPending || refreshRequired"
               @click="deprecate"
               >停用定义</ElButton
             >
@@ -765,9 +1087,7 @@ onMounted(() => {
         >
       </section>
       <template #footer
-        ><ElButton
-          :disabled="action.busy.value || !!write.pending.value"
-          @click="close.requestClose"
+        ><ElButton :disabled="action.busy.value || commandPending" @click="close.requestClose"
           >关闭</ElButton
         ><ElButton
           v-if="canEdit"
@@ -779,7 +1099,7 @@ onMounted(() => {
               : 'primary'
           "
           :loading="action.busy.value"
-          :disabled="!!write.pending.value || refreshRequired"
+          :disabled="commandPending || refreshRequired"
           @click="save()"
           >保存草稿</ElButton
         ><ElButton
@@ -791,7 +1111,7 @@ onMounted(() => {
           "
           type="primary"
           :loading="action.busy.value"
-          :disabled="!!write.pending.value || refreshRequired"
+          :disabled="commandPending || refreshRequired"
           @click="save(true)"
           >保存并校验</ElButton
         ></template

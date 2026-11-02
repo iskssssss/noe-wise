@@ -38,6 +38,38 @@ const bases: AgentDefinitionsBase[] = ['/platform/agent-definitions', '/tenant/a
 
 describe('共享定义客户端的正式宿主协议', () => {
   afterEach(() => vi.unstubAllGlobals())
+  it('机构保存回执只读原键，保存时禁止 401 自动重发', async () => {
+    const fixture = transport(null)
+    const api = createAgentDefinitionsApi(fixture.http, '/tenant/agent-definitions')
+    await api.saveReceipt('create', 'original')
+    await api.saveReceipt('update', 'same-key', definitionId)
+    await api.create({ name: '测试', distribution_policy: 'AUTHORIZED_DEPLOY' }, 'create-key')
+    await api.update(definitionId, 1, {}, 'update-key')
+    expect(fixture.requests.map((item) => item.path)).toEqual([
+      '/tenant/agent-definitions/save-receipt?operation=create&request_key=original',
+      `/tenant/agent-definitions/save-receipt?operation=update&request_key=same-key&definition_id=${definitionId}`,
+      '/tenant/agent-definitions',
+      '/tenant/agent-definitions/update'
+    ])
+    expect(fixture.requests[2]!.options?.retryOnUnauthorized).toBe(false)
+    expect(fixture.requests[3]!.options?.retryOnUnauthorized).toBe(false)
+  })
+  it('原保存状态只读核对，封存按原键派发且禁止 401 自动重发', async () => {
+    const fixture = transport({ state: 'UNKNOWN', receipt: null })
+    const api = createAgentDefinitionsApi(fixture.http, '/tenant/agent-definitions')
+    await api.saveResolution('update', 'original-key', definitionId)
+    await api.fenceSave('update', 'original-key', definitionId)
+    expect(fixture.requests[0]).toMatchObject({
+      method: 'GET',
+      path: `/tenant/agent-definitions/save-resolution?operation=update&request_key=original-key&definition_id=${definitionId}`
+    })
+    expect(fixture.requests[1]).toMatchObject({
+      method: 'POST',
+      path: '/tenant/agent-definitions/save-fence',
+      body: { operation: 'update', request_key: 'original-key', definition_id: definitionId },
+      options: { retryOnUnauthorized: false }
+    })
+  })
 
   it.each(bases)('%s读取精确身份、筛选和草稿修订并透传取消信号', async (base) => {
     const fixture = transport()

@@ -2,7 +2,17 @@ import { defineComponent, type Component } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { ElButton, ElFormItem, ElInput, ElRadioGroup, ElSelect, ElPagination } from 'element-plus'
+import {
+  ElButton,
+  ElDrawer,
+  ElFormItem,
+  ElInput,
+  ElRadioGroup,
+  ElSelect,
+  ElPagination
+} from 'element-plus'
+import { confirmPageLeave } from '@skillforge/shared/admin'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import SubInstitutionsPage from './SubInstitutionsPage.vue'
 import InstitutionDefinitionsPage from './InstitutionDefinitionsPage.vue'
 import InstitutionGrantsPage from './InstitutionGrantsPage.vue'
@@ -28,6 +38,9 @@ const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  saveReceipt: vi.fn(),
+  fenceSave: vi.fn(),
+  session: 'test-session',
   validate: vi.fn(),
   previewContent: vi.fn(),
   previewSaved: vi.fn(),
@@ -46,6 +59,7 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   confirm: mocks.confirm
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.session,
   api: {
     institutionManagement: {
       targetOptions: mocks.targetOptions,
@@ -66,6 +80,9 @@ vi.mock('../../api', () => ({
       detail: mocks.detail,
       create: mocks.create,
       update: mocks.update,
+      saveReceipt: mocks.saveReceipt,
+      saveResolution: mocks.saveReceipt,
+      fenceSave: mocks.fenceSave,
       validate: mocks.validate,
       previewContent: mocks.previewContent,
       previewSaved: mocks.previewSaved,
@@ -146,6 +163,10 @@ afterEach(() => {
 })
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.saveReceipt.mockReset()
+  mocks.fenceSave.mockReset()
+  sessionStorage.clear()
+  mocks.session = 'test-session'
   mocks.auth.user.authorization_version = 1
   mocks.auth.user.permissions = [
     'tenant.sub_institutions.read',
@@ -287,8 +308,9 @@ describe('机构管理实际页面交互', () => {
     expect(mocks.provision.mock.calls[1]).toEqual(mocks.provision.mock.calls[0])
     expect(mocks.provision).toHaveBeenCalledTimes(2)
   })
-  it('草稿CAS失败保留输入及完整复杂定义；显式重新读取才放弃编辑', async () => {
-    mocks.update.mockRejectedValue(Object.assign(Error('修订冲突'), { status: 409 }))
+  it.each([409, 400])('保存返回 %s 不能推断原操作失败，保留草稿并只读核对', async (status) => {
+    mocks.update.mockRejectedValue(Object.assign(Error('请求失败'), { status }))
+    mocks.saveReceipt.mockResolvedValue(null)
     const w = await open(InstitutionDefinitionsPage)
     await button(w, '查看与维护').trigger('click')
     await flushPromises()
@@ -302,14 +324,225 @@ describe('机构管理实际页面交互', () => {
       expect.objectContaining({ name: '修改后的客服', definition: definition.definition })
     ])
     expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('修改后的客服')
-    mocks.confirm.mockResolvedValueOnce(false)
-    await button(w, '重新读取草稿').trigger('click')
+    const drawer = w.getComponent(ElDrawer)
+    await drawer
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '核对原保存')!
+      .trigger('click')
     await flushPromises()
     expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('修改后的客服')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.saveReceipt).toHaveBeenCalledTimes(1)
+    expect(await confirmPageLeave()).toBe(false)
+  })
+  it('更新断连后刷新只读原回执，未确认不得重发，恢复时读取精确修订', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '待确认名称')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    const key = mocks.update.mock.calls[0]![3]
+    expect(document.body.textContent).toContain('原保存结果尚未确认')
+    expect(sessionStorage.length).toBe(1)
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).not.toContain('待确认名称')
+    w.unmount()
+    mocks.saveReceipt.mockResolvedValueOnce(null)
+    const restored = await open(InstitutionDefinitionsPage)
+    expect(mocks.saveReceipt).toHaveBeenCalledExactlyOnceWith(
+      'update',
+      key,
+      definition.definition_id,
+      { silent: true }
+    )
+    expect(button(restored, '新建共享定义').props('disabled')).toBe(true)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    const saved = { ...structuredClone(definition), draft_revision: 8, name: '待确认名称' }
+    mocks.saveReceipt.mockResolvedValueOnce({ state: 'COMMITTED', receipt: saved })
+    mocks.detail.mockResolvedValueOnce(saved)
+    await button(restored, '核对原保存').trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+    expect(field(restored, '定义名称').getComponent(ElInput).props('modelValue')).toBe('待确认名称')
+  })
+  it('创建返回 401 后重新登录仍只读核对并禁止再次创建', async () => {
+    mocks.create.mockRejectedValueOnce(Object.assign(Error('会话失效'), { status: 401 }))
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '新建共享定义').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '创建中的定义')
+    await input(w, '系统提示词', '私有草稿')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    const key = mocks.create.mock.calls[0]![1]
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).not.toContain('私有草稿')
+    w.unmount()
+    mocks.session = 'new-session'
+    mocks.saveReceipt.mockResolvedValueOnce(null)
+    const restored = await open(InstitutionDefinitionsPage)
+    expect(mocks.saveReceipt).toHaveBeenCalledExactlyOnceWith('create', key, undefined, {
+      silent: true
+    })
+    expect(button(restored, '新建共享定义').props('disabled')).toBe(true)
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+  })
+  it('用户确认结束后服务端封存原更新，保留草稿且不自动重发', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    mocks.fenceSave.mockResolvedValueOnce({ state: 'FENCED', receipt: null })
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '保留的草稿')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    const key = mocks.update.mock.calls[0]![3]
+    await button(w, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    expect(mocks.fenceSave).toHaveBeenCalledExactlyOnceWith('update', key, definition.definition_id)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('保留的草稿')
+    expect(button(w, '保存草稿').props('disabled')).toBe(false)
+  })
+  it('结束请求断连后刷新只读状态，封存未确认时不重发结束或保存', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    mocks.fenceSave.mockRejectedValueOnce(Error('断连'))
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '保留的草稿')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    await button(w, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    const key = mocks.update.mock.calls[0]![3]
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).toContain('fenceAttempted')
+    w.unmount()
+    mocks.saveReceipt.mockResolvedValueOnce({ state: 'UNKNOWN', receipt: null })
+    const restored = await open(InstitutionDefinitionsPage)
+    expect(mocks.saveReceipt).toHaveBeenCalledExactlyOnceWith(
+      'update',
+      key,
+      definition.definition_id,
+      { silent: true }
+    )
+    expect(
+      restored.findAllComponents(ElButton).some((item) => item.text() === '结束未确认的保存')
+    ).toBe(true)
+    expect(mocks.fenceSave).toHaveBeenCalledTimes(1)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    mocks.saveReceipt.mockResolvedValueOnce({ state: 'FENCED', receipt: null })
+    await button(restored, '核对原保存').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.fenceSave).toHaveBeenCalledTimes(1)
+  })
+  it('结束请求未到达时允许用户显式重试同一封存键，不自动重发保存', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    mocks.fenceSave
+      .mockRejectedValueOnce(Error('未到达'))
+      .mockResolvedValueOnce({ state: 'FENCED', receipt: null })
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '保留草稿')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    await button(w, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    expect(mocks.fenceSave).toHaveBeenCalledTimes(1)
+    await button(w, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    expect(mocks.fenceSave).toHaveBeenCalledTimes(2)
+    expect(mocks.fenceSave.mock.calls[1]).toEqual(mocks.fenceSave.mock.calls[0])
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('撤销写权限但保留读取权限时仍可确认结束原保存', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '保留草稿')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    w.unmount()
+    mocks.auth.user.permissions = ['tenant.agent_definitions.read']
+    mocks.saveReceipt.mockResolvedValueOnce({ state: 'UNKNOWN', receipt: null })
+    mocks.fenceSave.mockResolvedValueOnce({ state: 'FENCED', receipt: null })
+    const restored = await open(InstitutionDefinitionsPage)
+    await button(restored, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    expect(mocks.fenceSave).toHaveBeenCalledTimes(1)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('结束原请求时服务端返回已保存回执，读取原精确修订', async () => {
+    const saved = { ...structuredClone(definition), draft_revision: 8, name: '原保存内容' }
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    mocks.fenceSave.mockResolvedValueOnce({ state: 'COMMITTED', receipt: saved })
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '原保存内容')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    mocks.detail.mockResolvedValueOnce(saved)
+    await button(w, '结束未确认的保存').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.length).toBe(0)
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('原保存内容')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+  })
+  it('原保存已确认且草稿修订前进时保留编辑并允许显式读取最新修订', async () => {
+    mocks.update.mockRejectedValueOnce(Error('断连'))
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '原编辑内容')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    mocks.saveReceipt.mockResolvedValueOnce({
+      state: 'COMMITTED',
+      receipt: { ...definition, draft_revision: 8 }
+    })
+    const newer = { ...structuredClone(definition), name: '后来更新', draft_revision: 9 }
+    mocks.detail.mockResolvedValue(newer)
+    await button(w, '核对原保存').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.length).toBe(0)
+    expect(document.body.textContent).toContain('原保存已确认，草稿已有更新修订')
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('原编辑内容')
+    expect(button(w, '保存草稿').props('disabled')).toBe(true)
     mocks.confirm.mockResolvedValueOnce(true)
     await button(w, '重新读取草稿').trigger('click')
     await flushPromises()
-    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe(definition.name)
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('后来更新')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+  })
+  it('明确修订冲突码证明未受理时解锁原请求，保留草稿并要求重读', async () => {
+    mocks.update.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'AGENT_DEFINITION_REVISION_CONFLICT',
+        userMessage: '修订冲突'
+      })
+    )
+    const w = await open(InstitutionDefinitionsPage)
+    await button(w, '查看与维护').trigger('click')
+    await flushPromises()
+    await input(w, '定义名称', '保留的内容')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    expect(sessionStorage.length).toBe(0)
+    expect(document.body.textContent).toContain('保存未受理，草稿修订已变化')
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('保留的内容')
+    expect(button(w, '保存草稿').props('disabled')).toBe(true)
+    expect(button(w, '重新读取草稿').props('disabled')).toBe(false)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
   })
   it('保存后读取服务端解析的能力配置，再次保存使用真实结果', async () => {
     const saved = structuredClone(definition)
@@ -434,14 +667,13 @@ describe('机构管理实际页面交互', () => {
     expect(document.body.textContent).toContain('草稿已保存，需重新读取保存结果')
     expect(button(w, '发布此修订').props('disabled')).toBe(true)
   })
-  it('原写入未知后重试被拒绝时保留原请求，再次核对使用同一键', async () => {
+  it('原写入未知后只读核对同一键，不重新提交或自动校验', async () => {
     const saved = { ...structuredClone(definition), draft_revision: 8, name: '待核对的定义' }
     mocks.detail.mockResolvedValueOnce(definition).mockResolvedValue(saved)
-    mocks.update
-      .mockReset()
-      .mockRejectedValueOnce(Object.assign(Error('连接中断'), { status: 0 }))
-      .mockRejectedValueOnce(Object.assign(Error('当前被拒绝'), { status: 403 }))
-      .mockResolvedValueOnce(saved)
+    mocks.update.mockReset().mockRejectedValueOnce(Object.assign(Error('连接中断'), { status: 0 }))
+    mocks.saveReceipt
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ state: 'COMMITTED', receipt: saved })
     mocks.previewSaved.mockReset().mockResolvedValue({
       validation: { valid: true, issues: [] },
       impact: {
@@ -465,15 +697,18 @@ describe('机构管理实际页面交互', () => {
     await button(w, '保存并校验').trigger('click')
     await flushPromises()
     const original = mocks.update.mock.calls[0]
-    await button(w, '核对原请求').trigger('click')
+    await button(w, '核对原保存').trigger('click')
     await flushPromises()
     expect(button(w, '保存草稿').props('disabled')).toBe(true)
     expect(mocks.previewSaved).not.toHaveBeenCalled()
-    await button(w, '核对原请求').trigger('click')
+    await button(w, '核对原保存').trigger('click')
     await flushPromises()
-    expect(mocks.update.mock.calls[1]).toEqual(original)
-    expect(mocks.update.mock.calls[2]).toEqual(original)
-    expect(mocks.previewSaved).toHaveBeenCalledWith(definition.definition_id, 8, expect.any(Object))
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.saveReceipt.mock.calls.map((call) => call[1])).toEqual([
+      original![3],
+      original![3]
+    ])
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
   })
   it('保存成功后读取失败锁定写入，重新读取后继续维护', async () => {
     const saved = { ...structuredClone(definition), draft_revision: 8, name: '已保存的名称' }

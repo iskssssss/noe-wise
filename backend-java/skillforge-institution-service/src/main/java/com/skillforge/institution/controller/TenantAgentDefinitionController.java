@@ -24,6 +24,15 @@ public class TenantAgentDefinitionController {
     @GetMapping public ApiResponse<AdminAgentTemplateListResponse> list(@ModelAttribute AgentTemplateQuery query){scope();return ApiResponses.wrap(definitions.list(query));}
     /** 自有源工作草稿。 */
     @GetMapping("/detail") public ApiResponse<AdminAgentTemplateDetailResponse> detail(@RequestParam("definition_id")Long id){scope();return ApiResponses.wrap(definitions.detail(id));}
+    /** 只查询当前主体的原创建或编辑回执；空结果不推断写入未发生。 */
+    @GetMapping("/save-receipt") public ApiResponse<AdminAgentTemplateItemResponse> saveReceipt(@RequestParam("operation")String operation,@RequestParam("request_key")String key,@RequestParam(value="definition_id",required=false)Long id){scope();return ApiResponses.wrap(definitions.tenantSaveReceipt(operation,key,id));}
+    /** 原键状态可在封存响应中断后继续查询；未找到时仍为UNKNOWN。 */
+    @GetMapping("/save-resolution") public ApiResponse<AgentDefinitionSaveResolution> saveResolution(@RequestParam("operation")String operation,@RequestParam("request_key")String key,@RequestParam(value="definition_id",required=false)Long id){scope();return ApiResponses.wrap(definitions.tenantSaveResolution(operation,key,id));}
+    /** 只封存当前可信主体的原键；不会重新提交保存内容。 */
+    @PostMapping("/save-fence") public ApiResponse<AgentDefinitionSaveResolution> fenceSave(@Valid @RequestBody SaveFence request){scope();return ApiResponses.wrap(definitions.tenantFenceSave(request.operation(),request.requestKey(),request.definitionId()));}
+    public record SaveFence(@com.fasterxml.jackson.annotation.JsonProperty("operation") @jakarta.validation.constraints.NotBlank String operation,
+            @com.fasterxml.jackson.annotation.JsonProperty("request_key") @jakarta.validation.constraints.NotBlank String requestKey,
+            @com.fasterxml.jackson.annotation.JsonProperty("definition_id") Long definitionId) { }
     /** 自有源不可变发布历史。 */
     @GetMapping("/history") public ApiResponse<List<AdminAgentTemplateDetailResponse>> history(@RequestParam("definition_id")Long id){scope();return ApiResponses.wrap(definitions.history(id));}
     /** 精确草稿的声明差量和明确可见实例结构。 */

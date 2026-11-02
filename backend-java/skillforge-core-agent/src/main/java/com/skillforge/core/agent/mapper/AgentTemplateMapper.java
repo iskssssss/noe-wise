@@ -19,6 +19,12 @@ public interface AgentTemplateMapper extends BaseMapper<AgentTemplateDO> {
             @org.apache.ibatis.annotations.Param("key") String key);
     /** 与原业务变更及审计同事务插入完整安全回执，不存在独立pending提交。 */
     int appendDefinitionOperation(AgentDefinitionOperationRow row);
+    /** 同锁内读取或记录机构原保存键封存事实。 */
+    boolean definitionSaveFenced(@org.apache.ibatis.annotations.Param("tenant") long tenant,@org.apache.ibatis.annotations.Param("actor") String actor,
+            @org.apache.ibatis.annotations.Param("operation") String operation,@org.apache.ibatis.annotations.Param("scope") String scope,@org.apache.ibatis.annotations.Param("key") String key);
+    int fenceDefinitionSave(@org.apache.ibatis.annotations.Param("tenant") long tenant,@org.apache.ibatis.annotations.Param("actor") String actor,
+            @org.apache.ibatis.annotations.Param("operation") String operation,@org.apache.ibatis.annotations.Param("scope") String scope,
+            @org.apache.ibatis.annotations.Param("key") String key,@org.apache.ibatis.annotations.Param("definitionId") Long definitionId);
     /** 恢复完整草稿内容，显式写入可空展示字段；不更新发布指针、身份或安装计数。 */
     int restoreDraftContent(AgentTemplateDO row);
     Long lockFamily(@org.apache.ibatis.annotations.Param("templateKey") String templateKey);

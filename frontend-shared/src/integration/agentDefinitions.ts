@@ -136,6 +136,10 @@ export interface AgentDefinitionsHttp {
   post: <T>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
   put: <T>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
 }
+export interface AgentDefinitionSaveResolution {
+  state: 'UNKNOWN' | 'COMMITTED' | 'FENCED'
+  receipt: AgentTemplateItem | null
+}
 
 /** 两个宿主同构的定义生命周期客户端；身份、目标范围和CAS均由正式服务端校验。 */
 export function createAgentDefinitionsApi(
@@ -151,6 +155,10 @@ export function createAgentDefinitionsApi(
   }
   // 调用方保存原内容与key后可核验未知结果；工厂只派发一次，不自行重试或换key。
   const writeOptions = (key: string) => ({ headers: { 'Idempotency-Key': key } })
+  const saveOptions = (key: string) => ({
+    ...writeOptions(key),
+    ...(base === '/tenant/agent-definitions' ? { retryOnUnauthorized: false } : {})
+  })
   const command = (id: string, revision: number) => ({
     definition_id: id,
     expected_revision: revision
@@ -163,6 +171,32 @@ export function createAgentDefinitionsApi(
       ),
     detail: (id: string, options?: RequestOptions) =>
       http.get<AgentTemplateDetail>(`${base}/detail${query({ definition_id: id })}`, options),
+    saveReceipt: (
+      operation: 'create' | 'update',
+      key: string,
+      id?: string,
+      options?: RequestOptions
+    ) =>
+      http.get<AgentTemplateItem | null>(
+        `${base}/save-receipt${query({ operation, request_key: key, definition_id: id })}`,
+        options
+      ),
+    saveResolution: (
+      operation: 'create' | 'update',
+      key: string,
+      id?: string,
+      options?: RequestOptions
+    ) =>
+      http.get<AgentDefinitionSaveResolution>(
+        `${base}/save-resolution${query({ operation, request_key: key, definition_id: id })}`,
+        options
+      ),
+    fenceSave: (operation: 'create' | 'update', key: string, id?: string) =>
+      http.post<AgentDefinitionSaveResolution>(
+        `${base}/save-fence`,
+        { operation, request_key: key, ...(id ? { definition_id: id } : {}) },
+        { retryOnUnauthorized: false }
+      ),
     history: (id: string, options?: RequestOptions) =>
       http.get<AgentTemplateDetail[]>(`${base}/history${query({ definition_id: id })}`, options),
     impact: (id: string, revision: number, options?: RequestOptions) =>
@@ -177,7 +211,7 @@ export function createAgentDefinitionsApi(
         options
       ),
     create: (data: AgentDefinitionCreateInput, key: string = crypto.randomUUID()) =>
-      http.post<AgentTemplateItem>(base, data, writeOptions(key)),
+      http.post<AgentTemplateItem>(base, data, saveOptions(key)),
     update: (
       id: string,
       revision: number,
@@ -187,7 +221,7 @@ export function createAgentDefinitionsApi(
       http.put<AgentTemplateItem>(
         `${base}/update`,
         { ...command(id, revision), payload: data },
-        writeOptions(key)
+        saveOptions(key)
       ),
     validate: (id: string, revision: number, key: string = crypto.randomUUID()) =>
       http.post<AgentTemplateValidation>(

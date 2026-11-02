@@ -79,6 +79,12 @@ public class AgentTemplateService extends ServiceImpl<AgentTemplateMapper, Agent
     public void appendDefinitionOperation(AgentDefinitionOperationRow row) {
         if(baseMapper.appendDefinitionOperation(row)!=1)throw new IllegalStateException("定义操作回执写入失败");
     }
+    public boolean definitionSaveFenced(long tenant,String actor,String operation,String scope,String key) {
+        return baseMapper.definitionSaveFenced(tenant,actor,operation,scope,key);
+    }
+    public void fenceDefinitionSave(long tenant,String actor,String operation,String scope,String key,Long id) {
+        if(baseMapper.fenceDefinitionSave(tenant,actor,operation,scope,key,id)!=1)throw new IllegalStateException("定义保存封存写入失败");
+    }
     public AgentTemplateDO lockTemplate(Long id) {
         AgentTemplateDO value = getOne(new LambdaQueryWrapper<AgentTemplateDO>()
                 .eq(AgentTemplateDO::getId, id).last("FOR UPDATE"));

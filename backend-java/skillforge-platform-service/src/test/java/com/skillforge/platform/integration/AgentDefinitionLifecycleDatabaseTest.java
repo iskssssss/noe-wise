@@ -275,6 +275,252 @@ class AgentDefinitionLifecycleDatabaseTest {
         assertThat(write(()->service.create(create(null,null),"create"))).isEqualTo(c);
     }
 
+    @Test void institutionSaveReceiptsAreReadOnlyOriginalActorScopedAndOwnerIsolated() {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var subject=new java.util.concurrent.atomic.AtomicReference<>(new FoundationAccess.Subject(false,"7","9"));
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenAnswer(call->subject.get());
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));TenantContext.setTenantId("7");
+        var request=new CreateAgentTemplateRequest("original",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        var created=write(tenantTx,()->lifecycle.create(request,"create-key"));
+        var updated=write(tenantTx,()->lifecycle.update(created.id(),1,new UpdateAgentTemplateRequest("updated",null,null,null,null,null,null,null,null),"update-key"));
+        write(tenantTx,()->lifecycle.update(created.id(),2,new UpdateAgentTemplateRequest("later",null,null,null,null,null,null,null,null),"later-key"));
+        var other=write(tenantTx,()->lifecycle.create(request,"other-key"));
+        long receipts=count("nw_agent_definition_operations"),audits=audits(created.id());
+        assertThat(write(tenantTx,()->lifecycle.update(created.id(),1,new UpdateAgentTemplateRequest("updated",null,null,null,null,null,null,null,null),"update-key"))).isEqualTo(updated);
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.update(created.id(),1,new UpdateAgentTemplateRequest("different",null,null,null,null,null,null,null,null),"update-key")))
+                .isInstanceOfSatisfying(ApiException.class,e->{assertThat(e.getStatus().value()).isEqualTo(409);assertThat(e.getCode()).isNotEqualTo("AGENT_DEFINITION_REVISION_CONFLICT");});
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.update(created.id(),1,new UpdateAgentTemplateRequest("stale",null,null,null,null,null,null,null,null),"stale-key")))
+                .isInstanceOfSatisfying(ApiException.class,e->{assertThat(e.getStatus().value()).isEqualTo(409);assertThat(e.getCode()).isEqualTo("AGENT_DEFINITION_REVISION_CONFLICT");});
+        assertThat(restrictedMapper.definitionOperation("tenant:7:member:9","update",created.id().toString(),"stale-key")).isNull();
+        assertThat(tenantTemplates.getById(created.id()).getDraftRevision()).isEqualTo(3);
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","create-key",null))).isEqualTo(created);
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("update","update-key",created.id()))).isEqualTo(updated);
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("update","missing",created.id()))).isNull();
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("update","update-key",other.id()))).isNull();
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","update-key",null))).isNull();
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("create","create-key",created.id()))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(400));
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("update","update-key",null))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(400));
+        subject.set(new FoundationAccess.Subject(false,"7","10"));
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","create-key",null))).isNull();
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("update","update-key",created.id()))).isNull();
+        subject.set(new FoundationAccess.Subject(false,"8","9"));TenantContext.setTenantId("8");
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","create-key",null))).isNull();
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("update","update-key",created.id()))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(404));
+        subject.set(new FoundationAccess.Subject(false,"7","9"));TenantContext.setTenantId("7");
+        doThrow(new ApiException(org.springframework.http.HttpStatus.FORBIDDEN,"禁止读取")).when(access).require("tenant.agent_definitions.read");
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("create","create-key",null))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+        assertThat(count("nw_agent_definition_operations")).isEqualTo(receipts);assertThat(audits(created.id())).isEqualTo(audits);
+    }
+
+    @Test void uncommittedSaveReceiptReturnsUnknownWithoutBlockingThenReadsCommittedResult() throws Exception {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));
+        var request=new CreateAgentTemplateRequest("in-flight",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        var written=new CountDownLatch(1);var allowCommit=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var saving=pool.submit(()->{
+                TenantContext.setTenantId("7");
+                try {return write(tenantTx,()->{var result=lifecycle.create(request,"in-flight-key");written.countDown();await(allowCommit);return result;});}
+                finally {TenantContext.clear();}
+            });
+            try {
+                assertThat(written.await(10,TimeUnit.SECONDS)).isTrue();
+                var lookup=pool.submit(()->{TenantContext.setTenantId("7");try{return write(tenantTx,()->lifecycle.tenantSaveReceipt("create","in-flight-key",null));}finally{TenantContext.clear();}});
+                assertThat(lookup.get(3,TimeUnit.SECONDS)).isNull();
+            } finally {allowCommit.countDown();}
+            var committed=saving.get(10,TimeUnit.SECONDS);
+            TenantContext.setTenantId("7");
+            assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","in-flight-key",null))).isEqualTo(committed);
+            assertThat(owner.queryForObject("SELECT count(*) FROM nw_agent_definition_operations WHERE request_key='in-flight-key'",Long.class)).isEqualTo(1);
+            assertThat(audits(committed.id())).isEqualTo(1);
+        }
+    }
+
+    @Test void institutionSaveReceiptSeparatesServicePrincipalsAndChecksCurrentScope() {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
+        var integrations=mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class);
+        doAnswer(call->{var identity=(com.skillforge.common.context.ServicePrincipalContext.Identity)call.getArgument(0);String scope=call.getArgument(1);
+            if(!identity.scopes().contains(scope))throw new ApiException(org.springframework.http.HttpStatus.FORBIDDEN,"缺少权限");return null;}).when(integrations).requirePrincipal(any(),anyString());
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,integrations);
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));TenantContext.setTenantId("7");
+        var request=new CreateAgentTemplateRequest("service",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        try {
+            com.skillforge.common.context.ServicePrincipalContext.set(new com.skillforge.common.context.ServicePrincipalContext.Identity("101","7","1",1,Set.of("tenant.agent_definitions.create","tenant.agent_definitions.read")));
+            var created=write(tenantTx,()->lifecycle.create(request,"service-key"));
+            assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","service-key",null))).isEqualTo(created);
+            com.skillforge.common.context.ServicePrincipalContext.set(new com.skillforge.common.context.ServicePrincipalContext.Identity("101","7","1",2,Set.of("tenant.agent_definitions.read")));
+            assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("create","service-fence",null)).state()).isEqualTo("FENCED");
+            assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("update","service-update-fence",created.id())).state()).isEqualTo("FENCED");
+            assertThatThrownBy(()->write(tenantTx,()->lifecycle.create(request,"service-fence"))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+            com.skillforge.common.context.ServicePrincipalContext.set(new com.skillforge.common.context.ServicePrincipalContext.Identity("102","7","1",1,Set.of("tenant.agent_definitions.read")));
+            assertThat(write(tenantTx,()->lifecycle.tenantSaveReceipt("create","service-key",null))).isNull();
+            assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","service-fence",null)).state()).isEqualTo("UNKNOWN");
+            com.skillforge.common.context.ServicePrincipalContext.set(new com.skillforge.common.context.ServicePrincipalContext.Identity("101","7","1",2,Set.of()));
+            assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("create","service-key",null))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+            assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantFenceSave("create","no-scope",null))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+            com.skillforge.common.context.ServicePrincipalContext.set(new com.skillforge.common.context.ServicePrincipalContext.Identity("101","8","1",1,Set.of("tenant.agent_definitions.read")));
+            assertThatThrownBy(()->write(tenantTx,()->lifecycle.tenantSaveReceipt("create","service-key",null))).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+        } finally {com.skillforge.common.context.ServicePrincipalContext.clear();}
+    }
+
+    @Test void saveFencePreventsLateCreateAndUpdateAndRemainsActorScoped() {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var subject=new java.util.concurrent.atomic.AtomicReference<>(new FoundationAccess.Subject(false,"7","9"));
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenAnswer(call->subject.get());
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));TenantContext.setTenantId("7");
+        var request=new CreateAgentTemplateRequest("fenced",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","create-fence",null)).state()).isEqualTo("UNKNOWN");
+        assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("create","create-fence",null)).state()).isEqualTo("FENCED");
+        assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("create","create-fence",null)).state()).isEqualTo("FENCED");
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","create-fence",null)).state()).isEqualTo("FENCED");
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.create(request,"create-fence")))
+                .isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getCode()).isEqualTo("AGENT_DEFINITION_SAVE_FENCED"));
+        assertThat(count("nw_agent_templates")).isZero();assertThat(count("nw_agent_definition_operations")).isZero();
+        subject.set(new FoundationAccess.Subject(false,"7","10"));
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","create-fence",null)).state()).isEqualTo("UNKNOWN");
+        subject.set(new FoundationAccess.Subject(false,"8","9"));TenantContext.setTenantId("8");
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","create-fence",null)).state()).isEqualTo("UNKNOWN");
+        assertThat(restrictedMapper.definitionSaveFenced(7,"tenant:7:member:9","create","new","create-fence")).isFalse();
+        assertThatThrownBy(()->restrictedMapper.fenceDefinitionSave(7,"tenant:7:member:9","create","new","foreign-insert",null)).isInstanceOf(RuntimeException.class);
+        subject.set(new FoundationAccess.Subject(false,"7","9"));TenantContext.setTenantId("7");
+        var created=write(tenantTx,()->lifecycle.create(request,"created"));
+        assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("create","created",null)).receipt()).isEqualTo(created);
+        assertThat(write(tenantTx,()->lifecycle.tenantSaveResolution("create","created",null)).state()).isEqualTo("COMMITTED");
+        long audits=audits(created.id());
+        assertThat(write(tenantTx,()->lifecycle.tenantFenceSave("update","update-fence",created.id())).state()).isEqualTo("FENCED");
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.update(created.id(),1,update("late"),"update-fence")))
+                .isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getCode()).isEqualTo("AGENT_DEFINITION_SAVE_FENCED"));
+        assertThat(tenantTemplates.getById(created.id()).getDraftRevision()).isEqualTo(1);
+        assertThat(audits(created.id())).isEqualTo(audits);
+        assertThat(write(tenantTx,()->lifecycle.update(created.id(),1,update("next"),"new-key")).draftRevision()).isEqualTo(2);
+        assertThatThrownBy(()->write(tenantTx,()->lifecycle.create(new CreateAgentTemplateRequest("different",null,List.of(),null,null,"free",0,definition("other"),AgentDistributionPolicy.AUTHORIZED_DEPLOY),"created")))
+                .isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(409));
+    }
+
+    /** 写入已持有原键锁时，显式封存须等待事务并读取提交的原回执。 */
+    @Test void saveFenceWaitsForOriginalCommitAndReturnsItsReceipt() throws Exception {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));
+        var request=new CreateAgentTemplateRequest("pending",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        var written=new CountDownLatch(1);var allowCommit=new CountDownLatch(1);var started=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var saving=pool.submit(()->{TenantContext.setTenantId("7");try{return write(tenantTx,()->{var result=lifecycle.create(request,"race-key");written.countDown();await(allowCommit);return result;});}finally{TenantContext.clear();}});
+            try {
+                assertThat(written.await(10,TimeUnit.SECONDS)).isTrue();
+                var fencing=pool.submit(()->{TenantContext.setTenantId("7");try{started.countDown();return write(tenantTx,()->lifecycle.tenantFenceSave("create","race-key",null));}finally{TenantContext.clear();}});
+                assertThat(started.await(5,TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(()->fencing.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                allowCommit.countDown();var original=saving.get(10,TimeUnit.SECONDS);var result=fencing.get(10,TimeUnit.SECONDS);
+                assertThat(result.state()).isEqualTo("COMMITTED");assertThat(result.receipt()).isEqualTo(original);
+            } finally {allowCommit.countDown();}
+        }
+        assertThat(owner.queryForObject("SELECT count(*) FROM nw_agent_definition_save_fences WHERE request_key='race-key'",Long.class)).isZero();
+    }
+
+    /** 封存事务先拿锁时，晚到写入必须等提交后拒绝，同一原键没有业务副作用。 */
+    @Test void originalSaveWaitsForFenceCommitAndCannotWriteAfterward() throws Exception {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));
+        var request=new CreateAgentTemplateRequest("late",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        var fenced=new CountDownLatch(1);var allowCommit=new CountDownLatch(1);var started=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var fencing=pool.submit(()->{TenantContext.setTenantId("7");try{return write(tenantTx,()->{var result=lifecycle.tenantFenceSave("create","fence-first",null);fenced.countDown();await(allowCommit);return result;});}finally{TenantContext.clear();}});
+            try {
+                assertThat(fenced.await(10,TimeUnit.SECONDS)).isTrue();
+                var saving=pool.submit(()->{TenantContext.setTenantId("7");try{started.countDown();return write(tenantTx,()->lifecycle.create(request,"fence-first"));}finally{TenantContext.clear();}});
+                assertThat(started.await(5,TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(()->saving.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                allowCommit.countDown();assertThat(fencing.get(10,TimeUnit.SECONDS).state()).isEqualTo("FENCED");
+                assertThatThrownBy(()->saving.get(10,TimeUnit.SECONDS)).isInstanceOfSatisfying(ExecutionException.class,error->
+                        assertThat(error.getCause()).isInstanceOfSatisfying(ApiException.class,cause->assertThat(cause.getCode()).isEqualTo("AGENT_DEFINITION_SAVE_FENCED")));
+            } finally {allowCommit.countDown();}
+        }
+        assertThat(count("nw_agent_templates")).isZero();assertThat(count("nw_agent_definition_operations")).isZero();
+        assertThat(owner.queryForObject("SELECT count(*) FROM nw_agent_definition_save_fences WHERE request_key='fence-first'",Long.class)).isEqualTo(1);
+        var start=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<String> repeated=()->{TenantContext.setTenantId("7");try{await(start);return write(tenantTx,()->lifecycle.tenantFenceSave("create","parallel-fence",null)).state();}finally{TenantContext.clear();}};
+            var first=pool.submit(repeated);var second=pool.submit(repeated);start.countDown();
+            assertThat(first.get(10,TimeUnit.SECONDS)).isEqualTo("FENCED");assertThat(second.get(10,TimeUnit.SECONDS)).isEqualTo("FENCED");
+        }
+        assertThat(owner.queryForObject("SELECT count(*) FROM nw_agent_definition_save_fences WHERE request_key='parallel-fence'",Long.class)).isEqualTo(1);
+    }
+
+    /** 编辑锁先提交时返回原回执；封存先拿锁但回滚时，原编辑仍能提交。 */
+    @Test void updateFenceSerializesWithOriginalAndRollbackDoesNotBlockWrite() throws Exception {
+        owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
+        owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
+        var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
+        var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
+        var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
+                mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class));
+        var tenantTx=new TransactionTemplate(new DataSourceTransactionManager(restrictedSource));TenantContext.setTenantId("7");
+        var request=new CreateAgentTemplateRequest("original",null,List.of(),null,null,"free",0,definition("first"),AgentDistributionPolicy.AUTHORIZED_DEPLOY);
+        var created=write(tenantTx,()->lifecycle.create(request,"update-seed"));TenantContext.clear();
+        var updated=new CountDownLatch(1);var finishUpdate=new CountDownLatch(1);var started=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var saving=pool.submit(()->{TenantContext.setTenantId("7");try{return write(tenantTx,()->{var result=lifecycle.update(created.id(),1,update("second"),"update-race");updated.countDown();await(finishUpdate);return result;});}finally{TenantContext.clear();}});
+            try {
+                assertThat(updated.await(10,TimeUnit.SECONDS)).isTrue();
+                var fencing=pool.submit(()->{TenantContext.setTenantId("7");try{started.countDown();return write(tenantTx,()->lifecycle.tenantFenceSave("update","update-race",created.id()));}finally{TenantContext.clear();}});
+                assertThat(started.await(5,TimeUnit.SECONDS)).isTrue();assertThatThrownBy(()->fencing.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                finishUpdate.countDown();var original=saving.get(10,TimeUnit.SECONDS);var result=fencing.get(10,TimeUnit.SECONDS);
+                assertThat(result.state()).isEqualTo("COMMITTED");assertThat(result.receipt()).isEqualTo(original);
+            } finally {finishUpdate.countDown();}
+            var fenced=new CountDownLatch(1);var finishFence=new CountDownLatch(1);var writeStarted=new CountDownLatch(1);
+            var rollback=pool.submit(()->{TenantContext.setTenantId("7");try{return tenantTx.execute(status->{var result=lifecycle.tenantFenceSave("update","rollback-key",created.id());fenced.countDown();await(finishFence);status.setRollbackOnly();return result;});}finally{TenantContext.clear();}});
+            try {
+                assertThat(fenced.await(10,TimeUnit.SECONDS)).isTrue();
+                var late=pool.submit(()->{TenantContext.setTenantId("7");try{writeStarted.countDown();return write(tenantTx,()->lifecycle.update(created.id(),2,update("after-rollback"),"rollback-key"));}finally{TenantContext.clear();}});
+                assertThat(writeStarted.await(5,TimeUnit.SECONDS)).isTrue();assertThatThrownBy(()->late.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                finishFence.countDown();assertThat(rollback.get(10,TimeUnit.SECONDS).state()).isEqualTo("FENCED");
+                assertThat(late.get(10,TimeUnit.SECONDS).draftRevision()).isEqualTo(3);
+            } finally {finishFence.countDown();}
+        }
+        assertThat(owner.queryForObject("SELECT count(*) FROM nw_agent_definition_save_fences WHERE request_key IN ('update-race','rollback-key')",Long.class)).isZero();
+        assertThat(audits(created.id())).isEqualTo(3);
+    }
+
     /** 机构生命周期在真实受限连接下复用唯一engine：原回执、NULL恢复、owner隔离、不可变历史及停用守卫。 */
     @Test void institutionLifecycleUsesOwnReceiptsAndDoesNotDiscloseSourceDraftToRecipient() {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'受让机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");

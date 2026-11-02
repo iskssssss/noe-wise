@@ -9,6 +9,7 @@ import com.skillforge.core.agent.dto.request.UpdateAgentTemplateRequest;
 import com.skillforge.core.agent.dto.response.AdminAgentTemplateDetailResponse;
 import com.skillforge.core.agent.dto.response.AdminAgentTemplateItemResponse;
 import com.skillforge.core.agent.dto.response.AdminAgentTemplateListResponse;
+import com.skillforge.core.agent.dto.response.AgentDefinitionSaveResolution;
 import com.skillforge.core.agent.dto.response.AgentTemplateValidationResponse;
 import com.skillforge.core.agent.model.AgentTemplateDO;
 import com.skillforge.core.agent.model.AgentTemplateDefinition;
@@ -93,6 +94,59 @@ public class AgentDefinitionLifecycleService {
         return detail(requireTemplate(id));
     }
 
+    /** 读取当前机构和主体首次保存的原安全快照，不推断不存在的回执。 */
+    @Transactional(readOnly=true)
+    public AdminAgentTemplateItemResponse tenantSaveReceipt(String operation,String requestKey,Long id) {
+        requireTenantOwner();
+        requireSaveIdentity(operation,id);
+        authorize("read",id);
+        if(id!=null)requireTemplate(id);
+        String key=com.skillforge.core.agent.deployment.AgentTemplateGrantService.requireKey(requestKey);
+        var row=templateService.definitionOperation(actorRef(),operation,id==null?"new":id.toString(),key);
+        if(row==null)return null;
+        if(row.definitionId()==null||id!=null&&!id.equals(row.definitionId()))throw new IllegalStateException("定义原操作回执目标不一致");
+        authorize("read",row.definitionId());
+        var current=requireTemplate(row.definitionId());
+        try {
+            var result=json.readValue(row.resultSnapshot(),AdminAgentTemplateItemResponse.class);
+            if(result==null||!row.definitionId().equals(result.id())||!current.getOwnerKind().equals(result.ownerKind())
+                    ||!java.util.Objects.equals(current.getOwnerTenantId(),result.ownerTenantId()))
+                throw new IllegalStateException("定义原操作回执身份不一致");
+            return result;
+        } catch(JsonProcessingException failure){throw new IllegalStateException("定义原操作回执损坏",failure);}
+    }
+
+    /** 只读确认原键的成功或封存事实；查不到仍是UNKNOWN。 */
+    @Transactional(readOnly=true)
+    public AgentDefinitionSaveResolution tenantSaveResolution(String operation,String requestKey,Long id) {
+        var receipt=tenantSaveReceipt(operation,requestKey,id);
+        if(receipt!=null)return new AgentDefinitionSaveResolution("COMMITTED",receipt);
+        var owner=owner();var key=com.skillforge.core.agent.deployment.AgentTemplateGrantService.requireKey(requestKey);
+        return new AgentDefinitionSaveResolution(templateService.definitionSaveFenced(owner.tenantId(),actorRef(),operation,
+                id==null?"new":id.toString(),key)?"FENCED":"UNKNOWN",null);
+    }
+
+    /** 原键已成功则返回原回执；否则与原写同锁封存，不推断原请求是否到达。 */
+    @Transactional(rollbackFor=Exception.class,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public AgentDefinitionSaveResolution tenantFenceSave(String operation,String requestKey,Long id) {
+        requireTenantOwner();requireSaveIdentity(operation,id);
+        var owner=authorize("read",id);var actor=actorRef();
+        var key=com.skillforge.core.agent.deployment.AgentTemplateGrantService.requireKey(requestKey);
+        String scope=id==null?"new":id.toString();
+        if(id==null)templateService.lockFamily("create:"+actor+":"+key);
+        else lockTemplateFamilyAndRow(id);
+        var receipt=tenantSaveReceipt(operation,key,id);
+        if(receipt!=null)return new AgentDefinitionSaveResolution("COMMITTED",receipt);
+        if(!templateService.definitionSaveFenced(owner.tenantId(),actor,operation,scope,key))
+            templateService.fenceDefinitionSave(owner.tenantId(),actor,operation,scope,key,id);
+        return new AgentDefinitionSaveResolution("FENCED",null);
+    }
+    private static void requireSaveIdentity(String operation,Long id) {
+        if(!"create".equals(operation)&&!"update".equals(operation)
+                ||"create".equals(operation)&&id!=null||"update".equals(operation)&&(id==null||id<=0))
+            throw new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","保存回执查询参数非法",false);
+    }
+
     /** 返回当前定义的字段级校验结果，供编辑器在发布前定位问题。 */
     public AgentTemplateValidationResponse validate(Long id) {
         authorize("validate",id);
@@ -154,9 +208,9 @@ public class AgentDefinitionLifecycleService {
     }
 
     /** 同主体创建请求只提交一个定义，任何后续编辑都不改变原创建响应。 */
-    @Transactional(rollbackFor=Exception.class)
+    @Transactional(rollbackFor=Exception.class,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public AdminAgentTemplateItemResponse create(CreateAgentTemplateRequest request,String requestKey) {
-        authorize("create",null);
+        var owner=authorize("create",null);
         String actor=actorRef();
         String key=com.skillforge.core.agent.deployment.AgentTemplateGrantService.requireKey(requestKey);
         var normalized=normalizeCreate(request);
@@ -164,6 +218,7 @@ public class AgentDefinitionLifecycleService {
         templateService.lockFamily("create:"+actor+":"+key);
         var replay=replay(actor,"create","new",key,fingerprint);
         if(replay!=null)return replay;
+        if(owner.tenantId()!=null&&templateService.definitionSaveFenced(owner.tenantId(),actor,"create","new",key))throw saveFenced();
         var result=createChecked(normalized);
         complete(actor,"create","new",key,fingerprint,result);
         return result;
@@ -216,7 +271,7 @@ public class AgentDefinitionLifecycleService {
     }
 
     /** 编辑在同一family/row锁下先读取原回执，再对新命令检查精确草稿CAS。 */
-    @Transactional(rollbackFor=Exception.class)
+    @Transactional(rollbackFor=Exception.class,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public AdminAgentTemplateItemResponse update(Long id,long expected,UpdateAgentTemplateRequest request,String key) {
         return mutate(id,expected,"update","edit",key,request,existing->updateChecked(existing,request));
     }
@@ -255,14 +310,18 @@ public class AgentDefinitionLifecycleService {
     /** 当前动作/目标检查先于任何回执或定义读取；锁内只为新命令核验CAS，不重放业务写入。 */
     private AdminAgentTemplateItemResponse mutate(Long id,long expected,String operation,String action,String requestKey,Object payload,
             java.util.function.Function<AgentTemplateDO,AdminAgentTemplateItemResponse> work) {
-        authorize(action,id);
+        var owner=authorize(action,id);
         String actor=actorRef(),key=com.skillforge.core.agent.deployment.AgentTemplateGrantService.requireKey(requestKey);
         String fingerprint=fingerprint(operation,expected,payload),scope=id.toString();
         var current=lockTemplateFamilyAndRow(id);
         var previous=replay(actor,operation,scope,key,fingerprint);
         if(previous!=null)return previous;
+        if("update".equals(operation)&&owner.tenantId()!=null&&templateService.definitionSaveFenced(owner.tenantId(),actor,operation,scope,key))throw saveFenced();
         if(expected<1)throw new ApiException(HttpStatus.BAD_REQUEST,"expected_revision必须为正数");
-        if(current.getDraftRevision()!=expected)throw new ApiException(HttpStatus.CONFLICT,"草稿修订已变化，请重新读取");
+        if(current.getDraftRevision()!=expected) {
+            if("update".equals(operation))throw new ApiException(HttpStatus.CONFLICT,"AGENT_DEFINITION_REVISION_CONFLICT","草稿修订已变化，请重新读取",false);
+            throw new ApiException(HttpStatus.CONFLICT,"草稿修订已变化，请重新读取");
+        }
         var result=work.apply(current);
         complete(actor,operation,scope,key,fingerprint,result);
         return result;
@@ -315,6 +374,7 @@ public class AgentDefinitionLifecycleService {
      * @param payload 已规范化创建内容、编辑内容或恢复历史修订
      */
     private record OperationParameters(String operation,Long expectedRevision,Object payload) { }
+    private static ApiException saveFenced(){return new ApiException(HttpStatus.CONFLICT,"AGENT_DEFINITION_SAVE_FENCED","原保存请求已封存，不能再次提交",false);}
 
     /** 机构入口拒绝平台人员或平台管理机器身份。 */
     public void requireTenantOwner(){if(owner().tenantId()==null)throw new ApiException(HttpStatus.FORBIDDEN,"需要固定机构管理身份");}

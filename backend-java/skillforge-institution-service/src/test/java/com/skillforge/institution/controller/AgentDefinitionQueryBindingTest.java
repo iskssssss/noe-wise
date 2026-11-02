@@ -5,6 +5,9 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.hamcrest.Matchers.containsString;
 
 import com.skillforge.core.agent.AgentDefinitionLifecycleService;
 import com.skillforge.core.agent.dto.query.AgentTemplateQuery;
@@ -50,5 +53,31 @@ class AgentDefinitionQueryBindingTest {
                 .andExpect(status().isOk());
         verify(lifecycle).requireTenantOwner();
         verify(impact).preview(eq(31L),eq(4L),argThat(definition->"preview".equals(definition.systemPrompt())));
+    }
+    @Test void saveReceiptBindsOriginalIdentityAndKeepsUnknownAsNull() throws Exception {
+        var service=mock(AgentDefinitionLifecycleService.class);
+        var mvc=MockMvcBuilders.standaloneSetup(new TenantAgentDefinitionController(service,mock(TenantAgentDefinitionImpactService.class))).build();
+        mvc.perform(get("/api/v1/tenant/agent-definitions/save-receipt").param("operation","update")
+                .param("request_key","original-key").param("definition_id","31"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("OK"))
+                .andExpect(content().string(containsString("\"data\":null")));
+        verify(service).requireTenantOwner();
+        verify(service).tenantSaveReceipt("update","original-key",31L);
+        verifyNoMoreInteractions(service);
+    }
+    @Test void saveFenceAndResolutionBindSameOriginalRequest() throws Exception {
+        var service=mock(AgentDefinitionLifecycleService.class);
+        when(service.tenantFenceSave("update","original-key",31L)).thenReturn(new com.skillforge.core.agent.dto.response.AgentDefinitionSaveResolution("FENCED",null));
+        when(service.tenantSaveResolution("update","original-key",31L)).thenReturn(new com.skillforge.core.agent.dto.response.AgentDefinitionSaveResolution("FENCED",null));
+        var mvc=MockMvcBuilders.standaloneSetup(new TenantAgentDefinitionController(service,mock(TenantAgentDefinitionImpactService.class))).build();
+        mvc.perform(post("/api/v1/tenant/agent-definitions/save-fence").contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"operation\":\"update\",\"request_key\":\"original-key\",\"definition_id\":\"31\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("FENCED"));
+        mvc.perform(get("/api/v1/tenant/agent-definitions/save-resolution").param("operation","update").param("request_key","original-key").param("definition_id","31"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("FENCED"));
+        verify(service,times(2)).requireTenantOwner();
+        verify(service).tenantFenceSave("update","original-key",31L);
+        verify(service).tenantSaveResolution("update","original-key",31L);
+        verifyNoMoreInteractions(service);
     }
 }

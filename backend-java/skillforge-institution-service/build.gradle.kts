@@ -132,7 +132,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
-    useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser") }
+    useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
 }
 
 tasks.register<Test>("connectorCreationBrowserE2E") {
@@ -207,6 +207,17 @@ tasks.register<Test>("workflowPublishBrowserE2E") {
     testClassesDirs = ordinaryTests.output.classesDirs
     classpath = ordinaryTests.runtimeClasspath
     useJUnitPlatform { includeTags("workflow-publish-browser") }
+    setFinalizedBy(emptyList<Any>())
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("institutionDefinitionRecoveryBrowserE2E") {
+    description = "验证机构共享定义原保存响应中断后的恢复基线及精确修订运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    useJUnitPlatform { includeTags("institution-definition-recovery-browser") }
     setFinalizedBy(emptyList<Any>())
     outputs.upToDateWhen { false }
 }

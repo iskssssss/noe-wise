@@ -16,6 +16,14 @@
     INSERT INTO nw_agent_definition_operations(actor_ref,operation,object_scope,request_key,fingerprint,definition_id,result_snapshot)
     VALUES(#{actorRef},#{operation},#{objectScope},#{requestKey},#{fingerprint},#{definitionId},CAST(#{resultSnapshot} AS jsonb))
   </insert>
+  <select id="definitionSaveFenced" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS(SELECT 1 FROM nw_agent_definition_save_fences WHERE tenant_id=#{tenant} AND actor_ref=#{actor}
+      AND operation=#{operation} AND object_scope=#{scope} AND request_key=#{key})
+  </select>
+  <insert id="fenceDefinitionSave">
+    INSERT INTO nw_agent_definition_save_fences(tenant_id,actor_ref,operation,object_scope,request_key,definition_id)
+    VALUES(#{tenant},#{actor},#{operation},#{scope},#{key},#{definitionId})
+  </insert>
   <update id="restoreDraftContent">
     UPDATE nw_agent_templates
     SET name=#{name},category=#{category},
