@@ -38,6 +38,7 @@ com.skillforge.runtime.api.KnowledgeOperation
 com.skillforge.runtime.api.KnowledgeOperation$ListDocuments
 com.skillforge.runtime.api.KnowledgeOperation$ReadDocument
 com.skillforge.runtime.api.KnowledgeOperation$Search
+com.skillforge.runtime.api.KnowledgeOperationLimits
 com.skillforge.runtime.api.KnowledgeOperatorType
 com.skillforge.runtime.api.KnowledgePlan
 com.skillforge.runtime.api.KnowledgeRequest
@@ -1234,20 +1235,6 @@ public final class com.skillforge.runtime.api.KnowledgeMode extends java.lang.En
     descriptor: (Ljava/lang/String;)Lcom/skillforge/runtime/api/KnowledgeMode;
 }
 public interface com.skillforge.runtime.api.KnowledgeOperation {
-  public static final int MAX_TITLE_FILTER_CHARACTERS;
-    descriptor: I
-  public static final int MAX_CURSOR_CHARACTERS;
-    descriptor: I
-  public static final int DEFAULT_PAGE_SIZE;
-    descriptor: I
-  public static final int MAX_PAGE_SIZE;
-    descriptor: I
-  public static final int DEFAULT_READ_OFFSET;
-    descriptor: I
-  public static final int DEFAULT_READ_CHARACTERS;
-    descriptor: I
-  public static final int MAX_READ_CHARACTERS;
-    descriptor: I
 }
 public final class com.skillforge.runtime.api.KnowledgeOperation$ListDocuments extends java.lang.Record implements com.skillforge.runtime.api.KnowledgeOperation {
   public com.skillforge.runtime.api.KnowledgeOperation$ListDocuments(java.lang.String, java.util.Optional<java.lang.String>, int);
@@ -1314,6 +1301,22 @@ public final class com.skillforge.runtime.api.KnowledgeOperation$Search extends 
 
   public java.lang.String query();
     descriptor: ()Ljava/lang/String;
+}
+public final class com.skillforge.runtime.api.KnowledgeOperationLimits {
+  public static final int MAX_TITLE_FILTER_CHARACTERS;
+    descriptor: I
+  public static final int MAX_CURSOR_CHARACTERS;
+    descriptor: I
+  public static final int DEFAULT_PAGE_SIZE;
+    descriptor: I
+  public static final int MAX_PAGE_SIZE;
+    descriptor: I
+  public static final int DEFAULT_READ_OFFSET;
+    descriptor: I
+  public static final int DEFAULT_READ_CHARACTERS;
+    descriptor: I
+  public static final int MAX_READ_CHARACTERS;
+    descriptor: I
 }
 public final class com.skillforge.runtime.api.KnowledgeOperatorType extends java.lang.Enum<com.skillforge.runtime.api.KnowledgeOperatorType> {
   public static final com.skillforge.runtime.api.KnowledgeOperatorType KEYWORD;

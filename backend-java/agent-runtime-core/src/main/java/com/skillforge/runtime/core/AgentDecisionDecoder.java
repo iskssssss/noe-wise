@@ -4,6 +4,7 @@ import com.skillforge.runtime.json.CodecLimits;
 
 import com.skillforge.runtime.api.TypedPayload;
 import com.skillforge.runtime.api.KnowledgeOperation;
+import com.skillforge.runtime.api.KnowledgeOperationLimits;
 import com.skillforge.runtime.api.ToolCallLimits;
 import com.skillforge.runtime.core.CanonicalJson.Field;
 import com.skillforge.runtime.core.CanonicalJson.Value;
@@ -165,12 +166,12 @@ public final class AgentDecisionDecoder {
                 root.requireMembers(List.of("type", "knowledge_handle"), List.of("title_filter", "page_cursor", "page_size"));
                 String cursor = root.optionalField("page_cursor").map(Value::stringValue).orElse("");
                 yield new AgentAction.KnowledgeListDocuments(text(root, "knowledge_handle"), new KnowledgeOperation.ListDocuments(
-                        root.optionalField("title_filter").map(Value::stringValue).orElse(""), cursor.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(cursor), optionalInteger(root, "page_size", KnowledgeOperation.DEFAULT_PAGE_SIZE)));
+                        root.optionalField("title_filter").map(Value::stringValue).orElse(""), cursor.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(cursor), optionalInteger(root, "page_size", KnowledgeOperationLimits.DEFAULT_PAGE_SIZE)));
             }
             case "knowledge_read_document" -> {
                 root.requireMembers(List.of("type", "knowledge_handle", "source_id", "document_id", "source_version"), List.of("offset", "max_characters"));
                 yield new AgentAction.KnowledgeReadDocument(text(root, "knowledge_handle"), new KnowledgeOperation.ReadDocument(
-                        text(root, "source_id"), text(root, "document_id"), text(root, "source_version"), optionalInteger(root, "offset", KnowledgeOperation.DEFAULT_READ_OFFSET), optionalInteger(root, "max_characters", KnowledgeOperation.DEFAULT_READ_CHARACTERS)));
+                        text(root, "source_id"), text(root, "document_id"), text(root, "source_version"), optionalInteger(root, "offset", KnowledgeOperationLimits.DEFAULT_READ_OFFSET), optionalInteger(root, "max_characters", KnowledgeOperationLimits.DEFAULT_READ_CHARACTERS)));
             }
             case "ask_user" -> { root.requireFields("type", "question"); yield new AgentAction.AskUser(text(root, "question")); }
             case "plan" -> new AgentAction.Plan(PlanDecisionCodec.decode(root));

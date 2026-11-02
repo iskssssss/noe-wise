@@ -22,7 +22,7 @@ public sealed interface KnowledgeDocumentResult permits KnowledgeDocumentResult.
             documents = ApiContracts.immutableDistinctList(documents, "documents");
             nextCursor = ApiContracts.requireOptional(nextCursor, "nextCursor");
             nextCursor.ifPresent(value -> ApiContracts.requireText(value, "nextCursor"));
-            if (documents.size() > KnowledgeOperation.MAX_PAGE_SIZE || documents.isEmpty() && nextCursor.isPresent())
+            if (documents.size() > KnowledgeOperationLimits.MAX_PAGE_SIZE || documents.isEmpty() && nextCursor.isPresent())
                 throw new IllegalArgumentException("knowledge_document_result_invalid");
         }
     }

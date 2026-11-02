@@ -12,7 +12,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.concurrent.ExecutorCompletionService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** 有界原生tool_calls组：只发送新许可，准确兄弟与复用结果保留到完整回合采纳。 */
 final class ExecutionBatchDriver<M> {
@@ -89,7 +91,10 @@ final class ExecutionBatchDriver<M> {
         for (var send : sends) outcomes[send.slot() - 1] = null;
         Run last = current; Adoption<M> adopted = null; RuntimeException failure = null; boolean interrupted = false;
         // 外层Run槽有界；每组至多READ_ONLY_BATCH个平台线程，没有新增全局通用队列或虚拟线程。
-        try (var executor = Executors.newFixedThreadPool(program.batchParallel(materials) ? sends.size() : 1, Thread.ofPlatform().daemon(true).name("execution-tool-batch-", 0).factory())) {
+        int parallelism = program.batchParallel(materials) ? sends.size() : 1;
+        try (var executor = new ThreadPoolExecutor(parallelism, parallelism, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(sends.size()), Thread.ofPlatform().daemon(true).name("execution-tool-batch-", 0).factory(),
+                new ThreadPoolExecutor.AbortPolicy())) {
             var completed = new ExecutorCompletionService<Finished>(executor);
             for (var send : sends) completed.submit(() -> {
                 if (control.cancelled() || control.ownershipLost()) return new Finished(send.slot(), null, null);

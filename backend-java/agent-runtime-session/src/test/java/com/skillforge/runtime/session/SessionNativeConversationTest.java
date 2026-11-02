@@ -4,7 +4,7 @@ import com.skillforge.runtime.json.RuntimeJson;
 import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.runtime.api.port.ModelPort.ModelTool;
-import com.skillforge.runtime.api.KnowledgeOperation;
+import com.skillforge.runtime.api.KnowledgeOperationLimits;
 import com.skillforge.runtime.core.AgentAction;
 import com.skillforge.runtime.core.AgentDecisionDecoder;
 import com.skillforge.runtime.json.CodecLimits;
@@ -32,10 +32,10 @@ class SessionNativeConversationTest {
                 .findFirst().orElseThrow().inputSchema().canonicalJson()).path("properties");
         var read = mapper.readTree(tools.stream().filter(tool -> tool.wireName().equals("knowledge_read_document"))
                 .findFirst().orElseThrow().inputSchema().canonicalJson()).path("properties");
-        assertEquals(KnowledgeOperation.MAX_TITLE_FILTER_CHARACTERS, list.path("title_filter").path("maxLength").intValue());
-        assertEquals(KnowledgeOperation.MAX_CURSOR_CHARACTERS, list.path("page_cursor").path("maxLength").intValue());
-        assertEquals(KnowledgeOperation.MAX_PAGE_SIZE, list.path("page_size").path("maximum").intValue());
-        assertEquals(KnowledgeOperation.MAX_READ_CHARACTERS, read.path("max_characters").path("maximum").intValue());
+        assertEquals(KnowledgeOperationLimits.MAX_TITLE_FILTER_CHARACTERS, list.path("title_filter").path("maxLength").intValue());
+        assertEquals(KnowledgeOperationLimits.MAX_CURSOR_CHARACTERS, list.path("page_cursor").path("maxLength").intValue());
+        assertEquals(KnowledgeOperationLimits.MAX_PAGE_SIZE, list.path("page_size").path("maximum").intValue());
+        assertEquals(KnowledgeOperationLimits.MAX_READ_CHARACTERS, read.path("max_characters").path("maximum").intValue());
         var decoder = new AgentDecisionDecoder(LIMITS);
         var decodedList = (AgentAction.KnowledgeListDocuments) ((AgentDecisionDecoder.Decoded) decoder.decodeWire(
                 "{\"type\":\"knowledge_list_documents\",\"knowledge_handle\":\"knowledge:one\"}")).action();

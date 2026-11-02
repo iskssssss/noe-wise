@@ -23,7 +23,9 @@ final class DesktopProtocol {
 
     void serve(Reader input, DesktopRuntime runtime) throws IOException {
         var reader = new BufferedReader(input);
-        var tests = java.util.concurrent.Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("desktop-model-test").factory());
+        var tests = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(1), Thread.ofPlatform().daemon().name("desktop-model-test").factory(),
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
         try {
             while (true) {
                 String line = line(reader); if (line == null) return;

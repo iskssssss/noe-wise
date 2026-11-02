@@ -167,6 +167,7 @@ class PublicApiBoundaryTest {
             KnowledgeDocumentResult.class,
             KnowledgeMode.class,
             KnowledgeOperation.class,
+            KnowledgeOperationLimits.class,
             KnowledgeOperatorType.class,
             KnowledgePlan.class,
             KnowledgeRequest.class,
