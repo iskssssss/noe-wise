@@ -604,6 +604,49 @@ describe('按挂载类型加载实际关联', () => {
       })
     )
   })
+  it('工作流接入后智能体重读失败，可在抽屉内恢复且保留配置和挂载选择', async () => {
+    mocks.permissions.push(
+      'foundation.agents.read',
+      'foundation.workflows.read',
+      'foundation.agents.create',
+      'foundation.workflows.create'
+    )
+    const { wrapper, drawer } = await open('WORKFLOW')
+    const form = wrapper
+      .findAllComponents(ElForm)
+      .find((item) => item.props('model')?.system_prompt !== undefined)!
+    const name = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === '客服')!
+    name.vm.$emit('update:modelValue', '未保存的智能体草稿')
+    const selected = drawer.findAllComponents(ElSelect)[1]!
+    const instance = drawer.findAllComponents(ElSelect)[2]!
+    instance.vm.$emit('update:modelValue', '9223372036854775807')
+    await button(drawer, '接入工作流').trigger('click')
+    await flushPromises()
+    mocks.get
+      .mockRejectedValueOnce(new Error('智能体读取失败'))
+      .mockRejectedValueOnce(new Error('智能体仍不可读'))
+    drawer.getComponent(WorkflowOnboarding).vm.$emit('confirmed')
+    await flushPromises()
+    expect(document.body.textContent).toContain('工作流接入已确认，智能体或挂载选项尚未刷新')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(true)
+    await button(drawer, '重新读取接入状态').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('工作流接入已确认，智能体或挂载选项尚未刷新')
+    expect(mocks.workflowOptions).toHaveBeenCalledTimes(1)
+    expect(form.props('model')?.name).toBe('未保存的智能体草稿')
+    await button(drawer, '重新读取接入状态').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('工作流接入已确认，智能体或挂载选项尚未刷新')
+    expect(form.props('model')?.name).toBe('未保存的智能体草稿')
+    expect(selected.props('modelValue')).toBe('10')
+    expect(instance.props('modelValue')).toBe('9223372036854775807')
+    expect(mocks.workflowOptions).toHaveBeenCalledTimes(2)
+    expect(mocks.workflowSubmit).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
   it('工作流接入后的挂载选项读取失败时保留选择并可重试', async () => {
     mocks.permissions.push(
       'foundation.agents.read',
@@ -620,13 +663,13 @@ describe('按挂载类型加载实际关联', () => {
     mocks.workflowOptions.mockRejectedValueOnce(new Error('目录不可读'))
     drawer.getComponent(WorkflowOnboarding).vm.$emit('confirmed')
     await flushPromises()
-    expect(document.body.textContent).toContain('工作流接入已确认，挂载选项尚未刷新')
+    expect(document.body.textContent).toContain('工作流接入已确认，智能体或挂载选项尚未刷新')
     expect(selected.props('modelValue')).toBe('10')
     expect(instance.props('modelValue')).toBe('9223372036854775807')
     expect(button(drawer, '添加能力').props('disabled')).toBe(true)
-    await button(drawer, '重新读取挂载选项').trigger('click')
+    await button(drawer, '重新读取接入状态').trigger('click')
     await flushPromises()
-    expect(document.body.textContent).not.toContain('工作流接入已确认，挂载选项尚未刷新')
+    expect(document.body.textContent).not.toContain('工作流接入已确认，智能体或挂载选项尚未刷新')
     expect(selected.props('modelValue')).toBe('10')
     expect(instance.props('modelValue')).toBe('9223372036854775807')
     expect(mocks.create).not.toHaveBeenCalled()

@@ -696,9 +696,9 @@
         {{ workflowOnboardingOpen ? '收起工作流接入' : '接入工作流' }}
       </ElButton>
       <p v-if="mountType === 'WORKFLOW' && workflowOptionsRefreshRequired" role="status">
-        工作流接入已确认，挂载选项尚未刷新。
+        工作流接入已确认，智能体或挂载选项尚未刷新。
         <ElButton :disabled="busy || onboardingBusy" @click="refreshWorkflowOptions"
-          >重新读取挂载选项</ElButton
+          >重新读取接入状态</ElButton
         >
       </p>
       <WorkflowOnboarding
@@ -1709,6 +1709,17 @@ function toolsConfirmed(receipt: ToolOnboardingReceipt) {
 async function refreshWorkflowOptions() {
   const owner = publicationOwner.value
   await run(async () => {
+    if (refreshRequired.value) {
+      const next = await reload()
+      if (
+        !next ||
+        publicationOwner.value !== owner ||
+        !mountOpen.value ||
+        mountType.value !== 'WORKFLOW'
+      )
+        return
+      refreshRequired.value = false
+    }
     const [options, nextInstances] = await Promise.all([
       readCurrentOptions('WORKFLOW'),
       api.agents.capabilityMounts.workflowOptions()
