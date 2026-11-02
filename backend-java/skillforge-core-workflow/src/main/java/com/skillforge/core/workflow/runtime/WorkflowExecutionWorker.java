@@ -203,7 +203,8 @@ final class WorkflowExecutionWorker {
         return current.get();
     }
     private void check(VerifiedIdentity identity,AtomicReference<ExecutionRecord> current,ExecutionLease lease,InvocationControl control) {
-        if(control.cancellationSignal().isCancellationRequested()||!clock.instant().isBefore(control.deadlineAt()))throw denied();
+        if(control.cancellationSignal().isCancellationRequested())throw new CancellationSignalled();
+        if(!clock.instant().isBefore(control.deadlineAt()))throw denied();
         var actual=current.get();
         if(actual.lease().isEmpty()||!actual.lease().orElseThrow().equals(lease.fence())
                 ||!clock.instant().isBefore(lease.fence().leaseUntil()))throw denied();
@@ -289,5 +290,8 @@ final class WorkflowExecutionWorker {
     static EventId event(ExecutionRecord record,String kind) {return new EventId("workflow:"+record.executionRef().executionId()+":"+(record.executionRevision()+1)+":"+kind);}
     static ResultRef result(ExecutionRecord record) {return new ResultRef("workflow-result:"+record.executionRef().executionId()+":"+(record.executionRevision()+1));}
     private static IllegalStateException denied() {return new IllegalStateException("workflow_execution_not_permitted");}
+    static final class CancellationSignalled extends IllegalStateException {
+        CancellationSignalled() { super("workflow_execution_cancelled"); }
+    }
     private static final class Cancelled extends RuntimeException {private static final long serialVersionUID=1L;}
 }

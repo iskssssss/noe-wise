@@ -80,6 +80,7 @@ public final class SdkWorkflowPortal implements WorkflowPortal {
             return true;
         }
     }
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(SdkWorkflowPortal.class);
     private final JdbcExecutionLedgerPort ledger;
     private final JdbcWorkflowBindings bindings;
     private final ExternalNodes nodes;
@@ -132,7 +133,39 @@ public final class SdkWorkflowPortal implements WorkflowPortal {
         if(result instanceof ExecutionWriteResult.Conflict conflict)return registeredReplay(registered,prepared,request,conflict.current());
         var current=WorkflowExecutionWorker.applied(result);
         if(result instanceof ExecutionWriteResult.Replayed)return registeredReplay(registered,prepared,request,current);
-        return result(worker.execute(registered.actor(),request.executionRef(),request.context().callContext().control(),new RegisteredSource(registered,prepared)));
+        try {
+            return result(worker.execute(registered.actor(),request.executionRef(),request.context().callContext().control(),new RegisteredSource(registered,prepared)));
+        } catch (WorkflowExecutionWorker.CancellationSignalled signalled) {
+            var parent=executionStore.load(registered.run().identity().runRef()).orElse(null);
+            if(parent==null||!parent.identity().equals(registered.run().identity())||!parent.cancelled()
+                    ||parent.status()!=RunStatus.CANCELLED||parent.phase()!=ExecutionStore.Phase.FINISHED)throw signalled;
+            // 只清理已提交父取消的原Execution；此时原worker租约已由finally释放。
+            try {
+                var input=new InputId("workflow-parent-cancel:"+parent.identity().runRef().runId()+":"+prepared.action().actionId());
+                var cleanup=new InvocationControl(clock.instant().plusSeconds(5),()->Thread.currentThread().isInterrupted());
+                if(cancelCommittedParent(registered.actor(),request.executionRef(),input,cleanup))
+                    return result(read(registered.actor(),request.executionRef()));
+            } catch (RuntimeException unavailable) {
+                LOG.warn("Workflow原派发取消清理暂缓 execution={} failureType={}",request.executionRef().executionId(),unavailable.getClass().getSimpleName(),unavailable);
+            }
+            try {
+                // 其他清理者可能仍持有租约；只在本次调用内有界观察，不重复提交取消。
+                long until=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+                while(!Thread.currentThread().isInterrupted()&&System.nanoTime()-until<0) {
+                    if(!policy.authorizeQuery(new WorkflowQuery(registered.actor(),request.executionRef())))break;
+                    var observed=read(registered.actor(),request.executionRef());
+                    if(!observed.owner().equals(parent.identity())||!observed.causativeActionRef().equals(Optional.of(prepared.action())))break;
+                    requireInitialSource(observed,request.target(),request.snapshot(),request.parameters(),request.evidenceRefs());
+                    if(WorkflowExecutionWorker.terminal(observed.state())&&!Thread.currentThread().isInterrupted())return result(observed);
+                    java.util.concurrent.locks.LockSupport.parkNanos(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(25));
+                }
+            } catch (RuntimeException unavailable) {
+                LOG.warn("Workflow原派发结果核对暂缓 execution={} failureType={}",request.executionRef().executionId(),unavailable.getClass().getSimpleName(),unavailable);
+                return unknown(request.executionRef());
+            }
+            LOG.info("Workflow原派发取消清理尚未收敛 execution={}",request.executionRef().executionId());
+            return unknown(request.executionRef());
+        }
     }
 
     /** 同一原CREATE的重复读取仍核当前写权限与精确来源；不获取执行租约、不再次驱动任何节点。 */

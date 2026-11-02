@@ -1,6 +1,6 @@
 import { test, expect, type Page, type Response } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 
 /** 只接收Java隔离夹具；live文字沿用已授权唯一标记，不增加模型调用或预算。 */
@@ -387,6 +387,8 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
     if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/auth/refresh')
       refreshes++
   })
+  const cancelGate = process.env.E2E_WORKFLOW_CANCEL_GATE
+  if (cancelGate) await expect.poll(() => existsSync(cancelGate), { timeout: 30_000 }).toBe(true)
   await page.route('**/api/v1/builder/workflows/test-sessions/close', async (route) => {
     closeAttempts++
     if (closeAttempts === 1) {

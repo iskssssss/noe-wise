@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.core.workflow.runtime.SdkWorkflowPortal;
 import com.skillforge.runtime.adapter.jdbc.execution.JdbcExecutionLedgerPort;
 import com.skillforge.runtime.adapter.jdbc.execution.JdbcExecutionStore;
+import com.skillforge.runtime.adapter.jdbc.execution.ExecutionCommands;
 import com.skillforge.core.foundation.integration.runtime.identity.JdbcIdentityPolicyPort;
 import com.skillforge.runtime.adapter.jdbc.identity.WorkflowPolicyResource;
 import com.skillforge.runtime.adapter.jdbc.session.JdbcSessionLogPort;
@@ -25,6 +26,10 @@ import java.sql.DriverManager;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.*;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -141,6 +146,152 @@ class SdkWorkflowPortalTest {
         assertFalse(store.authorizeSend(f.registered(), f.prepared()));
     }
 
+    @Test void competingAuthorizedActorsWithSameCancellationKeyLeaveOnePersistedIntent() throws Exception {
+        var f=fixture("competing-cancel-actors",true);
+        assertInstanceOf(WorkflowResult.Suspended.class,portal().dispatchRegistered(f.registered(),f.prepared(),f.request()));
+        int executed=nodes.get();
+        var parent=store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-competing-parent"),List.of()));
+        var authentication=identities.registerTrusted(new PrincipalRef.SystemPrincipal(TENANT,"workflow-worker"),
+                parent.identity().owner(),"worker","queue",Duration.ofMinutes(5));
+        var second=assertInstanceOf(IdentityPolicyPort.IdentityResult.Verified.class,identities.verify(
+                new IdentityPolicyPort.IdentityRequest(authentication,parent.identity().owner(),"worker","queue",
+                        new RequestId("verify-competing-cancel"),Optional.empty(),"trace:competing-cancel","span:competing-cancel"))).identity();
+        assertNotEquals(f.identity().verificationRef(),second.verificationRef());
+        var original=record(f);var wait=original.waiting().orElseThrow();
+        var resource=WorkflowPolicyResource.cancelResource(parent.identity(),f.request().snapshot(),f.request().target(),
+                f.request().executionRef(),wait.actionKey(),original.executionRevision(),"parent_cancelled",f.prepared().action(),
+                f.prepared().request().reference(),f.prepared().fingerprint());
+        assertTrue(policy.authorizeCommittedCancel(f.identity(),parent,resource));
+        assertTrue(policy.authorizeCommittedCancel(second,parent,resource));
+        var input=new InputId("workflow-parent-cancel:"+parent.identity().runRef().runId()+":"+f.prepared().action().actionId());
+        var event=new EventId(input.value());var at=Instant.now();
+        var firstCommand=ExecutionCommands.cancel(original,f.identity(),input,event,at);
+        var secondCommand=ExecutionCommands.cancel(original,second,input,event,at);
+        var ready=new CountDownLatch(2);var go=new CountDownLatch(1);
+        try(var executor=Executors.newFixedThreadPool(2)) {
+            var first=executor.submit(()->{ready.countDown();assertTrue(go.await(5,TimeUnit.SECONDS));return ledger.requestCancel(firstCommand);});
+            var competing=executor.submit(()->{ready.countDown();assertTrue(go.await(5,TimeUnit.SECONDS));return ledger.requestCancel(secondCommand);});
+            assertTrue(ready.await(5,TimeUnit.SECONDS));go.countDown();
+            var a=first.get(10,TimeUnit.SECONDS);var b=competing.get(10,TimeUnit.SECONDS);
+            assertTrue(a instanceof ExecutionLedgerPort.ExecutionCancelResult.Applied ^ b instanceof ExecutionLedgerPort.ExecutionCancelResult.Applied);
+            var rejected=assertInstanceOf(ExecutionLedgerPort.ExecutionCancelResult.Rejected.class,
+                    a instanceof ExecutionLedgerPort.ExecutionCancelResult.Rejected?a:b);
+            assertEquals("execution_mutation_conflict",rejected.failure().reasonCode());
+        }
+        assertEquals(Optional.of(input),record(f).cancelRequestId());
+        assertTrue(portal().cancelCommittedParent(f.identity(),f.request().executionRef(),input,
+                new InvocationControl(Instant.now().plusSeconds(5),()->false)));
+        assertEquals(WorkflowExecutionState.CANCELLED,record(f).state());assertEquals(executed,nodes.get());
+    }
+
+    @Test void inFlightDispatchReturnsCommittedCancellationWithoutExecutingANode() {
+        var f=fixture("dispatch-cancel",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-dispatch"),List.of()));
+            cancelled.set(true);
+        },true);
+        var result=assertInstanceOf(WorkflowResult.Cancelled.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+        assertEquals(request.executionRef(),result.executionRef());
+        assertEquals(WorkflowExecutionState.CANCELLED,record(f).state());
+        assertTrue(record(f).lease().isEmpty());assertEquals(0,nodes.get());
+        assertFalse(store.authorizeSend(f.registered(),f.prepared()));
+        assertEquals(1,store.actions(f.registered().run().identity().runRef(),0,10).size());
+    }
+
+    @Test void inFlightDispatchKeepsUnknownWhenCleanupCannotConverge() {
+        var f=fixture("dispatch-cancel-unknown",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-unknown"),List.of()));
+            cancelled.set(true);
+        },false);
+        assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+        assertNotEquals(WorkflowExecutionState.CANCELLED,record(f).state());
+        assertTrue(record(f).cancelRequestId().isPresent());assertEquals(0,nodes.get());
+    }
+
+    @Test void inFlightDispatchObservesConcurrentCleanupWithoutRepeatingCancellation() throws Exception {
+        var f=fixture("dispatch-cancel-observed",false);var cancelled=new AtomicBoolean();
+        var firstCleanup=new CountDownLatch(1);
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-observed"),List.of()));
+            cancelled.set(true);
+        },false,firstCleanup::countDown);
+        try(var executor=Executors.newSingleThreadExecutor()) {
+            var other=executor.submit(()->{
+                assertTrue(firstCleanup.await(5,TimeUnit.SECONDS));
+                long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                while(record(f).lease().isPresent()&&System.nanoTime()-until<0)Thread.sleep(10);
+                assertTrue(portal().cancelCommittedParent(f.identity(),request.executionRef(),new InputId("other-cleanup"),
+                        new InvocationControl(Instant.now().plusSeconds(5),()->false)));
+                return null;
+            });
+            assertInstanceOf(WorkflowResult.Cancelled.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+            other.get(5,TimeUnit.SECONDS);
+        }
+        assertEquals(WorkflowExecutionState.CANCELLED,record(f).state());assertEquals(0,nodes.get());
+        assertEquals(1,store.actions(f.registered().run().identity().runRef(),0,10).size());
+    }
+
+    @Test void revokedDuringObservationKeepsResultUnknown() {
+        var f=fixture("dispatch-observation-revoked",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-observation-revoked"),List.of()));
+            cancelled.set(true);
+        },false,()->identities.revoke(f.authentication()));
+        assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+        assertEquals(0,nodes.get());
+    }
+
+    @Test void interruptedObservationKeepsResultUnknownAndInterruptStatus() {
+        var f=fixture("dispatch-observation-interrupted",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-observation-interrupted"),List.of()));
+            cancelled.set(true);
+        },false,()->Thread.currentThread().interrupt());
+        try {
+            assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+            assertTrue(Thread.currentThread().isInterrupted());assertEquals(0,nodes.get());
+        } finally { Thread.interrupted(); }
+    }
+
+    @Test void cancellationSignalWithoutCommittedParentDoesNotImpersonateCancellation() {
+        var f=fixture("dispatch-signal-only",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        assertThrows(RuntimeException.class,()->portal(()->cancelled.set(true),true).dispatchRegistered(f.registered(),f.prepared(),request));
+        assertFalse(store.load(f.registered().run().identity().runRef()).orElseThrow().cancelled());
+        assertTrue(record(f).cancelRequestId().isEmpty());assertEquals(0,nodes.get());
+    }
+
+    @Test void revokedActorCannotUseCancellationCleanupToBypassAuthorization() {
+        var f=fixture("dispatch-cancel-revoked",false);var cancelled=new AtomicBoolean();
+        var request=withControl(f,new InvocationControl(Instant.now().plusSeconds(60),cancelled::get));
+        var portal=portal(()->{
+            store.cancel(new Cancel(f.identity(),f.registered().run().identity().runRef(),new InputId("cancel-parent-revoked"),List.of()));
+            identities.revoke(f.authentication());cancelled.set(true);
+        },true);
+        assertInstanceOf(WorkflowResult.OutcomeUnknown.class,portal.dispatchRegistered(f.registered(),f.prepared(),request));
+        assertEquals(0,nodes.get());
+    }
+
+    @Test void expiredDeadlineDoesNotBecomeCommittedCancellation() {
+        var f=fixture("dispatch-expired",false);
+        var request=withControl(f,new InvocationControl(Instant.now().minusSeconds(1),()->false));
+        assertThrows(IllegalStateException.class,()->portal().dispatchRegistered(f.registered(),f.prepared(),request));
+        assertFalse(store.load(f.registered().run().identity().runRef()).orElseThrow().cancelled());
+        assertTrue(record(f).cancelRequestId().isEmpty());assertEquals(0,nodes.get());
+    }
+
+    private WorkflowDispatch withControl(Fixture fixture,InvocationControl control) {
+        var original=fixture.request();var call=original.context().callContext();
+        var context=ProviderCallContext.dispatched(new PortCallContext(call.runIdentity(),call.identity(),control),original.context().dispatch());
+        return new WorkflowDispatch(context,original.snapshot(),original.target(),original.executionRef(),original.parameters(),original.evidenceRefs(),original.idempotencyKey());
+    }
+
     private Fixture fixture(String label, boolean human) {
         var owner = SessionOwner.user(new SessionRef(TENANT, "session:" + label), new AgentId("10"), new EndUserId(1));
         var authentication = identities.registerTrusted(new PrincipalRef.SystemPrincipal(TENANT, "workflow-worker"), owner, "worker", "queue", Duration.ofMinutes(5));
@@ -180,9 +331,12 @@ class SdkWorkflowPortalTest {
         return new Fixture(authentication, identity, registered, prepared, dispatch, new WorkflowDispatch(context, snapshot, target, execution, INPUT, List.of(), new IdempotencyKey("workflow:" + label)));
     }
 
-    private SdkWorkflowPortal portal() {
+    private SdkWorkflowPortal portal() { return portal(()->{},true); }
+    private SdkWorkflowPortal portal(Runnable beforeEngine,boolean cleanupConverges) { return portal(beforeEngine,cleanupConverges,()->{}); }
+    private SdkWorkflowPortal portal(Runnable beforeEngine,boolean cleanupConverges,Runnable onCancel) {
         var engine = new StateMachineEngine() {
             @Override public Map<String,Object> runControlled(ControlledWorkflowExecution.Request request, ControlledWorkflowExecution.Hooks hooks) {
+                beforeEngine.run();
                 return super.runControlled(request, new ControlledWorkflowExecution.Hooks() {
                     public void beforeNode(String id) { hooks.beforeNode(id); nodes.incrementAndGet(); }
                     public com.skillforge.core.workflow.execution.node.NodeOutcome executeExternalNode(com.skillforge.core.workflow.execution.node.NodeExecutionContext node) { return hooks.executeExternalNode(node); }
@@ -191,7 +345,13 @@ class SdkWorkflowPortalTest {
             }
         };
         return new SdkWorkflowPortal(source, bindings, policy, engine, new WorkflowParser(),
-                (identity, lease, execution, control, inputs, node) -> { throw new IllegalStateException("external_node_not_expected"); },
+                new SdkWorkflowPortal.ExternalNodes() {
+                    @Override public com.skillforge.core.workflow.execution.node.NodeOutcome execute(VerifiedIdentity identity,ExecutionLedgerPort.ExecutionLease lease,
+                            ExecutionLedgerPort.ExecutionRecord execution,InvocationControl control,SdkWorkflowPortal.NodeInputs inputs,
+                            com.skillforge.core.workflow.execution.node.NodeExecutionContext node) { throw new IllegalStateException("external_node_not_expected"); }
+                    @Override public boolean cancel(VerifiedIdentity identity,ExecutionLedgerPort.ExecutionLease lease,
+                            ExecutionLedgerPort.ExecutionRecord execution,InvocationControl control) { onCancel.run();return cleanupConverges; }
+                },
                 call -> INPUT.equals(call.parameters()), call -> "application/json".equals(call.response().schemaId()),
                 (binding, output) -> "skillforge.runtime.workflow.engine-result.v1".equals(output.schemaId()), Clock.systemUTC(), store,
                 (session, execution) -> {

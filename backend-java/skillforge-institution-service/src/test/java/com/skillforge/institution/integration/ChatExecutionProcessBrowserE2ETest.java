@@ -31,6 +31,8 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     private org.springframework.security.crypto.password.PasswordEncoder webhookPasswords;
     @org.springframework.beans.factory.annotation.Autowired
     private com.skillforge.core.foundation.settings.OperationalSettingsService operationalSettings;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private com.skillforge.core.workflow.execution.StateMachineEngine workflowEngine;
     private com.skillforge.core.foundation.settings.OperationalSettingsService.Snapshot originalRate;
     private long fixtureRateRevision;
     private long fixtureRateActor;
@@ -122,6 +124,23 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         }
         environment.put("E2E_INTERNAL_REASONING", "fixture-reasoning-" + fixtureRunId());
         environment.put("E2E_ARTIFACT_DIR", browserEvidence.toString());
+        if ("1".equals(System.getenv("NOEWISE_TEST_CANCEL_RACE"))) {
+            Path gate = evidence.resolve("workflow-entered-gate");
+            environment.put("E2E_WORKFLOW_CANCEL_GATE", gate.toString());
+            org.mockito.Mockito.doAnswer(invocation -> {
+                var request = (com.skillforge.core.workflow.execution.ControlledWorkflowExecution.Request) invocation.getArgument(0);
+                if (!tenantId.equals(request.tenantId()))
+                    return invocation.callRealMethod();
+                Files.writeString(gate, "entered", StandardCharsets.UTF_8);
+                long limit = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                while (System.nanoTime() < limit && countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=? AND cancelled", tenantId, request.sessionId()) == 0) {
+                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
+                }
+                if (countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=? AND cancelled", tenantId, request.sessionId()) == 0)
+                    throw new AssertionError("隔离运行未收到取消请求");
+                return invocation.callRealMethod();
+            }).when(workflowEngine).runControlled(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        }
 
         Process process = command.start();
         Set<ProcessHandle> owned = new LinkedHashSet<>();
@@ -138,8 +157,26 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             String output = Files.exists(log)
                     ? Files.readString(log, StandardCharsets.UTF_8) : "<no Playwright log>";
             String tail = output.length() > 6000 ? output.substring(output.length() - 6000) : output;
+            var closeEvidence = Map.of(
+                    "tests", queryRows(jdbc, tenantId, "SELECT id,session_id,status FROM nw_workflow_test_sessions WHERE tenant_id=?", Long.parseLong(tenantId)),
+                    "runs", queryRows(jdbc, tenantId, "SELECT run_id,session_id,status,phase,cancelled,lease_claim_id IS NOT NULL AS leased FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id IN (SELECT session_id FROM nw_workflow_test_sessions WHERE tenant_id=CAST(? AS bigint))", tenantId, tenantId),
+                    "attempts", queryRows(jdbc, tenantId, "SELECT p.run_id,p.result_kind,p.adopted FROM agent_runtime_execution_attempts p JOIN agent_runtime_execution_runs r ON r.tenant_id=p.tenant_id AND r.run_id=p.run_id WHERE r.tenant_id=? AND r.session_id IN (SELECT session_id FROM nw_workflow_test_sessions WHERE tenant_id=CAST(? AS bigint))", tenantId, tenantId),
+                    "budgets", queryRows(jdbc, tenantId, "SELECT b.run_id,b.state,b.category FROM agent_runtime_budget_attempts b JOIN agent_runtime_execution_runs r ON r.tenant_id=b.tenant_id AND r.run_id=b.run_id WHERE r.tenant_id=? AND r.session_id IN (SELECT session_id FROM nw_workflow_test_sessions WHERE tenant_id=CAST(? AS bigint))", tenantId, tenantId),
+                    "workflows", queryRows(jdbc, tenantId, "SELECT execution_id,run_id,session_id,state,cancel_request_id IS NOT NULL AS cancellation_requested,lease_claim_id IS NOT NULL AS leased FROM agent_runtime_executions WHERE tenant_id=? AND session_id IN (SELECT session_id FROM nw_workflow_test_sessions WHERE tenant_id=CAST(? AS bigint))", tenantId, tenantId));
+            Files.writeString(evidence.resolve("workflow-close-state.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(closeEvidence), StandardCharsets.UTF_8);
             assertEquals(0, process.exitValue(), "Chat process browser E2E failed; evidence=" + evidence
                     + "\n" + tail);
+            if ("1".equals(System.getenv("NOEWISE_TEST_CANCEL_RACE"))) {
+                assertEquals(1, closeEvidence.get("tests").size());
+                assertEquals("closed", closeEvidence.get("tests").getFirst().get("status"));
+                assertEquals("CANCELLED", closeEvidence.get("runs").getFirst().get("status"));
+                assertEquals("FINISHED", closeEvidence.get("runs").getFirst().get("phase"));
+                assertEquals(false, closeEvidence.get("runs").getFirst().get("leased"));
+                assertEquals("SUCCEEDED", closeEvidence.get("attempts").getFirst().get("result_kind"));
+                assertEquals(false, closeEvidence.get("attempts").getFirst().get("adopted"));
+                assertEquals("CANCELLED", closeEvidence.get("workflows").getFirst().get("state"));
+                assertEquals(false, closeEvidence.get("workflows").getFirst().get("leased"));
+            }
             var receipt = objectMapper.readTree(Files.readString(browserEvidence.resolve("browser-receipt.json"), StandardCharsets.UTF_8));
             assertExecutionPersistence(receipt.path("sessionId").asText(), receipt.path("runId").asText(),
                     receipt.path("inputId").asText(), expectedReply, evidence, live);
