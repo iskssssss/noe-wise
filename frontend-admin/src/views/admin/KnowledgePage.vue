@@ -18,7 +18,7 @@
       知识库“{{ creationUnknown }}”的创建结果尚未确认，请求号：{{
         createRequestId
       }}。查不到回执不代表创建失败。
-      <ElButton :disabled="busy || !canRead" @click="checkCreation">核对创建结果</ElButton>
+      <ElButton :disabled="busy || !canRead" @click="checkCreation()">核对创建结果</ElButton>
       <ElButton v-if="creationInputAvailable" :disabled="busy" @click="open = true"
         >查看原创建输入</ElButton
       >
@@ -110,7 +110,7 @@
     >
       <div v-if="creationUnknown" role="status">
         <p>创建结果待核对，请求号：{{ createRequestId }}。</p>
-        <ElButton :disabled="busy || !canRead" @click="checkCreation">核对创建结果</ElButton>
+        <ElButton :disabled="busy || !canRead" @click="checkCreation()">核对创建结果</ElButton>
       </div>
       <ElForm
         ref="formRef"
@@ -445,7 +445,10 @@ const filtered = computed(() =>
     (item.name + (item.description ?? '')).toLowerCase().includes(query.value.trim().toLowerCase())
   )
 )
-onMounted(reload)
+onMounted(async () => {
+  await reload()
+  if (!disposed && creationUnknown.value && canRead.value) await checkCreation(true)
+})
 const { busy, error, run } = useTask()
 /** 数字输入在 busy 切换后仍按真实 native disabled 更新 ARIA，保留原控件和焦点身份。 */
 function syncNumericDisabled(root: HTMLElement) {
@@ -659,7 +662,7 @@ async function save() {
   })
   if (destination) await navigateToCreated(destination)
 }
-async function checkCreation() {
+async function checkCreation(automatic = false) {
   const destination = await run(async () => {
     const subject = owner.value,
       requestId = createRequestId.value,
@@ -680,7 +683,7 @@ async function checkCreation() {
       typeof result.kb_id !== 'string' ||
       !result.kb_id
     ) {
-      message.warning('尚未查到原创建回执，结果仍待核对')
+      if (!automatic) message.warning('尚未查到原创建回执，结果仍待核对')
       return
     }
     sessionStorage.removeItem(createStorageKey(subject))

@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { confirm } from '@skillforge/shared/feedback'
+import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
 import {
   ElButton,
@@ -527,6 +528,98 @@ it('创建回执缺少标识时视为结果未知，不重复创建', async () =
   expect(push).not.toHaveBeenCalled()
 })
 
+it('重新进入时自动核对知识库创建原回执并进入原知识库', async () => {
+  permissions.value.push('foundation.knowledge.read')
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.knowledge-create:["7","8"]'
+  sessionStorage.setItem(key, JSON.stringify({ requestId, name: '原知识库' }))
+  createReceipt.mockResolvedValue({ request_id: requestId, kb_id: 'kb-owned' })
+  const wrapper = mount(KnowledgePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: true } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(createReceipt).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(push).toHaveBeenCalledExactlyOnceWith('/admin/knowledge/kb-owned')
+  expect(api.createBase).not.toHaveBeenCalled()
+})
+it('目录读取失败仍自动核对原创建回执', async () => {
+  permissions.value.push('foundation.knowledge.read')
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.knowledge-create:["7","8"]'
+  sessionStorage.setItem(key, JSON.stringify({ requestId, name: '原知识库' }))
+  api.listBases.mockRejectedValueOnce(new Error('目录读取失败'))
+  createReceipt.mockResolvedValue({ request_id: requestId, kb_id: 'kb-owned' })
+  const wrapper = mount(KnowledgePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: true } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(createReceipt).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(push).toHaveBeenCalledExactlyOnceWith('/admin/knowledge/kb-owned')
+  expect(api.createBase).not.toHaveBeenCalled()
+})
+it('自动核对未找到匹配回执时保留原身份和手动入口', async () => {
+  permissions.value.push('foundation.knowledge.read')
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.knowledge-create:["7","8"]'
+  const record = JSON.stringify({ requestId, name: '原知识库' })
+  sessionStorage.setItem(key, record)
+  createReceipt.mockResolvedValueOnce({ request_id: 'other', kb_id: 'kb-owned' })
+  const wrapper = mount(KnowledgePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: true } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(createReceipt).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(sessionStorage.getItem(key)).toBe(record)
+  expect(button(wrapper, '核对创建结果').exists()).toBe(true)
+  expect(push).not.toHaveBeenCalled()
+  expect(api.createBase).not.toHaveBeenCalled()
+})
+it('自动核对请求失败时保留原记录并可手动重试', async () => {
+  permissions.value.push('foundation.knowledge.read')
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.knowledge-create:["7","8"]'
+  const record = JSON.stringify({ requestId, name: '原知识库' })
+  sessionStorage.setItem(key, record)
+  createReceipt
+    .mockRejectedValueOnce(new Error('回执服务不可用'))
+    .mockResolvedValueOnce({ request_id: requestId, kb_id: 'kb-owned' })
+  const wrapper = mount(KnowledgePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: true } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBe(record)
+  expect(wrapper.getComponent(FeedbackNotice).props('title')).toBe('回执服务不可用')
+  await button(wrapper, '核对创建结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(createReceipt).toHaveBeenCalledTimes(2)
+  expect(push).toHaveBeenCalledExactlyOnceWith('/admin/knowledge/kb-owned')
+  expect(api.createBase).not.toHaveBeenCalled()
+})
+it('缺少读取权限时保留创建原身份，不自动查询', async () => {
+  const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+  const key = 'skillforge.knowledge-create:["7","8"]'
+  const record = JSON.stringify({ requestId, name: '原知识库' })
+  sessionStorage.setItem(key, record)
+  const wrapper = mount(KnowledgePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: true } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(createReceipt).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).toBe(record)
+  expect(button(wrapper, '核对创建结果').props('disabled')).toBe(true)
+})
 it('结果未知跨页面重建保留原请求，只读核对后进入原知识库', async () => {
   permissions.value.push('foundation.knowledge.read')
   api.createBase.mockRejectedValueOnce(new Error('连接中断'))
