@@ -791,6 +791,11 @@ export interface WebhookCreateReceipt {
   request_id: string
   subscription_id: string
 }
+export interface WebhookPauseReceipt {
+  request_id: string
+  subscription_id: string
+  changed: boolean
+}
 export interface WebhookSubscription {
   id: number
   session_id?: string | null
@@ -2135,9 +2140,23 @@ export const api = {
           `/webhook-subscriptions/create-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
         ),
       pause: (id: number) =>
-        patch<{ id: number; paused: boolean }>(`/webhook-subscriptions/pause`, {
-          subscription_id: id
-        })
+        patch<{ id: number; paused: boolean }>(
+          `/webhook-subscriptions/pause`,
+          {
+            subscription_id: id
+          },
+          { retryOnUnauthorized: false }
+        ),
+      pauseWithReceipt: (requestId: string, id: number) =>
+        post<WebhookPauseReceipt>(
+          '/webhook-subscriptions/pause-with-receipt',
+          { request_id: requestId, subscription_id: id },
+          { retryOnUnauthorized: false }
+        ),
+      pauseResult: (requestId: string) =>
+        get<WebhookPauseReceipt | undefined>(
+          `/webhook-subscriptions/pause-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+        )
     },
     auditLogs: (params?: { action?: string; tenantId?: string; limit?: number }) => {
       const q = new URLSearchParams()

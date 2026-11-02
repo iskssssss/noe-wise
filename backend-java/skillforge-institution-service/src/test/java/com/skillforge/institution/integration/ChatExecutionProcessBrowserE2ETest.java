@@ -13,6 +13,8 @@ import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -27,6 +29,31 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     private com.skillforge.core.foundation.persistence.TenantMemberMapper webhookMembers;
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.security.crypto.password.PasswordEncoder webhookPasswords;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.skillforge.core.foundation.settings.OperationalSettingsService operationalSettings;
+    private com.skillforge.core.foundation.settings.OperationalSettingsService.Snapshot originalRate;
+    private long fixtureRateRevision;
+    private long fixtureRateActor;
+
+    @BeforeEach
+    void configureBrowserRatePolicy() {
+        // 多个浏览器场景共用真实限流器；为隔离测试负载设置容量。
+        originalRate = operationalSettings.read("rate_limits");
+        fixtureRateActor = com.skillforge.core.shared.config.SnowflakeIds.nextId();
+        jdbc.update("INSERT INTO nw_platform_members(id,username,password_hash,status) VALUES(?,?,?,'disabled')",
+                fixtureRateActor, "chat-browser-policy-" + fixtureRateActor, "unused");
+        fixtureRateRevision = operationalSettings.update("rate_limits", originalRate.revision(),
+                Map.of("requests_per_minute_default", 600), fixtureRateActor).revision();
+        assertEquals(600, operationalSettings.read("rate_limits").integer("requests_per_minute_default"));
+    }
+
+    @AfterEach
+    void restoreBrowserRatePolicy() {
+        if (fixtureRateRevision != 0) {
+            operationalSettings.update("rate_limits", fixtureRateRevision, originalRate.values(), fixtureRateActor);
+            assertEquals(originalRate.values(), operationalSettings.read("rate_limits").values());
+        }
+    }
 
     @DynamicPropertySource
     static void allowIsolatedBrowserOrigin(DynamicPropertyRegistry registry) {

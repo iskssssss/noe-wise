@@ -535,3 +535,96 @@ test('Webhook 专属授权可通过页面创建订阅', async ({ page }) => {
     )
   )
 })
+
+test('已暂停的 Webhook 明确展示状态且禁止重复暂停', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('tab', { name: 'Webhook', exact: true }).click()
+  await page.getByRole('button', { name: '订阅回调', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '新增 Webhook' })
+  const endpoint = `https://127.0.0.1:1/webhook-pause-baseline-${Date.now()}`
+  await drawer.getByLabel('回调地址').fill(endpoint)
+  await drawer.getByLabel('签名密钥').fill('synthetic-pause-fixture')
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  const row = page.getByRole('row').filter({ hasText: endpoint })
+  await expect(row).toBeVisible()
+  const first = responseAt(page, '/api/v1/webhook-subscriptions/pause-with-receipt', 'POST')
+  await row.getByRole('button', { name: '暂停', exact: true }).click()
+  await page.getByRole('button', { name: '暂停订阅', exact: true }).click()
+  expect((await dataOf(await first)).changed).toBe(true)
+  await expect(row).toContainText('已暂停')
+  await expect(row.getByRole('button', { name: '暂停', exact: true })).toBeDisabled()
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({ path: join(evidence, 'webhook-pause-confirmed.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'webhook-pause-confirmed.json'),
+    JSON.stringify({ first_changed: true, repeat_disabled: true }, null, 2)
+  )
+})
+
+test('Webhook 暂停提交后响应中断可只读核对原操作', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/login?redirect=/admin/governance')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/governance$/)
+  await page.getByRole('tab', { name: 'Webhook', exact: true }).click()
+  await page.getByRole('button', { name: '订阅回调', exact: true }).click()
+  const drawer = page.locator('.el-drawer').filter({ hasText: '新增 Webhook' })
+  const endpoint = `https://127.0.0.1:1/webhook-pause-disconnect-${Date.now()}`
+  await drawer.getByLabel('回调地址').fill(endpoint)
+  await drawer.getByLabel('签名密钥').fill('synthetic-pause-disconnect')
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  const row = page.getByRole('row').filter({ hasText: endpoint })
+  await expect(row).toBeVisible()
+  let posts = 0
+  const path = '/api/v1/webhook-subscriptions/pause-with-receipt'
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === path) posts++
+  })
+  let finishInterception!: () => void
+  const intercepted = new Promise<void>((resolve) => {
+    finishInterception = resolve
+  })
+  await page.route('**' + path, async (route) => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    expect((await response.json()).data.changed).toBe(true)
+    await route.abort('failed')
+    finishInterception()
+  })
+  await row.getByRole('button', { name: '暂停', exact: true }).click()
+  await page.getByRole('button', { name: '暂停订阅', exact: true }).click()
+  await intercepted
+  await expect(page.getByText('回调订阅暂停结果尚未确认', { exact: false }).first()).toBeVisible()
+  await expect(row.getByRole('button', { name: '暂停', exact: true })).toBeDisabled()
+  expect(posts).toBe(1)
+  await page.unroute('**' + path)
+  const receiptReady = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === path + '/result'
+  )
+  await page.reload()
+  expect((await receiptReady).status()).toBe(200)
+  await expect(page.getByText('原暂停操作已确认', { exact: false }).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'Webhook', exact: true }).click()
+  await expect(row).toContainText('已暂停')
+  await expect(row.getByRole('button', { name: '暂停', exact: true })).toBeDisabled()
+  expect(posts).toBe(1)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await page.screenshot({ path: join(evidence, 'webhook-pause-recovered.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'webhook-pause-recovered.json'),
+    JSON.stringify(
+      { committed: true, response_interrupted: true, recovered: true, attempts: posts },
+      null,
+      2
+    )
+  )
+})

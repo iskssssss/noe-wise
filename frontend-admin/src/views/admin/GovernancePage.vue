@@ -121,6 +121,32 @@
     <p v-if="webhookRecovered" class="admin-field-help" role="status">
       原订阅已确认（订阅 ID：{{ webhookRecovered }}），请在 Webhook 列表中查看。
     </p>
+    <div v-if="pendingWebhookPause || webhookPauseStorageError" class="admin-card" role="status">
+      <p v-if="pendingWebhookPause">
+        回调订阅暂停结果尚未确认，请求 ID：{{
+          pendingWebhookPause.requestId
+        }}。未查到回执不表示失败。
+      </p>
+      <p v-if="webhookPauseStorageError">{{ webhookPauseStorageError }}</p>
+      <p v-if="pendingWebhookPause && !identity.allowed('foundation.webhooks.read')">
+        当前账号没有 Webhook 读取权限，请联系管理员授权后核对原操作。
+      </p>
+      <ElButton
+        v-if="pendingWebhookPause && identity.allowed('foundation.webhooks.read')"
+        :disabled="busy"
+        @click="checkWebhookPause()"
+        >核对原暂停</ElButton
+      >
+      <ElButton
+        v-if="webhookPauseStorageError && !pendingWebhookPause"
+        :disabled="busy"
+        @click="loadWebhookPause"
+        >重新读取暂停记录</ElButton
+      >
+    </div>
+    <p v-if="webhookPauseOutcome" class="admin-field-help" role="status">
+      {{ webhookPauseOutcome }}
+    </p>
     <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload">
       <ElTabPane
         v-if="identity.allowed('foundation.service_principals.read')"
@@ -246,13 +272,15 @@
         prop="session_id"
         label="会话"
       /><ElTableColumn width="128" show-overflow-tooltip label="状态"
-        ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
+        ><template #default="{ row }">{{
+          row.status === 'paused' ? '已暂停' : statusLabel(row.status)
+        }}</template></ElTableColumn
       ><ElTableColumn width="80" class-name="admin-table-actions" label="操作"
         ><template #default="{ row }"
           ><ElButton
             v-permission="['foundation.webhooks.update']"
             link
-            :disabled="busy"
+            :disabled="busy || webhookPauseUncertain || row.status !== 'active'"
             @click="pauseWebhook(row as WebhookSubscription)"
             >暂停</ElButton
           ></template
@@ -558,6 +586,7 @@ import {
   api,
   type ServicePrincipal,
   type WebhookSubscription,
+  type WebhookPauseReceipt,
   type AuditLog,
   type KnowledgeWriteProposal,
   type IssuedServicePrincipal,
@@ -842,6 +871,91 @@ const webhookStorageError = ref('')
 const webhookRecovered = ref('')
 const webhookStorageKey = `skillforge.webhook-create:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
 const webhookUncertain = computed(() => !!pendingWebhook.value || !!webhookStorageError.value)
+type PendingWebhookPause = { requestId: string; subscriptionId: string }
+const pendingWebhookPause = ref<PendingWebhookPause>()
+const webhookPauseStorageError = ref('')
+const webhookPauseReceipt = ref<WebhookPauseReceipt>()
+const webhookPauseStorageKey = `skillforge.webhook-pause:${JSON.stringify([auth.user?.tenant_id, auth.user?.sub])}`
+const webhookPauseUncertain = computed(
+  () => !!pendingWebhookPause.value || !!webhookPauseStorageError.value
+)
+const webhookPauseOutcome = computed(() => {
+  const receipt = webhookPauseReceipt.value
+  if (!receipt) return ''
+  const item = webhooks.value.find((entry) => String(entry.id) === receipt.subscription_id)
+  const subject = item ? `“${item.endpoint_url}”` : `订阅 ${receipt.subscription_id}`
+  return receipt.changed
+    ? `原暂停操作已确认（${subject}）；当前状态以列表为准。`
+    : `原暂停操作未改变回调订阅（${subject}），请核对当前状态。`
+})
+function loadWebhookPause() {
+  if (!auth.user?.tenant_id || !auth.user?.sub) {
+    webhookPauseStorageError.value = '无法确认当前机构和成员，请重新登录。'
+    return
+  }
+  try {
+    const raw = sessionStorage.getItem(webhookPauseStorageKey)
+    const value = raw === null ? undefined : JSON.parse(raw)
+    if (
+      raw !== null &&
+      (!value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        typeof value.requestId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+        typeof value.subscriptionId !== 'string' ||
+        !/^\d+$/.test(value.subscriptionId))
+    )
+      throw Error('invalid')
+    pendingWebhookPause.value = value
+    webhookPauseStorageError.value = ''
+  } catch {
+    webhookPauseStorageError.value = '无法读取订阅暂停记录，请恢复浏览器存储后重试。'
+  }
+}
+function saveWebhookPause(value?: PendingWebhookPause) {
+  try {
+    if (value) sessionStorage.setItem(webhookPauseStorageKey, JSON.stringify(value))
+    else sessionStorage.removeItem(webhookPauseStorageKey)
+    pendingWebhookPause.value = value
+    webhookPauseStorageError.value = ''
+    return true
+  } catch {
+    webhookPauseStorageError.value = '无法保存订阅暂停记录，请恢复浏览器存储后重试。'
+    return false
+  }
+}
+function matchesWebhookPause(
+  receipt: WebhookPauseReceipt | undefined,
+  original: PendingWebhookPause
+) {
+  return (
+    !!receipt &&
+    receipt.request_id === original.requestId &&
+    receipt.subscription_id === original.subscriptionId &&
+    typeof receipt.changed === 'boolean'
+  )
+}
+function showWebhookPauseOutcome(receipt: WebhookPauseReceipt) {
+  webhookPauseReceipt.value = receipt
+  if (receipt.changed) message.success(webhookPauseOutcome.value)
+  else message.warning(webhookPauseOutcome.value)
+}
+async function checkWebhookPause(automatic = false) {
+  const original = pendingWebhookPause.value
+  if (!original || !identity.allowed('foundation.webhooks.read')) return
+  await run(async () => {
+    const receipt = await api.governance.webhooks.pauseResult(original.requestId)
+    if (!identity.current() || pendingWebhookPause.value?.requestId !== original.requestId) return
+    if (!matchesWebhookPause(receipt, original)) {
+      if (!automatic) message.warning('尚未查到匹配的暂停回执，结果仍未确认。')
+      return
+    }
+    if (!saveWebhookPause()) return
+    showWebhookPauseOutcome(receipt!)
+    if (tab.value === 'webhooks') await reload()
+  })
+}
 const drawerUncertain = computed(() =>
   tab.value === 'principals' ? credentialUncertain.value : webhookUncertain.value
 )
@@ -894,11 +1008,14 @@ async function checkWebhook(automatic = false) {
   })
 }
 onMounted(() => {
+  loadWebhookPause()
   loadWebhook()
   loadIssue()
   loadRotation()
   loadStatus()
   void (async () => {
+    if (pendingWebhookPause.value && identity.allowed('foundation.webhooks.read'))
+      await checkWebhookPause(true)
     if (pendingWebhook.value && identity.allowed('foundation.webhooks.read'))
       await checkWebhook(true)
     if (pendingIssue.value && identity.allowed('foundation.service_principals.read'))
@@ -1155,6 +1272,8 @@ async function changeStatus(row: ServicePrincipal, action: ServicePrincipalStatu
   })
 }
 async function pauseWebhook(row: WebhookSubscription) {
+  if (webhookPauseUncertain.value || row.status !== 'active') return
+  identity.requirePermission('foundation.webhooks.update')
   if (
     !(await confirm({
       title: '暂停回调订阅',
@@ -1163,10 +1282,29 @@ async function pauseWebhook(row: WebhookSubscription) {
     }))
   )
     return
+  identity.requirePermission('foundation.webhooks.update')
   await run(async () => {
-    await api.governance.webhooks.pause(row.id)
+    const original = { requestId: crypto.randomUUID(), subscriptionId: String(row.id) }
+    if (!saveWebhookPause(original)) return
+    webhookPauseReceipt.value = undefined
+    let receipt: WebhookPauseReceipt
+    try {
+      receipt = await api.governance.webhooks.pauseWithReceipt(original.requestId, row.id)
+    } catch (reason) {
+      if (
+        identity.current() &&
+        reason instanceof HttpClientError &&
+        reason.code === 'WEBHOOK_PAUSE_REJECTED'
+      )
+        saveWebhookPause()
+      throw reason
+    }
+    identity.requirePermission('foundation.webhooks.update')
+    if (!matchesWebhookPause(receipt, original)) throw Error('暂停响应不完整，请核对原请求。')
+    const cleared = saveWebhookPause()
+    showWebhookPauseOutcome(receipt)
+    if (!cleared) message.warning('原暂停已确认，但本地记录尚未清除，请恢复浏览器存储后核对。')
     await reload()
-    message.success('回调订阅已暂停')
   })
 }
 async function decide(row: KnowledgeWriteProposal, approve: boolean) {

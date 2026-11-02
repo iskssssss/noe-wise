@@ -381,6 +381,158 @@ class ChatClientOpenApiIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_channel_create_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), invalidId));
     }
 
+    @Test void webhookPauseReceiptRecordsActualChangeAndIsOwnedByOriginalMember() throws Exception {
+        String slug = "webhook-pause-" + SnowflakeIds.nextId();
+        String tenant = createTenant(tenants, plans, slug);
+        TenantContext.setTenantId(tenant);
+        String password = "WebhookManagement123";
+        createTestTenantAdministrator(tenant, "pause-owner", password);
+        String owner = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "pause-owner", "password", password), null).path("access_token").asText();
+        var created = managementHttp("POST", "/api/v1/webhook-subscriptions/create-with-receipt", Map.of(
+                "request_id", UUID.randomUUID().toString(), "endpoint_url", "https://127.0.0.1:1/pause-receipt",
+                "signing_secret", "synthetic-pause-secret"), owner);
+        long subscriptionId = created.path("subscription_id").asLong();
+        assertTrue(subscriptionId > 0);
+        String path = "/api/v1/webhook-subscriptions/pause-with-receipt";
+        String requestId = UUID.randomUUID().toString();
+        var command = Map.of("request_id", requestId, "subscription_id", subscriptionId);
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + owner).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        var a = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var b = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        var first = a.get(30, TimeUnit.SECONDS); var second = b.get(30, TimeUnit.SECONDS);
+        assertEquals(200, first.statusCode()); assertEquals(200, second.statusCode());
+        var receipt = json.readTree(first.body()).path("data");
+        assertEquals(receipt, json.readTree(second.body()).path("data"));
+        assertEquals(requestId, receipt.path("request_id").asText());
+        assertEquals(Long.toString(subscriptionId), receipt.path("subscription_id").asText());
+        assertTrue(receipt.path("changed").asBoolean());
+        assertEquals(receipt, managementHttp("GET", path + "/result?request_id=" + requestId, null, owner));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_webhook_pause_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), requestId));
+        assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_chat_session_event_subscriptions WHERE tenant_id=? AND id=? AND status='paused'", Long.valueOf(tenant), subscriptionId));
+        var conflict = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + owner).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", requestId, "subscription_id", subscriptionId + 1)))).build();
+        assertEquals(409, http.send(conflict, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String againId = UUID.randomUUID().toString();
+        var again = managementHttp("POST", path, Map.of("request_id", againId, "subscription_id", subscriptionId), owner);
+        assertFalse(again.path("changed").asBoolean());
+        assertEquals(again, managementHttp("GET", path + "/result?request_id=" + againId, null, owner));
+        String missingId = UUID.randomUUID().toString();
+        var missing = managementHttp("POST", path, Map.of("request_id", missingId, "subscription_id", subscriptionId + 1), owner);
+        assertFalse(missing.path("changed").asBoolean());
+        assertEquals(missing, managementHttp("GET", path + "/result?request_id=" + missingId, null, owner));
+        var notFound = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + UUID.randomUUID()))
+                .header("Authorization", "Bearer " + owner).GET().build();
+        assertEquals(204, http.send(notFound, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        var member = new com.skillforge.core.foundation.persistence.TenantMemberDO();
+        member.setId(SnowflakeIds.nextId()); member.setTenantId(Long.valueOf(tenant)); member.setUsername("pause-other");
+        member.setRole("member"); member.setPermissions(List.of()); member.setStatus("active");
+        member.setPasswordHash(webhookPasswords.encode(password)); member.setCreatedAt(java.time.Instant.now());
+        webhookMembers.insert(member);
+        jdbc.update("INSERT INTO nw_foundation_member_profiles(scope_key,member_id,display_name) VALUES(?,?,?)", tenant, member.getId(), "其他测试成员");
+        long role = SnowflakeIds.nextId();
+        jdbc.update("INSERT INTO nw_foundation_roles(id,scope_key,code,name,data_scope) VALUES(?,?,?,'Webhook 暂停测试角色','all')", role, tenant, "webhook_pause_" + role);
+        for (String permission : List.of("foundation.webhooks.read", "foundation.webhooks.update"))
+            jdbc.update("INSERT INTO nw_foundation_role_permissions(scope_key,role_id,permission_code) VALUES(?,?,?)", tenant, role, permission);
+        jdbc.update("INSERT INTO nw_foundation_member_roles(scope_key,member_id,role_id) VALUES(?,?,?)", tenant, member.getId(), role);
+        String other = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "pause-other", "password", password), null).path("access_token").asText();
+        var foreignRead = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                .header("Authorization", "Bearer " + other).GET().build();
+        assertEquals(204, http.send(foreignRead, HttpResponse.BodyHandlers.ofString()).statusCode());
+        var foreignReplay = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("Authorization", "Bearer " + other).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(command))).build();
+        assertEquals(409, http.send(foreignReplay, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        long deniedSubscription = managementHttp("POST", "/api/v1/webhook-subscriptions/create-with-receipt", Map.of(
+                "request_id", UUID.randomUUID().toString(), "endpoint_url", "https://127.0.0.1:1/pause-denied",
+                "signing_secret", "synthetic-pause-denied-secret"), owner).path("subscription_id").asLong();
+        String deniedRequestId = UUID.randomUUID().toString();
+        for (String permission : List.of("foundation.webhooks.read", "foundation.webhooks.update")) {
+            String username = permission.endsWith("read") ? "pause-reader" : "pause-updater";
+            var limitedMember = new com.skillforge.core.foundation.persistence.TenantMemberDO();
+            limitedMember.setId(SnowflakeIds.nextId()); limitedMember.setTenantId(Long.valueOf(tenant));
+            limitedMember.setUsername(username); limitedMember.setRole("member"); limitedMember.setPermissions(List.of());
+            limitedMember.setStatus("active"); limitedMember.setPasswordHash(webhookPasswords.encode(password));
+            limitedMember.setCreatedAt(java.time.Instant.now()); webhookMembers.insert(limitedMember);
+            jdbc.update("INSERT INTO nw_foundation_member_profiles(scope_key,member_id,display_name) VALUES(?,?,?)", tenant, limitedMember.getId(), "受限测试成员");
+            long limitedRole = SnowflakeIds.nextId();
+            jdbc.update("INSERT INTO nw_foundation_roles(id,scope_key,code,name,data_scope) VALUES(?,?,?,'Webhook 受限测试角色','all')", limitedRole, tenant, "pause_limited_" + limitedRole);
+            jdbc.update("INSERT INTO nw_foundation_role_permissions(scope_key,role_id,permission_code) VALUES(?,?,?)", tenant, limitedRole, permission);
+            jdbc.update("INSERT INTO nw_foundation_member_roles(scope_key,member_id,role_id) VALUES(?,?,?)", tenant, limitedMember.getId(), limitedRole);
+            String limited = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                    "username", username, "password", password), null).path("access_token").asText();
+            var denied = permission.endsWith("read")
+                    ? HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                        .header("Authorization", "Bearer " + limited).header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(Map.of("request_id", deniedRequestId, "subscription_id", deniedSubscription)))).build()
+                    : HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                        .header("Authorization", "Bearer " + limited).GET().build();
+            var deniedResponse = http.send(denied, HttpResponse.BodyHandlers.ofString());
+            assertEquals(403, deniedResponse.statusCode());
+            if (permission.endsWith("read")) {
+                assertEquals("WEBHOOK_PAUSE_REJECTED", json.readTree(deniedResponse.body()).path("code").asText());
+                assertEquals(0, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_webhook_pause_receipts WHERE tenant_id=? AND request_id=?::uuid", Long.valueOf(tenant), deniedRequestId));
+                assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_chat_session_event_subscriptions WHERE tenant_id=? AND id=? AND status='active'", Long.valueOf(tenant), deniedSubscription));
+            }
+        }
+
+        String foreignSlug = "webhook-pause-other-" + SnowflakeIds.nextId();
+        TenantContext.clear();
+        String foreignTenant = createTenant(tenants, plans, foreignSlug);
+        TenantContext.setTenantId(foreignTenant);
+        createTestTenantAdministrator(foreignTenant, "pause-foreign", password);
+        String foreign = managementHttp("POST", "/api/v1/auth/login", Map.of("tenant_slug", foreignSlug,
+                "username", "pause-foreign", "password", password), null).path("access_token").asText();
+        var crossTenantRead = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path + "/result?request_id=" + requestId))
+                .header("Authorization", "Bearer " + foreign).GET().build();
+        assertEquals(204, http.send(crossTenantRead, HttpResponse.BodyHandlers.ofString()).statusCode());
+        String crossId = UUID.randomUUID().toString();
+        var crossPause = managementHttp("POST", path, Map.of("request_id", crossId, "subscription_id", subscriptionId), foreign);
+        assertFalse(crossPause.path("changed").asBoolean());
+        assertEquals(crossPause, managementHttp("GET", path + "/result?request_id=" + crossId, null, foreign));
+
+        String roleName = "webhook_pause_rls_" + SnowflakeIds.nextId();
+        boolean roleCreated = false;
+        try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection()) {
+            connection.setAutoCommit(false);
+            try (var statement = connection.createStatement()) {
+                var current = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(current.next());
+                if (current.getBoolean(1)) {
+                    statement.execute("CREATE ROLE " + roleName + " NOLOGIN NOSUPERUSER NOBYPASSRLS");
+                    statement.execute("GRANT USAGE ON SCHEMA public TO " + roleName);
+                    statement.execute("GRANT SELECT ON nw_webhook_pause_receipts TO " + roleName);
+                    connection.commit(); roleCreated = true;
+                    statement.execute("SET LOCAL ROLE " + roleName);
+                }
+                var restricted = statement.executeQuery("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user");
+                assertTrue(restricted.next()); assertFalse(restricted.getBoolean(1));
+            }
+            try (var bind = connection.prepareStatement("SELECT set_config('app.tenant_id',?,true)");
+                 var count = connection.prepareStatement("SELECT count(*) FROM nw_webhook_pause_receipts WHERE request_id=CAST(? AS uuid)")) {
+                count.setString(1, requestId);
+                bind.setString(1, foreignTenant); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
+                bind.setString(1, tenant); bind.execute();
+                try (var rows = count.executeQuery()) { assertTrue(rows.next()); assertEquals(1, rows.getLong(1)); }
+            }
+            connection.rollback();
+        } finally {
+            if (roleCreated) {
+                try (var connection = java.util.Objects.requireNonNull(jdbc.getDataSource()).getConnection(); var statement = connection.createStatement()) {
+                    statement.execute("DROP OWNED BY " + roleName);
+                    statement.execute("DROP ROLE " + roleName);
+                }
+            }
+        }
+    }
+
     @Test void webhookCreateReceiptIsAtomicAndOwnedByOriginalMember() throws Exception {
         String slug = "webhook-receipt-" + SnowflakeIds.nextId();
         String tenant = createTenant(tenants, plans, slug);

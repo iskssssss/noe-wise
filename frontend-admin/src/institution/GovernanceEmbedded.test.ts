@@ -22,6 +22,8 @@ const fixture = vi.hoisted(() => ({
   webhooks: vi.fn(),
   webhookCreate: vi.fn(),
   webhookResult: vi.fn(),
+  webhookPause: vi.fn(),
+  webhookPauseResult: vi.fn(),
   audit: vi.fn()
 }))
 vi.mock('../stores/auth', () => ({ useAuthStore: () => reactive(fixture.auth) }))
@@ -41,7 +43,9 @@ vi.mock('../api', () => ({
       webhooks: {
         list: fixture.webhooks,
         createWithReceipt: fixture.webhookCreate,
-        createResult: fixture.webhookResult
+        createResult: fixture.webhookResult,
+        pauseWithReceipt: fixture.webhookPause,
+        pauseResult: fixture.webhookPauseResult
       },
       auditLogs: fixture.audit
     }
@@ -61,6 +65,7 @@ beforeEach(() => {
   fixture.issueResult.mockResolvedValue(undefined)
   fixture.statusResult.mockResolvedValue(undefined)
   fixture.webhookResult.mockResolvedValue(undefined)
+  fixture.webhookPauseResult.mockResolvedValue(undefined)
   fixture.webhooks.mockResolvedValue([])
   fixture.auth.identityVersion++
   fixture.auth.user.permissions = ['foundation.service_principals.read']
@@ -794,5 +799,230 @@ describe('Webhook 原订阅核对', () => {
         ?.attributes('disabled')
     ).toBeDefined()
     expect(fixture.webhookCreate).not.toHaveBeenCalled()
+  })
+  it('暂停断连保留原请求，重建页面只读核对并禁用已暂停记录', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    fixture.webhookPause.mockRejectedValueOnce(Error('connection closed'))
+    let wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '暂停')!
+      .trigger('click')
+    await flushPromises()
+    expect(fixture.webhookPause).toHaveBeenCalledTimes(1)
+    const original = fixture.webhookPause.mock.calls[0]![0]
+    const pauseKey = 'skillforge.webhook-pause:["10","member"]'
+    expect(sessionStorage.getItem(pauseKey)).toContain(original)
+    expect(wrapper.text()).toContain('暂停结果尚未确认')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '暂停')!
+        .attributes('disabled')
+    ).toBeDefined()
+    wrapper.unmount()
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'paused' }
+    ])
+    fixture.webhookPauseResult.mockResolvedValue({
+      request_id: original,
+      subscription_id: '42',
+      changed: true
+    })
+    wrapper = await openWebhooks()
+    expect(fixture.webhookPauseResult).toHaveBeenCalledWith(original)
+    expect(fixture.webhookPause).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem(pauseKey)).toBeNull()
+    expect(wrapper.text()).toContain('原暂停操作已确认')
+    expect(wrapper.text()).toContain('已暂停')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '暂停')!
+        .attributes('disabled')
+    ).toBeDefined()
+  })
+  it.each([undefined, { request_id: request, subscription_id: '99', changed: true }])(
+    '缺失或不匹配的暂停回执不解除未知结果',
+    async (receipt) => {
+      fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+      const pauseKey = 'skillforge.webhook-pause:["10","member"]'
+      sessionStorage.setItem(pauseKey, JSON.stringify({ requestId: request, subscriptionId: '42' }))
+      fixture.webhookPauseResult.mockResolvedValue(receipt)
+      const wrapper = await openWebhooks()
+      expect(wrapper.text()).toContain('暂停结果尚未确认')
+      expect(sessionStorage.getItem(pauseKey)).toContain(request)
+      expect(fixture.webhookPause).not.toHaveBeenCalled()
+    }
+  )
+  it('暂停返回未改变时如实显示，并允许其他领域操作', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.webhooks.read',
+      'foundation.webhooks.update',
+      'foundation.webhooks.create'
+    ]
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    fixture.webhookPause.mockImplementation(async (id: string) => ({
+      request_id: id,
+      subscription_id: '42',
+      changed: false
+    }))
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '暂停')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('原暂停操作未改变回调订阅')
+    expect(wrapper.text()).not.toContain('原暂停操作已确认')
+    expect(sessionStorage.getItem('skillforge.webhook-pause:["10","member"]')).toBeNull()
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '订阅回调')!
+        .attributes('disabled')
+    ).toBeUndefined()
+  })
+  it('暂停记录无法写入时不派发，可重新读取存储', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    const wrapper = await openWebhooks()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw Error('unavailable')
+    })
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '暂停')!
+      .trigger('click')
+    await flushPromises()
+    expect(fixture.webhookPause).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('无法保存订阅暂停记录')
+    vi.restoreAllMocks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重新读取暂停记录')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('无法保存订阅暂停记录')
+  })
+  it('缺少读取权限时不自动核对暂停且保留原请求', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.service_principals.read',
+      'foundation.webhooks.update'
+    ]
+    const pauseKey = 'skillforge.webhook-pause:["10","member"]'
+    sessionStorage.setItem(pauseKey, JSON.stringify({ requestId: request, subscriptionId: '42' }))
+    const wrapper = await openWebhooks()
+    expect(fixture.webhookPauseResult).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('没有 Webhook 读取权限')
+    expect(sessionStorage.getItem(pauseKey)).toContain(request)
+  })
+  it('暂停回执迟到时授权已变化，不清除原请求', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+    const pauseKey = 'skillforge.webhook-pause:["10","member"]'
+    sessionStorage.setItem(pauseKey, JSON.stringify({ requestId: request, subscriptionId: '42' }))
+    let finish!: (receipt: unknown) => void
+    fixture.webhookPauseResult.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const wrapper = await openWebhooks()
+    reactive(fixture.auth).user.authorization_version++
+    finish({ request_id: request, subscription_id: '42', changed: true })
+    await flushPromises()
+    expect(sessionStorage.getItem(pauseKey)).toContain(request)
+    expect(wrapper.text()).not.toContain('原暂停操作已确认')
+  })
+  it('损坏的暂停记录禁止派发，仍可使用其他功能', async () => {
+    fixture.auth.user.permissions = [
+      'foundation.webhooks.read',
+      'foundation.webhooks.update',
+      'foundation.webhooks.create'
+    ]
+    sessionStorage.setItem('skillforge.webhook-pause:["10","member"]', 'broken')
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    const wrapper = await openWebhooks()
+    expect(wrapper.text()).toContain('无法读取订阅暂停记录')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '暂停')!
+        .attributes('disabled')
+    ).toBeDefined()
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '订阅回调')!
+        .attributes('disabled')
+    ).toBeUndefined()
+    expect(fixture.webhookPause).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['WEBHOOK_PAUSE_REJECTED', true],
+    ['OTHER_FORBIDDEN', false]
+  ] as const)('暂停返回 %s 时按明确拒绝边界保留请求', async (code, cleared) => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    fixture.webhookPause.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 403,
+        code,
+        traceId: 'trace',
+        userMessage: '操作未获授权'
+      })
+    )
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '暂停')!
+      .trigger('click')
+    await flushPromises()
+    const raw = sessionStorage.getItem('skillforge.webhook-pause:["10","member"]')
+    if (cleared) expect(raw).toBeNull()
+    else expect(raw).toContain(fixture.webhookPause.mock.calls[0]![0])
+    expect(fixture.webhookPause).toHaveBeenCalledTimes(1)
+  })
+  it('权限拒绝返回前身份变化时保留原暂停请求', async () => {
+    fixture.auth.user.permissions = ['foundation.webhooks.read', 'foundation.webhooks.update']
+    fixture.webhooks.mockResolvedValue([
+      { id: 42, endpoint_url: 'https://example.test', status: 'active' }
+    ])
+    let reject!: (reason: unknown) => void
+    fixture.webhookPause.mockReturnValueOnce(
+      new Promise((_, fail) => {
+        reject = fail
+      })
+    )
+    const wrapper = await openWebhooks()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '暂停')!
+      .trigger('click')
+    await flushPromises()
+    reactive(fixture.auth).user.authorization_version++
+    reject(
+      new HttpClientError({
+        status: 403,
+        code: 'WEBHOOK_PAUSE_REJECTED',
+        traceId: 'trace',
+        userMessage: '操作未获授权'
+      })
+    )
+    await flushPromises()
+    expect(sessionStorage.getItem('skillforge.webhook-pause:["10","member"]')).toContain(
+      fixture.webhookPause.mock.calls[0]![0]
+    )
   })
 })
