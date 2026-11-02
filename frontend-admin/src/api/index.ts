@@ -2042,13 +2042,25 @@ export const api = {
     servicePrincipals: {
       list: () => get<ServicePrincipal[]>('/service-principals'),
       issue: (data: { integration_id: string; scopes: string[] }) =>
-        post<IssuedServicePrincipal>('/service-principals', data),
+        post<IssuedServicePrincipal>('/service-principals', data, { retryOnUnauthorized: false }),
       rotate: (id: number) =>
-        post<IssuedServicePrincipal>(`/service-principals/rotate`, { id: id }),
+        post<IssuedServicePrincipal>(
+          `/service-principals/rotate`,
+          { id: id },
+          { retryOnUnauthorized: false }
+        ),
       suspend: (id: number) =>
-        post<{ id: number; suspended: boolean }>(`/service-principals/suspend`, { id: id }),
+        post<{ id: number; suspended: boolean }>(
+          `/service-principals/suspend`,
+          { id: id },
+          { retryOnUnauthorized: false }
+        ),
       revoke: (id: number) =>
-        post<{ id: number; revoked: boolean }>(`/service-principals/revoke`, { id: id })
+        post<{ id: number; revoked: boolean }>(
+          `/service-principals/revoke`,
+          { id: id },
+          { retryOnUnauthorized: false }
+        )
     },
     webhooks: {
       list: () => get<WebhookSubscription[]>('/webhook-subscriptions'),

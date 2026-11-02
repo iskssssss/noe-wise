@@ -83,3 +83,26 @@ it.each(['receipt', 'legacy'] as const)('渠道令牌 %s 轮换收到 401 不自
   ).rejects.toMatchObject({ status: 401 })
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
+
+it.each(['issue', 'rotate', 'suspend', 'revoke'] as const)(
+  '服务身份 %s 收到 401 不自动重发',
+  async (kind) => {
+    localStorage.setItem('skillforge.access_token', 'expired-token')
+    localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const actions = {
+      issue: () =>
+        api.governance.servicePrincipals.issue({ integration_id: 'test', scopes: ['chat.read'] }),
+      rotate: () => api.governance.servicePrincipals.rotate(42),
+      suspend: () => api.governance.servicePrincipals.suspend(42),
+      revoke: () => api.governance.servicePrincipals.revoke(42)
+    }
+    await expect(actions[kind]()).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  }
+)
