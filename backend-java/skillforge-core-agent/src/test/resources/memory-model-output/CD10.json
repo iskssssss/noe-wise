@@ -1,0 +1,40 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "userId": 7,
+    "sources": [
+      {
+        "id": "s1",
+        "text": "给客户的报价单请用美元；我内部核算仍按人民币。",
+        "occurredAt": "2026-10-23T02:00:00Z"
+      }
+    ],
+    "existingFacts": [
+      {
+        "id": "f-cny",
+        "type": "preference",
+        "scope": "user_agent",
+        "subject": "user:7",
+        "predicate": "currency",
+        "object": {
+          "value": {
+            "text": "内部核算用人民币"
+          },
+          "conditions": [
+            "内部核算"
+          ],
+          "temporal": {
+            "kind": "stable",
+            "from": null,
+            "to": null
+          }
+        },
+        "revision": 3,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "validTo": null
+      }
+    ]
+  },
+  "rawOutput": "{\"schemaVersion\":2,\"candidates\":[{\"type\":\"preference\",\"subject\":\"user:7\",\"predicate\":\"报价单币种\",\"object\":{\"currency\":\"USD\",\"document\":\"给客户的报价单\"},\"signal\":\"observed\",\"sensitive\":false,\"scope\":\"user_agent\",\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null},\"conditions\":[\"给客户的报价单\"],\"evidence\":[{\"sourceId\":\"s1\",\"quote\":\"给客户的报价单请用美元\"}],\"relation\":\"new\",\"uncertainties\":[]},{\"type\":\"preference\",\"subject\":\"user:7\",\"predicate\":\"currency\",\"object\":{\"value\":{\"text\":\"内部核算用人民币\"}},\"signal\":\"observed\",\"sensitive\":false,\"scope\":\"user_agent\",\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null},\"conditions\":[\"内部核算\"],\"evidence\":[{\"sourceId\":\"s1\",\"quote\":\"我内部核算仍按人民币\"}],\"relation\":\"similar\",\"target\":\"f-cny\",\"uncertainties\":[]}]}",
+  "rawOutputSha256": "e543efb99585c92df98af87e7efd34f6ba224a36afc53b620a42a0c67451daa4"
+}

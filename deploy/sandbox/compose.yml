@@ -1,0 +1,128 @@
+name: skillforge-sandbox
+
+services:
+  sandbox-ca-init:
+    build:
+      context: ./proxy
+      target: ca-init
+    image: skillforge-sandbox-ca-init:1
+    volumes:
+      - sandbox-ca:/ca
+    restart: "no"
+
+  sandbox-egress-proxy:
+    build:
+      context: ./proxy
+      target: proxy
+    image: skillforge-sandbox-egress-proxy:11.0.2
+    container_name: skillforge-sandbox-egress-proxy
+    depends_on:
+      sandbox-ca-init:
+        condition: service_completed_successfully
+    volumes:
+      - sandbox-ca:/ca:ro
+    networks:
+      sandbox-task:
+        aliases:
+          - sandbox-egress-proxy
+      sandbox-uplink: {}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8080),2); s.close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  sandbox-service:
+    build:
+      context: ../../backend-java/skillforge-sandbox-service/build/libs
+      dockerfile: ../../Dockerfile
+      args:
+        SERVICE_BASE_IMAGE: ${SANDBOX_SERVICE_BASE_IMAGE:-public.ecr.aws/docker/library/eclipse-temurin:21-jre-alpine@sha256:1a29e1fe337eb28b5bec30f0ee8ed29f0ff80ab6f75dcf9313efe82911065a52}
+    image: skillforge-sandbox-service:0.2.0
+    mem_limit: 1g
+    depends_on:
+      sandbox-ca-init:
+        condition: service_completed_successfully
+      sandbox-egress-proxy:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:?SANDBOX_SERVICE_TOKEN must be set}
+      SANDBOX_TASK_NETWORK: skillforge-sandbox-task
+      SANDBOX_TASK_VOLUME: ${SANDBOX_TASK_VOLUME:-skillforge-sandbox-tasks}
+      SANDBOX_CA_VOLUME: skillforge-sandbox-ca
+      SANDBOX_PROXY_URL: http://sandbox-egress-proxy:8080
+      SANDBOX_PROXY_CONTAINER: skillforge-sandbox-egress-proxy
+      SANDBOX_PYTHON_IMAGE: skillforge-sandbox-python:3.12
+      SANDBOX_NODE_IMAGE: skillforge-sandbox-node:24
+      SANDBOX_WORKFLOW_PYTHON_ENVIRONMENT_VERSION: ${SANDBOX_WORKFLOW_PYTHON_ENVIRONMENT_VERSION:-workflow-python-v1}
+      SANDBOX_WORKFLOW_NODE_ENVIRONMENT_VERSION: ${SANDBOX_WORKFLOW_NODE_ENVIRONMENT_VERSION:-workflow-node-v1}
+      SANDBOX_WORKFLOW_PYTHON_IMAGE: ${SANDBOX_WORKFLOW_PYTHON_IMAGE:-skillforge-sandbox-python:3.12}
+      SANDBOX_WORKFLOW_NODE_IMAGE: ${SANDBOX_WORKFLOW_NODE_IMAGE:-skillforge-sandbox-node:24}
+      SANDBOX_PYTHON_INDEX_URL: ${SANDBOX_PYTHON_INDEX_URL:-https://pypi.org/simple}
+      SANDBOX_NODE_REGISTRY_URL: ${SANDBOX_NODE_REGISTRY_URL:-https://registry.npmjs.org}
+      SANDBOX_PROJECT_ROOT: /var/lib/skillforge-projects
+      SANDBOX_PROJECT_VOLUME: ${SANDBOX_PROJECT_VOLUME:-skillforge-sandbox-projects}
+      SANDBOX_WORKSPACE_CLOUD_ENDPOINT: ${SANDBOX_WORKSPACE_CLOUD_ENDPOINT:-https://v0.api.upyun.com}
+      SANDBOX_WORKSPACE_CLOUD_BUCKET: ${SANDBOX_WORKSPACE_CLOUD_BUCKET:-}
+      SANDBOX_WORKSPACE_CLOUD_OPERATOR: ${SANDBOX_WORKSPACE_CLOUD_OPERATOR:-}
+      SANDBOX_WORKSPACE_CLOUD_PASSWORD: ${SANDBOX_WORKSPACE_CLOUD_PASSWORD:-}
+      SANDBOX_WORKSPACE_CLOUD_REQUESTS_PER_SECOND: ${SANDBOX_WORKSPACE_CLOUD_REQUESTS_PER_SECOND:-1}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - sandbox-tasks:/var/lib/skillforge-sandbox
+      - sandbox-projects:/var/lib/skillforge-projects
+    networks:
+      - sandbox-control
+    ports:
+      - 127.0.0.1:${SANDBOX_SERVICE_PORT:-18200}:8200
+    restart: unless-stopped
+
+  python-runtime-image:
+    profiles: ["runtime-images"]
+    build:
+      context: ./runtimes
+      target: python-runtime
+    image: skillforge-sandbox-python:3.12
+    network_mode: none
+    command: ["/input/main.py"]
+
+  node-runtime-image:
+    profiles: ["runtime-images"]
+    build:
+      context: ./runtimes
+      target: node-runtime
+    image: skillforge-sandbox-node:24
+    network_mode: none
+    command: ["/input/main.mjs"]
+
+volumes:
+  sandbox-ca:
+    name: skillforge-sandbox-ca
+  sandbox-tasks:
+    name: ${SANDBOX_TASK_VOLUME:-skillforge-sandbox-tasks}
+  sandbox-projects:
+    name: ${SANDBOX_PROJECT_VOLUME:-skillforge-sandbox-projects}
+
+networks:
+  sandbox-control:
+    name: skillforge-sandbox-control
+  sandbox-task:
+    name: skillforge-sandbox-task
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  sandbox-uplink:
+    name: skillforge-sandbox-uplink

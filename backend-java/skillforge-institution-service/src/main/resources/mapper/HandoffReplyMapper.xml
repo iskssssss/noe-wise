@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.service.HandoffReplyMapper">
+ <sql id="columns">tenant_id,command_id,ticket_id,session_id,end_user_id,operator_id,operator_name,content,request_fingerprint,status,source_event_id,source_sequence,error_code</sql>
+ <select id="lockTicket" resultType="string">SELECT ticket_id FROM nw_human_handoff_tickets WHERE tenant_id=#{tenant} AND ticket_id=#{ticket} FOR UPDATE</select>
+ <select id="find" resultType="com.skillforge.institution.service.HandoffReplyRequest">SELECT <include refid="columns"/> FROM nw_handoff_reply_requests WHERE tenant_id=#{tenant} AND command_id=#{id}</select>
+ <select id="claim" resultType="com.skillforge.institution.service.HandoffReplyRequest">SELECT <include refid="columns"/> FROM nw_handoff_reply_requests WHERE tenant_id=#{tenant} AND command_id=#{id} FOR UPDATE SKIP LOCKED</select>
+ <select id="list" resultType="com.skillforge.institution.service.HandoffReplyRequest">SELECT <include refid="columns"/> FROM nw_handoff_reply_requests WHERE tenant_id=#{tenant} AND ticket_id=#{ticket} ORDER BY created_at,command_id LIMIT 100</select>
+ <select id="pending" resultType="string">SELECT command_id FROM nw_handoff_reply_requests WHERE tenant_id=#{tenant} AND status='accepted' ORDER BY created_at LIMIT 20</select>
+ <insert id="insert">INSERT INTO nw_handoff_reply_requests(tenant_id,command_id,ticket_id,session_id,end_user_id,operator_id,operator_name,content,request_fingerprint) VALUES(#{tenantId},#{commandId},#{ticketId},#{sessionId},#{endUserId},#{operatorId},#{operatorName},#{content},#{requestFingerprint})</insert>
+ <update id="commit">UPDATE nw_handoff_reply_requests SET status='committed',source_event_id=#{source},source_sequence=#{sequence},updated_at=now() WHERE tenant_id=#{tenant} AND command_id=#{id} AND status='accepted'</update>
+ <update id="reject">UPDATE nw_handoff_reply_requests SET status='rejected',error_code=#{error},updated_at=now() WHERE tenant_id=#{tenant} AND command_id=#{id} AND status='accepted'</update>
+</mapper>

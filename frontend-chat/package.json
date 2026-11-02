@@ -1,0 +1,40 @@
+{
+  "name": "frontend-chat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "preview": "vite preview --port 3200",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "dompurify": "^3.4.13",
+    "lucide-vue-next": "1.0.0",
+    "marked": "^18.0.9",
+    "mermaid": "12.1.0",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "^2.4.6",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "eslint-plugin-vue": "catalog:",
+    "globals": "catalog:",
+    "jsdom": "^26.1.0",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vite": "catalog:",
+    "vitest": "^4.1.10",
+    "vue-tsc": "catalog:"
+  }
+}

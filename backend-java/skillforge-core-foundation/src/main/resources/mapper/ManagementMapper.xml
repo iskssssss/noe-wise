@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.ManagementMapper">
+  <resultMap id="principal" type="com.skillforge.core.foundation.integration.ManagementRows$Principal">
+    <id column="principal_id" property="principalId"/>
+    <result column="scopes" property="scopes" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    <result column="target_tenant_ids" property="targetTenantIds" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    <result column="target_definition_ids" property="targetDefinitionIds" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    <result column="target_namespaces" property="targetNamespaces" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+  </resultMap>
+  <sql id="projection">p.principal_id,p.name,p.status,p.revision,p.credential_version,
+    p.key_hash,p.key_prefix,p.signing_secret_encrypted,p.created_by_ref,p.created_at,p.updated_at,
+    coalesce((SELECT jsonb_agg(s.action ORDER BY s.action) FROM nw_platform_management_scopes s WHERE s.principal_id=p.principal_id),'[]'::jsonb) AS scopes,
+    coalesce((SELECT jsonb_agg(t.target_value ORDER BY t.target_value) FROM nw_platform_management_targets t WHERE t.principal_id=p.principal_id AND t.kind='tenant'),'[]'::jsonb) AS target_tenant_ids,
+    coalesce((SELECT jsonb_agg(t.target_value ORDER BY t.target_value) FROM nw_platform_management_targets t WHERE t.principal_id=p.principal_id AND t.kind='agent_definition'),'[]'::jsonb) AS target_definition_ids,
+    coalesce((SELECT jsonb_agg(t.target_value ORDER BY t.target_value) FROM nw_platform_management_targets t WHERE t.principal_id=p.principal_id AND t.kind='namespace'),'[]'::jsonb) AS target_namespaces
+  </sql>
+  <select id="principal" resultMap="principal" useCache="false" flushCache="true">SELECT <include refid="projection"/> FROM nw_platform_management_principals p WHERE p.principal_id=#{principalId}</select>
+  <select id="forAuthentication" resultMap="principal" useCache="false" flushCache="true">SELECT <include refid="projection"/> FROM nw_platform_management_principals p WHERE p.key_hash=#{keyHash}</select>
+  <sql id="principalFilter">
+    <choose><when test="filter.all">true</when><otherwise>
+      (p.created_by_ref=concat('platform_member:',#{filter.memberId})
+      <if test="!filter.departmentIds.isEmpty()">OR EXISTS(SELECT 1 FROM nw_foundation_member_profiles m WHERE m.scope_key='platform' AND concat('platform_member:',m.member_id)=p.created_by_ref AND m.department_id::text IN
+      <foreach collection="filter.departmentIds" item="department" open="(" close=")" separator=",">#{department}</foreach>)</if>)
+    </otherwise></choose>
+  </sql>
+  <select id="principals" resultMap="principal" useCache="false" flushCache="true">SELECT <include refid="projection"/> FROM nw_platform_management_principals p WHERE <include refid="principalFilter"/> ORDER BY p.created_at DESC,p.principal_id DESC LIMIT #{limit} OFFSET #{offset}</select>
+  <select id="count" resultType="long" useCache="false" flushCache="true">SELECT count(*) FROM nw_platform_management_principals p WHERE <include refid="principalFilter"/></select>
+  <select id="principalAllowed" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM nw_platform_management_principals p WHERE p.principal_id=#{principalId} AND <include refid="principalFilter"/>)</select>
+  <insert id="insertPrincipal">INSERT INTO nw_platform_management_principals(principal_id,name,status,revision,credential_version,key_hash,key_prefix,signing_secret_encrypted,created_by_ref,created_at,updated_at) VALUES(#{principalId},#{name},#{status},#{revision},#{credentialVersion},#{keyHash},#{keyPrefix},#{signingSecretEncrypted},#{createdByRef},#{createdAt},#{updatedAt})</insert>
+  <insert id="insertScopes">INSERT INTO nw_platform_management_scopes(principal_id,action) VALUES <foreach collection="scopes" item="action" separator=",">(#{principalId},#{action})</foreach></insert>
+  <insert id="insertTargets">INSERT INTO nw_platform_management_targets(principal_id,kind,target_value) VALUES <foreach collection="targets" item="target" separator=",">(#{principalId},#{kind},#{target})</foreach></insert>
+  <update id="rotate">UPDATE nw_platform_management_principals SET key_hash=#{keyHash},key_prefix=#{keyPrefix},signing_secret_encrypted=#{secret},credential_version=credential_version+1,revision=revision+1,updated_at=now() WHERE principal_id=#{principalId} AND revision=#{expectedRevision} AND status='active'</update>
+  <update id="revoke">UPDATE nw_platform_management_principals SET status='revoked',signing_secret_encrypted=NULL,credential_version=credential_version+1,revision=revision+1,updated_at=now() WHERE principal_id=#{principalId} AND revision=#{expectedRevision} AND status='active'</update>
+  <insert id="claimReceipt">INSERT INTO nw_platform_management_receipts(actor_ref,operation,object_scope,idempotency_key,fingerprint) VALUES(#{actorRef},#{operation},#{objectScope},#{key},#{fingerprint}) ON CONFLICT DO NOTHING</insert>
+  <select id="receipt" resultType="com.skillforge.core.foundation.integration.ManagementRows$Receipt" useCache="false" flushCache="true">SELECT fingerprint,result_json::text FROM nw_platform_management_receipts WHERE actor_ref=#{actorRef} AND operation=#{operation} AND object_scope=#{objectScope} AND idempotency_key=#{key} FOR UPDATE</select>
+  <update id="completeReceipt">UPDATE nw_platform_management_receipts SET result_json=CAST(#{result} AS jsonb) WHERE actor_ref=#{actorRef} AND operation=#{operation} AND object_scope=#{objectScope} AND idempotency_key=#{key} AND result_json IS NULL</update>
+  <sql id="targetTable"><choose><when test="kind == 'tenant'">nw_tenants</when><when test="kind == 'agent_definition'">nw_agent_templates</when><otherwise>(SELECT NULL::bigint AS id WHERE false)</otherwise></choose></sql>
+  <select id="targetExists" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM <include refid="targetTable"/> t WHERE t.id=#{id})</select>
+  <sql id="grantee">
+    ((g.grantee_type='member' AND g.grantee_id::text=#{filter.memberId})
+    OR (g.grantee_type='department' AND EXISTS(SELECT 1 FROM nw_foundation_member_profiles m JOIN nw_foundation_departments d ON d.scope_key=m.scope_key AND d.id=m.department_id AND d.enabled WHERE m.scope_key='platform' AND m.member_id::text=#{filter.memberId} AND m.department_id=g.grantee_id))
+    OR (g.grantee_type='role' AND EXISTS(SELECT 1 FROM nw_foundation_member_roles mr JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id AND r.enabled WHERE mr.scope_key='platform' AND mr.member_id::text=#{filter.memberId} AND mr.role_id=g.grantee_id)))
+  </sql>
+  <sql id="targetFilter">
+    <choose><when test="filter.all">true</when><otherwise>
+      EXISTS(SELECT 1 FROM nw_foundation_resource_ownership o WHERE o.scope_key='platform' AND o.kind=#{kind} AND o.resource_id=t.id
+      AND (o.owner_member_id::text=#{filter.memberId}
+      <if test="!filter.departmentIds.isEmpty()">OR o.department_id::text IN <foreach collection="filter.departmentIds" item="department" open="(" close=")" separator=",">#{department}</foreach></if>
+      OR EXISTS(SELECT 1 FROM nw_foundation_resource_grants g WHERE g.scope_key=o.scope_key AND g.kind=o.kind AND g.resource_id=o.resource_id AND g.action=#{action} AND <include refid="grantee"/>)))
+    </otherwise></choose>
+  </sql>
+  <select id="allowedTargets" resultType="long" useCache="false" flushCache="true">SELECT t.id FROM <include refid="targetTable"/> t WHERE <include refid="targetFilter"/> ORDER BY t.id</select>
+  <select id="targetAllowed" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM <include refid="targetTable"/> t WHERE t.id=#{id} AND <include refid="targetFilter"/>)</select>
+  <select id="namespaceAllowed" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM nw_platform_management_namespace_grants g WHERE g.namespace=#{namespace} AND g.action=#{action} AND <include refid="grantee"/>)</select>
+  <select id="allowedNamespaces" resultType="string" useCache="false" flushCache="true">SELECT DISTINCT g.namespace FROM nw_platform_management_namespace_grants g WHERE g.action=#{action} AND <include refid="grantee"/> ORDER BY g.namespace</select>
+</mapper>

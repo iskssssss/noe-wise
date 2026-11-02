@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.observation.SessionObservationMapper">
+  <sql id="eventProjection">
+    SELECT e.tenant_id,e.session_id,r.target_kind,r.target_id,r.agent_id,r.end_user_id,r.input_id,r.root_input_id,r.trace_id,r.span_id,r.caused_by_event_id,
+           e.run_id,NULL::text AS execution_id,e.canonical_json::jsonb->>'actionId' AS action_id,NULL::text AS delegation_id,
+           e.event_id,NULL::text AS event_fingerprint,e.type AS event_type,NULL::text AS event_version,e.schema_id AS payload_schema_id,
+           e.canonical_json AS payload_canonical_json,e.event_sequence AS session_sequence,e.revision,
+           e.occurred_second AS occurred_at_epoch_second,e.occurred_nano AS occurred_at_nano
+    FROM public.agent_runtime_execution_events e JOIN public.agent_runtime_execution_runs r ON r.tenant_id=e.tenant_id AND r.run_id=e.run_id
+  </sql>
+  <sql id="candidates">
+WITH filtered_sessions AS MATERIALIZED (
+    SELECT s.tenant_id, t.name AS tenant_name, s.session_id,
+           s.end_user_id AS user_id, u.display_name AS user_name,
+           CASE WHEN s.agent_id IS NOT NULL THEN 'AGENT' ELSE 'TEAM' END AS target_type,
+           s.agent_id, a.name AS agent_name, s.team_id,
+           COALESCE(team.definition -&gt;&gt; 'name', team.id) AS team_name,
+           s.channel_id, c.channel_type, c.name AS channel_name,
+           s.summary_text, s.message_count, s.active_execution_id, s.expired_at,
+           s.created_at, s.updated_at
+      FROM public.nw_chat_sessions s
+      JOIN public.nw_tenants t ON t.id = s.tenant_id
+      JOIN public.nw_end_users u ON u.tenant_id = s.tenant_id AND u.id = s.end_user_id
+ LEFT JOIN public.nw_agents a ON a.tenant_id = s.tenant_id AND a.id = s.agent_id
+ LEFT JOIN public.nw_agent_teams team ON team.tenant_id = s.tenant_id AND team.id = s.team_id
+ LEFT JOIN public.nw_channels c ON c.tenant_id = s.tenant_id AND c.id = s.channel_id
+    <where>
+      <if test="scopeTenantId != null">AND s.tenant_id=#{scopeTenantId}</if>
+      <if test="tenantId != null">AND s.tenant_id=#{tenantId}</if>
+      <if test="sessionId != null">AND s.session_id=#{sessionId}</if>
+      <if test="userId != null">AND s.end_user_id=#{userId}</if>
+      <if test="agentId != null">AND s.agent_id=#{agentId}</if>
+      <if test="teamId != null">AND s.team_id=#{teamId}</if>
+      <if test="channel != null">AND (c.channel_type=#{channel} OR c.name ILIKE '%'||#{channel}||'%' OR s.channel_id::text=#{channel})</if>
+      <if test="startedFrom != null">AND s.created_at&gt;=#{startedFrom}</if>
+      <if test="startedTo != null">AND s.created_at&lt;#{startedTo}</if>
+      <if test="summary != null">AND s.summary_text ILIKE '%'||#{summary}||'%'</if>
+    </where>
+), event_roots AS (
+    SELECT event.tenant_id, event.session_id, event.root_input_id,
+           MAX(event.session_sequence) AS last_sequence,
+           MAX(to_timestamp(event.occurred_at_epoch_second
+               + event.occurred_at_nano / 1000000000.0)) AS last_event_at
+      FROM (<include refid="eventProjection"/>) event
+      JOIN filtered_sessions session
+        ON event.tenant_id=session.tenant_id::text AND event.session_id=session.session_id
+     GROUP BY event.tenant_id, event.session_id, event.root_input_id
+), latest_roots AS (
+    SELECT DISTINCT ON (tenant_id, session_id)
+           tenant_id, session_id, root_input_id, last_sequence
+      FROM event_roots
+     ORDER BY tenant_id, session_id, last_sequence DESC
+), message_stats AS (
+    SELECT message.tenant_id, message.session_id,
+           MIN(message.created_at) AS first_message_at,
+           MAX(message.created_at) AS last_message_at,
+           COUNT(*)::integer AS visible_memory_count, MAX(message.id) AS message_upper_bound
+      FROM public.nw_chat_messages message
+      JOIN filtered_sessions session
+        ON session.tenant_id=message.tenant_id AND session.session_id=message.session_id
+ LEFT JOIN latest_roots root
+        ON root.tenant_id=message.tenant_id::text AND root.session_id=message.session_id
+     GROUP BY message.tenant_id, message.session_id
+), event_stats AS (
+    SELECT tenant_id, session_id, COUNT(*)::integer AS root_input_count,
+           MAX(last_event_at) AS last_event_at
+      FROM event_roots
+     GROUP BY tenant_id, session_id
+), current_run_ids AS (
+    SELECT run.tenant_id, run.session_id, run.run_id
+      FROM public.agent_runtime_execution_runs run
+      JOIN filtered_sessions session
+        ON run.tenant_id=session.tenant_id::text AND run.session_id=session.session_id
+     WHERE run.status IN ('QUEUED','RUNNING','RESUMING','SUSPENDED')
+    UNION
+    SELECT DISTINCT event.tenant_id, event.session_id, event.run_id
+      FROM (<include refid="eventProjection"/>) event
+      JOIN latest_roots root
+        ON root.tenant_id=event.tenant_id AND root.session_id=event.session_id
+       AND root.root_input_id=event.root_input_id
+     WHERE event.run_id IS NOT NULL
+), run_stats AS (
+    SELECT run.tenant_id, run.session_id,
+           bool_or(run.status IN ('QUEUED','RUNNING','RESUMING') AND run.phase&lt;&gt;'UNCERTAIN') AS has_running,
+           bool_or(run.status = 'SUSPENDED' AND run.phase&lt;&gt;'UNCERTAIN') AS has_waiting,
+           bool_or(run.status IN ('FAILED','TERMINATED')) AS has_failed,
+           bool_or(run.status = 'CANCELLED') AS has_cancelled,
+           bool_or(run.phase = 'UNCERTAIN') AS has_unknown,
+           COUNT(*) &gt; 0 AS has_runs
+      FROM public.agent_runtime_execution_runs run
+      JOIN current_run_ids current
+        ON current.tenant_id=run.tenant_id AND current.session_id=run.session_id
+       AND current.run_id=run.run_id
+     GROUP BY run.tenant_id, run.session_id
+), candidates AS (
+    SELECT session.tenant_id, session.tenant_name, session.session_id,
+           session.user_id, session.user_name, session.target_type,
+           session.agent_id, session.agent_name, session.team_id, session.team_name,
+           session.channel_id, session.channel_type, session.channel_name,
+           CASE WHEN COALESCE(rs.has_running, false) OR COALESCE(rs.has_waiting, false) THEN 'IN_PROGRESS'
+                WHEN COALESCE(rs.has_failed, false) OR COALESCE(rs.has_unknown, false) THEN 'FAILED'
+                ELSE 'NONE' END AS answer_status,
+           CASE WHEN COALESCE(rs.has_running, false) THEN 'RUNNING'
+                WHEN COALESCE(rs.has_waiting, false) THEN 'WAITING'
+                WHEN COALESCE(rs.has_failed, false) THEN 'FAILED'
+                WHEN COALESCE(rs.has_cancelled, false) THEN 'CANCELLED'
+                WHEN COALESCE(rs.has_unknown, false) THEN 'OUTCOME_UNKNOWN'
+                WHEN COALESCE(rs.has_runs, false) THEN 'COMPLETED'
+                ELSE 'IDLE' END AS execution_status,
+           session.summary_text, COALESCE(ms.visible_memory_count, 0) AS message_count,
+           COALESCE(es.root_input_count, 0) AS root_input_count,
+           latest.root_input_id AS latest_root_input_id,
+           COALESCE(latest.last_sequence, 0) AS event_upper_bound,
+           COALESCE(ms.message_upper_bound, 0) AS message_upper_bound,
+           session.active_execution_id, session.expired_at,
+           ms.first_message_at, ms.last_message_at,
+           session.created_at, session.updated_at,
+           GREATEST(session.updated_at,
+                    COALESCE(ms.last_message_at, session.updated_at),
+                    COALESCE(es.last_event_at, session.updated_at)) AS last_activity_at
+      FROM filtered_sessions session
+ LEFT JOIN latest_roots latest
+        ON latest.tenant_id=session.tenant_id::text AND latest.session_id=session.session_id
+ LEFT JOIN message_stats ms
+        ON ms.tenant_id=session.tenant_id AND ms.session_id=session.session_id
+ LEFT JOIN event_stats es
+        ON es.tenant_id=session.tenant_id::text AND es.session_id=session.session_id
+ LEFT JOIN run_stats rs
+        ON rs.tenant_id=session.tenant_id::text AND rs.session_id=session.session_id
+)
+  </sql>
+  <select id="list" resultType="map">
+    <include refid="candidates"/>
+    SELECT tenant_id, tenant_name, session_id, user_id, user_name, target_type,
+agent_id, agent_name, team_id, team_name, channel_id, channel_type, channel_name,
+answer_status, execution_status, summary_text, message_count, root_input_count,
+active_execution_id, expired_at, first_message_at, last_message_at,
+latest_root_input_id, event_upper_bound, message_upper_bound,
+created_at, updated_at, last_activity_at, COUNT(*) OVER() AS total_count FROM candidates
+    ORDER BY last_activity_at DESC, tenant_id, session_id
+  </select>
+  <select id="find" resultType="map">
+    <include refid="candidates"/>
+    SELECT tenant_id, tenant_name, session_id, user_id, user_name, target_type,
+agent_id, agent_name, team_id, team_name, channel_id, channel_type, channel_name,
+answer_status, execution_status, summary_text, message_count, root_input_count,
+active_execution_id, expired_at, first_message_at, last_message_at,
+latest_root_input_id, event_upper_bound, message_upper_bound,
+created_at, updated_at, last_activity_at, 1::bigint AS total_count FROM candidates
+  </select>
+  <select id="readAt" resultType="java.time.Instant" flushCache="true" useCache="false">SELECT clock_timestamp()</select>
+  <select id="rounds" resultType="map">
+WITH roots AS (
+    SELECT root_input_id, MIN(session_sequence) AS first_sequence,
+           MAX(session_sequence) AS last_sequence,
+           MIN(to_timestamp(occurred_at_epoch_second + occurred_at_nano / 1000000000.0)) AS started_at,
+           MAX(to_timestamp(occurred_at_epoch_second + occurred_at_nano / 1000000000.0)) AS updated_at
+     FROM (<include refid="eventProjection"/>) event
+     WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+       AND session_sequence&lt;=#{upperBound}
+     GROUP BY root_input_id
+), numbered_roots AS (
+    SELECT root_input_id, first_sequence, last_sequence, started_at, updated_at,
+           ROW_NUMBER() OVER (ORDER BY first_sequence) AS round_number
+     FROM roots
+)
+SELECT root_input_id, round_number, first_sequence, last_sequence, started_at, updated_at
+ FROM numbered_roots
+ WHERE (#{beforeSequence,jdbcType=BIGINT} IS NULL OR first_sequence &lt; #{beforeSequence,jdbcType=BIGINT})
+   AND (#{targetRootInputId,jdbcType=VARCHAR} IS NULL OR first_sequence &lt;=
+       (SELECT first_sequence FROM roots WHERE root_input_id=#{targetRootInputId,jdbcType=VARCHAR}))
+ ORDER BY first_sequence DESC
+ LIMIT #{limit}
+  </select>
+  <select id="sessionSequenceUpperBound" resultType="Long">
+SELECT MAX(session_sequence)
+  FROM (<include refid="eventProjection"/>) event
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+  </select>
+  <select id="runs" resultType="map">
+WITH run_roots AS (
+    SELECT event.run_id, event.root_input_id,
+           MIN(event.session_sequence) AS first_sequence
+      FROM (<include refid="eventProjection"/>) event
+     WHERE event.tenant_id=#{tenantId} AND event.session_id=#{sessionId}
+       AND event.root_input_id IN <foreach collection="roots" item="item" open="(" separator="," close=")">#{item}</foreach> AND event.run_id IS NOT NULL
+     GROUP BY event.run_id, event.root_input_id
+)
+SELECT run.run_id, root.root_input_id, CASE WHEN run.phase='UNCERTAIN' THEN 'OUTCOME_UNKNOWN' ELSE run.status END AS status,
+       run.created_second AS created_epoch_second, run.created_nano,
+       run.updated_second AS updated_epoch_second, run.updated_nano
+  FROM run_roots root
+  JOIN public.agent_runtime_execution_runs run
+    ON run.tenant_id=#{tenantId} AND run.session_id=#{sessionId}
+   AND run.run_id=root.run_id
+ ORDER BY root.first_sequence, run.run_id
+  </select>
+  <select id="frozenKeys" resultType="map">
+SELECT 'ACTION_REQUEST' AS source_kind,a.run_id,a.request_ref AS operation_key,model.action_id AS loop_id,
+       (SELECT count(*)::integer FROM public.agent_runtime_execution_actions prior WHERE prior.tenant_id=a.tenant_id AND prior.run_id=a.run_id AND prior.kind='MODEL' AND prior.action_ordinal&lt;=model.action_ordinal) AS iteration,a.action_id
+FROM public.agent_runtime_execution_actions a
+JOIN LATERAL(SELECT m.action_id,m.action_ordinal FROM public.agent_runtime_execution_actions m WHERE m.tenant_id=a.tenant_id AND m.run_id=a.run_id AND m.kind='MODEL' AND m.action_ordinal&lt;=a.action_ordinal ORDER BY m.action_ordinal DESC LIMIT 1) model ON true
+WHERE a.tenant_id=#{tenantId} AND a.run_id IN <foreach collection="runIds" item="item" open="(" separator="," close=")">#{item}</foreach>
+  </select>
+  <!-- 作用域只由已授权的候选会话生成；查询不读取检查点、profile 或私有context。 -->
+  <sql id="publicScopePredicate">
+    <foreach collection="scopes" item="scope" open="(" separator=" OR " close=")">
+      (event.tenant_id=CAST(#{scope.tenantId} AS text) AND event.session_id=#{scope.sessionId}
+       AND event.session_sequence&lt;=#{scope.eventUpperBound}
+       <if test="scope.roots != null and !scope.roots.isEmpty()">
+         AND event.root_input_id IN <foreach collection="scope.roots" item="root" open="(" separator="," close=")">#{root}</foreach>
+       </if>)
+    </foreach>
+  </sql>
+  <sql id="publicEventColumns">
+    ${eventAlias}.tenant_id,${eventAlias}.session_id,${eventAlias}.agent_id,${eventAlias}.end_user_id,${eventAlias}.session_sequence,
+    ${eventAlias}.input_id,${eventAlias}.run_id,${eventAlias}.execution_id,${eventAlias}.action_id,${eventAlias}.delegation_id,
+    ${eventAlias}.event_id,${eventAlias}.event_fingerprint,${eventAlias}.event_type,${eventAlias}.event_version,${eventAlias}.trace_id,
+    ${eventAlias}.span_id,${eventAlias}.root_input_id,${eventAlias}.caused_by_event_id,${eventAlias}.payload_schema_id,${eventAlias}.payload_canonical_json,
+    ${eventAlias}.occurred_at_epoch_second,${eventAlias}.occurred_at_nano,${eventAlias}.target_kind,${eventAlias}.target_id
+  </sql>
+  <select id="publicFacts" resultType="map">
+SELECT event.tenant_id,event.session_id,event.target_kind,event.target_id,event.end_user_id,event.run_id,
+       event.session_sequence AS event_sequence,event.revision,event.event_id,event.event_type AS type,
+       event.payload_schema_id AS schema_id,event.payload_canonical_json AS canonical_json,
+       event.occurred_at_epoch_second AS occurred_second,event.occurred_at_nano AS occurred_nano
+FROM (<include refid="eventProjection"/>) event WHERE <include refid="publicScopePredicate"/>
+ORDER BY event.tenant_id,event.session_id,event.session_sequence
+  </select>
+  <select id="messages" resultType="map">
+SELECT message.tenant_id,message.session_id,message.id,message.message_id,message.role,message.content,
+       COALESCE(message.metadata-&gt;&gt;'root_input_id',message.metadata-&gt;&gt;'rootInputId') AS root_input_id,
+       COALESCE(message.metadata-&gt;&gt;'run_id',message.metadata-&gt;&gt;'runId') AS run_id,
+       message.metadata-&gt;&gt;'phase' AS phase,message.metadata-&gt;&gt;'state' AS state,
+       message.metadata-&gt;&gt;'team_answer_ref' AS team_answer_ref,message.message_version,
+       message.metadata::text AS metadata_json,message.input_references::text AS references_json,message.created_at
+  FROM public.nw_chat_messages message
+ WHERE <foreach collection="scopes" item="scope" open="(" separator=" OR " close=")">
+      (message.tenant_id=#{scope.tenantId} AND message.session_id=#{scope.sessionId}
+       AND message.id&lt;=#{scope.messageUpperBound}
+       <if test="scope.roots != null and !scope.roots.isEmpty()">
+         AND COALESCE(message.metadata-&gt;&gt;'root_input_id',message.metadata-&gt;&gt;'rootInputId') IN
+         <foreach collection="scope.roots" item="root" open="(" separator="," close=")">#{root}</foreach>
+       </if>)
+     </foreach>
+ ORDER BY message.created_at,message.id
+  </select>
+  <select id="messageUpperBound" resultType="Long">
+SELECT MAX(id) FROM public.nw_chat_messages WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+  </select>
+  <select id="rootExists" resultType="Boolean">
+SELECT EXISTS (
+    SELECT 1
+      FROM (<include refid="eventProjection"/>) event
+     WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+       AND root_input_id=#{rootInputId,jdbcType=VARCHAR})
+  </select>
+  <select id="traceUpperBound" resultType="Long">
+SELECT MAX(session_sequence)
+  FROM (<include refid="eventProjection"/>) event
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND root_input_id=#{rootInputId,jdbcType=VARCHAR}
+  </select>
+  <select id="traceNodeSequence" resultType="Long">
+SELECT session_sequence
+  FROM (<include refid="eventProjection"/>) event
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND root_input_id=#{rootInputId,jdbcType=VARCHAR}
+   AND event_id=#{nodeId} AND session_sequence&lt;=#{upperBound}
+  </select>
+  <select id="trace" resultType="map">
+SELECT event.session_sequence, event.input_id, event.root_input_id, event.run_id,
+          event.execution_id, event.action_id, event.event_id, event.event_type,
+          event.trace_id, event.caused_by_event_id, event.payload_schema_id,
+          event.payload_canonical_json
+              AS payload_canonical_json, event.occurred_at_epoch_second,
+          event.occurred_at_nano, action.kind AS action_call_kind,
+          parent.event_id AS parent_node_id
+     FROM (<include refid="eventProjection"/>) event
+LEFT JOIN public.agent_runtime_execution_actions action
+       ON action.tenant_id=event.tenant_id AND action.action_id=event.action_id
+LEFT JOIN (<include refid="eventProjection"/>) parent
+       ON parent.tenant_id=event.tenant_id AND parent.session_id=event.session_id
+      AND parent.root_input_id=event.root_input_id
+      AND parent.event_id=event.caused_by_event_id
+    WHERE event.tenant_id=#{tenantId} AND event.session_id=#{sessionId}
+      AND event.root_input_id=#{rootInputId,jdbcType=VARCHAR}
+      AND event.session_sequence&gt;#{afterSequence} AND event.session_sequence&lt;=#{upperBound}
+    ORDER BY event.session_sequence
+    LIMIT #{limit}
+  </select>
+  <select id="roundEvents" resultType="map">
+SELECT event.session_sequence, event.root_input_id, event.run_id,
+       event.action_id, event.event_id,
+       event.payload_canonical_json
+           AS payload_canonical_json,
+       event.occurred_at_epoch_second, event.occurred_at_nano
+  FROM (<include refid="eventProjection"/>) event
+ WHERE event.tenant_id=#{tenantId} AND event.session_id=#{sessionId}
+   AND event.root_input_id IN <foreach collection="roots" item="item" open="(" separator="," close=")">#{item}</foreach>
+   AND (#{sequenceUpperBound,jdbcType=BIGINT} IS NULL
+        OR event.session_sequence&lt;=#{sequenceUpperBound,jdbcType=BIGINT})
+ ORDER BY event.session_sequence
+  </select>
+  <select id="contentBelongsToRoot" resultType="Integer">
+SELECT COUNT(*)
+  FROM (<include refid="eventProjection"/>) event
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND root_input_id=#{rootInputId,jdbcType=VARCHAR}
+   AND event_id=#{eventId}
+  </select>
+  <select id="usage" resultType="map">
+SELECT attempt.attempt_ledger_id, attempt.attempt_id, attempt.invocation_id,
+          attempt.trace_node_id, attempt.run_id,
+          attempt.session_id AS source_session_id, attempt.root_input_id AS source_root_input_id,
+          COALESCE(usage.provider, attempt.provider) AS provider,
+          COALESCE(usage.model, attempt.model) AS model,
+          COALESCE(usage.call_point, attempt.call_point) AS call_point,
+          CASE WHEN usage.prompt_tokens IS NOT NULL OR usage.completion_tokens IS NOT NULL OR attempt.prompt_tokens IS NOT NULL OR attempt.completion_tokens IS NOT NULL THEN 'PROVIDER_REPORTED' ELSE 'UNKNOWN' END AS usage_source,
+          COALESCE(usage.prompt_tokens,attempt.prompt_tokens) AS prompt_tokens, COALESCE(usage.completion_tokens,attempt.completion_tokens) AS completion_tokens,
+          usage.cached_input_tokens, usage.cache_write_input_tokens,
+          usage.reasoning_output_tokens, usage.ingested_at,
+          EXISTS(SELECT 1 FROM public.agent_runtime_execution_attempts actual
+              JOIN public.agent_runtime_execution_actions action
+                ON action.tenant_id=actual.tenant_id AND action.run_id=actual.run_id
+               AND action.action_id=actual.action_id AND action.kind='MODEL'
+              JOIN public.agent_runtime_execution_materials request
+                ON request.tenant_id=actual.tenant_id AND request.reference=actual.request_ref
+               AND request.schema_id IN (#{modelRequestSchema},#{modelManifestSchema})
+             WHERE actual.tenant_id=CAST(attempt.tenant_id AS text)
+               AND actual.run_id=attempt.run_id AND actual.attempt_id=attempt.attempt_id) AS diagnostic_available
+     FROM public.observation_session_model_attempts attempt
+LEFT JOIN public.observation_effective_model_usage usage
+       ON usage.tenant_id=attempt.tenant_id AND usage.attempt_id=attempt.attempt_id
+      AND usage.session_id=attempt.session_id AND usage.run_id=attempt.run_id AND usage.root_input_id IS NOT DISTINCT FROM attempt.root_input_id
+    WHERE attempt.tenant_id=#{tenantId} AND attempt.session_id=#{sessionId}
+      AND (#{rootInputId,jdbcType=VARCHAR} IS NULL OR attempt.root_input_id=#{rootInputId,jdbcType=VARCHAR})
+      AND (#{attemptUpperBound,jdbcType=BIGINT} IS NULL
+           OR attempt.attempt_ledger_id&lt;=#{attemptUpperBound,jdbcType=BIGINT})
+    ORDER BY attempt.attempt_ledger_id, attempt.attempt_id, usage.ingested_at
+  </select>
+</mapper>

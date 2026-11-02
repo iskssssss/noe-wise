@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.mapper.AgentPublicationMapper">
+  <insert id="insert">
+    INSERT INTO nw_agent_publications(id,tenant_id,agent_id,revision,snapshot,published_at)
+    VALUES (#{id},#{tenantId},#{agentId},#{revision},CAST(#{snapshot} AS jsonb),#{publishedAt})
+  </insert>
+  <insert id="insertRequest">
+    INSERT INTO nw_agent_publications(id,tenant_id,agent_id,revision,snapshot,published_at,
+                                     request_id,request_fingerprint,request_actor_ref)
+    VALUES (#{id},#{tenantId},#{agentId},#{revision},CAST(#{snapshot} AS jsonb),#{publishedAt},
+            #{requestId},#{fingerprint},#{actor})
+  </insert>
+  <select id="findRequest" resultType="com.skillforge.core.agent.mapper.AgentPublicationMapper$RequestRow" useCache="false">
+    SELECT id,agent_id,revision,published_at,request_id,request_fingerprint,request_actor_ref
+    FROM nw_agent_publications
+    WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} AND request_id=#{requestId}
+  </select>
+  <select id="find" resultType="com.skillforge.core.agent.mapper.AgentPublicationMapper$Row">
+    SELECT id,agent_id,revision,snapshot::text,published_at FROM nw_agent_publications
+    WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} AND id=#{revisionId}
+  </select>
+  <select id="findRevision" resultType="com.skillforge.core.agent.mapper.AgentPublicationMapper$Row">
+    SELECT id,agent_id,revision,snapshot::text,published_at FROM nw_agent_publications
+    WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} AND revision=#{revision}
+  </select>
+  <select id="history" resultType="com.skillforge.core.agent.mapper.AgentPublicationMapper$History">
+    SELECT id,revision,snapshot-&gt;'agent'-&gt;&gt;'name' AS name,published_at FROM nw_agent_publications
+    WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} ORDER BY revision DESC
+  </select>
+  <select id="current" resultType="com.skillforge.core.agent.mapper.AgentPublicationMapper$Row">
+    SELECT p.id,p.agent_id,p.revision,p.snapshot::text,p.published_at FROM nw_agent_publications p
+    JOIN nw_agents a ON a.tenant_id=p.tenant_id AND a.id=p.agent_id AND a.published_revision_id=p.id
+    WHERE a.tenant_id=#{tenantId} AND a.status='published' AND a.id IN
+    <foreach collection="agentIds" item="agentId" open="(" separator="," close=")">#{agentId}</foreach>
+  </select>
+</mapper>

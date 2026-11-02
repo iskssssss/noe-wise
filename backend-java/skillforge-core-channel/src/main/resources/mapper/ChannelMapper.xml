@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.channel.mapper.ChannelMapper">
+
+    <!-- 渠道实体映射：config/ui_config jsonb 列显式类型处理器 -->
+    <resultMap id="channelMap" type="com.skillforge.core.channel.model.ChannelDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="channel_type" property="channelType"/>
+        <result column="name" property="name"/>
+        <result column="config" property="config"
+                typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="ui_config" property="uiConfig"
+                typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="channel_token_hash" property="channelTokenHash"/>
+        <result column="channel_token_prefix" property="channelTokenPrefix"/>
+        <result column="api_key_hash" property="apiKeyHash"/>
+        <result column="api_secret_encrypted" property="apiSecretEncrypted"/>
+    </resultMap>
+
+    <select id="lockOwnedChannel" resultType="long">
+        SELECT id FROM nw_channels WHERE tenant_id=#{tenantId} AND id=#{channelId} FOR UPDATE
+    </select>
+    <update id="updateApiCredentials">
+        UPDATE nw_channels SET api_key_hash=#{apiKeyHash}, api_secret_encrypted=#{apiSecretEncrypted}, updated_at=now()
+        WHERE tenant_id=#{tenantId} AND id=#{channelId}
+    </update>
+    <select id="bindingSummaries" resultType="com.skillforge.core.channel.mapper.ChannelMapper$BindingSummary">
+        SELECT b.channel_id, b.agent_id, COALESCE(a.name,'') AS name, b.priority, b.traffic_percentage, b.is_default
+        FROM nw_channel_agent_bindings b
+        LEFT JOIN nw_agents a ON a.tenant_id=b.tenant_id AND a.id=b.agent_id
+        WHERE b.tenant_id=#{tenantId} AND b.channel_id IN
+        <foreach collection="channelIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY b.id
+    </select>
+
+    <!-- 外部认证：按渠道令牌哈希定位激活渠道（SECURITY DEFINER 函数绕过 RLS，见 V40） -->
+    <select id="selectForAuthByTokenHash" resultMap="channelMap">
+        SELECT id, tenant_id, channel_type, name, config, ui_config, status, created_at, updated_at, channel_token_hash,
+               channel_token_prefix, api_key_hash, api_secret_encrypted FROM public.resolve_channel_by_token_hash(#{tokenHash})
+    </select>
+
+    <!-- 外部认证：按 OpenAPI API Key 哈希定位激活渠道（SECURITY DEFINER 函数绕过 RLS，见 V40） -->
+    <select id="selectForAuthByApiKeyHash" resultMap="channelMap">
+        SELECT id, tenant_id, channel_type, name, config, ui_config, status, created_at, updated_at, channel_token_hash,
+               channel_token_prefix, api_key_hash, api_secret_encrypted FROM public.resolve_channel_by_api_key_hash(#{apiKeyHash})
+    </select>
+
+</mapper>

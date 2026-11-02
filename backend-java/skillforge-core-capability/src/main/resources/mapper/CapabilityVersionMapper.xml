@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.persistence.CapabilityVersionMapper">
+  <select id="listSkillVersionSummaries" resultType="com.skillforge.core.capability.SkillVersionSummary">
+    SELECT id,version_key,status FROM nw_capability_versions
+    WHERE definition_id=#{definitionId} AND capability_type='SKILL'
+      <choose>
+        <when test="tenant == null">AND tenant_id IS NULL</when>
+        <otherwise>AND (tenant_id=#{tenant} OR (tenant_id IS NULL AND status='PUBLISHED'))</otherwise>
+      </choose>
+    ORDER BY created_at DESC,id DESC
+  </select>
+  <select id="listVersionSummaries" resultType="com.skillforge.core.capability.CapabilityVersionSummary">
+    SELECT id,version_key,name,description,status FROM nw_capability_versions
+    WHERE definition_id=#{definitionId}
+      <choose>
+        <when test="tenant == null">AND tenant_id IS NULL</when>
+        <otherwise>AND (tenant_id=#{tenant} OR (tenant_id IS NULL AND status='PUBLISHED'))</otherwise>
+      </choose>
+    ORDER BY created_at DESC,id DESC
+  </select>
+</mapper>

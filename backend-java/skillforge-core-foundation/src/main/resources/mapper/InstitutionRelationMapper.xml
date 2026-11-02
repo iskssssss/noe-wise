@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.institution.InstitutionRelationMapper">
+  <select id="lockTree" resultType="long" useCache="false" flushCache="true">SELECT revision FROM nw_institution_tree_revision WHERE singleton FOR UPDATE</select>
+  <select id="treeRevision" resultType="long" useCache="false" flushCache="true">SELECT revision FROM nw_institution_tree_revision WHERE singleton</select>
+  <sql id="columns">t.id AS tenant_id,t.parent_tenant_id,t.name,t.status,t.relation_revision AS revision</sql>
+  <select id="find" resultType="com.skillforge.core.foundation.institution.InstitutionRelationMapper$Row" useCache="false" flushCache="true">
+    SELECT <include refid="columns"/> FROM nw_tenants t WHERE t.id=#{tenantId} AND t.status&lt;&gt;'internal'
+  </select>
+  <select id="wouldCycle" resultType="boolean" useCache="false">
+    WITH RECURSIVE ancestors(id,parent_tenant_id) AS (
+      SELECT id,parent_tenant_id FROM nw_tenants WHERE id=#{parent}
+      UNION SELECT p.id,p.parent_tenant_id FROM nw_tenants p JOIN ancestors a ON p.id=a.parent_tenant_id)
+    SELECT EXISTS(SELECT 1 FROM ancestors WHERE id=#{child})
+  </select>
+  <update id="change">
+    UPDATE nw_tenants SET parent_tenant_id=#{parent},relation_revision=relation_revision+1,updated_at=clock_timestamp()
+    WHERE id=#{child} AND relation_revision=#{expected}
+  </update>
+  <insert id="append">
+    INSERT INTO nw_institution_relation_revisions(id,child_tenant_id,parent_tenant_id,revision,tree_revision,actor_ref,command_ref)
+    VALUES(#{id},#{child},#{parent},#{revision},#{tree},#{actor},#{key})
+  </insert>
+  <sql id="platformFilter">
+    <choose><when test="!allowed.isEmpty()">t.id IN <foreach collection="allowed" item="id" open="(" close=")" separator=",">#{id}</foreach>
+      AND (t.parent_tenant_id IS NULL OR t.parent_tenant_id IN <foreach collection="allowed" item="id" open="(" close=")" separator=",">#{id}</foreach>)
+    </when><otherwise>FALSE</otherwise></choose>
+    AND t.status&lt;&gt;'internal' <if test="parent != null">AND t.parent_tenant_id=#{parent}</if>
+  </sql>
+  <select id="platformRows" resultType="com.skillforge.core.foundation.institution.InstitutionRelationMapper$Row" useCache="false">
+    SELECT <include refid="columns"/> FROM nw_tenants t WHERE <include refid="platformFilter"/> ORDER BY t.id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="platformCount" resultType="long" useCache="false">SELECT count(*) FROM nw_tenants t WHERE <include refid="platformFilter"/></select>
+  <sql id="subFilter">
+    t.parent_tenant_id=#{parent} AND EXISTS(SELECT 1 FROM nw_institution_management_grants g
+      JOIN nw_institution_relation_revisions r ON r.id=g.relation_ref AND r.child_tenant_id=t.id
+        AND r.parent_tenant_id=#{parent} AND r.revision=t.relation_revision
+      WHERE g.actor_domain='tenant' AND g.actor_ref=concat('tenant:',#{parent}::text)
+        AND g.target_tenant_id=t.id AND g.action='tenant.sub_institutions.read' AND g.status='active')
+  </sql>
+  <select id="subRows" resultType="com.skillforge.core.foundation.institution.InstitutionRelationMapper$Row" useCache="false">
+    SELECT <include refid="columns"/> FROM nw_tenants t WHERE <include refid="subFilter"/> ORDER BY t.id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="subCount" resultType="long" useCache="false">SELECT count(*) FROM nw_tenants t WHERE <include refid="subFilter"/></select>
+  <select id="lockRequest" resultType="java.lang.Object" useCache="false" flushCache="true">
+    SELECT pg_advisory_xact_lock(hashtextextended(#{actor}||':'||#{operation}||':'||#{key},302))
+  </select>
+  <select id="request" resultType="com.skillforge.core.foundation.institution.InstitutionRelationMapper$Receipt" useCache="false" flushCache="true">
+    SELECT fingerprint,result::text AS result FROM nw_institution_relation_requests WHERE actor_ref=#{actor} AND operation=#{operation} AND command_ref=#{key}
+  </select>
+  <insert id="receipt">INSERT INTO nw_institution_relation_requests(actor_ref,operation,command_ref,fingerprint,child_tenant_id,result)
+    VALUES(#{actor},#{operation},#{key},#{fingerprint},#{child},CAST(#{result} AS jsonb))</insert>
+  <insert id="grantRead">INSERT INTO nw_institution_management_grants(id,actor_domain,actor_ref,target_tenant_id,action,status,revision,relation_ref)
+    VALUES(#{id},'tenant',concat('tenant:',#{parent}::text),#{child},'tenant.sub_institutions.read','active',1,#{relation})</insert>
+</mapper>

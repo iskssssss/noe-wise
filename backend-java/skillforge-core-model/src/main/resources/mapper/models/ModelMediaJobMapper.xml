@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.model.media.ModelMediaJobMapper">
+  <sql id="columns">
+    id::text,owner_id,tenant_id::text,operation_id,command_sha256,model_config_id::text,model_revision,
+    provider_id,service_id,profile_version,model_id,kind,endpoint,credential_encrypted,timeout_seconds,
+    status,provider_request_id,provider_task_id,reason_code,waiting_stopped,lock_version,created_at,updated_at,
+    input_tokens,output_tokens,image_count,video_count,characters,duration_seconds,
+    input_text,negative_prompt,size,resolution,ratio,voice,language,output_count,video_duration_seconds,
+    speaker_count,seed,prompt_extend,watermark,audio_enabled,diarization,enable_itn
+  </sql>
+  <select id="find" resultType="com.skillforge.core.model.media.ModelMediaJobMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_model_media_jobs WHERE owner_id=#{owner} AND id=CAST(#{id} AS bigint)
+  </select>
+  <select id="operation" resultType="com.skillforge.core.model.media.ModelMediaJobMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_model_media_jobs WHERE owner_id=#{owner} AND operation_id=#{operation}
+  </select>
+  <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+  <insert id="insert">
+    INSERT INTO nw_model_media_jobs(id,owner_id,tenant_id,operation_id,command_sha256,model_config_id,model_revision,
+      provider_id,service_id,profile_version,model_id,kind,endpoint,credential_encrypted,timeout_seconds,
+      status,reason_code,waiting_stopped,lock_version,created_at,updated_at,input_text,negative_prompt,size,
+      resolution,ratio,voice,language,output_count,video_duration_seconds,speaker_count,seed,prompt_extend,
+      watermark,audio_enabled,diarization,enable_itn)
+    VALUES(CAST(#{r.id} AS bigint),#{r.ownerId},CAST(#{r.tenantId} AS bigint),#{r.operationId},#{r.commandSha256},
+      CAST(#{r.modelConfigId} AS bigint),#{r.modelRevision},#{r.providerId},#{r.serviceId},#{r.profileVersion},#{r.modelId},
+      #{r.kind},#{r.endpoint},#{r.credentialEncrypted},#{r.timeoutSeconds},#{r.status},#{r.reasonCode},false,0,
+      #{r.createdAt},#{r.updatedAt},#{r.inputText},#{r.negativePrompt},#{r.size},#{r.resolution},#{r.ratio},
+      #{r.voice},#{r.language},#{r.outputCount},#{r.videoDurationSeconds},#{r.speakerCount},#{r.seed},
+      #{r.promptExtend},#{r.watermark},#{r.audioEnabled},#{r.diarization},#{r.enableItn})
+    ON CONFLICT(owner_id,operation_id) DO NOTHING
+  </insert>
+  <update id="update">
+    UPDATE nw_model_media_jobs SET status=#{r.status},provider_request_id=#{r.providerRequestId},provider_task_id=#{r.providerTaskId},reason_code=#{r.reasonCode},
+      input_tokens=#{r.inputTokens},output_tokens=#{r.outputTokens},image_count=#{r.imageCount},video_count=#{r.videoCount},
+      characters=#{r.characters},duration_seconds=#{r.durationSeconds},updated_at=#{r.updatedAt},lock_version=lock_version+1
+    WHERE id=CAST(#{r.id} AS bigint) AND owner_id=#{r.ownerId} AND lock_version=#{expected}
+  </update>
+  <update id="stop">
+    UPDATE nw_model_media_jobs SET waiting_stopped=true,updated_at=clock_timestamp()
+    WHERE id=CAST(#{id} AS bigint) AND owner_id=#{owner}
+  </update>
+  <select id="assets" resultType="com.skillforge.core.model.media.ModelMediaJobMapper$AssetRow">
+    SELECT id::text,job_id::text,kind,source_encrypted,media_type,size_bytes,sha256,name,available
+    FROM nw_model_media_assets WHERE job_id=CAST(#{job} AS bigint) ORDER BY id
+  </select>
+  <insert id="insertAsset">
+    INSERT INTO nw_model_media_assets(id,job_id,kind,source_encrypted,media_type,size_bytes,sha256,name,available)
+    VALUES(CAST(#{a.id} AS bigint),CAST(#{a.jobId} AS bigint),#{a.kind},#{a.sourceEncrypted},#{a.mediaType},
+      #{a.sizeBytes},#{a.sha256},#{a.name},#{a.available})
+  </insert>
+  <update id="materialize">
+    UPDATE nw_model_media_assets SET media_type=#{mediaType},size_bytes=#{size},sha256=#{sha256},name=#{name},available=true
+    WHERE id=CAST(#{id} AS bigint) AND available=false
+  </update>
+  <insert id="insertSource">
+    INSERT INTO nw_model_media_input_sources(job_id,ordinal,kind,source_encrypted)
+    VALUES(CAST(#{job} AS bigint),#{ordinal},#{kind},#{source})
+  </insert>
+  <insert id="insertLanguage">
+    INSERT INTO nw_model_media_input_languages(job_id,ordinal,language)
+    VALUES(CAST(#{job} AS bigint),#{ordinal},#{language})
+  </insert>
+  <insert id="insertChannel">
+    INSERT INTO nw_model_media_input_channels(job_id,ordinal,channel)
+    VALUES(CAST(#{job} AS bigint),#{ordinal},#{channel})
+  </insert>
+</mapper>

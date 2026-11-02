@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.RuntimeWorkerRecoveryMapper">
+    <select id="activeTenants" resultType="string">
+        SELECT id::text FROM nw_tenants WHERE status='active' ORDER BY id
+    </select>
+    <select id="activeTenantPage" resultType="string">
+        SELECT id::text FROM nw_tenants
+        WHERE status IN ('active','internal') AND id::text &gt; #{after}
+        ORDER BY id::text LIMIT #{limit}
+    </select>
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenant}, true)
+    </select>
+    <select id="unfinished" resultType="long">
+        SELECT (SELECT count(*) FROM agent_runtime_session_inbox WHERE status IN ('QUEUED','PROCESSING'))
+             + (SELECT count(*) FROM agent_runtime_executions WHERE state IN ('QUEUED','RUNNING','WAITING_EXTERNAL','RESUMING')
+                    OR (state='WAITING_HITL' AND cancel_request_id IS NOT NULL))
+             + (SELECT count(*) FROM agent_runtime_execution_runs WHERE status IN ('QUEUED','RUNNING','SUSPENDED','RESUMING'))
+    </select>
+</mapper>

@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.memory.MemoryMapper">
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenant}, true)
+    </select>
+
+    <select id="now" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryTimeRow">
+        WITH sampled AS (SELECT clock_timestamp() AS value)
+        SELECT floor(extract(epoch FROM value))::bigint AS epoch_second,
+               (extract(microseconds FROM value)::bigint % 1000000 * 1000)::integer AS nano
+          FROM sampled
+    </select>
+
+    <select id="lockOperation" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(
+            'memory-operation:' || length(#{tenant})::text || ':' || #{tenant} || #{key},
+            0
+        ))::text
+    </select>
+
+    <select id="findOperation" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryOperationRow">
+        SELECT tenant_id,idempotency_key,command_kind,command_data,result_fact_id,result_revision
+          FROM public.agent_runtime_memory_operations
+         WHERE tenant_id=#{tenant} AND idempotency_key=#{key}
+    </select>
+
+    <select id="lockExtraction" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(
+            'memory-extraction:' || length(#{tenant})::text || ':' || #{tenant} || #{digest},0))::text
+    </select>
+
+    <select id="governedHistory" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id,r.fact_id,r.revision,r.end_user_id,r.agent_id,r.session_id,r.group_binding_id,
+               r.subject_end_user_id,r.scope,r.type_id,r.status,r.source_session_id,r.created_epoch_second,r.created_nano,
+               r.valid_from_epoch_second,r.valid_from_nano,r.valid_to_epoch_second,r.valid_to_nano,
+               r.expires_epoch_second,r.expires_nano,r.superseded_fact_id,r.content_revision,
+               c.fact_data,c.fact_data_digest,c.extraction_digest,r.recorded_at AS governance_recorded_at
+          FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+         WHERE h.tenant_id=#{owner.tenantId} AND h.scope=#{owner.scope}
+           AND h.end_user_id IS NOT DISTINCT FROM #{owner.endUserId,jdbcType=BIGINT}
+           AND h.agent_id IS NOT DISTINCT FROM #{owner.agentId,jdbcType=VARCHAR}
+           AND h.session_id IS NOT DISTINCT FROM #{owner.sessionId,jdbcType=VARCHAR}
+           AND h.group_binding_id IS NOT DISTINCT FROM #{owner.groupBindingId,jdbcType=VARCHAR}
+           AND h.subject_end_user_id IS NOT DISTINCT FROM #{owner.subjectEndUserId,jdbcType=BIGINT}
+           AND (h.scope&lt;&gt;'SESSION' OR EXISTS (
+                SELECT 1 FROM public.agent_runtime_memory_fact_sources source
+                 WHERE source.tenant_id=r.tenant_id AND source.fact_id=r.fact_id AND source.revision=r.content_revision
+                   AND source.source_target_kind=#{targetKind} AND source.source_target_id=#{targetId}))
+           AND (r.status='FORGOTTEN' OR (r.revision=h.current_revision AND r.status='ARCHIVED' AND r.superseded_fact_id IS NOT NULL))
+         ORDER BY r.fact_id,r.revision
+    </select>
+
+    <select id="governedSources" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySourceRow">
+        SELECT s.source_target_kind,s.source_target_id,s.source_session_id,s.source_event_id
+          FROM public.agent_runtime_memory_fact_revisions r
+          JOIN public.agent_runtime_memory_fact_sources s
+            ON s.tenant_id=r.tenant_id AND s.fact_id=r.fact_id AND s.revision=r.content_revision
+         WHERE r.tenant_id=#{tenant} AND r.fact_id=#{factId} AND r.revision=#{revision}
+        UNION
+        SELECT e.source_target_kind,e.source_target_id,e.source_session_id,e.source_event_id
+          FROM public.agent_runtime_memory_extraction_evidence e
+         WHERE e.tenant_id=#{tenant} AND e.fact_id=#{factId}
+    </select>
+
+    <select id="sourcePositions" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySourcePositionRow">
+        SELECT occurred_at_epoch_second AS epoch_second,occurred_at_nano AS nano
+          FROM public.agent_runtime_session_events
+         WHERE tenant_id=#{tenant} AND target_kind=#{targetKind} AND target_id=#{targetId}
+           AND (agent_id=#{agentId} OR target_kind='GROUP') AND session_id=#{sessionId}
+           AND event_id IN
+           <foreach collection="eventIds" item="event" open="(" separator="," close=")">#{event}</foreach>
+    </select>
+
+    <select id="findEquivalentExtraction" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id,r.fact_id,r.revision,r.end_user_id,r.agent_id,r.session_id,r.group_binding_id,r.subject_end_user_id,r.scope,r.type_id,r.status,
+               r.source_session_id,r.created_epoch_second,r.created_nano,r.valid_from_epoch_second,r.valid_from_nano,
+               r.valid_to_epoch_second,r.valid_to_nano,r.expires_epoch_second,r.expires_nano,r.superseded_fact_id,
+               r.content_revision,c.fact_data,c.fact_data_digest,c.extraction_digest
+          FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+         WHERE h.tenant_id=#{tenant} AND h.scope=#{scope}
+           AND (h.scope='SESSION' OR h.end_user_id=#{endUserId})
+           AND c.extraction_digest=#{digest} AND r.status='ACTIVE' AND r.superseded_fact_id IS NULL
+           AND (r.created_epoch_second,r.created_nano) &lt;= (#{epoch},#{nano})
+           AND (r.valid_from_epoch_second,r.valid_from_nano) &lt;= (#{epoch},#{nano})
+           AND (r.valid_to_epoch_second IS NULL OR (r.valid_to_epoch_second,r.valid_to_nano) &gt; (#{epoch},#{nano}))
+           AND (r.expires_epoch_second IS NULL OR (r.expires_epoch_second,r.expires_nano) &gt; (#{epoch},#{nano}))
+           AND ((h.scope='SESSION' AND h.session_id=#{sessionId}
+                 AND EXISTS (SELECT 1 FROM public.agent_runtime_memory_fact_sources own_source
+                    WHERE own_source.tenant_id=h.tenant_id AND own_source.fact_id=h.fact_id AND own_source.revision=r.content_revision
+                     AND ((own_source.source_target_kind=#{targetKind} AND own_source.source_target_id=#{targetId})
+                          OR own_source.source_target_kind NOT IN ('AGENT','TEAM','GROUP') OR btrim(own_source.source_target_id)='')))
+                OR (h.scope='USER_AGENT' AND h.agent_id=#{agentId})
+                OR (h.scope='USER' AND h.agent_id IS NULL AND h.session_id IS NULL))
+         ORDER BY r.created_epoch_second,r.created_nano,h.fact_id LIMIT 1 FOR UPDATE OF h
+    </select>
+
+    <select id="findExtractionEvidence" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryExtractionEvidenceRow">
+        SELECT fact_id,revision FROM public.agent_runtime_memory_extraction_evidence
+         WHERE tenant_id=#{tenant} AND extraction_digest=#{digest} AND source_target_kind=#{targetKind}
+           AND source_target_id=#{targetId} AND source_session_id=#{sessionId}
+           AND source_event_id=#{eventId} AND extractor_version=#{extractor}
+    </select>
+
+    <insert id="insertExtractionEvidence">
+        INSERT INTO public.agent_runtime_memory_extraction_evidence(tenant_id,extraction_digest,
+            agent_id,source_target_kind,source_target_id,source_session_id,source_event_id,extractor_version,
+            fact_id,revision,access_audit_ref,source_audit_ref)
+        VALUES(#{tenant},#{digest},#{agentId},#{targetKind},#{targetId},#{sessionId},#{eventId},#{extractor},
+            #{factId},#{revision},#{accessAudit},#{sourceAudit})
+    </insert>
+
+    <select id="findCurrent" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id, r.fact_id, r.revision, r.end_user_id, r.agent_id, r.session_id, r.group_binding_id, r.subject_end_user_id, r.scope, r.type_id, r.status,
+               r.source_session_id, r.created_epoch_second, r.created_nano, r.valid_from_epoch_second, r.valid_from_nano,
+               r.valid_to_epoch_second, r.valid_to_nano, r.expires_epoch_second, r.expires_nano, r.superseded_fact_id,
+               r.content_revision,c.fact_data,c.fact_data_digest,c.extraction_digest
+          FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id
+           AND r.revision=h.current_revision
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+         WHERE h.tenant_id=#{tenant} AND h.fact_id=#{factId}
+           AND (
+                (h.scope='SESSION' AND h.session_id=#{sessionId}
+                 AND EXISTS (SELECT 1 FROM public.agent_runtime_memory_fact_sources own_source
+                    WHERE own_source.tenant_id=h.tenant_id AND own_source.fact_id=h.fact_id AND own_source.revision=r.content_revision
+                     AND ((own_source.source_target_kind=#{targetKind} AND own_source.source_target_id=#{targetId})
+                          OR own_source.source_target_kind NOT IN ('AGENT','TEAM','GROUP') OR btrim(own_source.source_target_id)='')))
+                OR (#{groupBindingId,jdbcType=VARCHAR} IS NULL AND h.end_user_id=#{endUserId,jdbcType=BIGINT}
+                    AND (h.scope='USER' OR (h.scope='USER_AGENT' AND h.agent_id=#{agentId})))
+                OR (h.scope IN ('GROUP','GROUP_MEMBER') AND h.group_binding_id=#{groupBindingId,jdbcType=VARCHAR})
+           )
+        <if test="lock">FOR UPDATE OF h</if>
+    </select>
+
+    <select id="findCurrentBatch" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id, r.fact_id, r.revision, r.end_user_id, r.agent_id, r.session_id, r.group_binding_id, r.subject_end_user_id, r.scope, r.type_id, r.status,
+               r.source_session_id, r.created_epoch_second, r.created_nano, r.valid_from_epoch_second, r.valid_from_nano,
+               r.valid_to_epoch_second, r.valid_to_nano, r.expires_epoch_second, r.expires_nano, r.superseded_fact_id,
+               r.content_revision,c.fact_data,c.fact_data_digest,c.extraction_digest,q.request_ordinal
+          FROM (VALUES
+          <foreach collection="requests" item="q" separator=",">
+              (#{q.requestOrdinal}::integer,#{q.factId}::text,#{q.endUserId,jdbcType=BIGINT}::bigint,
+               #{q.agentId}::text,#{q.sessionId}::text,#{q.groupBindingId,jdbcType=VARCHAR}::text,#{q.targetKind}::text,#{q.targetId}::text)
+          </foreach>) AS q(request_ordinal,fact_id,end_user_id,agent_id,session_id,group_binding_id,target_kind,target_id)
+          JOIN public.agent_runtime_memory_fact_heads h
+            ON h.tenant_id=#{tenant} AND h.fact_id=q.fact_id
+           AND ((h.scope='SESSION' AND h.session_id=q.session_id
+                 AND EXISTS (SELECT 1 FROM public.agent_runtime_memory_fact_sources own_source
+                    WHERE own_source.tenant_id=h.tenant_id AND own_source.fact_id=h.fact_id AND own_source.revision=1
+                     AND ((own_source.source_target_kind=q.target_kind AND own_source.source_target_id=q.target_id)
+                          OR own_source.source_target_kind NOT IN ('AGENT','TEAM','GROUP') OR btrim(own_source.source_target_id)='')))
+                OR (q.group_binding_id IS NULL AND h.end_user_id=q.end_user_id
+                    AND (h.scope='USER' OR (h.scope='USER_AGENT' AND h.agent_id=q.agent_id)))
+                OR (h.scope IN ('GROUP','GROUP_MEMBER') AND h.group_binding_id=q.group_binding_id))
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+         ORDER BY q.request_ordinal
+    </select>
+
+    <select id="findSourcesBatch" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySourceRow">
+        SELECT s.tenant_id,s.fact_id,f.revision,s.source_ordinal,s.agent_id,
+               s.source_target_kind,s.source_target_id,s.source_session_id,s.source_event_id
+          FROM (VALUES
+          <foreach collection="facts" item="f" separator=",">
+              (#{f.factId}::text,#{f.revision}::bigint)
+          </foreach>) AS f(fact_id,revision)
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=#{tenant} AND r.fact_id=f.fact_id AND r.revision=f.revision
+          JOIN public.agent_runtime_memory_fact_sources s
+            ON s.tenant_id=r.tenant_id AND s.fact_id=r.fact_id AND s.revision=r.content_revision
+         ORDER BY s.fact_id,f.revision,s.source_ordinal
+    </select>
+
+    <select id="findRevision" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id,r.fact_id,r.revision,r.end_user_id,r.agent_id,r.session_id,r.group_binding_id,r.subject_end_user_id,r.scope,r.type_id,r.status,r.source_session_id,
+               r.created_epoch_second,r.created_nano,r.valid_from_epoch_second,r.valid_from_nano,r.valid_to_epoch_second,
+               r.valid_to_nano,r.expires_epoch_second,r.expires_nano,r.superseded_fact_id,r.content_revision,c.fact_data,c.fact_data_digest,c.extraction_digest
+          FROM public.agent_runtime_memory_fact_revisions r
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+         WHERE r.tenant_id=#{tenant} AND r.fact_id=#{factId} AND r.revision=#{revision}
+    </select>
+
+    <select id="lockHeadForRead" resultType="long" useCache="false" flushCache="true">
+        SELECT current_revision FROM public.agent_runtime_memory_fact_heads WHERE tenant_id=#{tenant} AND fact_id=#{factId} FOR SHARE
+    </select>
+    <select id="headRevision" resultType="long">
+        SELECT current_revision FROM public.agent_runtime_memory_fact_heads
+         WHERE tenant_id=#{tenant} AND fact_id=#{factId}
+    </select>
+
+    <select id="listCurrent" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryFactRow">
+        SELECT r.tenant_id, r.fact_id, r.revision, r.end_user_id, r.agent_id, r.session_id, r.group_binding_id, r.subject_end_user_id, r.scope, r.type_id, r.status,
+               r.source_session_id, r.created_epoch_second, r.created_nano, r.valid_from_epoch_second, r.valid_from_nano,
+               r.valid_to_epoch_second, r.valid_to_nano, r.expires_epoch_second, r.expires_nano, r.superseded_fact_id,
+               r.content_revision,c.fact_data,c.fact_data_digest,c.extraction_digest,
+               coalesce(task_link.source_task_linked, false) AS source_task_linked,
+               coalesce(task_link.current_task_linked, false) AS current_task_linked
+          FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id
+           AND r.revision=h.current_revision
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+          LEFT JOIN LATERAL (
+               SELECT count(*) &gt; 0 AS source_task_linked,
+                      coalesce(bool_or(
+                          task_event.payload_canonical_json::jsonb #&gt;&gt; '{task,taskId}'
+                              = cast(#{taskId,jdbcType=VARCHAR} AS text)), false)
+                          AS current_task_linked
+                 FROM public.agent_runtime_memory_fact_sources source_ref
+                 JOIN public.agent_runtime_session_events source_event
+                   ON source_event.tenant_id=source_ref.tenant_id
+                  AND source_event.target_kind=source_ref.source_target_kind
+                  AND source_event.target_id=source_ref.source_target_id
+                  AND source_event.agent_id IS NOT DISTINCT FROM source_ref.agent_id
+                  AND source_event.session_id=source_ref.source_session_id
+                  AND source_event.event_id=source_ref.source_event_id
+                 JOIN public.agent_runtime_session_events task_event
+                   ON task_event.tenant_id=source_event.tenant_id
+                  AND task_event.agent_id=source_event.agent_id
+                  AND task_event.session_id=source_event.session_id
+                  AND task_event.run_id=source_event.run_id
+                  AND task_event.event_type='agent.task-context'
+                  AND task_event.payload_schema_id='skillforge.runtime.task-context.v2'
+                WHERE source_ref.tenant_id=h.tenant_id
+                  AND source_ref.fact_id=h.fact_id
+                  AND source_ref.revision=r.content_revision
+                  AND source_event.run_id IS NOT NULL
+                  AND task_event.payload_canonical_json::jsonb #&gt;&gt; '{task,taskId}' IS NOT NULL
+          ) task_link ON true
+         WHERE h.tenant_id=#{tenant} AND (
+                (h.scope='SESSION' AND h.session_id=#{sessionId}
+                 AND EXISTS (SELECT 1 FROM public.agent_runtime_memory_fact_sources own_source
+                    WHERE own_source.tenant_id=h.tenant_id AND own_source.fact_id=h.fact_id AND own_source.revision=r.content_revision
+                     AND ((own_source.source_target_kind=#{targetKind} AND own_source.source_target_id=#{targetId})
+                          OR own_source.source_target_kind NOT IN ('AGENT','TEAM','GROUP') OR btrim(own_source.source_target_id)='')))
+                OR (#{groupBindingId,jdbcType=VARCHAR} IS NULL AND h.end_user_id=#{endUserId,jdbcType=BIGINT}
+                    AND (h.scope='USER' OR (h.scope='USER_AGENT' AND h.agent_id=#{agentId})))
+                OR (h.scope IN ('GROUP','GROUP_MEMBER') AND h.group_binding_id=#{groupBindingId,jdbcType=VARCHAR})
+           )
+           AND h.scope IN <foreach collection="scopes" item="scope" open="(" separator="," close=")">#{scope}</foreach>
+           AND (h.scope&lt;&gt;'GROUP_MEMBER' OR h.subject_end_user_id=#{subjectEndUserId,jdbcType=BIGINT})
+    </select>
+
+    <select id="findSources" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySourceRow">
+        SELECT s.tenant_id,s.fact_id,r.revision,s.source_ordinal,s.agent_id,
+               s.source_target_kind,s.source_target_id,s.source_session_id,s.source_event_id
+          FROM public.agent_runtime_memory_fact_revisions r
+          JOIN public.agent_runtime_memory_fact_sources s
+            ON s.tenant_id=r.tenant_id AND s.fact_id=r.fact_id AND s.revision=r.content_revision
+         WHERE r.tenant_id=#{tenant} AND r.fact_id=#{factId} AND r.revision=#{revision}
+         ORDER BY s.source_ordinal
+    </select>
+
+    <insert id="insertRevision">
+        INSERT INTO public.agent_runtime_memory_fact_revisions(
+            tenant_id,fact_id,revision,end_user_id,agent_id,session_id,group_binding_id,subject_end_user_id,scope,type_id,status,
+            source_session_id,created_epoch_second,created_nano,valid_from_epoch_second,
+            valid_from_nano,valid_to_epoch_second,valid_to_nano,expires_epoch_second,
+            expires_nano,superseded_fact_id,content_revision,fact_data,fact_data_digest,extraction_digest)
+        VALUES(#{tenantId},#{factId},#{revision},#{endUserId,jdbcType=BIGINT},#{agentId,jdbcType=VARCHAR},#{sessionId,jdbcType=VARCHAR},#{groupBindingId,jdbcType=VARCHAR},#{subjectEndUserId,jdbcType=BIGINT},#{scope},
+            #{typeId},#{status},#{sourceSessionId},#{createdEpochSecond},#{createdNano},
+            #{validFromEpochSecond},#{validFromNano},#{validToEpochSecond},#{validToNano},
+            #{expiresEpochSecond},#{expiresNano},#{supersededFactId},#{contentRevision},
+            #{factData,jdbcType=BINARY},#{factDataDigest,jdbcType=VARCHAR},#{extractionDigest,jdbcType=VARCHAR})
+    </insert>
+
+    <insert id="insertSource">
+        INSERT INTO public.agent_runtime_memory_fact_sources(
+            tenant_id,fact_id,revision,source_ordinal,agent_id,source_target_kind,
+            source_target_id,source_session_id,source_event_id)
+        VALUES(#{tenantId},#{factId},#{revision},#{sourceOrdinal},#{agentId,jdbcType=VARCHAR},
+            #{sourceTargetKind},#{sourceTargetId},#{sourceSessionId},#{sourceEventId})
+    </insert>
+
+    <insert id="insertHead">
+        INSERT INTO public.agent_runtime_memory_fact_heads(
+            tenant_id,fact_id,current_revision,end_user_id,agent_id,session_id,group_binding_id,subject_end_user_id,scope,type_id)
+        VALUES(#{tenant},#{fact.ref.factId},#{fact.revision},#{row.endUserId,jdbcType=BIGINT},
+            #{row.agentId,jdbcType=VARCHAR},#{row.sessionId,jdbcType=VARCHAR},#{row.groupBindingId,jdbcType=VARCHAR},#{row.subjectEndUserId,jdbcType=BIGINT},#{fact.scope},#{fact.type.value})
+    </insert>
+
+    <update id="advanceHead">
+        UPDATE public.agent_runtime_memory_fact_heads SET current_revision=#{nextRevision}
+         WHERE tenant_id=#{tenant} AND fact_id=#{factId} AND current_revision=#{expectedRevision}
+    </update>
+
+    <insert id="insertOperation">
+        INSERT INTO public.agent_runtime_memory_operations(
+            tenant_id,idempotency_key,command_kind,command_data,result_fact_id,result_revision,
+            recorded_epoch_second,recorded_nano)
+        VALUES(#{tenant},#{key},#{kind},#{data},#{fact.ref.factId},#{fact.revision},
+            #{recorded.epochSecond},#{recorded.nano})
+    </insert>
+
+    <insert id="insertAudit">
+        INSERT INTO public.agent_runtime_memory_conflict_audits(
+            tenant_id,audit_ref,idempotency_key,fact_id,current_revision,reason_code,
+            command_digest,created_epoch_second,created_nano)
+        VALUES(#{tenant},#{auditRef},#{key},#{factId},#{revision},#{reason},#{digest},
+            #{recorded.epochSecond},#{recorded.nano})
+        ON CONFLICT (tenant_id,audit_ref) DO NOTHING
+    </insert>
+    <sql id="searchScope">
+        WITH authorized AS MATERIALIZED (SELECT h.fact_id,r.revision,r.content_revision
+          FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r
+            ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id
+           AND r.revision=h.current_revision
+          JOIN public.agent_runtime_memory_fact_revisions c
+            ON c.tenant_id=r.tenant_id AND c.fact_id=r.fact_id AND c.revision=r.content_revision
+          LEFT JOIN LATERAL (
+               SELECT count(*) &gt; 0 AS source_task_linked,
+                      coalesce(bool_or(
+                          task_event.payload_canonical_json::jsonb #&gt;&gt; '{task,taskId}'
+                              = cast(#{filter.taskId,jdbcType=VARCHAR} AS text)), false)
+                          AS current_task_linked
+                 FROM public.agent_runtime_memory_fact_sources source_ref
+                 JOIN public.agent_runtime_session_events source_event
+                   ON source_event.tenant_id=source_ref.tenant_id
+                  AND source_event.target_kind=source_ref.source_target_kind
+                  AND source_event.target_id=source_ref.source_target_id
+                  AND source_event.agent_id IS NOT DISTINCT FROM source_ref.agent_id
+                  AND source_event.session_id=source_ref.source_session_id
+                  AND source_event.event_id=source_ref.source_event_id
+                 JOIN public.agent_runtime_session_events task_event
+                   ON task_event.tenant_id=source_event.tenant_id
+                  AND task_event.agent_id=source_event.agent_id
+                  AND task_event.session_id=source_event.session_id
+                  AND task_event.run_id=source_event.run_id
+                  AND task_event.event_type='agent.task-context'
+                  AND task_event.payload_schema_id='skillforge.runtime.task-context.v2'
+                WHERE source_ref.tenant_id=h.tenant_id
+                  AND source_ref.fact_id=h.fact_id
+                  AND source_ref.revision=r.content_revision
+                  AND source_event.run_id IS NOT NULL
+                  AND task_event.payload_canonical_json::jsonb #&gt;&gt; '{task,taskId}' IS NOT NULL
+          ) task_link ON true
+         WHERE h.tenant_id=#{filter.tenant} AND (
+                (h.scope='SESSION' AND h.session_id=#{filter.sessionId}
+                 AND EXISTS (SELECT 1 FROM public.agent_runtime_memory_fact_sources own_source
+                    WHERE own_source.tenant_id=h.tenant_id AND own_source.fact_id=h.fact_id AND own_source.revision=r.content_revision
+                     AND ((own_source.source_target_kind=#{filter.targetKind} AND own_source.source_target_id=#{filter.targetId})
+                          OR own_source.source_target_kind NOT IN ('AGENT','TEAM','GROUP') OR btrim(own_source.source_target_id)='')))
+                OR (#{filter.groupBindingId,jdbcType=VARCHAR} IS NULL AND h.end_user_id=#{filter.endUserId,jdbcType=BIGINT}
+                    AND (h.scope='USER' OR (h.scope='USER_AGENT' AND h.agent_id=#{filter.agentId})))
+                OR (h.scope IN ('GROUP','GROUP_MEMBER') AND h.group_binding_id=#{filter.groupBindingId,jdbcType=VARCHAR})
+           )
+           AND h.scope IN <foreach collection="filter.scopes" item="scope" open="(" separator="," close=")">#{scope}</foreach>
+           AND (h.scope&lt;&gt;'GROUP_MEMBER' OR h.subject_end_user_id=#{filter.subjectEndUserId,jdbcType=BIGINT})
+
+           AND r.status='ACTIVE' AND r.superseded_fact_id IS NULL
+           AND (r.created_epoch_second,r.created_nano)&lt;=(#{filter.evaluatedSecond},#{filter.evaluatedNano})
+           AND (r.valid_from_epoch_second,r.valid_from_nano)&lt;=(#{filter.asOfSecond},#{filter.asOfNano})
+           AND (r.valid_to_epoch_second IS NULL OR (r.valid_to_epoch_second,r.valid_to_nano)&gt;(#{filter.asOfSecond},#{filter.asOfNano}))
+           AND (r.expires_epoch_second IS NULL OR (r.expires_epoch_second,r.expires_nano)&gt;(#{filter.asOfSecond},#{filter.asOfNano}))
+           AND (NOT #{filter.recent} OR (r.valid_from_epoch_second,r.valid_from_nano)&gt;=(#{filter.recentAfterSecond},#{filter.recentAfterNano}))
+           AND ((NOT #{filter.recent} AND #{filter.taskId,jdbcType=VARCHAR} IS NULL) OR NOT coalesce(task_link.source_task_linked,false) OR coalesce(task_link.current_task_linked,false))
+           <if test="!filter.types.isEmpty()">AND h.type_id IN <foreach collection="filter.types" item="type" open="(" separator="," close=")">#{type}</foreach></if>
+ )
+    </sql>
+    <sql id="searchProjections">
+        , documents AS MATERIALIZED (
+        SELECT a.fact_id,a.revision,a.content_revision,d.search_text,d.text_digest,d.lexical_terms FROM authorized a
+        LEFT JOIN public.agent_runtime_memory_search_documents d ON d.tenant_id=#{filter.tenant} AND d.fact_id=a.fact_id
+          AND d.content_revision=a.content_revision AND d.projection_version=#{filter.projectionVersion} AND d.analyzer_version=#{filter.analyzerVersion}
+        ), vectors AS MATERIALIZED (
+        SELECT d.fact_id,d.revision,d.content_revision,d.search_text,d.text_digest,d.lexical_terms,e.embedding
+          FROM documents d JOIN public.agent_runtime_memory_embeddings e
+          ON e.tenant_id=#{filter.tenant} AND e.fact_id=d.fact_id AND e.content_revision=d.content_revision
+          AND e.projection_version=#{filter.projectionVersion} AND e.analyzer_version=#{filter.analyzerVersion}
+          AND e.model_id=#{filter.modelId,jdbcType=VARCHAR} AND e.model_revision=#{filter.modelRevision,jdbcType=BIGINT}
+          AND e.dimensions=#{filter.dimensions,jdbcType=INTEGER} AND vector_dims(e.embedding)=#{filter.dimensions,jdbcType=INTEGER}
+          AND e.text_digest=d.text_digest AND e.state='READY')
+    </sql>
+    <select id="searchStats" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySearchStatsRow">
+        <include refid="searchScope"/><include refid="searchProjections"/>
+        SELECT (SELECT count(*) FROM documents WHERE search_text IS NOT NULL) visible_document_count,
+          (SELECT count(*) FROM vectors) ready_vector_count,(SELECT count(*) FROM documents WHERE search_text IS NULL) missing_document_count
+    </select>
+    <select id="lexicalSearch" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySearchHitRow">
+        <include refid="searchScope"/>
+        SELECT d.fact_id,a.revision,ts_rank(d.lexical_terms,CAST(#{filter.queryLexemes} AS tsquery))::double precision score
+          FROM public.agent_runtime_memory_search_documents d
+          JOIN authorized a ON a.fact_id=d.fact_id AND a.content_revision=d.content_revision
+         WHERE d.tenant_id=#{filter.tenant} AND d.projection_version=#{filter.projectionVersion}
+           AND d.analyzer_version=#{filter.analyzerVersion}
+           AND d.lexical_terms @@ CAST(#{filter.queryLexemes} AS tsquery)
+          ORDER BY score DESC,d.fact_id,a.revision LIMIT #{filter.candidateLimit}
+    </select>
+    <select id="vectorSearch" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySearchHitRow">
+        <include refid="searchScope"/><include refid="searchProjections"/>
+        SELECT fact_id,revision,1-(embedding &lt;=&gt; CAST(#{filter.vectorText} AS vector)) score
+          FROM vectors WHERE 1-(embedding &lt;=&gt; CAST(#{filter.vectorText} AS vector))&gt;=#{filter.cosineMinimum}
+          ORDER BY score DESC,fact_id,revision LIMIT #{filter.candidateLimit}
+    </select>
+    <insert id="insertSearchDocument">
+        INSERT INTO public.agent_runtime_memory_search_documents(tenant_id,fact_id,content_revision,projection_version,analyzer_version,search_text,text_digest,lexical_terms,run_data,identity_data)
+        VALUES(#{tenantId},#{factId},#{contentRevision},#{projectionVersion},#{analyzerVersion},#{searchText},#{textDigest},
+          array_to_tsvector(CASE WHEN #{analyzedText}='' THEN ARRAY[]::text[] ELSE string_to_array(#{analyzedText},' ') END),#{runData},#{identityData}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="searchDocument" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySearchDocumentRow">
+        SELECT tenant_id,fact_id,content_revision,projection_version,analyzer_version,search_text,text_digest,run_data,identity_data
+          FROM public.agent_runtime_memory_search_documents WHERE tenant_id=#{tenantId} AND fact_id=#{factId} AND content_revision=#{contentRevision}
+          AND projection_version=#{projectionVersion} AND analyzer_version=#{analyzerVersion}
+    </select>
+    <select id="searchDocuments" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemorySearchDocumentRow">
+        SELECT d.tenant_id,d.fact_id,d.content_revision,d.projection_version,d.analyzer_version,d.search_text,d.text_digest
+          FROM public.agent_runtime_memory_search_documents d
+         WHERE d.tenant_id=#{tenant} AND (d.fact_id,d.content_revision,d.projection_version,d.analyzer_version) IN
+          <foreach collection="documents" item="document" open="(" separator="," close=")">
+            (#{document.factId},#{document.contentRevision},#{document.projectionVersion},#{document.analyzerVersion})
+          </foreach>
+    </select>
+    <insert id="enqueueEmbedding">
+        INSERT INTO public.agent_runtime_memory_embeddings(tenant_id,fact_id,content_revision,projection_version,analyzer_version,model_id,model_revision,dimensions,text_digest,invocation_id)
+        VALUES(#{document.tenantId},#{document.factId},#{document.contentRevision},#{document.projectionVersion},#{document.analyzerVersion},#{model.modelConfigId},#{model.revision},#{model.dimensions},#{document.textDigest},#{invocationId}) ON CONFLICT DO NOTHING
+    </insert>
+    <update id="expireEmbeddings">
+        UPDATE public.agent_runtime_memory_embeddings SET state='UNKNOWN',reason_code='memory_embedding_outcome_unknown',lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp()
+         WHERE tenant_id=#{tenant} AND state='RUNNING' AND lease_until&lt;=clock_timestamp()
+    </update>
+    <select id="claimEmbedding" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryEmbeddingRow" affectData="true" flushCache="true">
+        WITH pending AS MATERIALIZED (SELECT e.tenant_id,e.invocation_id FROM public.agent_runtime_memory_embeddings e
+         JOIN public.agent_runtime_memory_fact_heads h ON h.tenant_id=e.tenant_id AND h.fact_id=e.fact_id
+         JOIN public.agent_runtime_memory_fact_revisions r ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+         WHERE e.tenant_id=#{tenant} AND e.state='QUEUED' AND r.status='ACTIVE' AND r.superseded_fact_id IS NULL
+          AND (r.valid_from_epoch_second+r.valid_from_nano/1000000000.0)&lt;=extract(epoch FROM clock_timestamp())
+          AND (r.valid_to_epoch_second IS NULL OR (r.valid_to_epoch_second+r.valid_to_nano/1000000000.0)&gt;extract(epoch FROM clock_timestamp()))
+          AND (r.expires_epoch_second IS NULL OR (r.expires_epoch_second+r.expires_nano/1000000000.0)&gt;extract(epoch FROM clock_timestamp()))
+         ORDER BY e.updated_at,e.fact_id LIMIT 1 FOR UPDATE OF e SKIP LOCKED), claimed AS (
+         UPDATE public.agent_runtime_memory_embeddings e SET state='RUNNING',lease_token=#{token},lease_until=clock_timestamp()+#{leaseSeconds}*interval '1 second',updated_at=clock_timestamp()
+         FROM pending p WHERE e.tenant_id=p.tenant_id AND e.invocation_id=p.invocation_id
+         RETURNING e.tenant_id,e.fact_id,e.content_revision,e.projection_version,e.analyzer_version,
+           e.model_id,e.model_revision,e.dimensions,e.text_digest,e.invocation_id,e.state,e.embedding,
+           e.lease_token,e.lease_until,e.reason_code)
+        SELECT c.tenant_id,c.fact_id,c.content_revision,c.projection_version,c.analyzer_version,
+          c.model_id,c.model_revision,c.dimensions,c.text_digest,c.invocation_id,c.state,c.lease_token,
+          c.lease_until,c.reason_code,c.embedding::text vector_text,d.search_text,d.run_data,d.identity_data FROM claimed c
+         JOIN public.agent_runtime_memory_search_documents d USING(tenant_id,fact_id,content_revision,projection_version,analyzer_version)
+    </select>
+    <update id="completeEmbedding">
+        UPDATE public.agent_runtime_memory_embeddings e SET state=#{state},embedding=CAST(#{vector,jdbcType=VARCHAR} AS vector),reason_code=#{reason,jdbcType=VARCHAR},lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp()
+         WHERE e.tenant_id=#{work.tenantId.value} AND e.invocation_id=#{work.invocationId}
+          AND e.fact_id=#{work.factId} AND e.content_revision=#{work.contentRevision}
+          AND e.projection_version=#{work.projectionVersion} AND e.analyzer_version=#{work.analyzerVersion} AND e.state='RUNNING' AND e.lease_token=#{work.leaseToken}
+          AND e.lease_until&gt;clock_timestamp() AND e.text_digest=#{work.textDigest}
+          AND e.model_id=#{work.model.modelConfigId} AND e.model_revision=#{work.model.revision} AND e.dimensions=#{work.model.dimensions}
+          AND EXISTS(SELECT 1 FROM public.agent_runtime_memory_search_documents d WHERE d.tenant_id=e.tenant_id AND d.fact_id=e.fact_id
+           AND d.content_revision=e.content_revision AND d.projection_version=e.projection_version AND d.analyzer_version=e.analyzer_version AND d.text_digest=e.text_digest)
+    </update>
+    <insert id="insertQueryEmbedding">
+        INSERT INTO public.agent_runtime_memory_query_embeddings(tenant_id,operation_id,fingerprint,invocation_id,model_id,model_revision,dimensions,run_data,identity_data,state,deadline_at)
+        VALUES(#{tenant},#{operation},#{fingerprint},#{invocation},#{model.modelConfigId},#{model.revision},#{model.dimensions},#{runData},#{identityData},'RUNNING',#{deadline}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="queryEmbedding" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryQueryEmbeddingRow">
+        SELECT tenant_id,operation_id,fingerprint,invocation_id,state,embedding::text vector_text,reason_code
+          FROM public.agent_runtime_memory_query_embeddings WHERE tenant_id=#{tenant} AND operation_id=#{operation}
+    </select>
+    <update id="expireQueryEmbeddings">
+        UPDATE public.agent_runtime_memory_query_embeddings SET state='UNKNOWN',reason_code='memory_query_embedding_outcome_unknown'
+         WHERE tenant_id=#{tenant} AND operation_id=#{operation} AND state='RUNNING' AND deadline_at&lt;=clock_timestamp()
+    </update>
+    <update id="finishQueryEmbedding">
+        UPDATE public.agent_runtime_memory_query_embeddings SET state=#{state},embedding=CAST(#{vector,jdbcType=VARCHAR} AS vector),reason_code=#{reason,jdbcType=VARCHAR}
+         WHERE tenant_id=#{tenant} AND operation_id=#{operation} AND fingerprint=#{fingerprint} AND state='RUNNING'
+    </update>
+
+    <select id="embeddingSourceActive" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM public.agent_runtime_memory_fact_heads h
+          JOIN public.agent_runtime_memory_fact_revisions r ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+          WHERE h.tenant_id=#{work.tenantId.value} AND h.fact_id=#{work.factId} AND r.content_revision=#{work.contentRevision}
+           AND r.status='ACTIVE' AND r.superseded_fact_id IS NULL
+           AND (r.valid_from_epoch_second+r.valid_from_nano/1000000000.0)&lt;=extract(epoch FROM clock_timestamp())
+           AND (r.valid_to_epoch_second IS NULL OR (r.valid_to_epoch_second+r.valid_to_nano/1000000000.0)&gt;extract(epoch FROM clock_timestamp()))
+           AND (r.expires_epoch_second IS NULL OR (r.expires_epoch_second+r.expires_nano/1000000000.0)&gt;extract(epoch FROM clock_timestamp())))
+    </select>
+    <select id="rebuildCandidates" resultType="com.skillforge.runtime.adapter.jdbc.memory.MemoryRebuildRow">
+        SELECT h.fact_id,r.revision,original.run_data,original.identity_data,operation.command_data FROM public.agent_runtime_memory_fact_heads h
+         JOIN public.agent_runtime_memory_fact_revisions r ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+         LEFT JOIN LATERAL(SELECT run_data,identity_data FROM public.agent_runtime_memory_search_documents d
+          WHERE d.tenant_id=h.tenant_id AND d.fact_id=h.fact_id AND d.content_revision=r.content_revision ORDER BY projection_version,analyzer_version LIMIT 1) original ON true
+         LEFT JOIN LATERAL(SELECT o.command_data FROM public.agent_runtime_memory_operations o WHERE o.tenant_id=h.tenant_id AND o.result_fact_id=h.fact_id
+          AND o.result_revision=1 AND o.command_kind IN ('CREATE','SUPERSEDE') LIMIT 1) operation ON true
+         WHERE h.tenant_id=#{tenant} AND r.status IN ('ACTIVE','PENDING_CONFIRM') AND r.superseded_fact_id IS NULL
+          AND (NOT EXISTS(SELECT 1 FROM public.agent_runtime_memory_search_documents d WHERE d.tenant_id=h.tenant_id AND d.fact_id=h.fact_id
+           AND d.content_revision=r.content_revision AND d.projection_version=#{policy.projectionVersion} AND d.analyzer_version=#{policy.analyzerVersion})
+          <if test="model != null">OR NOT EXISTS(SELECT 1 FROM public.agent_runtime_memory_embeddings e WHERE e.tenant_id=h.tenant_id AND e.fact_id=h.fact_id
+           AND e.content_revision=r.content_revision AND e.projection_version=#{policy.projectionVersion} AND e.analyzer_version=#{policy.analyzerVersion}
+           AND e.model_id=#{model.modelConfigId} AND e.model_revision=#{model.revision} AND e.dimensions=#{model.dimensions})</if>)
+         ORDER BY h.fact_id LIMIT #{limit} FOR SHARE OF h
+    </select>
+</mapper>

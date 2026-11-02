@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.sqlite.SqliteBudgetPolicyMigrationMapper">
+  <!-- 仅在初始化专用连接尚未开启 IMMEDIATE 事务时执行，业务连接仍强制开启外键。 -->
+  <update id="disableForeignKeysForBootstrap">PRAGMA foreign_keys=OFF</update>
+  <select id="hasPolicyMode" resultType="int">SELECT count(*) FROM pragma_table_info('agent_runtime_budget_roots') WHERE name='policy_mode'</select>
+  <select id="foreignKeyViolations" resultType="int">SELECT count(*) FROM pragma_foreign_key_check</select>
+<update id="createRoots"><![CDATA[
+CREATE TABLE agent_runtime_budget_roots_policy_v2 (
+ tenant_id TEXT NOT NULL, root_id TEXT NOT NULL,
+ scenario TEXT NOT NULL, source_version TEXT NOT NULL,
+ policy_mode TEXT NOT NULL CHECK (policy_mode IN ('ENFORCED','OBSERVE_ONLY')),
+ active_limit_seconds INTEGER,
+ closing_active_seconds INTEGER NOT NULL DEFAULT 0 CHECK (closing_active_seconds >= 0),
+ closing_run_id TEXT,
+ phase TEXT NOT NULL DEFAULT 'BUSINESS' CHECK (phase IN ('BUSINESS','CLOSING')),
+ PRIMARY KEY (tenant_id,root_id),
+ UNIQUE (tenant_id,root_id,policy_mode),
+ CHECK ((policy_mode='ENFORCED' AND active_limit_seconds IS NOT NULL AND active_limit_seconds>0)
+     OR (policy_mode='OBSERVE_ONLY' AND active_limit_seconds IS NULL))
+) STRICT]]></update>
+<update id="createRuns"><![CDATA[
+CREATE TABLE agent_runtime_budget_runs_policy_v2 (
+ tenant_id TEXT NOT NULL, run_id TEXT NOT NULL, root_id TEXT NOT NULL,
+ role TEXT NOT NULL CHECK (role IN ('PRIMARY','MEMBER')),
+ source_version TEXT NOT NULL,
+ policy_mode TEXT NOT NULL CHECK (policy_mode IN ('ENFORCED','OBSERVE_ONLY')),
+ active_limit_seconds INTEGER,
+ PRIMARY KEY (tenant_id,run_id),
+ FOREIGN KEY (tenant_id,root_id,policy_mode) REFERENCES agent_runtime_budget_roots(tenant_id,root_id,policy_mode),
+ CHECK ((policy_mode='ENFORCED' AND active_limit_seconds IS NOT NULL AND active_limit_seconds>0)
+     OR (policy_mode='OBSERVE_ONLY' AND active_limit_seconds IS NULL))
+) STRICT]]></update>
+<update id="createBalances"><![CDATA[
+CREATE TABLE agent_runtime_budget_balances_policy_v2 (
+ tenant_id TEXT NOT NULL, scope_kind TEXT NOT NULL CHECK (scope_kind IN ('ROOT','RUN','STAGE_BASE','STAGE','CLOSING','CLOSING_RUN')),
+ scope_id TEXT NOT NULL, dimension TEXT NOT NULL,
+ policy_mode TEXT NOT NULL CHECK (policy_mode IN ('ENFORCED','OBSERVE_ONLY')),
+ maximum INTEGER CHECK (maximum >= 0), consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed >= 0),
+ reserved INTEGER NOT NULL DEFAULT 0 CHECK (reserved >= 0),
+ PRIMARY KEY (tenant_id,scope_kind,scope_id,dimension),
+ CHECK ((scope_kind IN ('CLOSING','CLOSING_RUN') AND maximum IS NOT NULL)
+     OR (scope_kind NOT IN ('CLOSING','CLOSING_RUN') AND
+       ((policy_mode='ENFORCED' AND maximum IS NOT NULL) OR (policy_mode='OBSERVE_ONLY' AND maximum IS NULL))))
+) STRICT]]></update>
+<update id="copyRoots"><![CDATA[INSERT INTO agent_runtime_budget_roots_policy_v2(tenant_id,root_id,scenario,source_version,policy_mode,active_limit_seconds,closing_active_seconds,closing_run_id,phase) SELECT tenant_id,root_id,scenario,source_version,'ENFORCED',active_limit_seconds,closing_active_seconds,closing_run_id,phase FROM agent_runtime_budget_roots]]></update>
+<update id="copyRuns"><![CDATA[INSERT INTO agent_runtime_budget_runs_policy_v2(tenant_id,run_id,root_id,role,source_version,policy_mode,active_limit_seconds) SELECT tenant_id,run_id,root_id,role,source_version,'ENFORCED',active_limit_seconds FROM agent_runtime_budget_runs]]></update>
+<update id="copyBalances"><![CDATA[INSERT INTO agent_runtime_budget_balances_policy_v2(tenant_id,scope_kind,scope_id,dimension,policy_mode,maximum,consumed,reserved) SELECT tenant_id,scope_kind,scope_id,dimension,'ENFORCED',maximum,consumed,reserved FROM agent_runtime_budget_balances]]></update>
+<update id="dropRuns"><![CDATA[DROP TABLE agent_runtime_budget_runs]]></update>
+<update id="dropRoots"><![CDATA[DROP TABLE agent_runtime_budget_roots]]></update>
+<update id="dropBalances"><![CDATA[DROP TABLE agent_runtime_budget_balances]]></update>
+<update id="renameRoots"><![CDATA[ALTER TABLE agent_runtime_budget_roots_policy_v2 RENAME TO agent_runtime_budget_roots]]></update>
+<update id="renameRuns"><![CDATA[ALTER TABLE agent_runtime_budget_runs_policy_v2 RENAME TO agent_runtime_budget_runs]]></update>
+<update id="renameBalances"><![CDATA[ALTER TABLE agent_runtime_budget_balances_policy_v2 RENAME TO agent_runtime_budget_balances]]></update>
+<update id="indexRuns"><![CDATA[CREATE INDEX agent_runtime_budget_runs_root ON agent_runtime_budget_runs(tenant_id,root_id)]]></update>
+</mapper>

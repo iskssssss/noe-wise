@@ -1,0 +1,7 @@
+{
+  "entry": {"language": "python", "script_path": "scripts/research.py"},
+  "dependencies": [],
+  "expects_typed_results": true,
+  "example_inputs": ["examples/search.json", "examples/extract.json", "examples/requests.json", "examples/normalize.json", "examples/research.json"],
+  "outputs": {"md": ["research.md"], "json": ["responses.json", "corpus.json"]}
+}

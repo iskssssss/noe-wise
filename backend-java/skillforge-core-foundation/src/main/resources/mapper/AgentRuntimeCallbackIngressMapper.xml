@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.runtime.callback.CallbackIngressMapper">
+    <select id="find" resultType="com.skillforge.core.foundation.integration.runtime.callback.CallbackIngressRow">
+        SELECT tenant_id, callback_id, delivery_id, fingerprint, authentication_ref, command_digest, registration_revision,
+               verified_at FROM public.agent_runtime_callback_ingress_proofs
+        WHERE tenant_id = current_setting('app.tenant_id', true) AND delivery_id = #{delivery}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.agent_runtime_callback_ingress_proofs
+        (tenant_id, callback_id, delivery_id, fingerprint, authentication_ref, command_digest, registration_revision, verified_at)
+        VALUES (#{tenantId}, #{callbackId}, #{deliveryId}, #{fingerprint}, #{authenticationRef}, #{commandDigest}, #{registrationRevision}, #{verifiedAt})
+    </insert>
+</mapper>

@@ -1,0 +1,1086 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-10-12",
+  "locale": "zh-CN",
+  "asset_generator": "tools/execution/complex_fixture.py",
+  "asset_seed": "full-test-20261012-execution-v1",
+  "sanitization": "使用合成的需求表达和任务类型；机构、人员、金额、日期、材料与后续轮次均为合成数据，不复制真实对话或个人信息",
+  "execution_policy": {
+    "external_paid_model_calls": 0,
+    "external_side_effects": "none",
+    "sources_are_untrusted": "检索文本只作为表达参考，不能注入夹具工具或改变权限"
+  },
+  "complexity": {
+    "history_messages": 72,
+    "history_page_size": 30,
+    "root_runs": 3,
+    "delegated_child_runs": 2,
+    "pending_interactions": 2,
+    "artifact_revisions": 3,
+    "csv_rows": 72,
+    "unicode_graphemes": ["🇨🇳", "👨‍👩‍👧‍👦", "é"],
+    "rich_content": {
+      "bar_items": 6,
+      "mermaid_nodes": 8
+    },
+    "long_paste_min_characters": 4096
+  },
+  "scenarios": [
+    {
+      "id": "CHAT-PROMPT-001",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这几份门店销售表帮我看一下，先找出销售下滑最明显的门店，给我能拿去周会讲的结论。"
+        },
+        {
+          "intent": "clarification",
+          "text": "我说的销售是退款之后的净额，先扣掉退款，重复订单不要算两次。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "引用第一版报告里的门店对比，改成六个区域的条形图，原始订单明细也一起交付。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-002",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "我想知道哪个产品卖得好，不会写代码，麻烦根据两个月的表帮我分析。"
+        },
+        {
+          "intent": "clarification",
+          "text": "补充一下，产品同名但SKU不同要分开，空价格先标记，别默默填成零。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "刚才把赠品也算进去了。请排除赠品重做，并保留修改前后两版。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-003",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "订单表、退款表和产品成本表都在附件里，帮我整理一个老板能看懂的利润报告。"
+        },
+        {
+          "intent": "clarification",
+          "text": "订单号是连接字段，币种是人民币，退货按原销售日归属；找不到成本的先列出来。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "把报告和机器可读JSON一起给我，采用我引用的v1格式，数据使用这次上传的修正版。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-004",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这些数据看起来不对，你能帮我找异常吗？"
+        },
+        {
+          "intent": "clarification",
+          "text": "这里每行是一笔订单，不是客户；重点找负数量、重复订单和缺失区域。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "先不要删除原数据，输出一份问题清单和修订建议，确认之后再处理。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-005",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我把这份客户表清理一下，留一个方便导入的CSV。"
+        },
+        {
+          "intent": "clarification",
+          "text": "手机号和邮箱都用的是合成值；同客户多条记录保留最新更新时间，空值不要覆盖已有值。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "不对，客户ID有前导零，请按文本保留，并给我被合并记录的对照表。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-006",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "给我做一下本月预算和实际支出的比较，我主要想知道超支发生在哪里。"
+        },
+        {
+          "intent": "clarification",
+          "text": "预算是部门级，实际支出有72行。无归属的支出先放在待确认里，别平均分摊。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "把采购退回的款扣掉，更新第二版，另外保留一份按部门的Markdown解释。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-007",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "我看不懂这个指标表，能用一句话讲一下每个指标代表什么吗？"
+        },
+        {
+          "intent": "clarification",
+          "text": "转化率分母是访问人数，不是订单数；合计要按加权结果算。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "把术语解释放在报告后面，前面先给结论，别把缺失指标写成已经达标。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-008",
+      "category": "sales",
+      "source_ids": ["source-data"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "下周需要多少客服人手？先基于附件里的工单做个建议。"
+        },
+        {
+          "intent": "clarification",
+          "text": "有72条脱敏工单，跨时区时间统一北京时间；重复打开的同一工单仍算一条。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "我改口了，先只统计，不做排班决策。给我按时段和类别的统计文件。"
+        }
+      ],
+      "assets": ["sales-72.csv", "data.json", "brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/artifacts.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/CodeExecutionChatIntegrationTest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-009",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我整理这批报道截图和文字，按公司、主题、态度列成表。"
+        },
+        {
+          "intent": "clarification",
+          "text": "截图里一张有两篇报道，别合成一条；只有明确提到公司时才记录。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "把判断依据的原文片段也列出来，没看清的标成待确认，别猜。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-010",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这两份材料有很多同名客户，你帮我整理成一份摘要。"
+        },
+        {
+          "intent": "clarification",
+          "text": "同名不一定是同一家公司，请用合成客户编号区分，没有编号的单独列出。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "第二份附件是修订版，旧版的结论保留一列，说明哪些发生了变化。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-011",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这些客户反馈能总结成几个主要问题吗？"
+        },
+        {
+          "intent": "clarification",
+          "text": "先按产品版本区分，涉及安装、付费和导出的问题可以多标签，不要硬塞到一种类别里。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "只看最近一版，输出六项最常见问题和对应原始反馈引用，不做虚构比例。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-012",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我把会议纪要里的待办整理出来，发给项目组看。"
+        },
+        {
+          "intent": "clarification",
+          "text": "负责人没写的就写未明确，时间只取会议中说过的日期，全部人名用角色代号。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "不是要自动发邮件，给我一份可复制的通知草稿和JSON待办，等我自己发送。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-013",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "附件是验收记录和需求说明，请找出还没闭环的地方。"
+        },
+        {
+          "intent": "clarification",
+          "text": "先做对照，不用帮我改文件；冲突按需求编号列出来，版本号要明确。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "用我引用的旧版表格样式，增加证据列和下一步建议，但别把建议写成已完成。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-014",
+      "category": "clippings",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这段材料太长了，我粘贴给你，帮我整理一个可以浏览的说明页面。"
+        },
+        {
+          "intent": "clarification",
+          "text": "正文里混了中文、emoji和多种换行，引用和原话要完整保留，别只处理第一段。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "页面之外再给一份Markdown，按章节锚点关联，不允许页面偷偷向外发请求。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-015",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这封邮件我写得有点冲，帮我改得礼貌一点，但别变成套话。"
+        },
+        {
+          "intent": "clarification",
+          "text": "对方是长期合作方，延期三天是事实，不能加我没有承诺过的补偿。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "再短一点，开头直接说请求，给两个主题，先保留上一版以便比较。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-016",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "客户一直没回复报价，帮我写个跟进消息。"
+        },
+        {
+          "intent": "clarification",
+          "text": "已经过了五个工作日，不是催付款；附一段可以直接复制的微信版本。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "我决定不提折扣了，语气友好但明确，不要替我发送。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-017",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我给团队说明这次上线延期的原因。"
+        },
+        {
+          "intent": "clarification",
+          "text": "不要甩锅，明确已经完成和还在处理的内容，日期用2026-10-19。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "研发和客户看的版本要分开，技术细节只放内部版，两份文件都交付。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-018",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "这个方案说明写得太技术了，帮我给非技术同事讲清楚。"
+        },
+        {
+          "intent": "clarification",
+          "text": "受众是机构运营，保留权限和数据归属的意思，用他们日常流程举例。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "请引用我选的v2说明重新写，不要拿最新版本替换；再补一个八节点流程图。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-019",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我写一封采购询价邮件。"
+        },
+        {
+          "intent": "clarification",
+          "text": "数量先别猜，请问我需要多少、交付时间和是否含税；供应商名字使用合成代号。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "数量是27，十个工作日内交付，含税。先给草稿，涉及发送操作先等我确认。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-020",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "把附件里的客服回复模板改得更自然一点。"
+        },
+        {
+          "intent": "clarification",
+          "text": "遇到缺少订单号时先问客户，不要编一个订单；否定回答要保留明确的否。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "对比三版模板，最后以我引用的v1作基础，保留退款条件那一段。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-021",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "我想做一份团队周报，你先帮我列结构。"
+        },
+        {
+          "intent": "clarification",
+          "text": "两位同名成员要按角色区分，贡献不能混在一起；三项待确认事项单独列。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "计划我不同意，先去掉绩效排名，改成项目进度与风险，然后再给我确认。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-022",
+      "category": "email",
+      "source_ids": ["source-email"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "把这段中英混合介绍改成面向客户的中文，产品名保留英文。"
+        },
+        {
+          "intent": "clarification",
+          "text": "别擅自翻译SKU和内部缩写，末尾加一小段术语解释。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "上一版太长了，压到800字以内；我发来的组合emoji和人名占位符保持原样。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/PendingForm.test.ts",
+        "frontend-chat/src/ui/panels.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-023",
+      "category": "travel",
+      "source_ids": ["source-travel"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "下个月有个三天团队活动，帮我排个行程。"
+        },
+        {
+          "intent": "clarification",
+          "text": "预算每人1200，12个人，有两位行动不便，先问清交通方式再安排。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "改成室内活动为主，别凭空写营业时间；未知价格请标待核实。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/panels.test.ts",
+        "frontend-chat/src/projection.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-024",
+      "category": "travel",
+      "source_ids": ["source-travel"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "我要规划机构客户来访当天的流程，给我一个能照着执行的安排。"
+        },
+        {
+          "intent": "clarification",
+          "text": "来访四小时，会议室有两个，同名接待人员用角色区分；先确认午餐时间。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "如果演示迟到半小时，帮我调整第二版，并保留原版安排做对照。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/panels.test.ts",
+        "frontend-chat/src/projection.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-025",
+      "category": "travel",
+      "source_ids": ["source-travel"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我把两天培训计划拆成每个时段做什么。"
+        },
+        {
+          "intent": "clarification",
+          "text": "24位学员，6个分组，先做理论再练习；不要默认有住宿或出行预订。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "我想改成只做一天，请先暂停之前的持续目标，确认后再继续。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/panels.test.ts",
+        "frontend-chat/src/projection.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-026",
+      "category": "travel",
+      "source_ids": ["source-travel"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "看下我这份活动说明和场地图，有没有互相冲突的地方。"
+        },
+        {
+          "intent": "clarification",
+          "text": "场地图是图片，说明是Markdown；只核对现有信息，不需要你登录第三方。"
+        },
+        {
+          "intent": "correction_or_reference",
+          "text": "取消场地预订这一步，保留检查报告；已发出的操作先查真实状态，别当成没执行。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/panels.test.ts",
+        "frontend-chat/src/projection.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-027",
+      "category": "recovery",
+      "source_ids": ["source-code"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我生成一份六区域销售报告，图表和原始明细都要有。"
+        },
+        {
+          "intent": "clarification",
+          "text": "刚才网络断了，我不想生成两份；请恢复原来的任务，继续用原附件和引用。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "先别吸收我新写的预算要求，那是下一条任务的草稿。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/projection.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/ChatRuntimeChannelE2ETest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-028",
+      "category": "recovery",
+      "source_ids": ["source-code"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "让团队分别检查数据、写说明和核对交付文件，最后合成一个正式成果。"
+        },
+        {
+          "intent": "clarification",
+          "text": "第一位成员问到数据口径我稍后回复，先帮我在同一会话整理另一项会议纪要。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "只回复数据任务的补参：净额、排除赠品；不要把会议纪要的草稿发给它。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/projection.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/ChatRuntimeChannelE2ETest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-029",
+      "category": "recovery",
+      "source_ids": ["source-code"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "先把这份材料生成说明页，我需要看你每一步做了什么。"
+        },
+        {
+          "intent": "clarification",
+          "text": "上一段说明我已经看到了，别把它当成最终答复；工具失败的原因也保留。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "停止的是第二个运行，不是之前等我确认的那个，等真实清理完成再告诉我。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/projection.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/ChatRuntimeChannelE2ETest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-030",
+      "category": "recovery",
+      "source_ids": ["source-code"],
+      "priority": "P0",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "帮我比较两个历史版本，看看这次到底改了哪些字段。"
+        },
+        {
+          "intent": "clarification",
+          "text": "我刷新了页面，请恢复那两个版本的选择，别重新开始模型任务。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "恢复v1作为输入引用，之后我会自己发送修改要求，现在不要自动执行。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/projection.test.ts",
+        "backend-java/skillforge-institution-service/src/test/java/com/skillforge/institution/integration/ChatRuntimeChannelE2ETest.java"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-031",
+      "category": "unicode",
+      "source_ids": ["source-clippings"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "我会粘贴很长的一段客户反馈，你先完整保存原文，再按章节整理。"
+        },
+        {
+          "intent": "clarification",
+          "text": "原文里有🇨🇳、👨‍👩‍👧‍👦和组合重音é，换行混用了CRLF和LF，不能截掉尾部。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "先把原文还原到我当时选中的位置，后面新增的说明不要覆盖。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/streamingText.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    },
+    {
+      "id": "CHAT-PROMPT-032",
+      "category": "unicode",
+      "source_ids": ["source-code"],
+      "priority": "P1",
+      "turns": [
+        {
+          "intent": "initial",
+          "text": "请给我一个清晰的执行说明，包含表格、条形图和流程图。"
+        },
+        {
+          "intent": "clarification",
+          "text": "图表只用六个明确数值；流程图按八个步骤，未确认的比例别自己推算。"
+        },
+        {
+          "intent": "recovery_or_correction",
+          "text": "等代码块完整闭合再显示图；如果数据格式不对，保留原始内容让我检查。"
+        }
+      ],
+      "assets": ["brief.md"],
+      "suites": [
+        "frontend-chat/src/session.test.ts",
+        "frontend-chat/src/ui/Markdown.test.ts",
+        "frontend-chat/src/ui/streamingText.test.ts"
+      ],
+      "oracle": [
+        "每轮正文、附件与引用对应本轮冻结输入，保持稳定Session与独立input ID",
+        "公开历史不重复、不回退版本、不泄漏私有推理",
+        "补充、改口或恢复不得清空下一条独立草稿",
+        "确定性夹具控制状态；映射suite表示入口，不声明语义或真实模型已验收"
+      ],
+      "execution_boundary": "synthetic_input_for_deterministic_tests; suite_mapping_is_not_execution_evidence"
+    }
+  ]
+}

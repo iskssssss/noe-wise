@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.SkillCreateReceiptMapper">
+  <insert id="claim">
+    INSERT INTO nw_skill_create_receipts(request_id,tenant_id,actor_ref,request_fingerprint)
+    VALUES(CAST(#{requestId} AS uuid),#{tenant},#{actor},#{fingerprint}) ON CONFLICT (request_id) DO NOTHING
+  </insert>
+  <update id="complete">
+    UPDATE nw_skill_create_receipts SET definition_id=#{definition},draft_id=#{draft},draft_revision=#{revision}
+    WHERE request_id=CAST(#{requestId} AS uuid) AND draft_id IS NULL
+  </update>
+  <select id="find" resultType="com.skillforge.core.capability.SkillCreateReceiptMapper$Row">
+    SELECT actor_ref,request_fingerprint AS fingerprint,definition_id::text AS definition_id,
+      draft_id::text AS draft_id,draft_revision AS revision
+    FROM nw_skill_create_receipts WHERE request_id=CAST(#{requestId} AS uuid)
+  </select>
+</mapper>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.mapper.WorkflowDraftRevisionMapper">
+    <resultMap id="listMetadata" type="com.skillforge.core.workflow.model.WorkflowDraftRevisionDO">
+        <result column="container_id" property="containerId"/>
+        <result column="revision" property="revision"/>
+        <result column="definition" property="definition" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    </resultMap>
+    <select id="selectListMetadata" resultMap="listMetadata">
+        SELECT container_id, revision,
+            CASE WHEN jsonb_typeof(definition->'meta') = 'object'
+                THEN jsonb_build_object('meta', definition->'meta')
+                ELSE '{}'::jsonb END AS definition
+        FROM nw_workflow_draft_revisions
+        ${ew.customSqlSegment}
+    </select>
+</mapper>

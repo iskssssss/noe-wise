@@ -1,0 +1,31 @@
+# promtool test rules deploy/monitoring-tests.yml
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="skillforge-institution",instance="service:8000",status="500"}'
+        values: '0+6x10'
+      - series: 'http_server_requests_seconds_count{job="skillforge-institution",instance="service:8000",status="200"}'
+        values: '0+94x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              job: skillforge-institution
+              instance: service:8000
+              severity: critical
+            exp_annotations:
+              summary: "高错误率: 5xx 超过 5%"
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="skillforge-institution",instance="service:8000",status="500"}'
+        values: '0+1x10'
+      - series: 'http_server_requests_seconds_count{job="skillforge-institution",instance="service:8000",status="200"}'
+        values: '0+99x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: HighErrorRate
+        exp_alerts: []

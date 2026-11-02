@@ -1,0 +1,21 @@
+{
+  "group_binding_id": "replace-with-ensured-group-id",
+  "responses": [
+    {
+      "run_id": "replace-with-original-run-id",
+      "input_id": "group-lifecycle-1:wait-response-input:1",
+      "responder_end_user_id": "2001",
+      "hitl_response": {
+        "execution_id": "replace-with-original-run-id",
+        "run_revision": "1",
+        "human_input": {
+          "wait": {
+            "action_id": "replace-with-original-action-id",
+            "generation": "1"
+          },
+          "text": "这是对原等待问题的明确回答。"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.settings.OperationalSettingsMapper">
+
+    <resultMap id="headRow" type="com.skillforge.core.foundation.settings.OperationalSettingHeadRow">
+        <id property="groupKey" column="group_key"/>
+        <result property="currentRevision" column="current_revision"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="updatedBy" column="updated_by"/>
+    </resultMap>
+
+    <resultMap id="versionRow" type="com.skillforge.core.foundation.settings.OperationalSettingVersionRow">
+        <id property="groupKey" column="group_key"/>
+        <id property="revision" column="revision"/>
+        <result property="values" column="values"
+                typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="actorId" column="actor_id"/>
+    </resultMap>
+
+    <select id="selectCurrents" resultMap="headRow">
+        SELECT group_key, current_revision, updated_at, updated_by
+        FROM nw_platform_operational_setting_groups
+        WHERE group_key IN
+        <foreach collection="groupKeys" item="key" open="(" separator="," close=")">#{key}</foreach>
+    </select>
+
+    <select id="selectVersions" resultMap="versionRow">
+        SELECT group_key, revision, values, created_at, actor_id
+        FROM nw_platform_operational_setting_versions
+        WHERE <foreach collection="heads" item="head" separator=" OR ">
+            (group_key = #{head.groupKey} AND revision = #{head.currentRevision})
+        </foreach>
+    </select>
+
+    <select id="selectCurrent" resultMap="headRow">
+        SELECT group_key, current_revision, updated_at, updated_by
+        FROM nw_platform_operational_setting_groups
+        WHERE group_key = #{groupKey}
+    </select>
+
+    <select id="selectVersion" resultMap="versionRow">
+        SELECT group_key, revision, values, created_at, actor_id
+        FROM nw_platform_operational_setting_versions
+        WHERE group_key = #{groupKey}
+          AND revision = #{revision}
+    </select>
+
+    <select id="selectHistory" resultMap="versionRow">
+        SELECT group_key, revision, values, created_at, actor_id
+        FROM nw_platform_operational_setting_versions
+        WHERE group_key = #{groupKey}
+        ORDER BY revision DESC
+    </select>
+
+    <insert id="insertVersion">
+        INSERT INTO nw_platform_operational_setting_versions
+            (group_key, revision, values, actor_id)
+        VALUES
+            (#{groupKey}, #{revision},
+             #{values,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler}, #{actorId})
+        ON CONFLICT (group_key, revision) DO NOTHING
+    </insert>
+
+    <insert id="insertHead">
+        INSERT INTO nw_platform_operational_setting_groups
+            (group_key, current_revision, updated_by)
+        VALUES
+            (#{groupKey}, #{revision}, #{actorId})
+        ON CONFLICT (group_key) DO NOTHING
+    </insert>
+
+    <update id="compareAndSetHead">
+        UPDATE nw_platform_operational_setting_groups
+        SET current_revision = #{newRevision},
+            updated_by = #{actorId},
+            updated_at = now()
+        WHERE group_key = #{groupKey}
+          AND current_revision = #{expectedRevision}
+    </update>
+
+    <insert id="insertAudit">
+        INSERT INTO nw_platform_operational_setting_audits
+            (group_key, operation, from_revision, to_revision,
+             target_revision, actor_id, payload)
+        VALUES
+            (#{groupKey}, #{operation}, #{fromRevision}, #{toRevision},
+             #{targetRevision}, #{actorId},
+             #{payload,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler})
+    </insert>
+</mapper>

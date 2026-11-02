@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.operations.persistence.OperationsMapper">
+  <select id="probeDatabase" resultType="java.lang.Integer" timeout="2" useCache="false" flushCache="true">SELECT 1</select>
+  <resultMap id="audit" type="com.skillforge.core.foundation.operations.persistence.OperationsRows$Audit" autoMapping="true">
+    <id column="id" property="id"/>
+    <result column="payload" property="payload" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+  </resultMap>
+  <sql id="auditScope">
+    <choose><when test="scope == 'platform'">tenant_id IS NULL</when><otherwise>tenant_id = CAST(#{scope} AS bigint)</otherwise></choose>
+  </sql>
+  <sql id="filters">
+    WHERE <include refid="auditScope"/>
+    <if test="query.action != null">AND action=#{query.action}</if>
+    <if test="query.actorId != null">AND actor_id=#{query.actorId}</if>
+    <if test="query.category != null">AND category=#{query.category}</if>
+    <if test="query.outcome != null">AND outcome=#{query.outcome}</if>
+    <if test="query.resourceType != null">AND resource_type=#{query.resourceType}</if>
+    <if test="query.traceId != null">AND trace_id=#{query.traceId}</if>
+    <if test="query.from != null">AND created_at &gt;= #{query.from}</if>
+    <if test="query.to != null">AND created_at &lt; #{query.to}</if>
+  </sql>
+  <select id="audits" resultMap="audit">
+    SELECT id,tenant_id,actor_id,action,category,outcome,resource_type,resource_id,message,trace_id,payload,created_at
+    FROM nw_audit_logs <include refid="filters"/> ORDER BY created_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="auditSummaries" resultType="com.skillforge.core.foundation.operations.persistence.AuditSummaryRow">
+    SELECT id,actor_id,action,category,outcome,resource_type,message,trace_id,created_at
+    FROM nw_audit_logs <include refid="filters"/> ORDER BY created_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="auditExportRows" resultType="com.skillforge.core.foundation.operations.persistence.AuditExportRow">
+    SELECT id,tenant_id,actor_id,action,category,outcome,resource_type,resource_id,message,trace_id,created_at
+    FROM nw_audit_logs <include refid="filters"/> ORDER BY created_at DESC,id DESC LIMIT #{limit}
+  </select>
+  <select id="auditCount" resultType="long">SELECT count(*) FROM nw_audit_logs <include refid="filters"/></select>
+  <insert id="insertReadBatch">
+    INSERT INTO nw_foundation_audit_read_batches(audit_id,scope,actor_id,authorization_version,query_digest,
+      window_start,window_end,filter_action,filter_actor_id,filter_category,filter_outcome,filter_resource_type,
+      filter_trace_id,filter_from,filter_to,filter_from_epoch_second,filter_from_nano,
+      filter_to_epoch_second,filter_to_nano)
+    VALUES(#{auditId},#{scope},#{actorId},#{authorizationVersion},#{queryDigest},#{windowStart},#{windowEnd},
+      #{query.action},#{query.actorId},#{query.category},#{query.outcome},#{query.resourceType},#{query.traceId},
+      #{query.from},#{query.to},
+      <choose><when test="query.from != null">#{query.from.epochSecond},#{query.from.nano}</when><otherwise>NULL,NULL</otherwise></choose>,
+      <choose><when test="query.to != null">#{query.to.epochSecond},#{query.to.nano}</when><otherwise>NULL,NULL</otherwise></choose>)
+    ON CONFLICT(scope,actor_id,authorization_version,query_digest,window_start) DO NOTHING
+  </insert>
+  <select id="lockAudit" resultType="long">SELECT id FROM nw_audit_logs WHERE <include refid="auditScope"/> AND id=#{id} FOR UPDATE</select>
+  <select id="policy" resultType="com.skillforge.core.foundation.operations.persistence.OperationsRows$Policy">
+    SELECT scope,resource,retention_days,enabled,version FROM nw_foundation_retention_policies WHERE scope=#{scope} AND resource=#{resource}
+  </select>
+  <insert id="createPolicy">
+    INSERT INTO nw_foundation_retention_policies(scope,resource,retention_days,enabled,version)
+    VALUES(#{scope},#{resource},#{retentionDays},#{enabled},#{version}) ON CONFLICT(scope,resource) DO NOTHING
+  </insert>
+  <update id="updatePolicy">
+    UPDATE nw_foundation_retention_policies SET retention_days=#{days},enabled=#{enabled},version=version+1,updated_at=now()
+    WHERE scope=#{scope} AND resource='audit' AND version=#{version}
+  </update>
+  <select id="candidates" resultType="long">
+    SELECT id FROM nw_audit_logs WHERE <include refid="auditScope"/> AND created_at &lt; #{cutoff}
+    ORDER BY EXISTS(SELECT 1 FROM nw_foundation_audit_holds h WHERE h.audit_id=nw_audit_logs.id AND h.released_at IS NULL
+      AND (h.expires_at IS NULL OR h.expires_at &gt; now())),created_at,id LIMIT #{limit}
+  </select>
+  <select id="protectedCount" resultType="long">
+    SELECT count(DISTINCT audit_id) FROM nw_foundation_audit_holds WHERE scope=#{scope} AND released_at IS NULL
+    AND (expires_at IS NULL OR expires_at &gt; now()) AND audit_id IN
+    <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+  </select>
+  <insert id="insertRun">
+    INSERT INTO nw_foundation_cleanup_runs(id,scope,actor_id,resource,policy_version,cutoff,candidate_ids,candidates,protected_count,status,expires_at,created_at)
+    VALUES(#{id},#{scope},#{actorId},#{resource},#{policyVersion},#{cutoff},CAST(#{candidateIds} AS jsonb),#{candidates},#{protectedCount},#{status},#{expiresAt},#{createdAt})
+  </insert>
+  <select id="lockRun" resultType="com.skillforge.core.foundation.operations.persistence.OperationsRows$Run">
+    SELECT id,scope,actor_id,resource,policy_version,cutoff,candidate_ids::text AS candidate_ids,candidates,protected_count,deleted_count,status,expires_at,created_at,completed_at,failure_code FROM nw_foundation_cleanup_runs WHERE scope=#{scope} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="runs" resultType="com.skillforge.core.foundation.operations.persistence.OperationsRows$Run">
+    SELECT id,scope,actor_id,resource,policy_version,cutoff,candidate_ids::text AS candidate_ids,candidates,protected_count,deleted_count,status,expires_at,created_at,completed_at,failure_code FROM nw_foundation_cleanup_runs WHERE scope=#{scope} ORDER BY created_at DESC,id DESC LIMIT 100
+  </select>
+  <delete id="deleteAudits">
+    WITH authorized AS MATERIALIZED (SELECT set_config('app.audit_cleanup','on',true))
+    DELETE FROM nw_audit_logs USING authorized WHERE <include refid="auditScope"/> AND created_at &lt; #{cutoff}
+    AND id IN <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+    AND NOT EXISTS(SELECT 1 FROM nw_foundation_audit_holds h WHERE h.audit_id=nw_audit_logs.id AND h.released_at IS NULL AND (h.expires_at IS NULL OR h.expires_at &gt; now()))
+  </delete>
+  <update id="finishRun">
+    UPDATE nw_foundation_cleanup_runs SET status=#{status},deleted_count=#{deleted},protected_count=CASE WHEN #{protectedCount}&lt;0 THEN protected_count ELSE #{protectedCount} END,
+    failure_code=#{failure},completed_at=now() WHERE scope=#{scope} AND id=#{id} AND status='ready'
+  </update>
+  <insert id="insertHold">
+    INSERT INTO nw_foundation_audit_holds(id,scope,audit_id,reason,expires_at) VALUES(#{id},#{scope},#{auditId},#{reason},#{expiresAt})
+  </insert>
+  <select id="holds" resultType="com.skillforge.core.foundation.operations.persistence.OperationsRows$Hold">
+    SELECT id,scope,audit_id,reason,expires_at,released_at FROM nw_foundation_audit_holds WHERE scope=#{scope} ORDER BY id DESC LIMIT 100
+  </select>
+  <update id="releaseHold">UPDATE nw_foundation_audit_holds SET released_at=now() WHERE scope=#{scope} AND id=#{id} AND released_at IS NULL</update>
+</mapper>

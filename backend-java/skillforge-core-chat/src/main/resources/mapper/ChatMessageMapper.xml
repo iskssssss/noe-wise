@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.ChatMessageMapper">
+
+    <insert id="insertArchived">
+        INSERT INTO nw_chat_messages
+            (id, tenant_id, session_id, end_user_id, message_id, role, content, metadata,
+             message_version, input_references, created_at)
+        VALUES (#{id}, #{tenantId}, #{sessionId}, #{endUserId}, #{messageId}, #{role}, #{content},
+                #{metadata,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler}, #{messageVersion},
+                #{references,typeHandler=com.skillforge.core.chat.persistence.ChatReferencesTypeHandler}, #{createdAt})
+    </insert>
+
+    <update id="freezeInputReferences">
+        UPDATE nw_chat_messages SET input_references=#{references,typeHandler=com.skillforge.core.chat.persistence.ChatReferencesTypeHandler}
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND role='user'
+          AND metadata-&gt;&gt;'input_id'=#{inputId}
+          AND input_references='[]'::jsonb
+          AND input_references IS DISTINCT FROM #{references,typeHandler=com.skillforge.core.chat.persistence.ChatReferencesTypeHandler}
+    </update>
+
+    <!-- 消息实体映射：metadata jsonb 列显式类型处理器 -->
+    <resultMap id="chatMessageMap" type="com.skillforge.core.chat.persistence.ChatMessageDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="session_id" property="sessionId"/>
+        <result column="end_user_id" property="endUserId"/>
+        <result column="message_id" property="messageId"/>
+        <result column="role" property="role"/>
+        <result column="content" property="content"/>
+        <result column="metadata" property="metadata"
+                typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="message_version" property="messageVersion"/>
+        <result column="input_references" property="references" typeHandler="com.skillforge.core.chat.persistence.ChatReferencesTypeHandler"/>
+    </resultMap>
+
+    <!-- 工作流完成总结输入：按 metadata.execution_id 取该次执行的全部消息（时间正序） -->
+    <select id="selectByExecutionId" resultMap="chatMessageMap">
+        SELECT id, tenant_id, session_id, end_user_id, message_id, role, content, metadata, created_at, message_version, input_references
+        FROM nw_chat_messages
+        WHERE tenant_id = #{tenantId}
+          AND metadata -&gt;&gt; 'execution_id' = #{executionId}
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 卡消息同 id merge：同 (tenant_id, message_id) 覆盖 content/metadata（原位更新，
+         created_at 保留首次时间保证历史时序），用于进度卡/状态卡 updateFlag 原地更新 -->
+    <insert id="upsertById">
+        INSERT INTO nw_chat_messages (id, tenant_id, session_id, end_user_id, message_id, role, content, metadata, input_references, created_at)
+        VALUES (#{id}, #{tenantId}, #{sessionId}, #{endUserId}, #{messageId}, #{role}, #{content},
+                #{metadata, typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+                COALESCE(#{references, typeHandler=com.skillforge.core.chat.persistence.ChatReferencesTypeHandler}, '[]'::jsonb), now())
+        ON CONFLICT (tenant_id, message_id)
+        DO UPDATE SET content = EXCLUDED.content,
+                      metadata = EXCLUDED.metadata,
+                      input_references = EXCLUDED.input_references,
+                      message_version = nw_chat_messages.message_version + CASE
+                          WHEN nw_chat_messages.content IS DISTINCT FROM EXCLUDED.content
+                            OR nw_chat_messages.metadata IS DISTINCT FROM EXCLUDED.metadata
+                            OR nw_chat_messages.input_references IS DISTINCT FROM EXCLUDED.input_references THEN 1 ELSE 0 END
+        WHERE nw_chat_messages.session_id = EXCLUDED.session_id AND nw_chat_messages.end_user_id = EXCLUDED.end_user_id
+          AND nw_chat_messages.role = EXCLUDED.role
+    </insert>
+
+</mapper>

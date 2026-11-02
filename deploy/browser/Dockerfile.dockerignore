@@ -1,0 +1,11 @@
+# 本镜像只消费构建产物；根环境、数据库、业务数据与源码均不进入构建上下文。
+**
+!deploy/
+!deploy/browser/
+!deploy/browser/Dockerfile
+!deploy/browser/Dockerfile.dockerignore
+!backend-java/
+!backend-java/skillforge-browser-service/
+!backend-java/skillforge-browser-service/build/
+!backend-java/skillforge-browser-service/build/libs/
+!backend-java/skillforge-browser-service/build/libs/skillforge-browser-service.jar

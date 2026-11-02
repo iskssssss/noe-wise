@@ -1,0 +1,45 @@
+{
+  "name": "frontend-admin",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "test:e2e:mock": "playwright test --config playwright.mock.config.ts",
+    "check:ui": "node ../tools/frontend/check-ui.mjs",
+    "test:coverage": "vitest run --coverage",
+    "build": "vue-tsc -b && vite build",
+    "check:bundle": "node ../tools/frontend/check-entry-gzip.mjs .",
+    "preview": "vite preview",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0",
+    "format": "prettier --ignore-path ../.prettierignore --write .",
+    "format:check": "prettier --ignore-path ../.prettierignore --check ."
+  },
+  "dependencies": {
+    "@skillforge/shared": "workspace:*",
+    "element-plus": "catalog:",
+    "jsonc-parser": "^3.3.1",
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-i18n": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vitest/coverage-v8": "^4.1.10",
+    "@vue/test-utils": "^2.4.6",
+    "@vue/tsconfig": "^0.9.1",
+    "eslint": "catalog:",
+    "jsdom": "^26.1.0",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "^4.1.10",
+    "vue-tsc": "catalog:"
+  }
+}

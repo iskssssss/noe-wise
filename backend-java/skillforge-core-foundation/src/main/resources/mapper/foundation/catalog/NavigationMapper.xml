@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.catalog.navigation.NavigationMapper">
+  <select id="lockOwner" resultType="object">SELECT pg_advisory_xact_lock(hashtextextended(#{owner},276))</select>
+  <insert id="initialize">INSERT INTO nw_foundation_navigation_nodes(owner_key,tenant_id,code,parent_code,title,route_key,sort_order,enabled,created_by,updated_by) SELECT #{owner},CAST(#{tenant} AS bigint),code,parent_code,title,route_key,sort_order,enabled,#{actor},#{actor} FROM nw_foundation_navigation_nodes WHERE owner_key='tenant_template' ON CONFLICT DO NOTHING</insert>
+  <select id="initialized" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_foundation_navigation_owners WHERE owner_key=#{owner})</select>
+  <insert id="markInitialized">INSERT INTO nw_foundation_navigation_owners(owner_key,tenant_id) VALUES(#{owner},CAST(#{tenant} AS bigint)) ON CONFLICT DO NOTHING</insert>
+  <select id="nodes" resultType="com.skillforge.core.foundation.catalog.navigation.NavigationContracts$Node">SELECT code,parent_code,title,route_key,sort_order,enabled,revision FROM nw_foundation_navigation_nodes WHERE owner_key=#{owner} ORDER BY sort_order,code</select>
+  <insert id="insert">INSERT INTO nw_foundation_navigation_nodes(owner_key,tenant_id,code,parent_code,title,route_key,sort_order,enabled,created_by,updated_by) VALUES(#{owner},CAST(#{tenant} AS bigint),#{command.code},#{command.parentCode},#{command.title},#{command.routeKey},#{command.sortOrder},#{command.enabled},#{actor},#{actor}) ON CONFLICT DO NOTHING</insert>
+  <update id="update">UPDATE nw_foundation_navigation_nodes SET parent_code=#{command.parentCode},title=#{command.title},route_key=#{command.routeKey},sort_order=#{command.sortOrder},enabled=#{command.enabled},revision=revision+1,updated_at=clock_timestamp(),updated_by=#{actor} WHERE owner_key=#{owner} AND code=#{command.code} AND revision=#{command.expectedRevision}</update>
+  <select id="children" resultType="long">SELECT count(*) FROM nw_foundation_navigation_nodes WHERE owner_key=#{owner} AND parent_code=#{code}</select>
+  <delete id="delete">DELETE FROM nw_foundation_navigation_nodes WHERE owner_key=#{owner} AND code=#{command.code} AND revision=#{command.expectedRevision}</delete>
+</mapper>

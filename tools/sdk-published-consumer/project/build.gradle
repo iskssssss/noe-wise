@@ -1,0 +1,177 @@
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.dsl.LockMode
+
+plugins { id 'java' }
+
+// SQLite 单独源集和类路径，不继承 PostgreSQL Starter 或 Spring。
+sourceSets { sqliteTest }
+
+def sdkVersion = providers.gradleProperty('sdkVersion').orNull
+if (sdkVersion == null || !(sdkVersion ==~ /[1-9][0-9]*\.[0-9]+\.[0-9]+/)) {
+    throw new GradleException('sdkVersion must be the exact current stable publication version')
+}
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+dependencyLocking { lockAllConfigurations(); lockMode = LockMode.STRICT }
+// Gradle 8.14 不允许 dependency locking 与内置 failOnDynamicVersions 同时启用。
+// 通过公共 selector/constraint/metadata API 保留动态、changing 与 SNAPSHOT 拒绝。
+def rejectMutableSelector = { String selector, String origin ->
+    if (selector == null || selector.trim().isEmpty()) { return }
+    def version = selector.trim()
+    if (version.contains('+') || version.startsWith('latest.') ||
+            version.find(/[\[\](),]/)) {
+        throw new GradleException("SDK_CONSUMER_DYNAMIC_VERSION_REJECTED: $origin -> $version")
+    }
+    if (version.toUpperCase(java.util.Locale.ROOT).endsWith('-SNAPSHOT')) {
+        throw new GradleException("SDK_CONSUMER_CHANGING_VERSION_REJECTED: $origin -> $version")
+    }
+}
+def rejectMutableConstraint = { constraint, String origin ->
+    if (constraint.branch != null) {
+        throw new GradleException("SDK_CONSUMER_DYNAMIC_BRANCH_REJECTED: $origin")
+    }
+    [constraint.requiredVersion, constraint.preferredVersion, constraint.strictVersion].each {
+        rejectMutableSelector(it, origin)
+    }
+}
+configurations.configureEach { configuration ->
+    incoming.beforeResolve {
+        configuration.allDependencies.each { dependency ->
+            if (dependency instanceof org.gradle.api.artifacts.ExternalModuleDependency) {
+                if (dependency.changing) {
+                    throw new GradleException("SDK_CONSUMER_CHANGING_DEPENDENCY_REJECTED: $dependency")
+                }
+                rejectMutableConstraint(dependency.versionConstraint, dependency.toString())
+            } else {
+                rejectMutableSelector(dependency.version, dependency.toString())
+            }
+        }
+        configuration.allDependencyConstraints.each {
+            rejectMutableConstraint(it.versionConstraint, it.toString())
+        }
+    }
+    resolutionStrategy.eachDependency {
+        rejectMutableSelector(it.requested.version, it.requested.toString())
+    }
+}
+dependencies.components.all { metadata ->
+    if (metadata.changing) {
+        throw new GradleException("SDK_CONSUMER_CHANGING_METADATA_REJECTED: ${metadata.id}")
+    }
+    rejectMutableSelector(metadata.id.version, metadata.id.toString())
+    metadata.allVariants {
+        withDependencies { entries ->
+            entries.each { rejectMutableConstraint(it.versionConstraint, "${metadata.id} dependency ${it.group}:${it.name}") }
+        }
+        withDependencyConstraints { entries ->
+            entries.each { rejectMutableConstraint(it.versionConstraint, "${metadata.id} constraint ${it.group}:${it.name}") }
+        }
+    }
+}
+
+dependencies {
+    implementation platform("com.skillforge:agent-runtime-bom:$sdkVersion")
+    implementation 'com.skillforge:agent-runtime-spring-boot-starter'
+    implementation 'com.skillforge:agent-runtime-memory'
+    implementation 'com.skillforge:agent-runtime-adapter-jdbc'
+    // 第三方版本由正式 SDK BOM 的 Spring Boot BOM 统一解析，再由严格依赖锁冻结。
+    runtimeOnly 'org.postgresql:postgresql'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'com.skillforge:agent-runtime-adapter-sqlite'
+    // Agent 样例直接使用正式公开类型；不从源码项目或运行时隐式传递依赖编译。
+    testImplementation 'com.skillforge:agent-runtime-core'
+    testImplementation 'com.skillforge:agent-runtime-json'
+    testImplementation 'com.skillforge:agent-runtime-codec-spi'
+    testImplementation 'com.skillforge:agent-runtime-adapter-model'
+    testImplementation testFixtures('com.skillforge:agent-runtime-adapter-testkit')
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    sqliteTestImplementation platform("com.skillforge:agent-runtime-bom:$sdkVersion")
+    sqliteTestImplementation 'com.skillforge:agent-runtime-adapter-sqlite'
+    sqliteTestImplementation 'org.junit.jupiter:junit-jupiter'
+    sqliteTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def consumerConfigurations = ['compileClasspath', 'runtimeClasspath', 'testCompileClasspath', 'testRuntimeClasspath', 'annotationProcessor', 'testAnnotationProcessor', 'sqliteTestCompileClasspath', 'sqliteTestRuntimeClasspath', 'sqliteTestAnnotationProcessor']
+def requiredRuntimeModules = [
+    'agent-runtime-api', 'agent-runtime-codec-spi', 'agent-runtime-session-spi',
+    'agent-runtime-json', 'agent-runtime-core', 'agent-runtime-session', 'agent-runtime-memory',
+    'agent-runtime-adapter-jdbc', 'agent-runtime-adapter-model',
+    'agent-runtime-spring-boot-starter'
+] as Set
+def digest = { File path -> MessageDigest.getInstance('SHA-256').digest(path.bytes).encodeHex().toString() }
+
+tasks.register('writeConsumerLocks') {
+    // 只供显式准备阶段 --write-locks 使用；普通验收不允许缺锁或隐式刷新。
+    doLast { consumerConfigurations.each { configurations.getByName(it).resolve() } }
+}
+
+tasks.register('verifyPublishedResolution') {
+    outputs.upToDateWhen { false }
+    doLast {
+        def repository = new File(providers.gradleProperty('sdkRepository').get()).canonicalFile
+        def rows = []
+        consumerConfigurations.each { configurationName ->
+            def configuration = configurations.getByName(configurationName)
+            configuration.incoming.resolutionResult.allComponents.each { component ->
+                if (component.id instanceof ModuleComponentIdentifier) {
+                    if (component.id.group == 'com.skillforge') {
+                        assert component.id.version == sdkVersion : 'Mixed SDK release version'
+                        assert component.id.module.startsWith('agent-runtime-') : 'Host module leaked into SDK consumer'
+                    }
+                } else if (component.id != configuration.incoming.resolutionResult.root.id) {
+                    throw new GradleException("Non-module consumer dependency: ${component.id}")
+                }
+            }
+            configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                assert artifact.file.name.endsWith('.jar') : "Consumer artifact is not a published JAR: ${artifact.file}"
+                if (artifact.file.name.contains('test-fixtures')) {
+                    assert configurationName in ['testCompileClasspath', 'testRuntimeClasspath'] : 'Test fixtures leaked into production/SQLite consumer'
+                    assert artifact.moduleVersion.id.group == 'com.skillforge' && artifact.moduleVersion.id.name == 'agent-runtime-adapter-testkit' : 'Unexpected published test fixture'
+                }
+                def id = artifact.moduleVersion.id
+                if (id.group == 'com.skillforge') {
+                    assert id.version == sdkVersion : 'SDK artifact version mismatch'
+                    def published = new File(repository, "com/skillforge/${id.name}/$sdkVersion/${artifact.file.name}")
+                    assert published.isFile() : "Missing artifact in current publication: ${artifact.file.name}"
+                    assert digest(published) == digest(artifact.file) : "Consumer artifact differs from current repository: $id"
+                }
+                rows << "$configurationName\t$id\t${artifact.file.name}\t${digest(artifact.file)}"
+            }
+        }
+        def runtimeSdk = configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts
+                .findAll { it.moduleVersion.id.group == 'com.skillforge' }.collect { it.name } as Set
+        assert runtimeSdk == requiredRuntimeModules : "Unexpected SDK production classpath: $runtimeSdk"
+        def sqliteArtifacts = configurations.sqliteTestRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
+        def sqliteSdk = sqliteArtifacts.findAll { it.moduleVersion.id.group == 'com.skillforge' }.collect { it.name } as Set
+        assert sqliteSdk == ['agent-runtime-api', 'agent-runtime-session-spi', 'agent-runtime-adapter-sqlite'] as Set : "Unexpected SQLite SDK classpath: $sqliteSdk"
+        assert sqliteArtifacts.every { !it.moduleVersion.id.group.startsWith('org.springframework') } : 'Spring leaked into SQLite consumer'
+        assert sqliteArtifacts.every { !it.file.name.contains('test-fixtures') } : 'Test fixtures leaked into SQLite consumer'
+        def report = layout.buildDirectory.file('reports/published-consumer/resolution-sha256.tsv').get().asFile
+        report.parentFile.mkdirs()
+        report.text = rows.sort().join('\n') + '\n'
+        logger.lifecycle('SDK_PUBLISHED_RESOLUTION_COMPLETE')
+    }
+}
+
+tasks.named('compileTestJava') { dependsOn 'verifyPublishedResolution' }
+tasks.register('verifyConsumerStartup', JavaExec) {
+    dependsOn 'test', 'verifyPublishedResolution'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'example.sdk.PublishedHost'
+}
+tasks.named('test') {
+    useJUnitPlatform()
+    maxParallelForks = 1
+    include '**/PublishedDatabaseTest.class', '**/PublishedExecutionStoreContractTest.class'
+    testLogging { events 'passed', 'failed', 'skipped' }
+}
+tasks.register('sqliteTest', Test) {
+    dependsOn 'verifyPublishedResolution'
+    testClassesDirs = sourceSets.sqliteTest.output.classesDirs
+    classpath = sourceSets.sqliteTest.runtimeClasspath
+    useJUnitPlatform()
+    maxParallelForks = 1
+    testLogging { events 'passed', 'failed', 'skipped' }
+}
+tasks.register('verifyConsumerDatabase') { dependsOn 'test', 'sqliteTest' }
+tasks.named('check') { dependsOn 'verifyPublishedResolution' }

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "演示配置约束；不是任何正式系统的配置契约",
+  "type": "object",
+  "required": ["service", "features"],
+  "additionalProperties": false,
+  "$defs": {
+    "service": {
+      "type": "object",
+      "required": ["name", "port", "environment"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "environment": {"enum": ["development", "test", "production"]}
+      }
+    }
+  },
+  "properties": {
+    "service": {"$ref": "#/$defs/service"},
+    "features": {
+      "type": "object",
+      "required": ["artifacts"],
+      "additionalProperties": false,
+      "properties": {"artifacts": {"type": "boolean"}}
+    }
+  }
+}

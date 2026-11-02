@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.billing.export.PlatformUsageMapper">
+ <select id="executionSource" resultType="com.skillforge.core.billing.export.PlatformUsageExecutionSource">
+  SELECT CASE WHEN target_kind='GROUP' THEN target_id::bigint END AS group_binding_id,
+    requester_kind,
+    CASE WHEN requester_kind='END_USER' THEN 'end_user:'||requester_end_user_id::text
+         WHEN requester_kind='SYSTEM' THEN 'system:'||requester_system_principal_id END AS requester_ref,
+    source_session_id AS origin_session_id,source_message_id AS origin_event_id
+  FROM public.agent_runtime_execution_runs WHERE tenant_id=#{tenantId} AND run_id=#{runId}
+ </select>
+ <select id="systemSource" resultType="com.skillforge.core.billing.export.PlatformUsageSystemSource">
+  SELECT s.id AS system_agent_run_id,s.agent_id,
+    'system-agent-config:'||s.agent_id::text||':'||coalesce(s.version::text,'draft') AS configuration_ref,
+    'system-agent-invocation:'||s.id::text AS invocation_ref,a.purpose,s.debug,
+    j.agent_id::bigint AS responsibility_agent_id,j.end_user_id AS source_author_id,
+    CASE WHEN j.source_target_kind='GROUP' THEN j.integration_id ELSE original.integration_id END AS integration_id,
+    j.group_binding_id,j.source_session_id AS origin_session_id,j.source_event_id AS origin_event_id,e.root_input_id,original.business_scope_id
+  FROM public.nw_platform_system_agent_runs s
+  JOIN public.nw_platform_system_agents a ON a.id=s.agent_id
+  LEFT JOIN public.agent_runtime_memory_extraction_jobs j
+    ON j.tenant_id=s.tenant_id::text AND j.system_run_id=s.id::text
+  LEFT JOIN public.agent_runtime_session_events e
+    ON e.tenant_id=j.tenant_id AND e.target_kind=j.source_target_kind AND e.target_id=j.source_target_id
+      AND e.session_id=j.source_session_id AND e.event_id=j.source_event_id AND e.agent_id=j.agent_id
+      AND (j.source_target_kind='GROUP' OR e.end_user_id=j.end_user_id)
+  LEFT JOIN public.nw_chat_sessions original ON original.tenant_id=s.tenant_id AND original.session_id=j.source_session_id
+  WHERE s.tenant_id=CAST(#{tenantId} AS bigint) AND s.id=#{systemRunId}
+ </select>
+ <select id="frozenSource" resultType="com.skillforge.core.billing.export.PlatformUsageFrozenSource">
+  SELECT COALESCE(auth.snapshot -&gt; 'grant_chain' -&gt;&gt; 'owner_kind','tenant') AS source_owner_kind,
+    CASE WHEN auth.snapshot IS NULL THEN b.tenant_id::bigint
+      ELSE (auth.snapshot -&gt; 'grant_chain' -&gt;&gt; 'owner_tenant_id')::bigint END AS source_owner_tenant_id,
+    (auth.snapshot -&gt; 'grant_chain' -&gt;&gt; 'definition_id')::bigint AS agent_definition_id,
+    b.frozen_member -&gt;&gt; 'agent_definition_version' AS agent_definition_version,
+    (b.frozen_member -&gt;&gt; 'agent_revision_id')::bigint AS agent_revision_id,
+    (b.frozen_member -&gt;&gt; 'agent_revision')::integer AS agent_revision,
+    (auth.snapshot -&gt;&gt; 'deployment_id')::bigint AS deployment_id,
+    (auth.snapshot -&gt;&gt; 'deployment_revision')::bigint AS deployment_revision,
+    (auth.snapshot -&gt;&gt; 'grant_id')::bigint AS grant_id,
+    (auth.snapshot -&gt;&gt; 'grant_revision')::bigint AS grant_revision
+  FROM public.nw_runtime_agent_run_bindings b
+  CROSS JOIN LATERAL (SELECT b.scope_snapshot -&gt; 'authorizations' -&gt; b.actor_agent_id AS snapshot) auth
+  WHERE b.tenant_id=#{tenantId} AND b.run_id=#{runId} AND b.actor_agent_id=CAST(#{agentId} AS text)
+  UNION ALL
+  SELECT 'platform' AS source_owner_kind,NULL::bigint AS source_owner_tenant_id,NULL::bigint AS agent_definition_id,
+   s.source_data -&gt;&gt; 'prompt_source_ref' AS agent_definition_version,
+   NULL::bigint AS agent_revision_id,NULL::integer AS agent_revision,
+   NULL::bigint AS deployment_id,NULL::bigint AS deployment_revision,NULL::bigint AS grant_id,NULL::bigint AS grant_revision
+  FROM public.agent_runtime_execution_runs r
+  JOIN public.nw_system_agent_runtime_capability_sources s ON s.tenant_id=r.tenant_id AND s.session_id=r.session_id
+   AND s.agent_id=r.agent_id AND s.end_user_id=r.end_user_id AND s.input_id=r.input_id
+  JOIN public.nw_runtime_host_owners h ON h.tenant_id=s.tenant_id AND h.session_id=s.session_id
+   AND h.agent_id=s.agent_id AND h.end_user_id=s.end_user_id AND h.target_kind=r.target_kind AND h.target_id=r.target_id
+  WHERE r.tenant_id=#{tenantId} AND r.run_id=#{runId} AND r.agent_id=CAST(#{agentId} AS text)
+   AND r.target_kind='AGENT' AND r.target_id=r.agent_id AND r.requester_kind='SYSTEM'
+   AND r.origin_ref=s.source_data -&gt;&gt; 'run_id' AND NULLIF(s.source_data -&gt;&gt; 'prompt_source_ref','') IS NOT NULL
+  <!-- 平台系统 Agent 没有机构发布记录/共享定义；不把目录 generation 伪造成发布 ID 或修订。 -->
+ </select>
+ <select id="frozenGrantHops" resultType="com.skillforge.core.billing.export.PlatformUsageGrantHopRow">
+  SELECT hop.ordinality::integer AS ordinal,(hop.value -&gt;&gt; 'grant_id')::bigint AS grant_id,
+    (hop.value -&gt;&gt; 'revision')::bigint AS revision,hop.value -&gt;&gt; 'grantor_kind' AS grantor_kind,
+    (hop.value -&gt;&gt; 'grantor_tenant_id')::bigint AS grantor_tenant_id,
+    (hop.value -&gt;&gt; 'target_tenant_id')::bigint AS target_tenant_id,
+    (hop.value -&gt;&gt; 'parent_grant_id')::bigint AS parent_grant_id,
+    (hop.value -&gt;&gt; 'parent_grant_revision')::bigint AS parent_grant_revision,
+    (hop.value -&gt;&gt; 'relation_ref')::bigint AS relation_ref,
+    (hop.value -&gt;&gt; 'relation_revision')::bigint AS relation_revision
+  FROM public.nw_runtime_agent_run_bindings b
+  CROSS JOIN LATERAL jsonb_array_elements(b.scope_snapshot -&gt; 'authorizations' -&gt; b.actor_agent_id -&gt; 'grant_chain' -&gt; 'hops')
+    WITH ORDINALITY hop(value,ordinality)
+  WHERE b.tenant_id=#{tenantId} AND b.run_id=#{runId} AND b.actor_agent_id=CAST(#{agentId} AS text)
+  ORDER BY hop.ordinality
+ </select>
+ <insert id="insertGrantHops">
+  INSERT INTO public.nw_usage_event_grant_hops(tenant_id,usage_id,ordinal,grant_id,revision,grantor_kind,
+    grantor_tenant_id,target_tenant_id,parent_grant_id,parent_grant_revision,relation_ref,relation_revision)
+  VALUES <foreach collection="event.grantChain" item="hop" separator=",">
+   (#{event.tenantId},#{event.id},#{hop.ordinal},#{hop.grantId},#{hop.revision},#{hop.grantorKind},
+    #{hop.grantorTenantId},#{hop.targetTenantId},#{hop.parentGrantId},#{hop.parentGrantRevision},#{hop.relationRef},#{hop.relationRevision})
+  </foreach>
+ </insert>
+ <select id="grantHops" resultType="com.skillforge.core.billing.export.PlatformUsageGrantHopRow">
+  SELECT usage_id,ordinal,grant_id,revision,grantor_kind,grantor_tenant_id,target_tenant_id,
+    parent_grant_id,parent_grant_revision,relation_ref,relation_revision
+  FROM public.nw_usage_event_grant_hops WHERE
+  <choose><when test="tenants != null and !tenants.isEmpty() and usageIds != null and !usageIds.isEmpty()">
+   tenant_id IN <foreach collection="tenants" item="tenant" open="(" close=")" separator=",">#{tenant}</foreach>
+   AND usage_id IN <foreach collection="usageIds" item="id" open="(" close=")" separator=",">#{id}</foreach>
+  </when><otherwise>FALSE</otherwise></choose>
+  ORDER BY usage_id,ordinal
+ </select>
+ <insert id="insertPending">
+  INSERT INTO public.nw_usage_publication_pending(tenant_id,usage_id,event_id)
+  SELECT tenant_id,id,tenant_id::text||':'||event_id FROM public.nw_usage_events
+  WHERE tenant_id=#{event.tenantId} AND id=#{event.id} ON CONFLICT(tenant_id,usage_id) DO NOTHING
+ </insert>
+ <select id="publishCommitted" resultType="long">SELECT public.publish_committed_usage(#{limit})</select>
+ <select id="streamRevision" resultType="java.lang.String">SELECT stream_revision FROM public.nw_usage_publication_state WHERE stream_id=1</select>
+ <select id="streamTail" resultType="long">SELECT published_cursor FROM public.nw_usage_publication_state WHERE stream_id=1</select>
+ <!-- 不可变计量正文只由 usage_events 保存；精确同租户 FK 保护发布与恢复的源事实。 -->
+ <sql id="sourceFacts">
+  SELECT e.tenant_id,e.usage_id,e.event_id,e.publication_cursor,e.published_at,
+    u.event_id AS source_event_id,u.origin_kind,u.actor_ref,u.responsibility_ref,u.deployment_id,u.integration_id,u.business_scope_id,u.agent_definition_version,
+    u.source_owner_kind,u.source_owner_tenant_id,u.agent_definition_id,u.agent_revision_id,u.agent_revision,
+    u.deployment_revision,u.grant_id,u.grant_revision,u.measurement_unit,
+    u.group_binding_id,u.requester_kind,u.requester_ref,u.origin_session_id,u.origin_event_id,u.responsibility_agent_id,u.system_agent_run_id,u.system_agent_configuration_ref,u.system_agent_invocation_ref,
+    u.event_type,u.usage_event_kind,u.report_revision,u.usage_snapshot_revision,
+    CASE WHEN original.id IS NOT NULL THEN original.tenant_id::text||':'||original.event_id END AS adjustment_of_event_id,
+    u.invocation_id,u.attempt_id,u.request_id,u.root_input_id,u.session_id,u.run_id,u.end_user_id,u.channel_id,
+    u.agent_id,u.provider,u.model,u.quantity,u.pricing_model_id,u.pricing_model_revision,u.image_count,u.video_count,u.characters,u.duration_seconds,u.tokens,u.prompt_tokens,u.completion_tokens,u.usage_source,
+    u.amount_status,COALESCE(u.total_amount,u.total_amount_cents::numeric) AS amount_cents,
+    u.currency,u.exchange_rate_to_cny,u.occurred_at,u.ingested_at
+  FROM (SELECT tenant_id,usage_id,event_id,publication_cursor,published_at FROM public.nw_usage_publication_events
+    UNION ALL SELECT tenant_id,usage_id,event_id,NULL::bigint AS publication_cursor,NULL::timestamptz AS published_at
+     FROM public.nw_usage_publication_pending) e
+  JOIN public.nw_usage_events u ON u.tenant_id=e.tenant_id AND u.id=e.usage_id
+  LEFT JOIN public.nw_usage_events original ON original.tenant_id=u.tenant_id AND original.id=u.adjustment_of_event_id
+ </sql>
+ <sql id="factColumns">
+  ${factAlias}.tenant_id,${factAlias}.usage_id,${factAlias}.event_id,${factAlias}.publication_cursor,
+  ${factAlias}.published_at,${factAlias}.source_event_id,${factAlias}.origin_kind,${factAlias}.actor_ref,${factAlias}.responsibility_ref,${factAlias}.deployment_id,${factAlias}.integration_id,${factAlias}.business_scope_id,${factAlias}.agent_definition_version,
+  ${factAlias}.source_owner_kind,${factAlias}.source_owner_tenant_id,${factAlias}.agent_definition_id,${factAlias}.agent_revision_id,${factAlias}.agent_revision,
+  ${factAlias}.deployment_revision,${factAlias}.grant_id,${factAlias}.grant_revision,${factAlias}.measurement_unit,
+  ${factAlias}.group_binding_id,${factAlias}.requester_kind,${factAlias}.requester_ref,${factAlias}.origin_session_id,${factAlias}.origin_event_id,${factAlias}.responsibility_agent_id,${factAlias}.system_agent_run_id,${factAlias}.system_agent_configuration_ref,${factAlias}.system_agent_invocation_ref,
+  ${factAlias}.event_type,${factAlias}.usage_event_kind,${factAlias}.report_revision,${factAlias}.usage_snapshot_revision,${factAlias}.adjustment_of_event_id,
+  ${factAlias}.invocation_id,${factAlias}.attempt_id,${factAlias}.request_id,${factAlias}.root_input_id,${factAlias}.session_id,
+  ${factAlias}.run_id,${factAlias}.end_user_id,${factAlias}.channel_id,${factAlias}.agent_id,${factAlias}.provider,
+  ${factAlias}.model,${factAlias}.quantity,${factAlias}.pricing_model_id,${factAlias}.pricing_model_revision,${factAlias}.image_count,${factAlias}.video_count,${factAlias}.characters,${factAlias}.duration_seconds,${factAlias}.tokens,${factAlias}.prompt_tokens,${factAlias}.completion_tokens,
+  ${factAlias}.usage_source,${factAlias}.amount_status,${factAlias}.amount_cents,${factAlias}.currency,${factAlias}.exchange_rate_to_cny,
+  ${factAlias}.occurred_at,${factAlias}.ingested_at
+ </sql>
+ <sql id="ownership">
+  <choose><when test="tenants != null and !tenants.isEmpty()">
+   tenant_id IN <foreach collection="tenants" item="tenant" open="(" separator="," close=")">#{tenant}</foreach>
+  </when><otherwise>FALSE</otherwise></choose>
+  <if test="integrationId != null">AND integration_id=#{integrationId}</if>
+ </sql>
+ <select id="hasPending" resultType="boolean">
+  SELECT EXISTS(SELECT 1 FROM (<include refid="sourceFacts"/>) pending WHERE publication_cursor IS NULL
+   AND <include refid="ownership"/> <include refid="filters"/>)
+ </select>
+ <sql id="filters">
+  <if test="query.integrationId != null">AND integration_id=#{query.integrationId}</if>
+  <if test="query.deploymentId != null">AND deployment_id=#{query.deploymentId}</if>
+  <if test="query.tenantId != null">AND tenant_id=#{query.tenantId}</if>
+  <if test="query.agentId != null">AND agent_id=#{query.agentId}</if>
+  <if test="query.agentDefinitionVersion != null">AND agent_definition_version=#{query.agentDefinitionVersion}</if>
+  <if test="query.endUserId != null">AND end_user_id=#{query.endUserId}</if>
+  <if test="query.sessionId != null">AND session_id=#{query.sessionId}</if>
+  <if test="query.runId != null">AND run_id=#{query.runId}</if>
+  <if test="query.channelId != null">AND channel_id=#{query.channelId}</if>
+  <if test="query.businessScopeId != null">AND business_scope_id=#{query.businessScopeId}</if>
+  <if test="query.groupBindingId != null">AND group_binding_id=#{query.groupBindingId}</if>
+  <if test="query.from != null">AND occurred_at&gt;=#{query.from}</if>
+  <if test="query.to != null">AND occurred_at&lt;#{query.to}</if>
+ </sql>
+ <select id="list" resultType="com.skillforge.core.billing.export.PlatformUsageRow">
+  WITH facts AS (<include refid="sourceFacts"/>)
+  SELECT <include refid="factColumns"><property name="factAlias" value="facts"/></include> FROM facts WHERE <include refid="ownership"/>
+    <include refid="filters"/>
+    AND publication_cursor&gt;#{cursor} AND publication_cursor&lt;=#{through}
+  ORDER BY publication_cursor,event_id LIMIT #{limit}
+ </select>
+ <!-- 有效报告逐字段归并；确认替换原成本且增减只加一次，时间过滤作用于原调用。 -->
+ <select id="summarize" resultType="com.skillforge.core.billing.export.PlatformUsageSummaryRow">
+  WITH facts AS MATERIALIZED (
+   SELECT <include refid="factColumns"><property name="factAlias" value="source"/></include> FROM (<include refid="sourceFacts"/>) source WHERE <include refid="ownership"/>
+  ), base AS (
+   SELECT <include refid="factColumns"><property name="factAlias" value="facts"/></include> FROM facts WHERE usage_event_kind='measured' <include refid="filters"/>
+   UNION ALL
+   SELECT <include refid="factColumns"><property name="factAlias" value="r"/></include> FROM facts r WHERE r.usage_event_kind='usage_report' <include refid="filters"/>
+     AND NOT EXISTS(SELECT 1 FROM facts m WHERE m.tenant_id=r.tenant_id AND m.attempt_id=r.attempt_id AND m.usage_event_kind='measured')
+     AND r.usage_id=(SELECT x.usage_id FROM facts x WHERE x.tenant_id=r.tenant_id AND x.attempt_id=r.attempt_id
+       AND x.usage_event_kind='usage_report' ORDER BY x.report_revision DESC,x.usage_id DESC LIMIT 1)
+  ), effective AS (
+   SELECT <include refid="factColumns"><property name="factAlias" value="e"/></include>,
+    CASE WHEN e.event_type='llm.chat' AND e.attempt_id IS NOT NULL
+      THEN COALESCE(p.prompt_tokens,e.prompt_tokens) ELSE e.prompt_tokens END AS effective_prompt,
+    CASE WHEN e.event_type='llm.chat' AND e.attempt_id IS NOT NULL
+      THEN COALESCE(p.completion_tokens,e.completion_tokens) ELSE e.completion_tokens END AS effective_completion,
+    c.effective_amount,c.effective_currency,c.effective_rate,c.effective_status,
+    COALESCE(a.gaps,0) AS gaps,COALESCE(a.delta,0) AS delta
+   FROM base e
+   LEFT JOIN LATERAL (SELECT
+     (array_agg(x.prompt_tokens ORDER BY COALESCE(x.report_revision,x.usage_snapshot_revision,-1) DESC,x.usage_id DESC)
+       FILTER(WHERE x.prompt_tokens IS NOT NULL AND x.usage_source='PROVIDER_REPORTED'))[1] AS prompt_tokens,
+     (array_agg(x.completion_tokens ORDER BY COALESCE(x.report_revision,x.usage_snapshot_revision,-1) DESC,x.usage_id DESC)
+       FILTER(WHERE x.completion_tokens IS NOT NULL AND x.usage_source='PROVIDER_REPORTED'))[1] AS completion_tokens
+     FROM facts x WHERE x.tenant_id=e.tenant_id AND x.attempt_id=e.attempt_id
+       AND x.usage_event_kind IN ('measured','usage_report')) p ON true
+   LEFT JOIN LATERAL (SELECT <include refid="factColumns"><property name="factAlias" value="r"/></include> FROM facts r WHERE r.adjustment_of_event_id=e.event_id
+     AND r.usage_event_kind='reconciliation' ORDER BY r.ingested_at DESC,r.usage_id DESC LIMIT 1) r ON true
+   CROSS JOIN LATERAL (SELECT
+     CASE WHEN r.usage_id IS NULL THEN e.amount_cents ELSE r.amount_cents END AS effective_amount,
+     CASE WHEN r.usage_id IS NULL THEN e.currency ELSE r.currency END AS effective_currency,
+     CASE WHEN r.usage_id IS NULL THEN e.exchange_rate_to_cny ELSE r.exchange_rate_to_cny END AS effective_rate,
+     CASE WHEN r.usage_id IS NULL AND e.event_type IN ('llm.chat','llm.embedding')
+       AND e.usage_source IS DISTINCT FROM 'PROVIDER_REPORTED' THEN 'unresolved'
+       WHEN r.usage_id IS NULL THEN e.amount_status ELSE r.amount_status END AS effective_status) c
+   LEFT JOIN LATERAL (SELECT SUM(CASE WHEN x.amount_status='priced' THEN x.amount_cents*
+       CASE WHEN x.currency='CNY' THEN 1 ELSE x.exchange_rate_to_cny END END) AS delta,
+       COUNT(*) FILTER(WHERE x.amount_status IS DISTINCT FROM 'priced' OR x.amount_cents IS NULL
+        OR (x.currency IS DISTINCT FROM 'CNY' AND x.exchange_rate_to_cny IS NULL)) AS gaps
+     FROM facts x WHERE x.adjustment_of_event_id=e.event_id AND x.usage_event_kind='adjustment') a ON true
+  ), totals AS (
+   SELECT COUNT(*) FILTER(WHERE event_type='request') AS request_count,
+     COUNT(*) FILTER(WHERE event_type&lt;&gt;'request' AND NOT(event_type IN ('media.image','media.video','media.transcription','media.speech') AND quantity=0 AND amount_status='not_applicable')) AS invocation_count,
+     SUM(effective_prompt) AS prompt_tokens,SUM(effective_completion) AS completion_tokens,
+     COUNT(*) FILTER(WHERE (event_type='llm.chat' AND (effective_prompt IS NULL OR effective_completion IS NULL))
+       OR (event_type='llm.embedding' AND effective_prompt IS NULL)
+       OR (event_type IN ('media.image','media.video','media.transcription','media.speech') AND usage_source IS DISTINCT FROM 'PROVIDER_REPORTED' AND NOT(quantity=0 AND amount_status='not_applicable'))
+       OR (event_type NOT IN ('request','llm.chat','llm.embedding','media.image','media.video','media.transcription','media.speech') AND quantity IS NULL)) AS unknown_usage_count,
+     COUNT(*) FILTER(WHERE event_type&lt;&gt;'request' AND NOT(event_type IN ('media.image','media.video','media.transcription','media.speech') AND quantity=0 AND amount_status='not_applicable') AND (effective_status IS DISTINCT FROM 'priced'
+       OR effective_amount IS NULL OR (effective_currency IS DISTINCT FROM 'CNY' AND effective_rate IS NULL) OR gaps&gt;0)) AS unresolved_cost_count
+    FROM effective
+  ), costs AS (
+   SELECT 'CNY'::text AS currency,SUM(effective_amount*
+      CASE WHEN effective_currency='CNY' THEN 1 ELSE effective_rate END + delta) AS amount_cents
+   FROM effective WHERE event_type&lt;&gt;'request' AND effective_status='priced' AND effective_amount IS NOT NULL
+     AND (effective_currency='CNY' OR effective_rate IS NOT NULL) AND gaps=0
+   HAVING COUNT(*)&gt;0
+  ) SELECT totals.request_count,totals.invocation_count,totals.prompt_tokens,totals.completion_tokens,
+    totals.unknown_usage_count,totals.unresolved_cost_count,costs.currency,costs.amount_cents FROM totals LEFT JOIN costs ON true
+ </select>
+</mapper>

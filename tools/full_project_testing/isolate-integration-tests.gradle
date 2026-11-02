@@ -1,0 +1,12 @@
+// 本次补测中每个机构集成类使用独立 JVM，避免原三轮已记录的 Spring
+// 上下文/全局状态累积和 512 MiB worker OOM 污染后续类的业务证据。
+// 不改变生产服务配置、测试断言或既有单 executor 约束。
+allprojects {
+    if (project.name == 'skillforge-institution-service') {
+        tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+            maxHeapSize = '1536m'
+            forkEvery = 1
+            systemProperty 'spring.test.context.cache.maxSize', '1'
+        }
+    }
+}

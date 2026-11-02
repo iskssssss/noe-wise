@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.workflowtest.WorkflowTestIsolationMapper">
+  <sql id="columns">id,tenant_id,initiator_member_id,request_id,request_fingerprint,source_kind,source_container_id,source_workflow_id,source_draft_revision,source_definition_version_id,source_hash,container_id,definition_version_id,capability_definition_id,capability_version_id,instance_id,installation_revision,agent_id,end_user_id,session_id,initial_input_id,initial_message,parameters,max_business_model_calls,max_tool_calls,max_knowledge_calls,max_total_tokens,max_wall_time_seconds,status,expires_at,created_at,updated_at,closed_at</sql>
+  <resultMap id="test" type="com.skillforge.core.foundation.workflowtest.WorkflowTestSessionDO" autoMapping="true">
+    <result property="parameters" column="parameters" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+  </resultMap>
+  <select id="lockBySession" resultMap="test" useCache="false" flushCache="true">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND session_id=#{session} FOR UPDATE</select>
+  <select id="bySession" resultMap="test" useCache="false" flushCache="true">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND session_id=#{session}</select>
+  <select id="byEndUser" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND end_user_id=#{user}</select>
+  <select id="byAgent" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND agent_id=#{agent}</select>
+  <select id="ownedAgentIds" resultType="java.lang.Long">
+    SELECT DISTINCT agent_id FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND agent_id IN
+    <foreach collection="agentIds" item="agentId" open="(" separator="," close=")">#{agentId}</foreach>
+  </select>
+  <select id="byRequest" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND initiator_member_id=#{member} AND request_id=#{request}</select>
+  <select id="byInstance" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND instance_id=#{instance}</select>
+  <select id="ownedResource" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND
+      <choose>
+        <when test="kind == 'agent'">agent_id::text=#{id}</when>
+        <when test="kind == 'workflow'">container_id::text=#{id}</when>
+        <when test="kind == 'workflow_instance'">instance_id::text=#{id}</when>
+        <when test="kind == 'capability'">capability_definition_id::text=#{id}</when>
+        <when test="kind == 'end_user'">end_user_id::text=#{id}</when>
+        <otherwise>FALSE</otherwise>
+      </choose>)
+  </select>
+  <select id="lockRequest" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended(#{key},0))::text</select>
+  <select id="bindings" resultType="com.skillforge.core.foundation.workflowtest.WorkflowTestIsolationMapper$Binding">
+    SELECT tenant_id,test_session_id,slot,capability_type,capability_definition_id,capability_version_id,tool_deployment_id,tool_deployment_key,tool_deployment_revision,knowledge_revision
+    FROM nw_workflow_test_capability_bindings WHERE tenant_id=#{tenant} AND test_session_id=#{test} ORDER BY slot
+  </select>
+  <insert id="insertBinding">
+    INSERT INTO nw_workflow_test_capability_bindings(tenant_id,test_session_id,slot,capability_type,capability_definition_id,capability_version_id,tool_deployment_id,tool_deployment_key,tool_deployment_revision,knowledge_revision)
+    VALUES(#{tenantId},#{testSessionId},#{slot},#{capabilityType},#{capabilityDefinitionId},#{capabilityVersionId},#{toolDeploymentId},#{toolDeploymentKey},#{toolDeploymentRevision},#{knowledgeRevision})
+  </insert>
+  <update id="closing">UPDATE nw_workflow_test_sessions SET status='closing',updated_at=clock_timestamp() WHERE tenant_id=#{tenant} AND id=#{test} AND status='ready'</update>
+  <update id="closed">UPDATE nw_workflow_test_sessions SET status='closed',closed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE tenant_id=#{tenant} AND id=#{test} AND status='closing'</update>
+  <!-- 原UNKNOWN材料永久保留；只有当前仍无结果/UNKNOWN阻止清理，明确补回执后可收敛。 -->
+  <select id="quiet" resultType="boolean">
+    SELECT NOT EXISTS(SELECT 1 FROM agent_runtime_execution_runs r WHERE r.tenant_id=#{tenant}::text AND r.session_id=#{session} AND
+      (r.phase!='FINISHED' OR r.lease_claim_id IS NOT NULL))
+    AND NOT EXISTS(SELECT 1 FROM agent_runtime_execution_attempts p JOIN agent_runtime_execution_runs r ON r.tenant_id=p.tenant_id AND r.run_id=p.run_id
+      WHERE r.tenant_id=#{tenant}::text AND r.session_id=#{session} AND (p.result_kind IS NULL OR p.result_kind='UNKNOWN'))
+    AND NOT EXISTS(SELECT 1 FROM agent_runtime_executions e WHERE e.tenant_id=#{tenant}::text AND e.session_id=#{session} AND e.state NOT IN ('COMPLETED','FAILED','LOOP_TERMINATED','CANCELLED'))
+  </select>
+  <select id="expiring" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND (status='closing' OR status='ready' AND expires_at&lt;=clock_timestamp()) ORDER BY expires_at LIMIT 50</select>
+</mapper>

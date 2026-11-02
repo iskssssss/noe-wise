@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$Mapper">
+    <select id="member" resultType="string">
+        SELECT frozen_member::text FROM nw_runtime_agent_run_bindings
+        WHERE tenant_id=#{tenant} AND run_id=#{run} AND session_id=#{session} AND target_kind=#{kind}
+          AND target_id=#{target} AND end_user_id IS NOT DISTINCT FROM #{user,jdbcType=BIGINT} AND actor_agent_id=#{agent}
+    </select>
+    <select id="tool" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$ToolRow">
+        SELECT v.tenant_id AS "versionTenant",v.name,v.description,v.trust_level AS "trustLevel",v.status,
+          v.content_hash AS "contentHash",v.descriptor::text AS "descriptorJson",t.provider_type AS "providerType",
+          t.provider_ref AS "providerRef",t.environment,t.revision AS "deploymentRevision"
+        FROM nw_capability_versions v
+        JOIN nw_capability_definitions d ON d.id=v.definition_id AND d.capability_type='TOOL' AND d.status='PUBLISHED'
+          AND d.tenant_id IS NOT DISTINCT FROM v.tenant_id
+        JOIN nw_tool_deployments t ON t.tenant_id=#{tenant}::bigint AND t.deployment_key=#{deployment} AND t.status='ACTIVE'
+        JOIN nw_capability_versions deployed ON deployed.id=t.tool_version_id AND deployed.definition_id=d.id
+          AND deployed.capability_type='TOOL' AND deployed.status='PUBLISHED'
+          AND deployed.tenant_id IS NOT DISTINCT FROM d.tenant_id
+        JOIN nw_capability_versions current_version ON current_version.id=d.default_version_id AND current_version.definition_id=d.id
+          AND current_version.status='PUBLISHED' AND current_version.tenant_id IS NOT DISTINCT FROM d.tenant_id
+        WHERE v.id=#{version}::bigint AND v.definition_id=#{capability}::bigint
+          AND v.capability_type='TOOL' AND v.status='PUBLISHED' AND (v.tenant_id IS NULL OR v.tenant_id=#{tenant}::bigint)
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+    <sql id="knowledgeColumns">
+        v.tenant_id AS "versionTenant",v.name,v.description,v.trust_level AS "trustLevel",v.status,
+        v.content_hash AS "contentHash",v.descriptor::text AS "descriptorJson",r.kb_id::text AS "sourceId",
+        r.revision,r.source_versions::text AS "sourceVersions"
+    </sql>
+    <select id="skill" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$SkillRow">
+        SELECT v.tenant_id AS "versionTenant",v.name,v.description,v.trust_level AS "trustLevel",v.status,
+          v.content_hash AS "contentHash",v.descriptor::text AS "descriptorJson"
+        FROM nw_capability_versions v
+        JOIN nw_capability_definitions d ON d.id=v.definition_id AND d.capability_type='SKILL' AND d.status='PUBLISHED'
+          AND d.tenant_id IS NOT DISTINCT FROM v.tenant_id
+        WHERE v.id=#{version}::bigint AND v.definition_id=#{capability}::bigint
+          AND v.capability_type='SKILL' AND v.status='PUBLISHED' AND (v.tenant_id IS NULL OR v.tenant_id=#{tenant}::bigint)
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+    <select id="workflow" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$WorkflowRow">
+        SELECT v.tenant_id AS "versionTenant",v.name,v.description,v.trust_level AS "trustLevel",v.status,
+          v.content_hash AS "contentHash",v.descriptor::text AS "descriptorJson"
+        FROM nw_capability_versions v
+        JOIN nw_capability_definitions d ON d.id=v.definition_id AND d.capability_type='WORKFLOW' AND d.status='PUBLISHED'
+          AND d.tenant_id IS NOT DISTINCT FROM v.tenant_id
+        WHERE v.id=#{version}::bigint AND v.definition_id=#{capability}::bigint
+          AND v.capability_type='WORKFLOW' AND v.status='PUBLISHED' AND (v.tenant_id IS NULL OR v.tenant_id=#{tenant}::bigint)
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+    <select id="currentWorkflow" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$WorkflowRow">
+        SELECT v.tenant_id AS "versionTenant",v.name,v.description,v.trust_level AS "trustLevel",v.status,
+          v.content_hash AS "contentHash",v.descriptor::text AS "descriptorJson"
+        FROM nw_workflow_instances i
+        JOIN nw_workflow_installation_revisions r ON r.tenant_id=i.tenant_id AND r.instance_id=i.id AND r.installation_revision=#{installation}
+        JOIN nw_workflow_definition_versions installed ON installed.tenant_id=i.tenant_id AND installed.id=r.definition_version_id
+        JOIN nw_workflow_definition_versions definition ON definition.tenant_id=installed.tenant_id AND definition.container_id=installed.container_id
+          AND definition.id=#{definition}
+        JOIN nw_capability_versions v ON v.tenant_id=definition.tenant_id AND v.id=definition.capability_version_id
+          AND v.capability_type='WORKFLOW' AND v.status='PUBLISHED'
+        JOIN nw_capability_definitions d ON d.tenant_id=v.tenant_id AND d.id=v.definition_id AND d.capability_type='WORKFLOW' AND d.status='PUBLISHED'
+        WHERE i.tenant_id=#{tenant}::bigint AND i.id=#{instance}::bigint AND i.status='published'
+          AND v.id=#{version}::bigint AND v.definition_id=#{capability}::bigint
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+    <select id="knowledge" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$KnowledgeRow">
+        SELECT <include refid="knowledgeColumns"/>
+        FROM nw_knowledge_base_revisions r
+        JOIN nw_knowledge_bases kb ON kb.tenant_id=r.tenant_id AND kb.id=r.kb_id AND kb.status='active'
+        JOIN nw_capability_versions v ON v.tenant_id=r.tenant_id AND v.id=r.capability_version_id
+          AND v.capability_type='KNOWLEDGE_SOURCE' AND v.status='PUBLISHED'
+        JOIN nw_capability_definitions d ON d.tenant_id=v.tenant_id AND d.id=v.definition_id
+          AND d.capability_type='KNOWLEDGE_SOURCE' AND d.status='PUBLISHED'
+        WHERE r.tenant_id=#{tenant}::bigint AND r.id=#{revision}::bigint AND r.status IN ('published','archived')
+          AND r.published_at IS NOT NULL AND v.id=#{version}::bigint AND d.id=#{capability}::bigint
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+    <!-- 仅还原受理时已PINNED的不可变知识材料；当前停用检查由knowledge派发查询独占。 -->
+    <select id="frozenKnowledge" resultType="com.skillforge.institution.runtime.AgentRuntimeExecutionMounts$KnowledgeRow">
+        SELECT <include refid="knowledgeColumns"/>
+        FROM nw_knowledge_base_revisions r
+        JOIN nw_capability_versions v ON v.tenant_id=r.tenant_id AND v.id=r.capability_version_id
+          AND v.capability_type='KNOWLEDGE_SOURCE'
+        WHERE r.tenant_id=#{tenant}::bigint AND r.id=#{revision}::bigint AND r.published_at IS NOT NULL
+          AND v.id=#{version}::bigint AND v.definition_id=#{capability}::bigint
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    </select>
+</mapper>

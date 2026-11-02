@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.persistence.CapabilityDefinitionMapper">
+  <select id="listPlatformSkills" resultType="com.skillforge.core.capability.SkillCatalogSummary">
+    SELECT d.id,d.capability_key,d.name,d.description,d.status,d.default_version_id,v.version_key AS default_version_key
+    FROM nw_capability_definitions d
+    LEFT JOIN nw_capability_versions v ON v.id=d.default_version_id AND v.definition_id=d.id
+      AND v.tenant_id IS NULL AND v.capability_type=d.capability_type
+    WHERE d.tenant_id IS NULL AND d.capability_type='SKILL'
+      AND NOT EXISTS(SELECT 1 FROM nw_workflow_test_sessions wt WHERE wt.capability_definition_id=d.id)
+    ORDER BY d.updated_at DESC,d.id DESC
+  </select>
+  <select id="listRequirementOptions" resultType="com.skillforge.core.capability.CapabilityRequirementOption">
+    SELECT d.id AS definition_id,d.name,v.id AS version_id,v.version_key
+    FROM nw_capability_definitions d
+    JOIN nw_capability_versions v ON v.id=d.default_version_id AND v.definition_id=d.id
+      AND v.tenant_id IS NOT DISTINCT FROM d.tenant_id AND v.capability_type=d.capability_type
+    WHERE d.capability_type=#{type} AND d.status='PUBLISHED' AND v.status='PUBLISHED'
+      <choose>
+        <when test="tenant == null">AND d.tenant_id IS NULL</when>
+        <otherwise>AND (d.tenant_id=#{tenant} OR d.tenant_id IS NULL)</otherwise>
+      </choose>
+      AND NOT EXISTS(SELECT 1 FROM nw_workflow_test_sessions wt WHERE wt.capability_definition_id=d.id)
+    ORDER BY d.updated_at DESC,d.id DESC
+  </select>
+</mapper>

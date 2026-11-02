@@ -1,0 +1,30 @@
+{
+  "wallet_origin": "http://127.0.0.1:8099",
+  "wallet_token_env": "SKILLFORGE_WALLET_SERVICE_TOKEN",
+  "reconciliation_token_env": "SKILLFORGE_RECONCILIATION_MANAGEMENT_TOKEN",
+  "pricing": {
+    "revision": "customer-v1",
+    "currency": "CNY",
+    "input_cents_per_thousand_tokens": "1.50",
+    "output_cents_per_thousand_tokens": "1.50",
+    "tool_cents_per_call": "0.10"
+  },
+  "accounts": {
+    "institution-a": {
+      "wallet_account_id": "account-institution-a",
+      "currency": "CNY"
+    },
+    "institution-b": {
+      "wallet_account_id": "account-institution-b",
+      "currency": "CNY"
+    },
+    "platform-business": {
+      "wallet_account_id": "account-platform-business",
+      "currency": "CNY"
+    },
+    "other-institution": {
+      "wallet_account_id": "account-other-institution",
+      "currency": "CNY"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeGovernanceProjectionMapper">
+    <resultMap id="projection" type="com.skillforge.core.knowledge.model.KnowledgeGovernanceProjectionDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="proposal_id" property="proposalId"/>
+        <result column="projection_type" property="projectionType"/>
+        <result column="status" property="status"/>
+        <result column="details" property="details" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="error" property="error"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+    <insert id="insertClaim">
+        INSERT INTO public.nw_knowledge_governance_projections
+            (id, tenant_id, proposal_id, projection_type, status, details, created_at, updated_at)
+        VALUES (#{row.id}, #{row.tenantId}, #{row.proposalId}, #{row.projectionType}, #{row.status},
+            #{row.details,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler}, #{row.createdAt}, #{row.updatedAt})
+        ON CONFLICT (tenant_id, proposal_id) DO NOTHING
+    </insert>
+    <select id="lockByProposal" resultMap="projection">
+        SELECT id, tenant_id, proposal_id, projection_type, status, details, error, created_at, updated_at
+        FROM public.nw_knowledge_governance_projections
+        WHERE tenant_id = #{tenantId} AND proposal_id = #{proposalId} FOR UPDATE
+    </select>
+</mapper>

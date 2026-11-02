@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.attachment.SessionAttachmentMapper">
+  <sql id="identityColumns">
+    a.id::text AS id, a.tenant_id::text AS tenant_id, a.session_id, a.name, a.input_path, a.size, a.sha256
+  </sql>
+
+  <insert id="insert">
+    INSERT INTO nw_chat_session_attachments(
+      id, tenant_id, session_id, name, input_path, size, sha256, body_format, created_at, expires_at
+    ) VALUES (
+      CAST(#{id} AS uuid), CAST(#{tenantId} AS bigint), #{sessionId}, #{name}, #{inputPath},
+      #{size}, #{sha256}, 'bytea.v1', #{createdAt}, #{expiresAt}
+    )
+    ON CONFLICT (id) DO NOTHING
+  </insert>
+
+  <select id="find" resultType="com.skillforge.institution.attachment.SessionAttachmentRow">
+    SELECT <include refid="identityColumns"/>, b.content, a.created_at, a.expires_at
+    FROM nw_chat_session_attachments a JOIN nw_chat_attachment_bodies b
+      ON b.tenant_id=a.tenant_id AND b.sha256=a.sha256 AND b.size=a.size AND b.format=a.body_format
+    WHERE a.tenant_id=CAST(#{tenant} AS bigint) AND a.session_id=#{session}
+      AND a.id=CAST(#{id} AS uuid) AND a.expires_at&gt;clock_timestamp()
+  </select>
+
+  <select id="findMetadata" resultType="com.skillforge.institution.attachment.SessionAttachmentRow">
+    SELECT <include refid="identityColumns"/>, NULL::bytea AS content, created_at, expires_at
+    FROM nw_chat_session_attachments a
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session}
+      AND id=CAST(#{id} AS uuid) AND expires_at&gt;clock_timestamp()
+  </select>
+
+  <select id="list" resultType="com.skillforge.institution.attachment.SessionAttachmentRow">
+    SELECT <include refid="identityColumns"/>, NULL::bytea AS content, created_at, expires_at
+    FROM nw_chat_session_attachments a
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session}
+      AND expires_at&gt;clock_timestamp()
+    ORDER BY created_at,id
+  </select>
+
+  <select id="findMetadataBatch" resultType="com.skillforge.institution.attachment.SessionAttachmentRow">
+    SELECT <include refid="identityColumns"/>, NULL::bytea AS content, created_at, expires_at
+    FROM nw_chat_session_attachments a
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session}
+      AND expires_at&gt;clock_timestamp()
+      <choose>
+        <when test="ids != null and !ids.isEmpty()">
+          AND id IN
+          <foreach collection="ids" item="id" open="(" separator="," close=")">
+            CAST(#{id} AS uuid)
+          </foreach>
+        </when>
+        <otherwise>AND FALSE</otherwise>
+      </choose>
+  </select>
+
+  <update id="clearExpiredContent">
+    WITH expired AS (
+      SELECT id FROM nw_chat_session_attachments
+      WHERE tenant_id=CAST(#{tenant} AS bigint) AND expires_at&lt;=clock_timestamp()
+        AND body_format IS NOT NULL
+      ORDER BY expires_at,id
+      LIMIT #{limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE nw_chat_session_attachments attachment
+    SET body_format=NULL,reclaimed_at=clock_timestamp(),name=NULL
+    FROM expired
+    WHERE attachment.tenant_id=CAST(#{tenant} AS bigint) AND attachment.id=expired.id
+  </update>
+</mapper>

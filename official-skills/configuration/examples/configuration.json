@@ -1,0 +1,9 @@
+{
+  "format": "yaml",
+  "schema_file": "/input/data/schema.json",
+  "schema_source": {"kind": "user_defined", "description": "演示配置约束，非 灵知 服务的正式 Schema"},
+  "document": {
+    "service": {"name": "delivery-api", "port": 8080, "environment": "development"},
+    "features": {"artifacts": true}
+  }
+}

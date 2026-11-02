@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 基础执行"
+  short_description: "管理灵知 任务范围、授权、恢复与完成边界"
+
+policy:
+  allow_implicit_invocation: true

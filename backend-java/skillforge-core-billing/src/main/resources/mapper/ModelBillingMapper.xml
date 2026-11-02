@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.billing.persistence.ModelBillingMapper">
+ <sql id="modelTypes">('llm.chat','llm.embedding','llm.rerank','media.image','media.video','media.transcription','media.speech')</sql>
+ <!-- 汇总和分页共用原事实范围；报告只占一个未终结attempt，成本只取已提交的有效成本投影。 -->
+ <sql id="modelFacts">
+  WITH reports AS (
+   SELECT e.id,e.tenant_id,e.event_type,e.provider,e.model,e.occurred_at,e.invocation_id,e.attempt_id,
+    e.session_id,e.run_id,e.quantity,e.prompt_tokens,e.completion_tokens,e.image_count,e.video_count,
+    e.characters,e.duration_seconds,e.pricing_snapshot_version,e.pricing_model_id,e.pricing_model_revision,
+    e.currency,e.report_revision,e.usage_source
+   FROM public.nw_usage_events e
+   WHERE e.tenant_id=#{tenantId} AND e.event_type IN <include refid="modelTypes"/>
+    AND e.usage_event_kind='usage_report' AND e.attempt_id IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM public.nw_usage_events m WHERE m.tenant_id=e.tenant_id
+     AND m.attempt_id=e.attempt_id AND m.usage_event_kind='measured')
+  ), report_groups AS (
+   SELECT tenant_id,attempt_id,MIN(occurred_at) AS occurred_at,
+    (array_agg(id ORDER BY report_revision DESC,id DESC))[1] AS metadata_id,
+    (array_agg(prompt_tokens ORDER BY report_revision DESC,id DESC)
+     FILTER(WHERE prompt_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS prompt_tokens,
+    (array_agg(completion_tokens ORDER BY report_revision DESC,id DESC)
+     FILTER(WHERE completion_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS completion_tokens
+   FROM reports GROUP BY tenant_id,attempt_id
+  ), facts AS (
+   SELECT e.id,e.event_type,e.provider,e.model,e.occurred_at,e.invocation_id,e.attempt_id,e.session_id,e.run_id,
+    e.quantity,e.prompt_tokens,e.completion_tokens,e.image_count,e.video_count,e.characters,e.duration_seconds,
+    e.pricing_snapshot_version,e.pricing_model_id,e.pricing_model_revision,
+    e.effective_amount AS original_amount_cents,e.effective_currency AS original_currency,
+    CASE WHEN e.cost_status='priced' THEN e.confirmed_cost_cents END AS amount_cents,e.cost_status
+   FROM public.billing_effective_usage e
+   WHERE e.tenant_id=#{tenantId} AND e.event_type IN <include refid="modelTypes"/>
+    AND e.occurred_at&gt;=#{from} AND e.occurred_at&lt;#{to}
+    AND NOT(e.event_type IN ('media.image','media.video','media.transcription','media.speech')
+     AND e.quantity=0 AND e.amount_status='not_applicable')
+   UNION ALL
+   SELECT e.id,e.event_type,e.provider,e.model,g.occurred_at,e.invocation_id,e.attempt_id,e.session_id,e.run_id,
+    e.quantity,g.prompt_tokens,g.completion_tokens,e.image_count,e.video_count,e.characters,e.duration_seconds,
+    e.pricing_snapshot_version,e.pricing_model_id,e.pricing_model_revision,
+    NULL::numeric AS original_amount_cents,e.currency AS original_currency,NULL::numeric AS amount_cents,
+    'unresolved'::text AS cost_status
+   FROM reports e JOIN report_groups g ON g.tenant_id=e.tenant_id AND g.metadata_id=e.id
+   WHERE g.occurred_at&gt;=#{from} AND g.occurred_at&lt;#{to}
+  )
+ </sql>
+ <select id="summarize" resultType="com.skillforge.core.billing.persistence.ModelBillingMapper$Summary">
+  <include refid="modelFacts"/>
+  SELECT COUNT(*) AS model_calls,COALESCE(SUM(amount_cents),0) AS known_amount_cents,
+   COUNT(*) FILTER(WHERE cost_status IS DISTINCT FROM 'priced' OR amount_cents IS NULL) AS missing_cost_count,
+   SUM(prompt_tokens) AS prompt_tokens,SUM(completion_tokens) AS completion_tokens
+  FROM facts
+ </select>
+ <select id="list" resultType="com.skillforge.core.billing.persistence.ModelBillingMapper$Row">
+  <include refid="modelFacts"/>
+  SELECT id,event_type,provider,model,occurred_at,invocation_id,attempt_id,session_id,run_id,quantity,
+   prompt_tokens,completion_tokens,image_count,video_count,characters,duration_seconds,
+   pricing_snapshot_version,pricing_model_id,pricing_model_revision,original_amount_cents,original_currency,
+   amount_cents,cost_status
+  FROM facts ORDER BY occurred_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
+ </select>
+</mapper>

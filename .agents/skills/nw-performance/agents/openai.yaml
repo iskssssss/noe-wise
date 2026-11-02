@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 性能"
+  short_description: "测量灵知 用户路径性能并验证优化收益"
+
+policy:
+  allow_implicit_invocation: true

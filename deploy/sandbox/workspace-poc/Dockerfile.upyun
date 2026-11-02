@@ -1,0 +1,8 @@
+# 仅用于 FUSE 挂载验证；不作为运行不可信代码的生产沙箱。
+FROM skillforge-workspace-poc:local
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends fuse libfuse2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir fusepy==3.0.1 upyun==2.5.5
+COPY upyun_mount.py /opt/upyun_mount.py
+ENTRYPOINT ["python", "/opt/upyun_mount.py"]

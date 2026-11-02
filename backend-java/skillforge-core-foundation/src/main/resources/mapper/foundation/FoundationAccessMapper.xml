@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.access.FoundationAccessMapper">
+  <select id="sessionPrimaryId" resultType="long" useCache="false" flushCache="true">SELECT id FROM nw_chat_sessions WHERE tenant_id::text=#{scope} AND session_id=#{sessionId}</select>
+  <select id="visibleSessionIds" resultType="string" useCache="false" flushCache="true">
+    SELECT s.session_id FROM nw_chat_sessions s JOIN nw_foundation_resource_ownership o ON o.resource_id=s.id AND o.scope_key=#{scope} AND o.kind='session'
+    WHERE s.tenant_id::text=#{scope} AND (o.owner_member_id=#{memberId}
+    <if test="!filter.departmentIds.isEmpty()">OR o.department_id::text IN <foreach collection="filter.departmentIds" item="id" open="(" separator="," close=")">#{id}</foreach></if>) ORDER BY s.id
+  </select>
+  <select id="scopeVersion" resultType="long" useCache="false" flushCache="true">SELECT authorization_version FROM nw_foundation_access_scopes WHERE scope_key=#{scope}</select>
+  <select id="authorizedResourceIds" resultType="string" useCache="false" flushCache="true">
+    SELECT o.resource_id::text FROM nw_foundation_resource_ownership o WHERE o.scope_key=#{scope} AND o.kind=#{kind}
+    AND (o.owner_member_id=#{memberId}
+      <if test="!filter.departmentIds.isEmpty()">OR o.department_id::text IN <foreach collection="filter.departmentIds" item="id" open="(" separator="," close=")">#{id}</foreach></if>
+      OR EXISTS(SELECT 1 FROM nw_foundation_resource_grants g WHERE g.scope_key=o.scope_key AND g.kind=o.kind AND g.resource_id=o.resource_id AND g.action=#{action}
+        AND ((g.grantee_type='member' AND g.grantee_id=#{memberId})
+          OR (g.grantee_type='department' AND g.grantee_id=#{departmentId} AND EXISTS(SELECT 1 FROM nw_foundation_departments d WHERE d.scope_key=#{scope} AND d.id=g.grantee_id AND d.enabled))
+          OR (g.grantee_type='role' AND EXISTS(SELECT 1 FROM nw_foundation_member_roles mr JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id AND r.enabled WHERE mr.scope_key=#{scope} AND mr.member_id=#{memberId} AND mr.role_id=g.grantee_id)))))
+    ORDER BY o.resource_id
+  </select>
+  <select id="member" resultType="com.skillforge.core.foundation.access.AccessRows$Member" useCache="false" flushCache="true">
+    <choose><when test="scope == 'platform'">
+      SELECT m.id,m.username,coalesce(p.display_name,m.display_name,m.username) AS display_name,m.email,m.status,
+        p.department_id,p.position_id,coalesce(p.authorization_version,1) AS authorization_version,
+        coalesce(p.lock_version,1) AS lock_version,m.created_at
+      FROM nw_platform_members m LEFT JOIN nw_foundation_member_profiles p ON p.scope_key=#{scope} AND p.member_id=m.id
+      WHERE m.id=#{memberId}
+    </when><otherwise>
+      SELECT m.id,m.username,coalesce(p.display_name,m.username) AS display_name,m.email,
+        CASE WHEN t.status IN('active','warning') THEN m.status ELSE 'disabled' END AS status,
+        p.department_id,p.position_id,coalesce(p.authorization_version,1) AS authorization_version,
+        coalesce(p.lock_version,1) AS lock_version,m.created_at
+      FROM nw_tenant_members m JOIN nw_tenants t ON t.id=m.tenant_id
+      LEFT JOIN nw_foundation_member_profiles p ON p.scope_key=#{scope} AND p.member_id=m.id
+      WHERE m.id=#{memberId} AND m.tenant_id::text=#{scope}
+    </otherwise></choose>
+  </select>
+  <select id="memberRoles" resultType="com.skillforge.core.foundation.access.AccessRows$Role" useCache="false" flushCache="true">
+    SELECT r.id,r.code,r.name,r.data_scope,r.built_in,r.administrator,r.enabled,r.lock_version
+    FROM nw_foundation_roles r JOIN nw_foundation_member_roles mr ON mr.scope_key=r.scope_key AND mr.role_id=r.id
+    WHERE mr.scope_key=#{scope} AND mr.member_id=#{memberId} AND r.enabled ORDER BY r.code
+  </select>
+  <select id="memberPermissions" resultType="string" useCache="false" flushCache="true">
+    SELECT DISTINCT rp.permission_code FROM nw_foundation_role_permissions rp
+    JOIN nw_foundation_roles r ON r.scope_key=rp.scope_key AND r.id=rp.role_id AND r.enabled
+    JOIN nw_foundation_member_roles mr ON mr.scope_key=r.scope_key AND mr.role_id=r.id
+    WHERE mr.scope_key=#{scope} AND mr.member_id=#{memberId} ORDER BY rp.permission_code
+  </select>
+  <select id="specifiedDepartments" resultType="long" useCache="false" flushCache="true">
+    SELECT DISTINCT d.id FROM nw_foundation_role_departments rd
+    JOIN nw_foundation_roles r ON r.scope_key=rd.scope_key AND r.id=rd.role_id AND r.enabled AND r.data_scope='specified'
+    JOIN nw_foundation_member_roles mr ON mr.scope_key=r.scope_key AND mr.role_id=r.id
+    JOIN nw_foundation_departments d ON d.scope_key=rd.scope_key AND d.id=rd.department_id AND d.enabled
+    WHERE mr.scope_key=#{scope} AND mr.member_id=#{memberId}
+  </select>
+  <select id="descendantDepartments" resultType="long" useCache="false" flushCache="true">
+    WITH RECURSIVE tree AS (
+      SELECT id FROM nw_foundation_departments WHERE scope_key=#{scope} AND id=#{departmentId} AND enabled
+      UNION ALL SELECT d.id FROM nw_foundation_departments d JOIN tree t ON d.parent_id=t.id
+      WHERE d.scope_key=#{scope} AND d.enabled
+    ) SELECT id FROM tree
+  </select>
+  <select id="enabledDepartment" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM nw_foundation_departments WHERE scope_key=#{scope} AND id=#{departmentId} AND enabled)</select>
+  <select id="resourceExists" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS (
+      <choose>
+        <when test="kind == 'agent'">SELECT 1 FROM nw_agents WHERE tenant_id=#{tenantId} AND id=#{resourceId}</when>
+        <when test="kind == 'workflow'">SELECT 1 FROM nw_workflow_containers WHERE tenant_id=#{tenantId} AND id=#{resourceId}</when>
+        <when test="kind == 'knowledge'">SELECT 1 FROM nw_knowledge_bases WHERE tenant_id=#{tenantId} AND id=#{resourceId}</when>
+        <otherwise>SELECT 1 WHERE false</otherwise>
+      </choose>
+    )
+  </select>
+  <select id="resource" resultType="com.skillforge.core.foundation.access.AccessRows$Resource" useCache="false" flushCache="true">
+    SELECT kind,resource_id::text AS resource_id,owner_member_id,department_id,lock_version
+    FROM nw_foundation_resource_ownership WHERE scope_key=#{scope} AND kind=#{kind} AND resource_id=#{resourceId}::bigint
+  </select>
+  <select id="hasResourceGrant" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS(SELECT 1 FROM nw_foundation_resource_grants g
+      WHERE g.scope_key=#{scope} AND g.kind=#{kind} AND g.resource_id=#{resourceId}::bigint AND g.action=#{action}
+      AND ((g.grantee_type='member' AND g.grantee_id=#{memberId})
+        OR (g.grantee_type='department' AND g.grantee_id=#{departmentId}
+            AND EXISTS(SELECT 1 FROM nw_foundation_departments d WHERE d.scope_key=#{scope} AND d.id=g.grantee_id AND d.enabled))
+        OR (g.grantee_type='role' AND EXISTS(SELECT 1 FROM nw_foundation_member_roles mr
+            JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id AND r.enabled
+            WHERE mr.scope_key=#{scope} AND mr.member_id=#{memberId} AND mr.role_id=g.grantee_id))))
+  </select>
+</mapper>

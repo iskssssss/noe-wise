@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryDecayMapper">
+    <select id="decayReady" resultType="java.lang.Boolean" useCache="false" flushCache="true">
+        select projected_decay_score &gt;= 0.95 from public.agent_runtime_memory_usage_projection
+        where tenant_id=#{tenant} and fact_id=#{fact} for update
+    </select>
+    <select id="active" resultType="string">
+        select p.fact_id from agent_runtime_memory_usage_projection p
+        join agent_runtime_memory_fact_heads h on h.tenant_id=p.tenant_id and h.fact_id=p.fact_id
+        join agent_runtime_memory_fact_revisions r on r.tenant_id=h.tenant_id
+            and r.fact_id=h.fact_id and r.revision=h.current_revision
+        where p.tenant_id=#{tenant} and p.fact_id&gt;#{after} and r.status='ACTIVE'
+        order by p.fact_id limit #{limit}
+    </select>
+    <update id="project">
+        with candidates as (
+            select p.fact_id,p.updated_at,p.last_referenced_at,least(1, greatest(0,
+            (extract(epoch from now()) - coalesce(extract(epoch from p.last_referenced_at),
+                r.created_epoch_second + r.created_nano/1000000000.0))/7776000.0))::numeric(8,7) as score
+            from agent_runtime_memory_usage_projection p
+            join agent_runtime_memory_fact_heads h on h.tenant_id=p.tenant_id and h.fact_id=p.fact_id
+            join agent_runtime_memory_fact_revisions r on r.tenant_id=h.tenant_id
+                and r.fact_id=h.fact_id and r.revision=h.current_revision
+            where p.tenant_id=#{tenant} and r.status='ACTIVE'
+                and p.fact_id in
+                <foreach collection="facts" item="fact" open="(" close=")" separator=",">#{fact}</foreach>
+        ), changed as (
+            select c.fact_id,c.score,c.last_referenced_at from candidates c
+            join agent_runtime_memory_usage_projection p on p.tenant_id=#{tenant} and p.fact_id=c.fact_id
+            where p.projected_decay_score is distinct from c.score
+        )
+        update agent_runtime_memory_usage_projection p
+        set projected_decay_score=c.score,updated_at=now()
+        from changed c where p.tenant_id=#{tenant} and p.fact_id=c.fact_id
+            and p.projected_decay_score is distinct from c.score
+            and p.last_referenced_at is not distinct from c.last_referenced_at
+    </update>
+    <select id="due" resultType="com.skillforge.institution.memory.MemoryDecayMapper$Due">
+        select p.fact_id,h.current_revision as revision from agent_runtime_memory_usage_projection p
+        join agent_runtime_memory_fact_heads h on h.tenant_id=p.tenant_id and h.fact_id=p.fact_id
+        join agent_runtime_memory_fact_revisions r on r.tenant_id=h.tenant_id
+            and r.fact_id=h.fact_id and r.revision=h.current_revision
+        where p.tenant_id=#{tenant} and p.projected_decay_score &gt;= 0.95 and r.status='ACTIVE'
+            and p.fact_id &gt; #{after}
+        order by p.fact_id limit #{limit}
+    </select>
+</mapper>

@@ -1,0 +1,5 @@
+{
+  "title": "业务指标交互报告",
+  "css": "*{box-sizing:border-box}body{margin:0;background:#edf2f0;color:#153f37;font:16px system-ui}main{max-width:880px;margin:auto;padding:clamp(20px,5vw,60px)}h1{font-size:clamp(28px,5vw,44px)}button{padding:10px 18px;border:1px solid #153f37;background:white;color:inherit;cursor:pointer}svg{width:100%;height:auto}text{font:14px system-ui}",
+  "code": "function App(){const [reverse,setReverse]=React.useState(false);const source=[{label:'一月',value:30},{label:'二月',value:50},{label:'三月',value:40}];const items=reverse?[...source].reverse():source;return <main><p>演示数据</p><h1>业务指标交互报告</h1><button onClick={()=>setReverse(!reverse)} aria-pressed={reverse}>反转月份顺序</button><svg viewBox='0 0 600 250' role='img' aria-label='月度指标柱状图'>{items.map((item,index)=><g key={item.label}><rect x={index*180+30} y={200-item.value*3} width='100' height={item.value*3} fill='#277b66'/><text x={index*180+30} y='230'>{item.label} {item.value}</text></g>)}</svg><p aria-live='polite'>当前首月：{items[0].label}</p></main>}"
+}

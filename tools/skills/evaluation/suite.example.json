@@ -1,0 +1,27 @@
+{
+  "institution_origin": "http://127.0.0.1:8000",
+  "platform_origin": "http://127.0.0.1:8100",
+  "tenant_id": "0",
+  "end_user_id": "0",
+  "repetitions": 3,
+  "variants": [
+    {"id": "baseline", "kind": "baseline", "agent_id": "0", "expected_skill_versions": {}},
+    {"id": "candidate", "kind": "candidate", "agent_id": "0", "expected_skill_versions": {"0": "0"}}
+  ],
+  "cases": [
+    {
+      "id": "positive",
+      "prompt": "生成一个 Python MCP stdio 服务，工具 sum 对输入数字数组求和，真实编译和协议验证后交付源码。",
+      "target_skill_definition_id": "0",
+      "should_activate": true,
+      "assertions": [{"type": "deliverable_text_contains", "value": "from mcp"}]
+    },
+    {
+      "id": "negative",
+      "prompt": "只回答 2 加 3 的结果，用一个阿拉伯数字，不生成任何文件。",
+      "target_skill_definition_id": "0",
+      "should_activate": false,
+      "assertions": [{"type": "answer_contains", "value": "5"}]
+    }
+  ]
+}

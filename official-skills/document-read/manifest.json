@@ -1,0 +1,22 @@
+{
+  "entry": {"language": "python", "script_path": "scripts/read_document.py"},
+  "dependencies": [],
+  "input_name": "document-read.json",
+  "expects_typed_results": true,
+  "default_output_format": "read",
+  "runtime_requirements": {
+    "python": [
+      {"name": "docling-slim", "version": "2.135.0"},
+      {"name": "docling-core", "version": "2.101.0"},
+      {"name": "docling-ibm-models", "version": "4.0.3"},
+      {"name": "opencv-python-headless", "version": "4.13.0.92"}
+    ],
+    "models_path": "/opt/skillforge/docling-models",
+    "model_lock_sha256": "9c8112b5cfecb5a3665c61019dce15ab8ba84ec8a1820bcd8bc24249581b59fb",
+    "ocr_executable": "/usr/bin/tesseract",
+    "ocr_languages": ["chi_sim", "eng"]
+  },
+  "example_inputs": ["examples/read.json", "examples/export.json"],
+  "references": ["references/input-contract.md", "references/docling/SKILL.md"],
+  "outputs": {"read": [], "markdown": ["document.md"], "json": ["document.json"]}
+}

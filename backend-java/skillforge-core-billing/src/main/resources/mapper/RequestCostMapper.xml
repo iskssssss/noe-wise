@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.billing.metering.RequestCostMapper">
+ <insert id="insert">
+  INSERT INTO public.nw_usage_events(id,tenant_id,event_type,occurred_at,ingested_at,created_at,quantity,
+   usage_event_kind,amount_status,usage_source,event_id,request_id,root_input_id,session_id,end_user_id,agent_id,run_id,call_point,meta,
+   origin_kind,actor_ref,responsibility_ref,deployment_id,integration_id,business_scope_id,source_owner_kind,source_owner_tenant_id,
+   agent_definition_id,agent_definition_version,agent_revision_id,agent_revision,deployment_revision,grant_id,grant_revision,requester_kind,requester_ref)
+  VALUES(#{event.id},#{event.tenantId},#{event.eventType},#{event.occurredAt},#{event.ingestedAt},#{event.createdAt},#{event.quantity},
+   #{event.usageEventKind},#{event.amountStatus},#{event.usageSource},#{event.eventId},#{event.requestId},#{event.rootInputId},#{event.sessionId},#{event.endUserId},#{event.agentId},#{event.runId},#{event.callPoint},
+   #{event.meta,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},#{event.originKind},#{event.actorRef},#{event.responsibilityRef},#{event.deploymentId},#{event.integrationId},#{event.businessScopeId},
+   #{event.sourceOwnerKind},#{event.sourceOwnerTenantId},#{event.agentDefinitionId},#{event.agentDefinitionVersion},#{event.agentRevisionId},#{event.agentRevision},#{event.deploymentRevision},#{event.grantId},#{event.grantRevision},#{event.requesterKind},#{event.requesterRef})
+  ON CONFLICT(tenant_id,event_id) DO NOTHING
+ </insert>
+</mapper>

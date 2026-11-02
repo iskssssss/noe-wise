@@ -1,0 +1,48 @@
+name: docs-ci
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'harness-design/**'
+      - 'deploy/**/*.md'
+      - '.agents/skills/**'
+      - 'tools/docs/**'
+      - 'workflows/**'
+      - 'Makefile'
+      - '**/*.gradle.kts'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.github/workflows/docs-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'harness-design/**'
+      - 'deploy/**/*.md'
+      - '.agents/skills/**'
+      - 'tools/docs/**'
+      - 'workflows/**'
+      - 'Makefile'
+      - '**/*.gradle.kts'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.github/workflows/docs-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docs verification gates
+        run: make docs-check

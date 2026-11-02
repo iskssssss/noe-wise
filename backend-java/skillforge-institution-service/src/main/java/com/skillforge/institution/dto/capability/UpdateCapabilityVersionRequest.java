@@ -1,0 +1,16 @@
+package com.skillforge.institution.dto.capability;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+import java.util.Map;
+
+/** 租户编辑 Draft Version 请求；版本键与类型身份不可编辑。 */
+@JsonIgnoreProperties(ignoreUnknown = false)
+public record UpdateCapabilityVersionRequest(
+        @NotBlank @Size(max = 255) String name,
+        @Size(max = 4000) String description,
+        @NotBlank @Size(max = 128) String contentHash,
+        @NotNull Map<String, Object> descriptor) {
+}

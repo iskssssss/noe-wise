@@ -1,0 +1,17 @@
+{
+  "source_path": "/input/artifacts/REPLACE_WITH_REAL_ARTIFACT_ID/index.html",
+  "viewports": [{ "width": 1280, "height": 900 }, { "width": 375, "height": 900 }],
+  "ready_selector": "#search",
+  "steps": [
+    { "op": "assert_visible_count", "selector": "tbody tr", "expected": 2, "label": "初始需求数量" },
+    { "op": "fill", "selector": "#search", "value": "备份" },
+    { "op": "assert_visible_count", "selector": "tbody tr", "expected": 1 },
+    { "op": "assert_text", "selector": "#count", "expected": "1 项需求" },
+    { "op": "fill", "selector": "#search", "value": "" },
+    { "op": "assert_visible_count", "selector": "tbody tr", "expected": 2 },
+    { "op": "focus", "selector": "#toggle" },
+    { "op": "assert_focused", "selector": "#toggle" },
+    { "op": "press", "selector": "#toggle", "key": "Enter" },
+    { "op": "assert_attribute", "selector": "#toggle", "attribute": "aria-pressed", "expected": "true" }
+  ]
+}

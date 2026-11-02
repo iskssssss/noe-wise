@@ -1,0 +1,39 @@
+# 仅供已脱敏评测结果的本机展示；不启用在线评审或代码执行。
+services:
+  mysql:
+    volumes: !override
+      - mysql:/var/lib/mysql
+  clickhouse:
+    volumes: !override
+      - clickhouse:/var/lib/clickhouse
+      - clickhouse-server:/var/log/clickhouse-server
+      - clickhouse-config:/etc/clickhouse-server/config.d
+      - ./clickhouse_config/users.d/enable_time_type.xml:/etc/clickhouse-server/users.d/enable_time_type.xml:ro
+      - ./clickhouse_config/users.d/distributed_insert_queue.xml:/etc/clickhouse-server/users.d/distributed_insert_queue.xml:ro
+  backend:
+    ports: !reset []
+    mem_limit: 2g
+    environment:
+      OPIK_USAGE_REPORT_ENABLED: "false"
+      OPIK_OTEL_SDK_ENABLED: "false"
+      TOGGLE_OLLIE_ENABLED: "false"
+      TOGGLE_OPIK_AI_ENABLED: "false"
+      TOGGLE_GUARDRAILS_ENABLED: "false"
+      TOGGLE_WELCOME_WIZARD_ENABLED: "false"
+      LLM_MODEL_REGISTRY_REMOTE_ENABLED: "false"
+      PYTHON_EVALUATOR_URL: http://127.0.0.1:1
+  python-backend:
+    privileged: false
+    profiles: !override [disabled-evaluator]
+    environment:
+      RQ_WORKER_ENABLED: "false"
+  demo-data-generator:
+    profiles: !override [disabled-demo]
+    environment:
+      CREATE_DEMO_DATA: "false"
+  frontend:
+    ports: !override
+      - "127.0.0.1:15173:5173"
+    environment:
+      NGINX_PORT: "5173"
+      OTEL_TRACE: "off"

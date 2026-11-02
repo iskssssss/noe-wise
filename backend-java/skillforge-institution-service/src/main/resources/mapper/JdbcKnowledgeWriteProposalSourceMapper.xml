@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.knowledge.JdbcKnowledgeWriteProposalSourceMapper">
+    <select id="bundles" resultType="string">
+        select bundle_json from nw_runtime_knowledge_results
+        where tenant_id=#{tenant} and bundle_json::jsonb-&gt;&gt;'bundleId'=#{bundle}
+    </select>
+    <select id="eventPayloads" resultType="string">
+        select public.agent_runtime_session_event_payload(tenant_id,session_id,target_kind,target_id,
+            end_user_id,run_id,event_id,event_type,payload_schema_id,payload_canonical_json) as payload_canonical_json
+        from agent_runtime_session_events
+        where tenant_id=#{tenant} and event_id=#{event}
+    </select>
+    <select id="observations" resultType="com.skillforge.institution.knowledge.JdbcKnowledgeWriteProposalSourceMapper$Observation">
+        select event_type as type,execution_id,
+            public.agent_runtime_session_event_payload(tenant_id,session_id,target_kind,target_id,
+                end_user_id,run_id,event_id,event_type,payload_schema_id,payload_canonical_json) as payload
+        from agent_runtime_session_events where tenant_id=#{tenant} and event_id=#{event}
+    </select>
+</mapper>

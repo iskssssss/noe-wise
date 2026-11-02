@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.runtime.session.CallbackPolicyMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenant}, true)</select>
+    <select id="now" resultType="java.time.Instant">SELECT clock_timestamp()</select>
+    <select id="findRun" resultType="com.skillforge.core.foundation.integration.runtime.session.CallbackRunOwnerRow" useCache="false" flushCache="true">
+        SELECT tenant_id,target_kind,target_id,agent_id,session_id,end_user_id,run_id,input_id,
+               trace_id,span_id,root_input_id,caused_by_event_id,identity_ref,requester_kind,requester_end_user_id,
+               requester_system_principal_id,source_session_id,source_message_id,origin_ref
+          FROM public.agent_runtime_execution_runs WHERE tenant_id = #{tenantId} AND run_id = #{runId}
+    </select>
+    <select id="originalService" resultType="com.skillforge.core.foundation.integration.runtime.session.CallbackServiceOrigin">
+        SELECT a.tenant_id, a.principal_id, a.integration_id, a.credential_version
+          FROM public.nw_runtime_identity_verifications v
+          JOIN public.nw_runtime_authentication_facts a
+            ON a.tenant_id = v.tenant_id AND a.authentication_ref = v.authentication_ref
+         WHERE v.tenant_id = #{tenant} AND v.verification_ref = #{reference} AND a.principal_kind = 'SERVICE'
+           AND a.target_kind = #{owner.target.kind} AND a.target_id = #{owner.target.id}
+           AND a.session_id = #{owner.sessionRef.sessionId}
+           AND a.end_user_id = #{owner.requireUser.value}
+    </select>
+    <select id="serviceCurrent" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM public.nw_service_principals
+          WHERE tenant_id::text = #{principal.tenantId.value} AND principal_id = #{principal.principalId}
+            AND integration_id = #{principal.integrationId} AND credential_version = #{principal.credentialVersion}
+            AND status = 'active')
+    </select>
+</mapper>

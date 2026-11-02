@@ -1,0 +1,77 @@
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.toolbar .el-input {
+  max-width: 300px;
+}
+.full {
+  width: 100%;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+}
+.split {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
+  gap: 20px;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.el-alert {
+  margin-bottom: 16px;
+}
+.el-table .cell {
+  overflow-wrap: anywhere;
+}
+.section-title {
+  margin: 8px 0 16px;
+}
+.readable {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 18px;
+}
+.node-card {
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  cursor: pointer;
+}
+.node-card.active {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 2px var(--el-color-primary-light-9);
+}
+.node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+@media (max-width: 1000px) {
+  .split,
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+}

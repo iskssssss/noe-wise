@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.systemagent.runtime.SystemAgentRuntimeStore$Mapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="lock" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended('system-agent-runtime:'||#{owner.sessionRef.tenantId.value}||':'||#{owner.sessionRef.sessionId}||':'||#{input},0))::text
+    </select>
+    <insert id="insertOwner">
+        INSERT INTO nw_runtime_host_owners(tenant_id,target_kind,target_id,agent_id,session_id,end_user_id,integration_id)
+        VALUES(#{owner.sessionRef.tenantId.value},#{owner.target.kind},#{owner.target.id},#{owner.target.id},#{owner.sessionRef.sessionId},#{owner.requireUser.value},#{integration})
+        ON CONFLICT(tenant_id,agent_id,session_id) DO NOTHING
+    </insert>
+    <select id="owner" resultType="com.skillforge.systemagent.runtime.SystemAgentRuntimeStore$OwnerRow">
+        SELECT end_user_id,integration_id FROM nw_runtime_host_owners
+        WHERE tenant_id=#{owner.sessionRef.tenantId.value} AND target_kind=#{owner.target.kind}
+          AND target_id=#{owner.target.id} AND agent_id=#{owner.target.id} AND session_id=#{owner.sessionRef.sessionId}
+    </select>
+    <insert id="insertSource">
+        INSERT INTO nw_system_agent_runtime_capability_sources(tenant_id,session_id,agent_id,end_user_id,input_id,generation,source_data)
+        VALUES(#{owner.sessionRef.tenantId.value},#{owner.sessionRef.sessionId},#{owner.target.id},#{owner.requireUser.value},#{input},#{generation},CAST(#{data} AS jsonb))
+        ON CONFLICT(tenant_id,session_id,input_id) DO NOTHING
+    </insert>
+    <select id="source" resultType="com.skillforge.systemagent.runtime.SystemAgentRuntimeStore$SourceRow">
+        SELECT tenant_id,session_id,agent_id,end_user_id,input_id,generation,source_data::text AS source_data,created_at
+        FROM nw_system_agent_runtime_capability_sources
+        WHERE tenant_id=#{owner.sessionRef.tenantId.value} AND session_id=#{owner.sessionRef.sessionId}
+          AND agent_id=#{owner.target.id} AND input_id=#{input}
+    </select>
+    <select id="now" resultType="java.time.Instant">SELECT clock_timestamp()</select>
+</mapper>

@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 工程"
+  short_description: "按改动加载项目编码、依赖、接口、安全、并发与前端工程规范"
+
+policy:
+  allow_implicit_invocation: true

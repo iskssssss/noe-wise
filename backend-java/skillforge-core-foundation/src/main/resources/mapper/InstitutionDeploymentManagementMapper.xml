@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper">
+  <sql id="projection">g.id AS grant_id,r.parent_tenant_id AS actor_tenant_id,g.target_tenant_id,g.action,g.status,g.revision,g.relation_ref,r.revision AS relation_revision</sql>
+  <sql id="grantJoin">FROM nw_institution_management_grants g JOIN nw_institution_relation_revisions r
+    ON r.id=g.relation_ref AND r.child_tenant_id=g.target_tenant_id
+      AND g.actor_domain='tenant' AND g.actor_ref=concat('tenant:',r.parent_tenant_id::text)
+    WHERE g.action IN('tenant.agent_deployments.read','tenant.agent_deployments.create','tenant.agent_deployments.bind','tenant.agent_deployments.switch_authorization',
+      'tenant.sub_institutions.usage_summary.read','tenant.sub_institutions.usage_details.read','tenant.sub_institutions.usage_events.read')</sql>
+  <sql id="visibleTargets">
+    <choose><when test="allowed != null and !allowed.isEmpty()">
+      AND r.parent_tenant_id IN <foreach collection="allowed" item="id" open="(" close=")" separator=",">#{id}</foreach>
+      AND g.target_tenant_id IN <foreach collection="allowed" item="id" open="(" close=")" separator=",">#{id}</foreach>
+    </when><otherwise>AND false</otherwise></choose>
+  </sql>
+  <sql id="filters">
+    <include refid="visibleTargets"/>
+    <if test="actor != null">AND r.parent_tenant_id=#{actor}</if>
+    <if test="target != null">AND g.target_tenant_id=#{target}</if>
+  </sql>
+  <select id="rows" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$GrantRow">
+    SELECT <include refid="projection"/> <include refid="grantJoin"/> <include refid="filters"/>
+    ORDER BY g.id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">SELECT count(g.id) <include refid="grantJoin"/> <include refid="filters"/></select>
+  <select id="visible" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$GrantRow">
+    SELECT <include refid="projection"/> <include refid="grantJoin"/> AND g.id=#{id} <include refid="visibleTargets"/>
+  </select>
+  <select id="lockGrant" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$GrantRow">
+    SELECT <include refid="projection"/> <include refid="grantJoin"/> AND g.id=#{id} FOR UPDATE OF g
+  </select>
+  <select id="lockTenants" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$TenantRow">
+    SELECT id AS tenant_id,status FROM nw_tenants WHERE id IN(#{actor},#{target}) AND status&lt;&gt;'internal' ORDER BY id FOR SHARE
+  </select>
+  <select id="currentRelation" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$RelationRow">
+    SELECT r.id AS relation_ref,r.revision FROM nw_tenants child JOIN nw_institution_relation_revisions r
+      ON r.child_tenant_id=child.id AND r.parent_tenant_id=child.parent_tenant_id AND r.revision=child.relation_revision
+    WHERE child.id=#{target} AND child.parent_tenant_id=#{actor}
+  </select>
+  <select id="lockGrantKey" resultType="java.lang.Object">
+    SELECT pg_advisory_xact_lock(hashtextextended(concat('deployment-management:',#{actor}::text,':',#{target}::text,':',#{action},':',#{relation}::text),307))
+  </select>
+  <select id="activeExists" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM nw_institution_management_grants WHERE actor_domain='tenant' AND actor_ref=concat('tenant:',#{actor}::text)
+      AND target_tenant_id=#{target} AND action=#{action} AND relation_ref=#{relation} AND status='active')
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_institution_management_grants(id,actor_domain,actor_ref,target_tenant_id,action,status,revision,relation_ref)
+      VALUES(#{id},'tenant',concat('tenant:',#{actor}::text),#{target},#{action},'active',1,#{relation})
+  </insert>
+  <update id="revoke">UPDATE nw_institution_management_grants SET status='revoked',revision=revision+1 WHERE id=#{id} AND status='active' AND revision=#{expected}</update>
+  <sql id="currentAuthorization">
+    FROM nw_institution_management_grants g
+    JOIN nw_institution_relation_revisions r ON r.id=g.relation_ref AND r.child_tenant_id=g.target_tenant_id
+    JOIN nw_tenants child ON child.id=g.target_tenant_id AND child.parent_tenant_id=#{actor} AND child.relation_revision=r.revision
+    JOIN nw_tenants hq ON hq.id=#{actor} AND r.parent_tenant_id=hq.id
+    WHERE g.actor_domain='tenant' AND g.actor_ref=concat('tenant:',#{actor}::text) AND g.action=#{action} AND g.status='active'
+      AND child.status IN('active','warning') AND hq.status IN('active','warning')
+  </sql>
+  <select id="lockAuthorization" resultType="com.skillforge.core.foundation.institution.InstitutionDeploymentManagementMapper$GrantRow">
+    SELECT <include refid="projection"/> <include refid="currentAuthorization"/> AND g.target_tenant_id=#{target} FOR SHARE OF g,child,hq
+  </select>
+  <select id="authorizedTargets" resultType="long">
+    SELECT g.target_tenant_id <include refid="currentAuthorization"/> ORDER BY g.target_tenant_id
+  </select>
+</mapper>

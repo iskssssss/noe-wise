@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.SessionTokenProfilesMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="lock" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended('session-token-profile:'||current_setting('app.tenant_id',true)||':'||#{ref},0))::text</select>
+    <select id="find" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionTokenProfileRow">
+        SELECT tenant_id,profile_ref,profile_data FROM public.agent_runtime_session_token_profiles
+        WHERE tenant_id=current_setting('app.tenant_id',true) AND profile_ref=#{ref}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.agent_runtime_session_token_profiles(tenant_id,profile_ref,profile_data)
+        VALUES(current_setting('app.tenant_id',true),#{ref},#{data})
+    </insert>
+</mapper>

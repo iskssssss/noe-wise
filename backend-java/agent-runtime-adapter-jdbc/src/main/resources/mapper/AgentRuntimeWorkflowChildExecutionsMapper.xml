@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.execution.WorkflowChildExecutionsMapper">
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenantId}, true)
+    </select>
+
+    <select id="storageNow"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionStorageTimeRow"
+            useCache="false" flushCache="true">
+        SELECT floor(extract(epoch FROM sampled_at))::bigint AS epoch_second,
+               floor((extract(epoch FROM sampled_at)
+                    - floor(extract(epoch FROM sampled_at)))
+                    * 1000000000)::integer AS nano
+          FROM (SELECT clock_timestamp() AS sampled_at) sampled
+    </select>
+
+    <!-- 所有写路径固定先锁 façade Run，再锁父 Workflow Execution。 -->
+    <select id="lockRun"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.JdbcWorkflowChildExecutions$RunSource"
+            useCache="false" flushCache="true">
+        SELECT tenant_id, session_id, target_kind, target_id, agent_id,
+               end_user_id, run_id, input_id AS causation_input_id, status,
+               CASE WHEN cancelled THEN 'typed-cancelled' END AS cancel_request_id,
+               NULL::bigint AS cancel_requested_epoch_second,NULL::integer AS cancel_requested_nano
+          FROM public.agent_runtime_execution_runs
+         WHERE tenant_id = #{tenantId}
+           AND run_id = #{runId}
+         FOR UPDATE
+    </select>
+
+    <select id="lockExecution"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionLedgerRow"
+            useCache="false" flushCache="true">
+        SELECT tenant_id, execution_id, session_id, agent_id, end_user_id, run_id, causation_input_id, execution_unit_id,
+               definition_version, execution_mode, causative_action_id, delegation_id, state, execution_revision,
+               checkpoint_schema_id, checkpoint_canonical_json, waiting_suspend_ref, waiting_action_key, result_ref,
+               reason_code, lease_claim_id, lease_worker_id, lease_fencing_token, lease_execution_revision,
+               lease_until_epoch_second, lease_until_nano, last_requested_epoch_second, last_requested_nano,
+               cancel_request_id, cancel_requested_epoch_second, cancel_requested_nano, record_data, created_epoch_second,
+               created_nano, updated_epoch_second, updated_nano, target_kind, target_id
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+         FOR UPDATE
+    </select>
+
+    <select id="findExecution"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionLedgerRow"
+            useCache="false">
+        SELECT tenant_id, execution_id, session_id, agent_id, end_user_id, run_id, causation_input_id, execution_unit_id,
+               definition_version, execution_mode, causative_action_id, delegation_id, state, execution_revision,
+               checkpoint_schema_id, checkpoint_canonical_json, waiting_suspend_ref, waiting_action_key, result_ref,
+               reason_code, lease_claim_id, lease_worker_id, lease_fencing_token, lease_execution_revision,
+               lease_until_epoch_second, lease_until_nano, last_requested_epoch_second, last_requested_nano,
+               cancel_request_id, cancel_requested_epoch_second, cancel_requested_nano, record_data, created_epoch_second,
+               created_nano, updated_epoch_second, updated_nano, target_kind, target_id
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+    </select>
+
+    <sql id="preparationColumns">
+        tenant_id, parent_execution_id, session_id, target_kind, target_id,
+        agent_id, end_user_id, run_id, node_id, visit, call_index,
+        definition_revision, installation_revision,
+        prepared_execution_revision, source_checkpoint_fingerprint,
+        preparation_fingerprint, preparation_data
+    </sql>
+
+    <sql id="sourceColumns">
+        tenant_id, child_execution_id, parent_execution_id,
+        node_id, visit, call_index, child_ordinal, branch_id,
+        session_id, target_kind, target_id, agent_id, end_user_id, run_id,
+        command_fingerprint, command_data
+    </sql>
+
+    <select id="findPreparation"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.WorkflowChildPreparationRow"
+            useCache="false">
+        SELECT <include refid="preparationColumns"/>
+          FROM public.agent_runtime_workflow_child_preparations
+         WHERE tenant_id = #{tenantId}
+           AND parent_execution_id = #{parentExecutionId}
+           AND node_id = #{nodeId}
+           AND visit = #{visit}
+           AND call_index = #{callIndex}
+    </select>
+
+    <select id="findSources"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.WorkflowChildExecutionSourceRow"
+            useCache="false">
+        SELECT <include refid="sourceColumns"/>
+          FROM public.agent_runtime_workflow_child_execution_sources
+         WHERE tenant_id = #{tenantId}
+           AND parent_execution_id = #{parentExecutionId}
+           AND node_id = #{nodeId}
+           AND visit = #{visit}
+           AND call_index = #{callIndex}
+         ORDER BY child_ordinal
+    </select>
+
+    <select id="findSource"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.WorkflowChildExecutionSourceRow"
+            useCache="false">
+        SELECT <include refid="sourceColumns"/>
+          FROM public.agent_runtime_workflow_child_execution_sources
+         WHERE tenant_id = #{tenantId}
+           AND child_execution_id = #{childExecutionId}
+    </select>
+
+    <insert id="insertPreparation">
+        INSERT INTO public.agent_runtime_workflow_child_preparations (
+            <include refid="preparationColumns"/>)
+        VALUES (
+            #{tenantId}, #{parentExecutionId}, #{sessionId}, #{targetKind},
+            #{targetId}, #{agentId}, #{endUserId}, #{runId}, #{nodeId},
+            #{visit}, #{callIndex}, #{definitionRevision},
+            #{installationRevision}, #{preparedExecutionRevision},
+            #{sourceCheckpointFingerprint}, #{preparationFingerprint},
+            #{preparationData})
+    </insert>
+
+    <insert id="insertSource">
+        INSERT INTO public.agent_runtime_workflow_child_execution_sources (
+            <include refid="sourceColumns"/>)
+        VALUES (
+            #{tenantId}, #{childExecutionId}, #{parentExecutionId},
+            #{nodeId}, #{visit}, #{callIndex}, #{childOrdinal}, #{branchId},
+            #{sessionId}, #{targetKind}, #{targetId}, #{agentId},
+            #{endUserId}, #{runId}, #{commandFingerprint}, #{commandData})
+    </insert>
+</mapper>

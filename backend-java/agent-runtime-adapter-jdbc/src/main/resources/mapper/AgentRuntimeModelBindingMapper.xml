@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.model.ModelBindingMapper">
+    <resultMap id="binding" type="com.skillforge.runtime.adapter.jdbc.model.ModelBindingRow" autoMapping="true">
+        <association property="imagePolicy" javaType="com.skillforge.runtime.api.media.ModelImagePolicy">
+            <constructor>
+                <arg column="image_enabled" javaType="_boolean"/>
+                <arg column="image_tool_images" javaType="_boolean"/>
+                <arg column="image_max_images" javaType="_int"/>
+                <arg column="image_max_image_bytes" javaType="_long"/>
+                <arg column="image_max_request_bytes" javaType="_long"/>
+                <arg column="image_max_dimension" javaType="_int"/>
+                <arg column="image_tile_size" javaType="_int"/>
+                <arg column="image_base_tokens" javaType="_int"/>
+                <arg column="image_tile_tokens" javaType="_int"/>
+                <arg column="image_version" javaType="string"/>
+            </constructor>
+        </association>
+    </resultMap>
+    <sql id="imagePolicyColumns">
+        ,(image_policy->>'enabled')::boolean AS image_enabled
+        ,(image_policy->>'toolImages')::boolean AS image_tool_images
+        ,(image_policy->>'maxImages')::integer AS image_max_images
+        ,(image_policy->>'maxImageBytes')::bigint AS image_max_image_bytes
+        ,(image_policy->>'maxRequestBytes')::bigint AS image_max_request_bytes
+        ,(image_policy->>'maxDimension')::integer AS image_max_dimension
+        ,(image_policy->>'tileSize')::integer AS image_tile_size
+        ,(image_policy->>'baseTokens')::integer AS image_base_tokens
+        ,(image_policy->>'tileTokens')::integer AS image_tile_tokens
+        ,image_policy->>'version' AS image_version
+    </sql>
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenant}, true)</select>
+    <select id="lockBinding" resultType="string" flushCache="true" useCache="false">
+        SELECT pg_advisory_xact_lock(hashtextextended('model-binding:' || length(#{tenant})::text || ':' || #{tenant} || #{binding}, 0))::text
+    </select>
+    <select id="latest" resultMap="binding">
+        SELECT tenant_id, binding_id, revision, agent_id, source_kind, source_id, content_digest, endpoint, model_id,
+               encrypted_credential, strategy_id, strategy_version, response_formats, image_policy, streaming, reasoning,
+               timeout, binding_format_version, provider_id, service_id, profile_version, protocol, authentication_scheme,
+               dialect_version, system_updates_in_history, tool_update_mode, retain_tools_with_tool_choice_none
+               <include refid="imagePolicyColumns"/> FROM public.agent_runtime_model_bindings
+        WHERE tenant_id = current_setting('app.tenant_id', true) AND binding_id = #{binding}
+        ORDER BY revision DESC LIMIT 1
+    </select>
+    <select id="find" resultMap="binding">
+        SELECT tenant_id, binding_id, revision, agent_id, source_kind, source_id, content_digest, endpoint, model_id,
+               encrypted_credential, strategy_id, strategy_version, response_formats, image_policy, streaming, reasoning,
+               timeout, binding_format_version, provider_id, service_id, profile_version, protocol, authentication_scheme,
+               dialect_version, system_updates_in_history, tool_update_mode, retain_tools_with_tool_choice_none
+               <include refid="imagePolicyColumns"/> FROM public.agent_runtime_model_bindings
+        WHERE tenant_id = current_setting('app.tenant_id', true) AND binding_id = #{binding} AND revision = #{revision}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.agent_runtime_model_bindings
+            (tenant_id,binding_id,revision,agent_id,source_kind,source_id,content_digest,
+             binding_format_version,provider_id,service_id,profile_version,protocol,authentication_scheme,dialect_version,
+             endpoint,model_id,encrypted_credential,strategy_id,strategy_version,response_formats,streaming,reasoning,timeout,
+             system_updates_in_history,tool_update_mode,retain_tools_with_tool_choice_none,image_policy)
+        VALUES (#{tenantId},#{bindingId},#{revision},#{agentId},#{sourceKind},#{sourceId},#{contentDigest},
+             #{bindingFormatVersion},#{providerId},#{serviceId},#{profileVersion},#{protocol},#{authenticationScheme},#{dialectVersion},
+             #{endpoint},#{modelId},#{encryptedCredential},#{strategyId},#{strategyVersion},#{responseFormats},#{streaming},#{reasoning},#{timeout},
+             #{systemUpdatesInHistory},#{toolUpdateMode},#{retainToolsWithToolChoiceNone},
+             jsonb_build_object('enabled',#{imagePolicy.enabled},'toolImages',#{imagePolicy.toolImages},
+                'maxImages',#{imagePolicy.maxImages},'maxImageBytes',#{imagePolicy.maxImageBytes},
+                'maxRequestBytes',#{imagePolicy.maxRequestBytes},'maxDimension',#{imagePolicy.maxDimension},
+                'tileSize',#{imagePolicy.tileSize},'baseTokens',#{imagePolicy.baseTokens},
+                'tileTokens',#{imagePolicy.tileTokens},'version',#{imagePolicy.version}))
+    </insert>
+</mapper>

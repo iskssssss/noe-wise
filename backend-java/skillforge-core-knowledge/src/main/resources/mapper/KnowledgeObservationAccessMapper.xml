@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeObservationAccessMapper">
+    <select id="readable" resultType="boolean">
+        <bind name="targetCount" value="targetVersions.size()"/>
+        SELECT EXISTS (
+            SELECT 1 FROM public.nw_runtime_knowledge_bindings binding
+            JOIN public.nw_knowledge_bases base
+              ON base.tenant_id::text=binding.tenant_id AND base.id::text=binding.descriptor_id
+            JOIN public.nw_knowledge_base_revisions revision
+              ON revision.tenant_id=base.tenant_id AND revision.kb_id=base.id
+             AND revision.revision=binding.descriptor_revision
+            JOIN public.nw_capability_versions capability
+              ON capability.tenant_id=revision.tenant_id AND capability.id=revision.capability_version_id
+             AND capability.id::text=binding.version_id AND capability.definition_id::text=binding.capability_id
+            JOIN public.nw_capability_definitions definition
+              ON definition.id=capability.definition_id AND definition.tenant_id=capability.tenant_id
+            WHERE binding.tenant_id=#{tenant} AND binding.handle=#{target.handle.value}
+              AND binding.descriptor_id=#{target.descriptorId} AND binding.descriptor_revision=#{target.descriptorRevision}
+              AND binding.capability_id=#{target.capability.capabilityId} AND binding.version_id=#{target.capability.versionId}
+              AND base.status='active' AND revision.status IN ('published','archived') AND revision.published_at IS NOT NULL
+              AND capability.status='PUBLISHED' AND capability.capability_type='KNOWLEDGE_SOURCE'
+              AND definition.status='PUBLISHED' AND definition.capability_type='KNOWLEDGE_SOURCE'
+              AND binding.descriptor_json::jsonb=capability.descriptor
+              AND capability.descriptor-&gt;&gt;'source_id'=base.id::text
+              AND capability.descriptor-&gt;'source_versions'=revision.source_versions
+              AND binding.source_count=#{targetCount}
+              AND binding.source_count=(SELECT count(*) FROM public.nw_runtime_knowledge_sources source
+                  WHERE source.tenant_id=binding.tenant_id AND source.binding_id=binding.binding_id)
+              AND binding.source_count=(SELECT count(*) FROM public.nw_runtime_knowledge_sources source
+                  WHERE source.tenant_id=binding.tenant_id AND source.binding_id=binding.binding_id
+                    AND (source.source_id,source.source_version) IN
+                    <foreach collection="targetVersions" item="version" open="(" separator="," close=")">
+                        (#{version.sourceId},#{version.sourceVersion})
+                    </foreach>)
+              AND NOT EXISTS (
+                  SELECT 1 FROM public.nw_runtime_knowledge_sources source
+                  WHERE source.tenant_id=binding.tenant_id AND source.binding_id=binding.binding_id
+                    AND (source.chunk_count&lt;=0 OR source.chunk_count&lt;&gt;(
+                        SELECT count(*) FROM public.nw_runtime_knowledge_chunks chunk
+                        WHERE chunk.tenant_id=source.tenant_id AND chunk.binding_id=source.binding_id
+                          AND chunk.source_id=source.source_id AND chunk.source_version=source.source_version))
+              )
+              <if test="selectedVersions != null and !selectedVersions.isEmpty()">
+              AND NOT EXISTS (
+                  SELECT 1 FROM (VALUES
+                    <foreach collection="selectedVersions" item="version" separator=",">
+                        (#{version.sourceId},#{version.sourceVersion})
+                    </foreach>
+                  ) AS selected(source_id,source_version)
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM public.nw_runtime_knowledge_sources source
+                      JOIN public.nw_knowledge_document_versions version
+                        ON version.tenant_id=source.source_tenant_id AND version.kb_id=source.source_base_id
+                       AND version.source_version=source.source_version AND version.chunk_set_id=source.chunk_set_id
+                      JOIN public.nw_knowledge_documents document
+                        ON document.tenant_id=version.tenant_id AND document.kb_id=version.kb_id
+                       AND document.id=version.document_id AND document.deleted_at IS NULL
+                      WHERE source.tenant_id=binding.tenant_id AND source.binding_id=binding.binding_id
+                        AND source.source_id=selected.source_id AND source.source_version=selected.source_version
+                        AND version.status='ready' AND version.chunk_count=source.chunk_count
+                  )
+              )
+              </if>
+        )
+    </select>
+</mapper>

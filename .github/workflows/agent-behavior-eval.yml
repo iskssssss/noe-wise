@@ -1,0 +1,152 @@
+name: Agent 行为评测
+
+on:
+  pull_request:
+    paths:
+      - 'tools/chat_regression/**'
+      - 'tools/runtime/conversation_eval.py'
+      - 'tools/runtime/test_conversation_eval.py'
+      - 'backend-java/skillforge-prompts/**'
+      - 'tools/memory_evaluation/**'
+      - 'tools/skills/evaluation/**'
+      - 'tools/skills/test_skill_evaluation.py'
+      - '!**/*.md'
+      - 'backend-java/skillforge-prompts/src/main/resources/**'
+      - '.github/workflows/agent-behavior-eval.yml'
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: '平台目录中的目录 ID 或精确模型名'
+        required: true
+        type: string
+      max_tokens:
+        description: '本批次 token 上限，正整数'
+        required: true
+        type: string
+      max_turns:
+        description: '本批次轮次上限，正整数'
+        required: true
+        type: string
+      max_seconds:
+        description: '本批次总时长上限（秒），正整数'
+        required: true
+        type: string
+      environment_receipt:
+        description: 'runner 本机已有的受控部署或网络验证收据 JSON 路径'
+        required: true
+        type: string
+      api:
+        description: '机构 API 地址'
+        required: false
+        default: 'http://127.0.0.1:8000/api/v1'
+        type: string
+      platform:
+        description: '平台 API 地址'
+        required: false
+        default: 'http://127.0.0.1:8100/api/v1'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  pr-tests:
+    name: 行为评测离线单元测试
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 生成变更评测建议
+        id: changes
+        env:
+          EVAL_BASE: ${{ github.event.pull_request.base.sha }}
+          EVAL_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python -X utf8 -B tools/chat_regression/behavior_changes.py --base "$EVAL_BASE" --head "$EVAL_HEAD" --output eval-change-plan
+          cat eval-change-plan/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: 运行 chat_regression 单元测试
+        if: steps.changes.outputs.behavior == 'true'
+        run: python -X utf8 -B -m unittest discover -s tools/chat_regression -p 'test_*.py'
+      - name: 运行 conversation_eval 回归测试
+        if: steps.changes.outputs.behavior == 'true'
+        run: python -X utf8 -B tools/runtime/test_conversation_eval.py
+      - name: 运行记忆评测工具离线测试
+        if: steps.changes.outputs.memory == 'true'
+        run: python -X utf8 -B -m unittest discover -s tools/memory_evaluation -p 'test_*.py'
+      - name: 运行 Skill 评测工具离线测试
+        if: steps.changes.outputs.skill == 'true'
+        run: python -X utf8 -B tools/skills/test_skill_evaluation.py
+      - name: 上传离线评测建议
+        if: always() && steps.changes.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-evaluation-change-plan
+          path: eval-change-plan
+
+  live:
+    name: 受保护环境行为评测
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, Windows, skillforge-agent-eval]
+    environment: agent-eval
+    concurrency:
+      group: skillforge-agent-eval-live
+      cancel-in-progress: false
+    env:
+      SF_TENANT: ${{ secrets.SF_TENANT }}
+      SF_ADMIN_USER: ${{ secrets.SF_ADMIN_USER }}
+      SF_ADMIN_PASSWORD: ${{ secrets.SF_ADMIN_PASSWORD }}
+      SF_PLATFORM_USER: ${{ secrets.SF_PLATFORM_USER }}
+      SF_PLATFORM_PASSWORD: ${{ secrets.SF_PLATFORM_PASSWORD }}
+      SF_BEHAVIOR_ROOT: tools/chat_regression/runs/behavior-${{ github.run_id }}-${{ github.run_attempt }}
+      SF_BEHAVIOR_MODEL_ID: ${{ inputs.model_id }}
+      SF_BEHAVIOR_MAX_TOKENS: ${{ inputs.max_tokens }}
+      SF_BEHAVIOR_MAX_TURNS: ${{ inputs.max_turns }}
+      SF_BEHAVIOR_MAX_SECONDS: ${{ inputs.max_seconds }}
+      SF_BEHAVIOR_ENVIRONMENT_RECEIPT: ${{ inputs.environment_receipt }}
+      SF_BEHAVIOR_API: ${{ inputs.api }}
+      SF_BEHAVIOR_PLATFORM: ${{ inputs.platform }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 运行受控 live 行为评测
+        shell: pwsh
+        run: |
+          python -X utf8 -B tools/chat_regression/behavior_main.py ci-run `
+            --root $env:SF_BEHAVIOR_ROOT `
+            --model-id $env:SF_BEHAVIOR_MODEL_ID `
+            --api $env:SF_BEHAVIOR_API `
+            --platform $env:SF_BEHAVIOR_PLATFORM `
+            --deployment-revision $env:GITHUB_SHA `
+            --max-tokens $env:SF_BEHAVIOR_MAX_TOKENS `
+            --max-turns $env:SF_BEHAVIOR_MAX_TURNS `
+            --max-seconds $env:SF_BEHAVIOR_MAX_SECONDS `
+            --environment-receipt $env:SF_BEHAVIOR_ENVIRONMENT_RECEIPT
+      - name: 检查脱敏公开产物
+        if: always()
+        id: public
+        shell: pwsh
+        run: |
+          $public = Join-Path $env:SF_BEHAVIOR_ROOT 'public'
+          if (Test-Path -LiteralPath $public -PathType Container) {
+            'exists=true' >> $env:GITHUB_OUTPUT
+          } else {
+            'exists=false' >> $env:GITHUB_OUTPUT
+          }
+      - name: 上传脱敏公开产物
+        if: ${{ always() && steps.public.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-behavior-evaluation-public
+          if-no-files-found: error
+          path: ${{ env.SF_BEHAVIOR_ROOT }}/public

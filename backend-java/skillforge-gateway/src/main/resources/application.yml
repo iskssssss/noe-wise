@@ -1,0 +1,61 @@
+server:
+  port: ${GATEWAY_PORT:8080}
+
+spring:
+  jackson:
+    time-zone: Asia/Shanghai
+  application:
+    name: skillforge-gateway
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:false}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+    gateway:
+      routes:
+        # 平台部署管理复用机构宿主中的单一部署事务；目标宿主独立认证和授权。
+        - id: skillforge-platform-deployments
+          uri: ${INSTITUTION_URI:http://localhost:8000}
+          predicates:
+            - Path=/api/v1/platform/agent-deployments,/api/v1/platform/agent-deployments/detail,/api/v1/platform/agent-deployments/definitions,/api/v1/platform/agent-deployments/grants,/api/v1/platform/agent-deployments/bindings,/api/v1/platform/agent-deployments/authorization,/api/v1/platform/agent-deployments/receipt/query
+          filters:
+            - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - id: skillforge-institution-usage
+          uri: ${INSTITUTION_URI:http://localhost:8000}
+          predicates:
+            - Path=/api/v1/admin/usage/events,/api/v1/admin/usage/summary,/api/v1/admin/usage/details
+          filters:
+            - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - id: skillforge-platform-service
+          uri: ${PLATFORM_URI:http://localhost:8100}
+          predicates:
+            - Path=/api/v1/platform/**,/api/v1/admin/**,/api/v1/marketplace/reviews/**,/api/v1/marketplace/workflows/*/approve,/api/v1/marketplace/workflows/*/reject
+          filters:
+            - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - id: skillforge-institution-service-ws
+          uri: ${INSTITUTION_WS_URI:ws://localhost:8000}
+          predicates:
+            - Path=/api/v1/agent/ws
+        - id: skillforge-institution-service
+          uri: ${INSTITUTION_URI:http://localhost:8000}
+          predicates:
+            - Path=/api/**,/health/**
+          filters:
+            - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  pattern:
+    dateformat: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX,Asia/Shanghai"

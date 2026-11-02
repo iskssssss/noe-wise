@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.platform.controller.PlatformTenantCreateReceiptMapper">
+  <insert id="claim">
+    INSERT INTO nw_platform_tenant_create_receipts(request_id, actor_ref, status)
+    VALUES(CAST(#{requestId} AS uuid), #{actor}, 'PROCESSING') ON CONFLICT (request_id) DO NOTHING
+  </insert>
+  <update id="complete">
+    UPDATE nw_platform_tenant_create_receipts SET status=#{status}, tenant_id=#{tenantId},
+      tenant_name=#{tenantName}, error_message=#{errorMessage}, completed_at=now()
+    WHERE request_id=CAST(#{requestId} AS uuid) AND status='PROCESSING'
+  </update>
+  <select id="find" resultType="com.skillforge.platform.controller.PlatformTenantCreateReceiptMapper$Row">
+    SELECT actor_ref, status, tenant_id, tenant_name, error_message
+    FROM nw_platform_tenant_create_receipts WHERE request_id=CAST(#{requestId} AS uuid)
+  </select>
+</mapper>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <script>
+      // 首屏默认深色；在应用加载前恢复已保存的明暗主题，避免闪烁。
+      let savedTheme
+      try {
+        savedTheme = localStorage.getItem('skillforge-chat:theme')
+      } catch {}
+      document.documentElement.dataset.theme =
+        savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'dark'
+    </script>
+    <style>
+      :root {
+        --chat-page-bg: #f8f9fa;
+        color-scheme: light;
+      }
+      :root[data-theme='dark'] {
+        --chat-page-bg: #111214;
+        color-scheme: dark;
+      }
+      html,
+      body {
+        background: var(--chat-page-bg);
+      }
+    </style>
+    <meta name="application-name" content="灵知" />
+    <meta name="description" content="与智能体对话，让想法成为成果。" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg?v=noewise" />
+    <title>灵知 · 智能对话</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

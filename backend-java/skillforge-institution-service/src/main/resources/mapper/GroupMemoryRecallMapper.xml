@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.GroupMemoryRecall$Qualifications">
+    <select id="allowed" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM (
+        SELECT g.id FROM nw_group_bindings g
+        JOIN nw_group_memberships m ON (m.tenant_id,m.integration_id,m.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+        JOIN nw_group_service_agents a ON (a.tenant_id,a.integration_id,a.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+        JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+        JOIN nw_end_users e ON e.tenant_id=g.tenant_id AND e.external_integration_id=g.integration_id AND e.id=m.end_user_id
+        JOIN nw_service_principals p ON p.tenant_id=g.tenant_id AND p.integration_id=g.integration_id
+        JOIN nw_institution_integrations i ON i.tenant_id=g.tenant_id AND i.integration_id=g.integration_id
+        JOIN nw_tenants n ON n.id=g.tenant_id
+        WHERE g.tenant_id=#{query.tenant} AND g.integration_id=#{query.integration} AND g.id=#{query.group}
+        AND g.session_id=#{query.session} AND g.status='active'
+        AND m.end_user_id=#{query.user} AND m.status='active' AND a.agent_id=#{query.agent} AND a.status='active'
+        AND b.status='active' AND e.status='active' AND n.status IN('active','warning')
+        AND p.principal_id=#{query.principal} AND p.status='active'
+        AND p.credential_version=#{query.credentialVersion} AND p.scopes @&gt; '["groups.memory.read"]'::jsonb
+        FOR SHARE OF g,m,a,b,e,p,i,n) current_qualification)
+    </select>
+</mapper>

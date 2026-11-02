@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeDocumentMapper">
+    <resultMap id="baseCount" type="com.skillforge.core.knowledge.model.KnowledgeBaseCount">
+        <constructor>
+            <arg column="kb_id" javaType="_long"/>
+            <arg column="total" javaType="_long"/>
+        </constructor>
+    </resultMap>
+    <select id="countByBase" resultMap="baseCount">
+        SELECT kb_id, COUNT(*) AS total
+        FROM public.nw_knowledge_documents
+        WHERE tenant_id = #{tenantId}
+          AND deleted_at IS NULL
+          AND kb_id IN
+          <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>
+        GROUP BY kb_id
+    </select>
+
+    <update id="compareAndSetCurrentVersion">
+        UPDATE public.nw_knowledge_documents
+        SET current_source_version = #{newSourceVersion}
+        WHERE tenant_id = #{tenantId}
+          AND id = #{documentId}
+          AND deleted_at IS NULL
+          AND current_source_version = #{expectedSourceVersion}
+    </update>
+    <update id="installInitialVersion">
+        UPDATE public.nw_knowledge_documents
+        SET current_source_version = #{newSourceVersion}
+        WHERE tenant_id = #{tenantId}
+          AND id = #{documentId}
+          AND deleted_at IS NULL
+          AND current_source_version IS NULL
+    </update>
+    <update id="softDelete">
+        UPDATE public.nw_knowledge_documents
+        SET deleted_at = now()
+        WHERE tenant_id = #{tenantId}
+          AND id = #{documentId}
+          AND deleted_at IS NULL
+          AND current_source_version = #{expectedSourceVersion}
+    </update>
+</mapper>

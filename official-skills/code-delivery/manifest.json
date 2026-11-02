@@ -1,0 +1,10 @@
+{
+  "entry": {"language": "python", "script_path": "scripts/package_delivery.py"},
+  "dependencies": [],
+  "example_inputs": ["examples/delivery.json"],
+  "outputs": {
+    "source": ["每个 files.path 对应的原始文件"],
+    "patch": ["change.patch"],
+    "zip": ["<package_name>.zip，package_name 默认 source-package"]
+  }
+}

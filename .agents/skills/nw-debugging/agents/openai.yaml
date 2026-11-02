@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 系统排障"
+  short_description: "沿灵知 实际运行路径定位故障并验证根因"
+
+policy:
+  allow_implicit_invocation: true

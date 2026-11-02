@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.sqlite.SqliteSchemaMapper">
+<!-- 0 仅对应现有未标版本布局（含已支持的预算策略升级）；1 为当前布局。 -->
+<select id="version" resultType="int">PRAGMA user_version</select>
+<update id="recordVersion">PRAGMA user_version = 1</update>
+<update id="create0"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_session_owners(tenant_id TEXT NOT NULL,target_kind TEXT NOT NULL,target_id TEXT NOT NULL,session_id TEXT NOT NULL,end_user_id INTEGER NOT NULL,subject_kind TEXT NOT NULL CHECK(subject_kind='USER'),subject_id TEXT NOT NULL CHECK(subject_id=CAST(end_user_id AS TEXT)),PRIMARY KEY(tenant_id,target_kind,target_id,session_id)) STRICT;]]></update>
+<update id="create1"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_sessions (
+    tenant_id text NOT NULL, session_id text NOT NULL,
+    target_kind TEXT NOT NULL, target_id text NOT NULL, end_user_id INTEGER NOT NULL,
+    subject_kind TEXT NOT NULL CHECK(subject_kind='USER'), subject_id TEXT NOT NULL CHECK(subject_id=CAST(end_user_id AS TEXT)),
+    last_event_sequence INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT execution_sessions_pk PRIMARY KEY (tenant_id,session_id),
+    CONSTRAINT execution_sessions_owner_uq UNIQUE (tenant_id,session_id,target_kind,target_id,end_user_id),
+    CONSTRAINT execution_sessions_identity_ck CHECK (trim(tenant_id)<>'' AND trim(session_id)<>'' AND trim(target_id)<>'' AND end_user_id>0),
+    CONSTRAINT execution_sessions_kind_ck CHECK (target_kind IN ('AGENT','TEAM')),
+    CONSTRAINT execution_sessions_sequence_ck CHECK (last_event_sequence>=0)
+) STRICT;]]></update>
+<update id="create2"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_materials (
+    tenant_id text NOT NULL, reference text NOT NULL, schema_id text NOT NULL, canonical_json text NOT NULL,
+    CONSTRAINT execution_materials_pk PRIMARY KEY (tenant_id,reference),
+    CONSTRAINT execution_materials_content_ck CHECK (trim(tenant_id)<>'' AND trim(reference)<>'' AND trim(schema_id)<>'' AND trim(canonical_json)<>'')
+) STRICT;]]></update>
+<update id="create3"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_runs (
+    tenant_id text NOT NULL, run_id TEXT NOT NULL, session_id text NOT NULL,
+    target_kind TEXT NOT NULL, target_id text NOT NULL, end_user_id INTEGER NOT NULL,
+    subject_kind TEXT NOT NULL CHECK(subject_kind='USER'), subject_id TEXT NOT NULL CHECK(subject_id=CAST(end_user_id AS TEXT)), agent_id text NOT NULL,
+    requester_kind TEXT NOT NULL,requester_end_user_id INTEGER,requester_system_principal_id TEXT,
+    source_session_id TEXT,source_message_id TEXT,origin_ref TEXT NOT NULL,
+    input_id TEXT NOT NULL, trace_id text NOT NULL, span_id text NOT NULL, root_input_id text NOT NULL,
+    caused_by_event_id text, identity_ref text NOT NULL, actor_verification_ref text NOT NULL, configuration_ref text NOT NULL,
+    input_ref text NOT NULL, initial_context_ref text NOT NULL, admission_fingerprint text NOT NULL,
+    status TEXT NOT NULL, phase TEXT NOT NULL, revision INTEGER NOT NULL, fence INTEGER NOT NULL DEFAULT 0,
+    cancelled INTEGER NOT NULL DEFAULT false, decisions INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0,
+    knowledge_calls INTEGER NOT NULL DEFAULT 0, context_ref text NOT NULL, current_action_id TEXT,
+    waiting_action_id TEXT, waiting_generation INTEGER,
+    batch_source_attempt text, batch_size integer,
+    lease_worker_id text, lease_claim_id text, lease_until_second INTEGER, lease_until_nano integer,
+    next_due_second INTEGER, next_due_nano integer,
+    created_second INTEGER NOT NULL, created_nano integer NOT NULL, updated_second INTEGER NOT NULL, updated_nano integer NOT NULL,
+    CONSTRAINT execution_runs_requester_ck CHECK (requester_kind='END_USER' AND requester_end_user_id=end_user_id AND requester_system_principal_id IS NULL),
+    CONSTRAINT execution_runs_current_action_fk FOREIGN KEY(tenant_id,current_action_id,run_id) REFERENCES agent_runtime_execution_actions(tenant_id,action_id,run_id) DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT execution_runs_batch_source_fk FOREIGN KEY(tenant_id,run_id,batch_source_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,run_id,attempt_id),
+    CONSTRAINT execution_runs_pk PRIMARY KEY (tenant_id,run_id),
+    CONSTRAINT execution_runs_session_uq UNIQUE (tenant_id,run_id,session_id),
+    CONSTRAINT execution_runs_full_owner_uq UNIQUE (tenant_id,target_kind,target_id,agent_id,session_id,end_user_id,run_id),
+    CONSTRAINT execution_runs_input_uq UNIQUE (tenant_id,session_id,target_kind,target_id,input_id),
+    CONSTRAINT execution_runs_owner_fk FOREIGN KEY (tenant_id,session_id,target_kind,target_id,end_user_id)
+        REFERENCES agent_runtime_execution_sessions(tenant_id,session_id,target_kind,target_id,end_user_id),
+    CONSTRAINT execution_runs_input_fk FOREIGN KEY (tenant_id,input_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_runs_initial_context_fk FOREIGN KEY (tenant_id,initial_context_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_runs_context_fk FOREIGN KEY (tenant_id,context_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_runs_identity_ck CHECK (trim(run_id)<>'' AND trim(agent_id)<>'' AND trim(input_id)<>'' AND trim(trace_id)<>'' AND trim(span_id)<>'' AND trim(root_input_id)<>'' AND trim(identity_ref)<>'' AND trim(actor_verification_ref)<>'' AND trim(configuration_ref)<>'' AND trim(admission_fingerprint)<>''),
+    CONSTRAINT execution_runs_status_ck CHECK (status IN ('QUEUED','RUNNING','SUSPENDED','RESUMING','COMPLETED','TERMINATED','FAILED','CANCELLED')),
+    CONSTRAINT execution_runs_phase_ck CHECK (phase IN ('READY','AWAITING_RESULT','WAITING','UNCERTAIN','FINISHED') AND (phase='FINISHED')=(status IN ('COMPLETED','TERMINATED','FAILED','CANCELLED'))),
+    CONSTRAINT execution_runs_counts_ck CHECK (revision>0 AND fence>=0 AND decisions>=0 AND tool_calls>=0 AND knowledge_calls>=0),
+    CONSTRAINT execution_runs_lease_ck CHECK ((lease_claim_id IS NULL AND lease_worker_id IS NULL AND lease_until_second IS NULL AND lease_until_nano IS NULL)
+        OR (lease_claim_id IS NOT NULL AND trim(lease_claim_id)<>'' AND lease_worker_id IS NOT NULL AND trim(lease_worker_id)<>'' AND fence>0 AND lease_until_second IS NOT NULL AND lease_until_nano IS NOT NULL AND lease_until_nano BETWEEN 0 AND 999999999)),
+    CONSTRAINT execution_runs_terminal_lease_ck CHECK (phase NOT IN ('FINISHED','WAITING','UNCERTAIN') OR (lease_claim_id IS NULL AND next_due_second IS NULL)),
+    CONSTRAINT execution_runs_due_ck CHECK ((next_due_second IS NULL AND next_due_nano IS NULL) OR (next_due_second IS NOT NULL AND next_due_nano IS NOT NULL AND next_due_nano BETWEEN 0 AND 999999999)),
+    CONSTRAINT execution_runs_action_phase_ck CHECK ((phase<>'READY' OR current_action_id IS NULL OR waiting_action_id IS NOT NULL)
+        AND (phase NOT IN ('AWAITING_RESULT','WAITING','UNCERTAIN') OR current_action_id IS NOT NULL OR batch_source_attempt IS NOT NULL)),
+    CONSTRAINT execution_runs_batch_ck CHECK ((batch_source_attempt IS NULL)=(batch_size IS NULL)
+        AND (batch_source_attempt IS NULL OR (trim(batch_source_attempt)<>'' AND batch_size>=2 AND current_action_id IS NULL))),
+    CONSTRAINT execution_runs_wait_ck CHECK ((waiting_action_id IS NULL)=(waiting_generation IS NULL)
+        AND (waiting_generation IS NULL OR (waiting_generation>0 AND current_action_id=waiting_action_id))
+        AND (phase<>'WAITING' OR waiting_action_id IS NOT NULL OR batch_source_attempt IS NOT NULL)),
+    CONSTRAINT execution_runs_time_ck CHECK (created_nano BETWEEN 0 AND 999999999 AND updated_nano BETWEEN 0 AND 999999999 AND (updated_second,updated_nano)>=(created_second,created_nano))
+) STRICT;]]></update>
+<update id="create4"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_actions (
+    tenant_id text NOT NULL, action_id TEXT NOT NULL, run_id TEXT NOT NULL,
+    action_ordinal INTEGER NOT NULL, kind TEXT NOT NULL, target_handle text NOT NULL,
+    capability_ref text NOT NULL, request_ref text NOT NULL, fingerprint text NOT NULL,
+    status TEXT NOT NULL, current_attempt text NOT NULL, selected_attempt text,
+    batch_source_attempt text, batch_size integer, batch_slot integer,
+    CONSTRAINT execution_actions_selected_fk FOREIGN KEY(tenant_id,action_id,selected_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,action_id,attempt_id) DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT execution_actions_current_fk FOREIGN KEY(tenant_id,action_id,current_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,action_id,attempt_id) DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT execution_actions_pk PRIMARY KEY (tenant_id,action_id),
+    CONSTRAINT execution_actions_run_uq UNIQUE (tenant_id,action_id,run_id),
+    CONSTRAINT execution_actions_ordinal_uq UNIQUE (tenant_id,run_id,action_ordinal),
+    CONSTRAINT execution_actions_batch_slot_uq UNIQUE (tenant_id,run_id,batch_source_attempt,batch_slot),
+    CONSTRAINT execution_actions_run_fk FOREIGN KEY (tenant_id,run_id) REFERENCES agent_runtime_execution_runs(tenant_id,run_id),
+    CONSTRAINT execution_actions_request_fk FOREIGN KEY (tenant_id,request_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_actions_identity_ck CHECK (trim(action_id)<>'' AND action_ordinal>0 AND trim(target_handle)<>'' AND trim(capability_ref)<>'' AND trim(fingerprint)<>''),
+    CONSTRAINT execution_actions_kind_ck CHECK (kind IN ('MODEL','TOOL','KNOWLEDGE','WORKFLOW','DELEGATION')),
+    CONSTRAINT execution_actions_batch_ck CHECK ((batch_source_attempt IS NULL AND batch_size IS NULL AND batch_slot IS NULL)
+        OR (batch_source_attempt IS NOT NULL AND trim(batch_source_attempt)<>'' AND batch_size IS NOT NULL AND batch_size>=2
+            AND batch_slot IS NOT NULL AND batch_slot BETWEEN 1 AND batch_size AND kind='TOOL')),
+    CONSTRAINT execution_actions_status_ck CHECK (status IN ('DISPATCHED','SUCCEEDED','FAILED','UNKNOWN','WAITING_INPUT')),
+    CONSTRAINT execution_actions_selected_ck CHECK ((status NOT IN ('DISPATCHED','WAITING_INPUT') OR selected_attempt IS NULL)
+        AND (status NOT IN ('SUCCEEDED','FAILED') OR selected_attempt IS NOT NULL))
+) STRICT;]]></update>
+<update id="create5"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_attempts (
+    tenant_id text NOT NULL, attempt_id text NOT NULL, action_id TEXT NOT NULL, run_id TEXT NOT NULL,
+    fence INTEGER NOT NULL, request_ref text NOT NULL, fingerprint text NOT NULL, continuation_generation INTEGER,
+    result_kind TEXT, result_ref text, uncertainty_ref text, feedback_ref text, external_operation text,
+    adopted INTEGER NOT NULL DEFAULT false,
+    observation_sequence INTEGER,
+    CONSTRAINT execution_attempts_pk PRIMARY KEY (tenant_id,attempt_id),
+    CONSTRAINT execution_attempts_action_uq UNIQUE (tenant_id,action_id,attempt_id),
+    CONSTRAINT execution_attempts_run_uq UNIQUE (tenant_id,run_id,attempt_id),
+    CONSTRAINT execution_attempts_action_fk FOREIGN KEY (tenant_id,action_id,run_id) REFERENCES agent_runtime_execution_actions(tenant_id,action_id,run_id),
+    CONSTRAINT execution_attempts_request_fk FOREIGN KEY (tenant_id,request_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_attempts_result_fk FOREIGN KEY (tenant_id,result_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_attempts_uncertainty_fk FOREIGN KEY (tenant_id,uncertainty_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_attempts_feedback_fk FOREIGN KEY (tenant_id,feedback_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_attempts_budget_fk FOREIGN KEY (tenant_id,attempt_id) REFERENCES agent_runtime_budget_attempts(tenant_id,attempt_id),
+    CONSTRAINT execution_attempts_identity_ck CHECK (trim(attempt_id)<>'' AND fence>0 AND trim(fingerprint)<>'' AND (continuation_generation IS NULL OR continuation_generation>0)),
+    CONSTRAINT execution_attempts_result_ck CHECK ((result_kind IS NULL)=(result_ref IS NULL) AND (result_kind IS NULL OR result_kind IN ('SUCCEEDED','FAILED','UNKNOWN','INPUT_REQUIRED')) AND (NOT adopted OR result_ref IS NOT NULL)
+        AND (feedback_ref IS NULL OR result_ref IS NOT NULL) AND (uncertainty_ref IS NULL OR result_ref IS NOT NULL))
+) STRICT;]]></update>
+<update id="create6"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_batch_members (
+    tenant_id text NOT NULL,run_id TEXT NOT NULL,source_attempt text NOT NULL,slot integer NOT NULL,size integer NOT NULL,
+    action_id TEXT NOT NULL,first_attempt_id text NOT NULL,reused INTEGER NOT NULL,reused_result_ref text,reused_feedback_ref text,
+    CONSTRAINT execution_batch_members_pk PRIMARY KEY(tenant_id,run_id,source_attempt,slot),
+    CONSTRAINT execution_batch_members_action_uq UNIQUE(tenant_id,run_id,source_attempt,action_id),
+    CONSTRAINT execution_batch_members_source_fk FOREIGN KEY(tenant_id,run_id,source_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,run_id,attempt_id),
+    CONSTRAINT execution_batch_members_action_fk FOREIGN KEY(tenant_id,action_id,run_id) REFERENCES agent_runtime_execution_actions(tenant_id,action_id,run_id),
+    CONSTRAINT execution_batch_members_attempt_fk FOREIGN KEY(tenant_id,action_id,first_attempt_id) REFERENCES agent_runtime_execution_attempts(tenant_id,action_id,attempt_id),
+    CONSTRAINT execution_batch_members_result_fk FOREIGN KEY(tenant_id,reused_result_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_batch_members_feedback_fk FOREIGN KEY(tenant_id,reused_feedback_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_batch_members_slot_ck CHECK(size BETWEEN 2 AND 8 AND slot BETWEEN 1 AND size),
+    CONSTRAINT execution_batch_members_reused_ck CHECK((reused AND reused_result_ref IS NOT NULL AND reused_feedback_ref IS NOT NULL)
+        OR (NOT reused AND reused_result_ref IS NULL AND reused_feedback_ref IS NULL))
+) STRICT;]]></update>
+<update id="create7"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_waits (
+    tenant_id text NOT NULL, run_id TEXT NOT NULL, action_id TEXT NOT NULL, generation INTEGER NOT NULL,
+    kind TEXT NOT NULL, source_attempt text NOT NULL, input_id TEXT, response_ref text, fingerprint text, actor_ref text,
+    accepted_revision INTEGER, continuation_attempt text, consumed_revision INTEGER, declared_revision INTEGER NOT NULL CHECK(declared_revision>0),
+    business_wait_id text, execution_id text, suspend_ref text, action_key text, execution_revision INTEGER,
+    plan_id text, plan_revision INTEGER,
+    CONSTRAINT execution_waits_pk PRIMARY KEY (tenant_id,action_id,generation),
+    CONSTRAINT execution_waits_run_uq UNIQUE (tenant_id,run_id,action_id,generation),
+    CONSTRAINT execution_waits_input_uq UNIQUE (tenant_id,run_id,input_id),
+    CONSTRAINT execution_waits_source_uq UNIQUE (tenant_id,source_attempt),
+    CONSTRAINT execution_waits_action_fk FOREIGN KEY (tenant_id,action_id,run_id) REFERENCES agent_runtime_execution_actions(tenant_id,action_id,run_id),
+    CONSTRAINT execution_waits_source_fk FOREIGN KEY (tenant_id,action_id,source_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,action_id,attempt_id),
+    CONSTRAINT execution_waits_response_fk FOREIGN KEY (tenant_id,response_ref) REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_waits_continuation_fk FOREIGN KEY (tenant_id,action_id,continuation_attempt) REFERENCES agent_runtime_execution_attempts(tenant_id,action_id,attempt_id) DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT execution_waits_identity_ck CHECK (generation>0 AND trim(source_attempt)<>''),
+    CONSTRAINT execution_waits_kind_ck CHECK (kind IN ('TOOL','HUMAN','DELEGATION','WORKFLOW','PLAN')),
+    CONSTRAINT execution_waits_internal_ck CHECK (
+        (kind IN ('TOOL','HUMAN') AND business_wait_id IS NULL AND execution_id IS NULL AND suspend_ref IS NULL AND action_key IS NULL AND execution_revision IS NULL AND plan_id IS NULL AND plan_revision IS NULL)
+        OR (kind='DELEGATION' AND business_wait_id IS NOT NULL AND trim(business_wait_id)<>'' AND execution_id IS NULL AND suspend_ref IS NULL AND action_key IS NULL AND execution_revision IS NULL AND plan_id IS NULL AND plan_revision IS NULL)
+        OR (kind='WORKFLOW' AND business_wait_id IS NULL AND execution_id IS NOT NULL AND trim(execution_id)<>'' AND suspend_ref IS NOT NULL AND trim(suspend_ref)<>''
+            AND action_key IS NOT NULL AND trim(action_key)<>'' AND execution_revision IS NOT NULL AND execution_revision>0 AND plan_id IS NULL AND plan_revision IS NULL)
+        OR (kind='PLAN' AND business_wait_id IS NOT NULL AND trim(business_wait_id)<>'' AND plan_id IS NOT NULL AND trim(plan_id)<>'' AND plan_revision IS NOT NULL AND plan_revision>0
+            AND execution_id IS NULL AND suspend_ref IS NULL AND action_key IS NULL AND execution_revision IS NULL)),
+    CONSTRAINT execution_waits_accepted_ck CHECK ((input_id IS NULL AND response_ref IS NULL AND fingerprint IS NULL AND actor_ref IS NULL AND accepted_revision IS NULL)
+        OR (input_id IS NOT NULL AND trim(input_id)<>'' AND response_ref IS NOT NULL AND fingerprint IS NOT NULL AND trim(fingerprint)<>''
+            AND actor_ref IS NOT NULL AND trim(actor_ref)<>'' AND accepted_revision IS NOT NULL AND accepted_revision>0)),
+    CONSTRAINT execution_waits_consumed_ck CHECK ((continuation_attempt IS NULL OR (kind IN ('TOOL','WORKFLOW') AND input_id IS NOT NULL AND trim(continuation_attempt)<>''))
+        AND (consumed_revision IS NULL OR (kind IN ('HUMAN','DELEGATION','PLAN') AND input_id IS NOT NULL AND consumed_revision>accepted_revision)))
+) STRICT;]]></update>
+<update id="create8"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_wait_children (
+    tenant_id text NOT NULL, action_id TEXT NOT NULL, generation INTEGER NOT NULL, ordinal integer NOT NULL,
+    delegation_id text NOT NULL, child_run_id TEXT NOT NULL,
+    CONSTRAINT execution_wait_children_pk PRIMARY KEY (tenant_id,action_id,generation,ordinal),
+    CONSTRAINT execution_wait_children_entry_uq UNIQUE (tenant_id,action_id,generation,delegation_id),
+    CONSTRAINT execution_wait_children_run_uq UNIQUE (tenant_id,action_id,generation,child_run_id),
+    CONSTRAINT execution_wait_children_wait_fk FOREIGN KEY (tenant_id,action_id,generation) REFERENCES agent_runtime_execution_waits(tenant_id,action_id,generation),
+    CONSTRAINT execution_wait_children_run_fk FOREIGN KEY (tenant_id,child_run_id) REFERENCES agent_runtime_execution_runs(tenant_id,run_id),
+    CONSTRAINT execution_wait_children_identity_ck CHECK (ordinal>0 AND trim(delegation_id)<>'')
+) STRICT;]]></update>
+<update id="create9"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_wait_requests (
+    tenant_id text NOT NULL, action_id TEXT NOT NULL, generation INTEGER NOT NULL, input_key text NOT NULL, method TEXT NOT NULL,
+    CONSTRAINT execution_wait_requests_pk PRIMARY KEY (tenant_id,action_id,generation,input_key),
+    CONSTRAINT execution_wait_requests_wait_fk FOREIGN KEY (tenant_id,action_id,generation) REFERENCES agent_runtime_execution_waits(tenant_id,action_id,generation),
+    CONSTRAINT execution_wait_requests_key_ck CHECK (trim(input_key)<>''),
+    CONSTRAINT execution_wait_requests_method_ck CHECK (method IN ('elicitation/create','sampling/createMessage','roots/list'))
+) STRICT;]]></update>
+<update id="create10"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_events (
+    tenant_id text NOT NULL, session_id text NOT NULL, run_id TEXT NOT NULL, event_sequence INTEGER NOT NULL,
+    revision INTEGER NOT NULL, event_id text NOT NULL, type text NOT NULL, schema_id text NOT NULL, canonical_json text NOT NULL,
+    occurred_second INTEGER NOT NULL, occurred_nano integer NOT NULL,
+    CONSTRAINT execution_events_pk PRIMARY KEY (tenant_id,session_id,event_sequence),
+    CONSTRAINT execution_events_identity_uq UNIQUE (tenant_id,session_id,event_id),
+    CONSTRAINT execution_events_run_fk FOREIGN KEY (tenant_id,run_id,session_id) REFERENCES agent_runtime_execution_runs(tenant_id,run_id,session_id),
+    CONSTRAINT execution_events_content_ck CHECK (event_sequence>0 AND revision>0 AND trim(event_id)<>'' AND trim(type)<>'' AND trim(schema_id)<>'' AND trim(canonical_json)<>'' AND occurred_nano BETWEEN 0 AND 999999999)
+) STRICT;]]></update>
+<update id="create11"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_execution_supplements (
+    tenant_id text NOT NULL, run_id TEXT NOT NULL, input_id TEXT NOT NULL,
+    content_ref text NOT NULL, fingerprint text NOT NULL, actor_ref text NOT NULL,
+    ordinal INTEGER NOT NULL, applied_revision INTEGER,
+    CONSTRAINT execution_supplements_pk PRIMARY KEY (tenant_id,run_id,input_id),
+    CONSTRAINT execution_supplements_ordinal_uq UNIQUE (tenant_id,run_id,ordinal),
+    CONSTRAINT execution_supplements_run_fk FOREIGN KEY (tenant_id,run_id)
+        REFERENCES agent_runtime_execution_runs(tenant_id,run_id),
+    CONSTRAINT execution_supplements_content_fk FOREIGN KEY (tenant_id,content_ref)
+        REFERENCES agent_runtime_execution_materials(tenant_id,reference),
+    CONSTRAINT execution_supplements_identity_ck CHECK (trim(input_id)<>'' AND trim(fingerprint)<>'' AND trim(actor_ref)<>''),
+    CONSTRAINT execution_supplements_revision_ck CHECK (ordinal>0 AND (applied_revision IS NULL OR applied_revision>0))
+) STRICT;]]></update>
+<update id="create12"><![CDATA[CREATE INDEX IF NOT EXISTS execution_runs_due_idx ON agent_runtime_execution_runs(tenant_id,next_due_second,next_due_nano,run_id) WHERE phase IN ('READY','AWAITING_RESULT') AND NOT cancelled AND next_due_second IS NOT NULL;]]></update>
+<update id="create13"><![CDATA[CREATE INDEX IF NOT EXISTS execution_runs_session_idx ON agent_runtime_execution_runs(tenant_id,session_id,created_second,created_nano);]]></update>
+<update id="create14"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_desktop_sessions(id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,workspace TEXT NOT NULL,created_at TEXT NOT NULL) STRICT;]]></update>
+<update id="create15"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_desktop_verified_identities(tenant_id TEXT NOT NULL,reference TEXT NOT NULL,session_id TEXT NOT NULL,target_kind TEXT NOT NULL,target_id TEXT NOT NULL,end_user_id INTEGER NOT NULL CHECK(end_user_id>0),policy_revision INTEGER NOT NULL CHECK(policy_revision>0),PRIMARY KEY(tenant_id,reference)) STRICT;]]></update>
+<update id="create16"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_desktop_identity_scopes(tenant_id TEXT NOT NULL,reference TEXT NOT NULL,scope TEXT NOT NULL,PRIMARY KEY(tenant_id,reference,scope),FOREIGN KEY(tenant_id,reference) REFERENCES agent_runtime_desktop_verified_identities(tenant_id,reference)) STRICT;]]></update>
+<update id="create18"><![CDATA[CREATE TABLE IF NOT EXISTS agent_runtime_desktop_send_authorizations(tenant_id TEXT NOT NULL,attempt_id TEXT NOT NULL,PRIMARY KEY(tenant_id,attempt_id),FOREIGN KEY(tenant_id,attempt_id) REFERENCES agent_runtime_execution_attempts(tenant_id,attempt_id)) STRICT;]]></update>
+<!-- 仅在未标版本布局升级后编译当前正式列查询；不读取正文，不尝试推断未知布局。 -->
+<select id="validateCurrentColumns" resultType="int">
+    SELECT 1 WHERE
+    EXISTS (SELECT tenant_id,target_kind,target_id,session_id,end_user_id,subject_kind,subject_id FROM agent_runtime_session_owners WHERE 0) OR
+    EXISTS (SELECT tenant_id,session_id,target_kind,target_id,end_user_id,subject_kind,subject_id,last_event_sequence FROM agent_runtime_execution_sessions WHERE 0) OR
+    EXISTS (SELECT tenant_id,reference,schema_id,canonical_json FROM agent_runtime_execution_materials WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,session_id,target_kind,target_id,end_user_id,subject_kind,subject_id,agent_id,requester_kind,requester_end_user_id,requester_system_principal_id,source_session_id,source_message_id,origin_ref,input_id,trace_id,span_id,root_input_id,caused_by_event_id,identity_ref,actor_verification_ref,configuration_ref,input_ref,initial_context_ref,admission_fingerprint,status,phase,revision,fence,cancelled,decisions,tool_calls,knowledge_calls,context_ref,current_action_id,waiting_action_id,waiting_generation,batch_source_attempt,batch_size,lease_worker_id,lease_claim_id,lease_until_second,lease_until_nano,next_due_second,next_due_nano,created_second,created_nano,updated_second,updated_nano FROM agent_runtime_execution_runs WHERE 0) OR
+    EXISTS (SELECT tenant_id,action_id,run_id,action_ordinal,kind,target_handle,capability_ref,request_ref,fingerprint,status,current_attempt,selected_attempt,batch_source_attempt,batch_size,batch_slot FROM agent_runtime_execution_actions WHERE 0) OR
+    EXISTS (SELECT tenant_id,attempt_id,action_id,run_id,fence,request_ref,fingerprint,continuation_generation,result_kind,result_ref,uncertainty_ref,feedback_ref,external_operation,adopted,observation_sequence FROM agent_runtime_execution_attempts WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,source_attempt,slot,size,action_id,first_attempt_id,reused,reused_result_ref,reused_feedback_ref FROM agent_runtime_execution_batch_members WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,action_id,generation,kind,source_attempt,input_id,response_ref,fingerprint,actor_ref,accepted_revision,continuation_attempt,consumed_revision,declared_revision,business_wait_id,execution_id,suspend_ref,action_key,execution_revision,plan_id,plan_revision FROM agent_runtime_execution_waits WHERE 0) OR
+    EXISTS (SELECT tenant_id,action_id,generation,ordinal,delegation_id,child_run_id FROM agent_runtime_execution_wait_children WHERE 0) OR
+    EXISTS (SELECT tenant_id,action_id,generation,input_key,method FROM agent_runtime_execution_wait_requests WHERE 0) OR
+    EXISTS (SELECT tenant_id,session_id,run_id,event_sequence,revision,event_id,type,schema_id,canonical_json,occurred_second,occurred_nano FROM agent_runtime_execution_events WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,input_id,content_ref,fingerprint,actor_ref,ordinal,applied_revision FROM agent_runtime_execution_supplements WHERE 0) OR
+    EXISTS (SELECT id,title,workspace,created_at FROM agent_runtime_desktop_sessions WHERE 0) OR
+    EXISTS (SELECT tenant_id,reference,session_id,target_kind,target_id,end_user_id,policy_revision FROM agent_runtime_desktop_verified_identities WHERE 0) OR
+    EXISTS (SELECT tenant_id,reference,scope FROM agent_runtime_desktop_identity_scopes WHERE 0) OR
+    EXISTS (SELECT tenant_id,attempt_id FROM agent_runtime_desktop_send_authorizations WHERE 0) OR
+    EXISTS (SELECT tenant_id,root_id,scenario,source_version,policy_mode,active_limit_seconds,closing_active_seconds,closing_run_id,phase FROM agent_runtime_budget_roots WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,root_id,role,source_version,policy_mode,active_limit_seconds FROM agent_runtime_budget_runs WHERE 0) OR
+    EXISTS (SELECT tenant_id,scope_kind,scope_id,dimension,policy_mode,maximum,consumed,reserved FROM agent_runtime_budget_balances WHERE 0) OR
+    EXISTS (SELECT tenant_id,attempt_id,run_id,fingerprint,category,closing,state,result_reference FROM agent_runtime_budget_attempts WHERE 0) OR
+    EXISTS (SELECT tenant_id,attempt_id,result_reference FROM agent_runtime_budget_result_receipts WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,target_handle FROM agent_runtime_budget_closing_targets WHERE 0) OR
+    EXISTS (SELECT tenant_id,attempt_id,dimension,reserved,reported,settled FROM agent_runtime_budget_attempt_amounts WHERE 0) OR
+    EXISTS (SELECT tenant_id,run_id,interval_id,started_at,confirmed_through FROM agent_runtime_budget_activity WHERE 0)
+</select>
+</mapper>

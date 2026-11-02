@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.AgentRuntimePlanDependencies$Mapper">
+    <select id="waiting" resultType="string">
+        SELECT r.run_id FROM agent_runtime_execution_runs r
+        JOIN agent_runtime_execution_waits w ON w.tenant_id=r.tenant_id AND w.run_id=r.run_id
+          AND w.action_id=r.waiting_action_id AND w.generation=r.waiting_generation AND w.kind='PLAN'
+        WHERE r.tenant_id=#{tenant} AND r.phase='WAITING' AND NOT r.cancelled AND w.input_id IS NULL
+          AND r.run_id &gt; #{after} AND COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+        ORDER BY r.run_id LIMIT #{limit}
+    </select>
+    <select id="source" resultType="string" useCache="false" flushCache="true">
+        SELECT e.payload_canonical_json FROM agent_runtime_session_events e
+        JOIN agent_runtime_dag_works w ON w.tenant_id=e.tenant_id AND w.session_id=e.session_id AND w.root_input_id=#{dependency.planId}
+          AND w.target_kind=e.target_kind AND w.target_id=e.target_id AND w.end_user_id=e.end_user_id
+        WHERE e.tenant_id=#{run.runRef.tenantId.value} AND e.session_id=#{run.owner.sessionRef.sessionId}
+          AND e.target_kind=#{run.owner.target.kind} AND e.target_id=#{run.owner.target.id} AND e.end_user_id=#{run.owner.requireUser.value}
+          AND e.agent_id=#{run.agentId.value} AND e.run_id=#{run.runRef.runId} AND e.event_id=#{event}
+          AND e.input_id=#{run.causationInputId.value} AND e.trace_id=#{run.trace.traceId} AND e.span_id=#{run.trace.spanId}
+          AND e.root_input_id=#{run.trace.rootInputId.value}
+          AND e.event_type='plan.wait.requested' AND e.payload_schema_id='skillforge.plan.wait.requested.v1'
+          AND e.payload_canonical_json::jsonb-&gt;&gt;'work_id'=#{dependency.planId}
+          AND e.payload_canonical_json::jsonb-&gt;&gt;'plan_revision'=CAST(#{dependency.planRevision} AS text)
+          AND COALESCE(current_setting('app.tenant_id',true),'')=#{run.runRef.tenantId.value}
+        <if test="lock">FOR UPDATE OF w</if>
+    </select>
+</mapper>

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-retrieval-b-dev-v1",
+  "split": "dev",
+  "evidenceStatus": "NOT_RUN",
+  "splitClaim": "独立人工案例；机制可重合，非盲测，不宣称语义家族隔离泛化。",
+  "annotationProtocol": "人工先按用户语义给相关度0/1/2；未读取检索分数生成标签。未列出的事实为0，越权/失效事实只记expectedForbidden，不能当相关候选参与指标。",
+  "defaults": {
+    "tenantKey": "own-tenant",
+    "userKey": "own-user",
+    "agentKey": "own-agent",
+    "groupKey": "own-group",
+    "status": "ACTIVE",
+    "revision": 1
+  },
+  "metricPlan": {
+    "recallAtK": [
+      5
+    ],
+    "ndcgAtK": [
+      5
+    ],
+    "falsePositiveQueries": "单独统计人工零相关查询的非空结果率，不将其混为Recall分母",
+    "cost": "实际模型/Token/耗时未运行保持NOT_RUN"
+  },
+  "facts": [
+    {
+      "id": "D-CHANNEL",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "后续提醒请发企业微信，不要打电话。"
+    },
+    {
+      "id": "D-APPOINTMENT",
+      "type": "episode",
+      "scope": "USER_AGENT",
+      "body": "设备安装预约在2026年11月8日下午三点，目前尚未完成。"
+    },
+    {
+      "id": "D-ORDER",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "报告默认先列风险，再介绍收益。"
+    },
+    {
+      "id": "D-THEME-NOISE",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "界面主题统一采用深色。"
+    },
+    {
+      "id": "D-GROUP-ORDER",
+      "type": "preference",
+      "scope": "GROUP",
+      "body": "本群的通知须先列结论，再解释执行步骤。"
+    },
+    {
+      "id": "D-METADATA-NOISE",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "总结预算时，先列费用总额再附明细。",
+      "nonBodyMetadata": {
+        "schema": "skillforge.memory.preference.v1",
+        "subject": "user:7",
+        "internal_id": "internal-runtime-102"
+      }
+    }
+  ],
+  "queries": [
+    {
+      "id": "DQ01",
+      "caseLabel": "notification-paraphrase",
+      "text": "我希望通过什么渠道收到后续通知？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "D-CHANNEL": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "DQ02",
+      "caseLabel": "negated-call",
+      "text": "别电话催办，请按我选的提醒方式联系。",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "D-CHANNEL": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "DQ03",
+      "caseLabel": "appointment-uncertainty",
+      "text": "安装约定什么时候，现在完成了吗？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "D-APPOINTMENT": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "DQ04",
+      "caseLabel": "risk-order-paraphrase",
+      "text": "写方案时风险与收益先讲哪个？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "D-ORDER": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "DQ05",
+      "caseLabel": "group-order",
+      "text": "本群通知的既定顺序是什么？",
+      "ownerKey": "own-group",
+      "relevanceGrades": {
+        "D-GROUP-ORDER": 2
+      },
+      "expectedForbidden": [],
+      "scopes": [
+        "GROUP"
+      ]
+    },
+    {
+      "id": "DQ06",
+      "caseLabel": "internal-metadata-is-not-body",
+      "text": "skillforge.memory.preference.v1 internal-runtime-102",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {},
+      "expectedForbidden": [],
+      "maxRelevant": 0
+    }
+  ]
+}

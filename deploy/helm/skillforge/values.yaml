@@ -1,0 +1,76 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# Supply images built and published by your delivery pipeline.
+backend:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/your-org/skillforge-backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/your-org/skillforge-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  # nginx listens on this port; the Service keeps its public port at 80.
+  containerPort: 8080
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+# PostgreSQL (with pgvector), Redis, and Elasticsearch are external dependencies.
+# Provision and operate them outside this chart, then provide their connection URLs.
+config:
+  appEnv: production
+  logLevel: INFO
+  databaseUrl: ""
+  databaseUrlSync: ""
+  redisUrl: ""
+  elasticsearchUrl: ""
+  elasticsearchEnabled: "true"
+  corsOrigins: '["https://skillforge.example.com"]'
+  jwtIssuer: skillforge
+  jwtAudience: skillforge-api
+  otelExporterOtlpEndpoint: ""
+  otelServiceName: skillforge-backend
+
+# Prefer an existing Secret created by your secret manager. If omitted, this chart
+# creates one from the values below. Never commit production values to values files.
+secrets:
+  existingSecret: ""
+  secretKey: ""
+  encryptionKeys: ""
+  llmApiKey: ""
+  llmApiBase: https://api.openai.com/v1
+  llmModel: gpt-4o-mini
+  llmEmbeddingModel: text-embedding-3-small
+
+imagePullSecrets: []
+serviceAccount:
+  create: false
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: skillforge.example.com
+  tls: []

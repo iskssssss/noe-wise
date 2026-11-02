@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.mapper.WorkflowAssetMapper">
+    <select id="lockTemplate" resultType="com.skillforge.core.workflow.model.WorkflowTemplateDO">
+        SELECT id, workflow_id, tenant_id, status, updated_at
+        FROM nw_workflow_templates WHERE workflow_id = #{workflowId} FOR UPDATE
+    </select>
+    <update id="touchTemplate">
+        UPDATE nw_workflow_templates SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
+        WHERE id = #{id} AND status = 'draft'
+    </update>
+    <insert id="upsertBatch">
+        INSERT INTO nw_workflow_assets (id, tenant_id, workflow_id, asset_name, content, created_at, updated_at)
+        VALUES
+        <foreach collection="assets" item="asset" separator=",">
+            (#{asset.id}, #{asset.tenantId,jdbcType=BIGINT}, #{asset.workflowId}, #{asset.assetName},
+             #{asset.content,jdbcType=BINARY}, #{asset.createdAt}, #{asset.updatedAt})
+        </foreach>
+        ON CONFLICT (workflow_id, asset_name) DO UPDATE
+        SET content = EXCLUDED.content, updated_at = EXCLUDED.updated_at
+    </insert>
+</mapper>

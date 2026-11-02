@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.workspace.SessionWorkspaceMapper">
+  <sql id="columns">workspace_id, tenant_id::text AS tenant_id, session_id, product_session_id, end_user_id, cleanup_state, initial_operation_id, initialized</sql>
+  <insert id="insert">
+    INSERT INTO nw_chat_session_workspaces(workspace_id,tenant_id,session_id,product_session_id,end_user_id,cleanup_state,initial_operation_id,initialized)
+    SELECT #{workspaceId},CAST(#{tenantId} AS bigint),#{sessionId},#{productSessionId},#{endUserId},'active',#{initialOperationId},FALSE
+    WHERE EXISTS(SELECT 1 FROM nw_chat_sessions WHERE tenant_id=CAST(#{tenantId} AS bigint) AND session_id=#{productSessionId}
+      AND end_user_id=#{endUserId} AND NOT jsonb_exists_any(COALESCE(metadata,'{}'::jsonb),ARRAY['closed_at','open_platform_closed_at']))
+    ON CONFLICT (tenant_id,session_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.workspace.SessionWorkspaceMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_chat_session_workspaces WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session}
+  </select>
+  <select id="list" resultType="com.skillforge.institution.workspace.SessionWorkspaceMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_chat_session_workspaces WHERE tenant_id=CAST(#{tenant} AS bigint)
+      AND product_session_id=#{productSession} AND cleanup_state='active' ORDER BY session_id
+  </select>
+  <select id="productActive" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM nw_chat_sessions WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{productSession}
+      AND end_user_id=#{endUser} AND NOT jsonb_exists_any(COALESCE(metadata,'{}'::jsonb),ARRAY['closed_at','open_platform_closed_at']))
+  </select>
+  <update id="markDeletedProducts">
+    UPDATE nw_chat_session_workspaces w SET cleanup_state='pending',updated_at=clock_timestamp()
+    WHERE w.tenant_id=CAST(#{tenant} AS bigint) AND w.cleanup_state='active' AND NOT EXISTS(
+      SELECT 1 FROM nw_chat_sessions s WHERE s.tenant_id=w.tenant_id AND s.session_id=w.product_session_id
+      AND s.end_user_id=w.end_user_id AND NOT jsonb_exists_any(COALESCE(s.metadata,'{}'::jsonb),ARRAY['closed_at','open_platform_closed_at']))
+  </update>
+  <select id="pendingCleanup" resultType="com.skillforge.institution.workspace.SessionWorkspaceMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_chat_session_workspaces WHERE tenant_id=CAST(#{tenant} AS bigint)
+      AND cleanup_state='pending' ORDER BY updated_at LIMIT 100
+  </select>
+  <update id="completeCleanup">
+    UPDATE nw_chat_session_workspaces SET cleanup_state='complete',updated_at=clock_timestamp()
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND workspace_id=#{workspace} AND cleanup_state='pending'
+  </update>
+  <update id="confirmInitialization">
+    UPDATE nw_chat_session_workspaces SET initialized=TRUE,updated_at=clock_timestamp()
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND workspace_id=#{workspace}
+      AND initial_operation_id=#{operation} AND cleanup_state='active' AND NOT initialized
+  </update>
+  <insert id="recordImport">
+    INSERT INTO nw_chat_session_workspace_imports(tenant_id,workspace_id,operation_id,evidence)
+    VALUES(CAST(#{tenant} AS bigint),#{workspace},#{operation},CAST(#{evidence} AS jsonb))
+    ON CONFLICT(tenant_id,workspace_id,operation_id) DO NOTHING
+  </insert>
+</mapper>

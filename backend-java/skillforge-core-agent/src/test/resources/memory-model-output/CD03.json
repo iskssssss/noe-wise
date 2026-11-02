@@ -1,0 +1,16 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "userId": 7,
+    "sources": [
+      {
+        "id": "s1",
+        "text": "上周我说“这一回请写英文”只是给那位客户看的；从现在起，我自己的报告一直用中文。",
+        "occurredAt": "2026-10-23T02:00:00Z"
+      }
+    ],
+    "existingFacts": []
+  },
+  "rawOutput": "{\"schemaVersion\":2,\"candidates\":[{\"type\":\"preference\",\"subject\":\"user:7\",\"predicate\":\"报告语言\",\"object\":{\"language\":\"中文\"},\"signal\":\"observed\",\"sensitive\":false,\"scope\":\"user_agent\",\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null},\"conditions\":[\"用户自己的报告\"],\"evidence\":[{\"sourceId\":\"s1\",\"quote\":\"从现在起，我自己的报告一直用中文。\"}],\"relation\":\"new\",\"uncertainties\":[]}]}",
+  "rawOutputSha256": "649627885f218919283a938590ed5ca9fb85b7ccc4e247de63bd5054e4b211cc"
+}

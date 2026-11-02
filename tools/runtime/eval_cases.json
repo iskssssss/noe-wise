@@ -1,0 +1,47 @@
+{
+  "format": "skillforge-conversation-eval-cases/v1",
+  "cases": [
+    {
+      "id": "page-generation-no-extra-queries",
+      "description": "已有页面生成信息时不追加查询。",
+      "applies_when": {"path": "scenario", "equals": "page_generation"},
+      "assertions": [{"kind": "no_tools_named", "tool_names": ["search", "list_artifacts", "get_latest_reset"]}],
+      "manual_gold": {"question": "回复是否基于已有页面生成信息完成，且没有缺失关键事实？", "rubric": "人工按完整对话评分；不得按关键词自动判定。"}
+    },
+    {
+      "id": "refresh-minimal-tool-set",
+      "description": "刷新仅调用当前场景允许的最小工具集合。",
+      "applies_when": {"path": "scenario", "equals": "refresh"},
+      "assertions": [{"kind": "only_tools_named", "tool_names": ["get_latest_reset"]}],
+      "manual_gold": {"question": "刷新结果是否满足用户所需的新鲜度和内容？", "rubric": "人工验证工具选择与最终答复的语义。"}
+    },
+    {
+      "id": "paginate-only-for-incomplete-history",
+      "description": "只有历史不完整时才分页。",
+      "applies_when": {"path": "scenario", "equals": "history"},
+      "assertions": [{"kind": "no_pagination_when_complete", "tool_names": ["load_more_history", "paginate_history"]}],
+      "manual_gold": {"question": "历史不完整时是否正确继续分页并在完整时停止？", "rubric": "此自动断言只覆盖完整历史；不完整分支人工复核。"}
+    },
+    {
+      "id": "failure-fact-review",
+      "description": "工具失败后基于失败事实复盘。",
+      "applies_when": {"path": "scenario", "equals": "failure"},
+      "assertions": [{"kind": "failure_fact_review"}],
+      "manual_gold": {"question": "答复是否准确说明失败事实、影响和下一步？", "rubric": "需要人工阅读；无结构化 fact_reviews 时自动结果必须为 unknown。"}
+    },
+    {
+      "id": "json-wrapper-is-not-tool-call",
+      "description": "JSON 包装的助手正文不能被误计为工具调用。",
+      "applies_when": {"path": "scenario", "equals": "json_wrapper"},
+      "assertions": [{"kind": "declared_tool_count", "equals": 0}],
+      "manual_gold": {"question": "JSON 正文是否被正确作为用户可见内容处理？", "rubric": "自动项只核对声明的 process 类型。"}
+    },
+    {
+      "id": "plan-has-no-write-before-approval",
+      "description": "Plan 获批前不存在写副作用。",
+      "applies_when": {"path": "scenario", "equals": "plan"},
+      "assertions": [{"kind": "no_write_before_approval"}],
+      "manual_gold": {"question": "Plan 是否在批准前保持为只读调查，且批准语义清晰？", "rubric": "工具 effect 缺失时不能假定其只读。"}
+    }
+  ]
+}

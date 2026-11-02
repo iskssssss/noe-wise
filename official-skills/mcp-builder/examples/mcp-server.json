@@ -1,0 +1,38 @@
+{
+  "name": "department_mcp",
+  "tools": [
+    {
+      "name": "department_sum",
+      "description": "对明确提供的金额数组求和，不推断数据来源",
+      "operation": "sum",
+      "input_schema": {
+        "type": "object",
+        "properties": {"values": {"type": "array", "items": {"type": "number"}, "maxItems": 1000}},
+        "required": ["values"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "department_lookup",
+      "description": "从示例合成数据按部门精确查询并分页",
+      "operation": "lookup",
+      "lookup_field": "department",
+      "records": [{"department": "A", "amount": 120.5}, {"department": "A", "amount": 120.5}, {"department": "B", "amount": 249}],
+      "input_schema": {
+        "type": "object",
+        "properties": {"value": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+        "required": ["value"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tests": [
+    {"tool": "department_sum", "arguments": {"values": [120.5, 120.5, 249]}, "expected_json": {"sum": 490}},
+    {"tool": "department_sum", "arguments": {"values": ["120.5"]}, "expect_error": true},
+    {"tool": "department_lookup", "arguments": {"value": "A", "limit": 1}, "expected_json": {"items": [{"department": "A", "amount": 120.5}], "total_count": 2, "has_more": true, "next_offset": 1}},
+    {"tool": "department_lookup", "arguments": {"value": "A", "offset": 1, "limit": 1}, "expected_json": {"items": [{"department": "A", "amount": 120.5}], "total_count": 2, "has_more": false, "next_offset": null}},
+    {"tool": "department_lookup", "arguments": {"value": "missing"}, "expected_json": {"items": [], "total_count": 0, "has_more": false, "next_offset": null}},
+    {"tool": "department_lookup", "arguments": {"value": "A", "limit": 0}, "expect_error": true}
+  ],
+  "bundle_zip": false
+}

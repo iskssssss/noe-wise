@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 协作"
+  short_description: "处理灵知 已授权任务协作、接替与资源交接"
+
+policy:
+  allow_implicit_invocation: true

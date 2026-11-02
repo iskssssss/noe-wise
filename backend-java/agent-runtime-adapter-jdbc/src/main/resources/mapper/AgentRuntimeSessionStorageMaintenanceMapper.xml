@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.SessionStorageMaintenanceMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenantId}, true)</select>
+    <select id="storageNow" resultType="java.time.Instant">SELECT clock_timestamp()</select>
+    <select id="lockOwner" resultType="long">
+        SELECT end_user_id FROM public.agent_runtime_session_owners
+         WHERE tenant_id=#{owner.sessionRef.tenantId.value} AND session_id=#{owner.sessionRef.sessionId}
+           AND target_kind=#{owner.target.kind} AND target_id=#{owner.target.id} AND end_user_id=#{owner.requireUser.value}
+         FOR NO KEY UPDATE
+    </select>
+    <select id="ownerProtection" resultType="string">
+        SELECT unnest(public.agent_runtime_session_history_owner_protection(
+            #{owner.sessionRef.tenantId.value},#{owner.sessionRef.sessionId},
+            #{owner.target.kind},#{owner.target.id},#{owner.requireUser.value}))
+    </select>
+    <sql id="ownerScope">
+        tenant_id=#{owner.sessionRef.tenantId.value} AND session_id=#{owner.sessionRef.sessionId}
+        AND target_kind=#{owner.target.kind} AND target_id=#{owner.target.id} AND end_user_id=#{owner.requireUser.value}
+    </sql>
+    <select id="scanRetirementOwners" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryOwnerRow">
+        SELECT target_kind,target_id,session_id,end_user_id FROM public.agent_runtime_sessions
+         WHERE tenant_id=#{tenantId} AND status='CLOSED'
+           AND (updated_epoch_second,updated_nano) &lt;= (#{cutoffSecond},#{cutoffNano})
+           AND public.agent_runtime_session_owner_retirement_pending(tenant_id,session_id,target_kind,target_id,end_user_id)
+        <if test="cursor != null">AND (target_kind,target_id,session_id) &gt;
+            (#{cursor.targetKind},#{cursor.targetId},#{cursor.sessionId})</if>
+         ORDER BY target_kind,target_id,session_id LIMIT #{limit}
+    </select>
+    <select id="retireOwner" affectData="true" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionOwnerRetirementRow">
+        SELECT rows,bytes,more_work,array_to_string(protected_reasons,'|') AS protected_reasons
+          FROM public.agent_runtime_session_retire_owner(#{owner.sessionRef.tenantId.value},#{owner.sessionRef.sessionId},
+            #{owner.target.kind},#{owner.target.id},#{owner.requireUser.value},#{limit})
+    </select>
+    <select id="scanClosedOwners" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryOwnerRow">
+        SELECT session.target_kind,session.target_id,session.session_id,session.end_user_id
+          FROM public.agent_runtime_sessions session
+          LEFT JOIN public.agent_runtime_session_history_retirements retirement
+            ON retirement.tenant_id=session.tenant_id AND retirement.session_id=session.session_id
+           AND retirement.target_kind=session.target_kind AND retirement.target_id=session.target_id
+         WHERE session.tenant_id=#{tenantId} AND session.status='CLOSED'
+           AND (session.updated_epoch_second,session.updated_nano) &lt;= (#{cutoffSecond},#{cutoffNano})
+           AND (retirement.status IS NULL OR retirement.status&lt;&gt;'RETIRED'
+               OR retirement.source_session_revision&lt;&gt;session.session_revision)
+        <if test="cursor != null">AND (session.target_kind,session.target_id,session.session_id) &gt;
+            (#{cursor.targetKind},#{cursor.targetId},#{cursor.sessionId})</if>
+         ORDER BY session.target_kind,session.target_id,session.session_id LIMIT #{limit}
+    </select>
+    <select id="lockClosedOwner" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryOwnerRow">
+        SELECT target_kind,target_id,session_id,end_user_id,session_revision AS source_session_revision,
+               updated_epoch_second AS closed_epoch_second,updated_nano AS closed_nano
+          FROM public.agent_runtime_sessions WHERE <include refid="ownerScope"/> AND status='CLOSED'
+           AND (updated_epoch_second,updated_nano) &lt;= (#{cutoffSecond},#{cutoffNano}) FOR UPDATE
+    </select>
+    <insert id="ensureHistoryRetirement">
+        INSERT INTO public.agent_runtime_session_history_retirements
+            (tenant_id,session_id,target_kind,target_id,end_user_id,source_session_revision,closed_epoch_second,closed_nano)
+        VALUES(#{owner.sessionRef.tenantId.value},#{owner.sessionRef.sessionId},#{owner.target.kind},#{owner.target.id},
+            #{owner.requireUser.value},#{revision},#{closedSecond},#{closedNano})
+        ON CONFLICT (tenant_id,target_kind,target_id,session_id) DO NOTHING
+    </insert>
+    <select id="lockHistoryRetirement" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryScanRow">
+        SELECT source_session_revision,closed_epoch_second,closed_nano,scan_after_sequence,resume_after_sequence,recheck_after_sequence,status
+          FROM public.agent_runtime_session_history_retirements WHERE <include refid="ownerScope"/> FOR UPDATE
+    </select>
+    <select id="lockHistoryEvents" resultMap="com.skillforge.runtime.adapter.jdbc.session.SessionLogMapper.sessionEventRow">
+        SELECT <include refid="com.skillforge.runtime.adapter.jdbc.session.SessionLogMapper.eventColumns"/>
+          FROM public.agent_runtime_session_events WHERE <include refid="ownerScope"/>
+           AND event_type='agent.model-reasoning' AND session_sequence&gt;#{after}
+           AND session_sequence&lt;=#{through}
+         ORDER BY session_sequence LIMIT #{limit} FOR UPDATE SKIP LOCKED
+    </select>
+    <select id="historyEventKeys" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryEventKey">
+        SELECT event_id,session_sequence FROM public.agent_runtime_session_events WHERE <include refid="ownerScope"/>
+           AND event_type='agent.model-reasoning' AND session_sequence&gt;#{after}
+         ORDER BY session_sequence LIMIT #{limit}
+    </select>
+    <select id="eventProtected" resultType="boolean">
+        SELECT public.agent_runtime_session_event_referenced(#{owner.sessionRef.tenantId.value},
+            #{owner.sessionRef.sessionId},#{owner.target.kind},#{owner.target.id},#{owner.requireUser.value},#{eventId})
+    </select>
+    <insert id="insertEventTombstone">
+        INSERT INTO public.agent_runtime_session_event_tombstones
+            (tenant_id,session_id,target_kind,target_id,end_user_id,event_id,session_sequence,event_digest)
+        VALUES (#{row.tenantId},#{row.sessionId},#{row.targetKind},#{row.targetId},#{row.endUserId},#{row.eventId},#{row.sessionSequence},#{digest})
+    </insert>
+    <select id="deleteHistoryEvent" affectData="true" resultType="com.skillforge.runtime.adapter.jdbc.session.StorageReclaimedRow">
+        WITH deleted AS (DELETE FROM public.agent_runtime_session_events WHERE <include refid="ownerScope"/>
+            AND event_id=#{eventId} AND session_sequence=#{sequence}
+            RETURNING octet_length(payload_canonical_json) AS size_bytes)
+        SELECT count(*) AS rows,COALESCE(sum(size_bytes),0)::bigint AS bytes FROM deleted
+    </select>
+    <update id="advanceHistoryRetirement">
+        UPDATE public.agent_runtime_session_history_retirements SET scan_after_sequence=GREATEST(scan_after_sequence,#{after}),
+               resume_after_sequence=#{resume},recheck_after_sequence=#{recheck,jdbcType=BIGINT},
+               retired_through_sequence=CASE WHEN #{rows}&gt;0 THEN GREATEST(retired_through_sequence,#{after}) ELSE retired_through_sequence END,
+               retired_event_count=retired_event_count+#{rows},retired_bytes=retired_bytes+#{bytes},
+               retired_reasoning_count=retired_reasoning_count+#{reasoning},
+               status=CASE WHEN #{complete} THEN 'RETIRED' ELSE 'RETIRING' END,updated_at=clock_timestamp()
+         WHERE <include refid="ownerScope"/> AND resume_after_sequence=#{expectedAfter}
+    </update>
+    <sql id="checkpointUnreferenced">
+        NOT EXISTS (SELECT 1 FROM public.agent_runtime_session_checkpoint_body_refs ref
+            WHERE ref.tenant_id=body.tenant_id AND ref.run_id=body.run_id AND ref.body_hash=body.content_hash)
+    </sql>
+    <select id="lockCheckpointBodies" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionStorageBodyKey">
+        SELECT body.run_id, body.content_hash FROM public.agent_runtime_session_checkpoint_bodies body
+         WHERE body.tenant_id=#{tenantId}
+         <if test="cursor != null">AND (body.run_id,body.content_hash) &gt; (#{cursor.runId},#{cursor.contentHash})</if>
+         ORDER BY body.run_id, body.content_hash
+         LIMIT #{limit} FOR UPDATE OF body SKIP LOCKED
+    </select>
+    <select id="deleteCheckpointBodies" affectData="true" resultType="com.skillforge.runtime.adapter.jdbc.session.StorageReclaimedRow">
+        WITH deleted AS (
+            DELETE FROM public.agent_runtime_session_checkpoint_bodies body
+             WHERE body.tenant_id=#{tenantId} AND (body.run_id, body.content_hash) IN
+             <foreach collection="keys" item="key" open="(" separator="," close=")">(#{key.runId}, #{key.contentHash})</foreach>
+               AND <include refid="checkpointUnreferenced"/>
+             RETURNING octet_length(body.payload_data) AS size_bytes
+        ) SELECT count(*) AS rows, COALESCE(sum(size_bytes),0)::bigint AS bytes FROM deleted
+    </select>
+    <select id="lockEventBodies" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionEventBodyKey">
+        SELECT body.target_kind,body.target_id,body.session_id,body.content_hash
+          FROM public.agent_runtime_session_event_bodies body WHERE body.tenant_id=#{tenantId}
+        <if test="cursor != null">AND (body.target_kind,body.target_id,body.session_id,body.content_hash) &gt;
+            (#{cursor.targetKind},#{cursor.targetId},#{cursor.sessionId},#{cursor.contentHash})</if>
+         ORDER BY body.target_kind,body.target_id,body.session_id,body.content_hash
+         LIMIT #{limit} FOR UPDATE OF body SKIP LOCKED
+    </select>
+    <select id="deleteEventBodies" affectData="true" resultType="com.skillforge.runtime.adapter.jdbc.session.StorageReclaimedRow">
+        WITH deleted AS (DELETE FROM public.agent_runtime_session_event_bodies body
+             WHERE body.tenant_id=#{tenantId} AND (body.target_kind,body.target_id,body.session_id,body.content_hash) IN
+             <foreach collection="keys" item="key" open="(" separator="," close=")">
+                 (#{key.targetKind},#{key.targetId},#{key.sessionId},#{key.contentHash})</foreach>
+               AND NOT EXISTS (SELECT 1 FROM public.agent_runtime_session_event_body_refs ref
+                   WHERE (ref.tenant_id,ref.target_kind,ref.target_id,ref.session_id,ref.content_hash)
+                       =(body.tenant_id,body.target_kind,body.target_id,body.session_id,body.content_hash))
+             RETURNING octet_length(body.canonical_content) AS size_bytes)
+        SELECT count(*) AS rows,COALESCE(sum(size_bytes),0)::bigint AS bytes FROM deleted
+    </select>
+    <select id="lockDiagnosticEvents" resultMap="com.skillforge.runtime.adapter.jdbc.session.SessionLogMapper.sessionEventRow">
+        SELECT <include refid="com.skillforge.runtime.adapter.jdbc.session.SessionLogMapper.eventColumns"/>
+          FROM public.agent_runtime_session_events WHERE <include refid="ownerScope"/>
+           AND event_type='agent.runtime-diagnostic' AND event_version='1'
+           AND payload_schema_id='skillforge.runtime.agent.runtime-diagnostic.v1'
+           AND (occurred_at_epoch_second,occurred_at_nano)&lt;(#{cutoffSecond},#{cutoffNano})
+           AND NOT public.agent_runtime_session_event_referenced(tenant_id,session_id,target_kind,target_id,end_user_id,event_id)
+         ORDER BY session_sequence LIMIT #{limit} FOR UPDATE SKIP LOCKED
+    </select>
+    <update id="advanceDiagnosticRetirement">
+        UPDATE public.agent_runtime_session_history_retirements SET retired_diagnostic_count=retired_diagnostic_count+#{rows},
+            retired_diagnostic_bytes=retired_diagnostic_bytes+#{bytes},updated_at=clock_timestamp()
+         WHERE <include refid="ownerScope"/>
+    </update>
+</mapper>

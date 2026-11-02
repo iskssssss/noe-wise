@@ -1,0 +1,66 @@
+name: Open Platform Contract
+
+on:
+  push:
+    paths:
+      - "backend-java/skillforge-institution-service/src/main/resources/openapi/open-platform-v1.yaml"
+      - "frontend-shared/src/open-platform/**"
+      - "tools/open_platform_contract.py"
+      - "tools/test_open_platform_contract.py"
+      - ".github/workflows/open-platform-contract.yml"
+      - "backend-java/**"
+  pull_request:
+    paths:
+      - "backend-java/skillforge-institution-service/src/main/resources/openapi/open-platform-v1.yaml"
+      - "frontend-shared/src/open-platform/**"
+      - "tools/open_platform_contract.py"
+      - "tools/test_open_platform_contract.py"
+      - ".github/workflows/open-platform-contract.yml"
+      - "backend-java/**"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install contract tooling
+        run: python -m pip install --disable-pip-version-check pyyaml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate contract and generator tests
+        run: |
+          python tools/open_platform_contract.py check
+          python tools/open_platform_contract.py generate --check
+          python -m unittest tools/test_open_platform_contract.py
+      - name: Export actual Springdoc document with isolated database and Redis
+        working-directory: backend-java
+        run: ./gradlew --no-daemon -Dorg.gradle.workers.max=2 :skillforge-institution-service:test --tests com.skillforge.institution.integration.OpenPlatformRuntimeOpenApiIntegrationTest
+      - name: Compare versioned contract with actual Springdoc schemas and scopes
+        shell: bash
+        run: python tools/open_platform_contract.py diff --runtime backend-java/skillforge-institution-service/build/reports/open-platform/runtime-openapi.json 2>&1 | tee backend-java/skillforge-institution-service/build/reports/open-platform/runtime-diff.txt
+      - name: Preserve runtime contract diagnostics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: open-platform-runtime-contract-evidence
+          path: |
+            backend-java/skillforge-institution-service/build/reports/open-platform/runtime-openapi.json
+            backend-java/skillforge-institution-service/build/reports/open-platform/runtime-diff.txt
+            backend-java/skillforge-institution-service/build/reports/tests/test
+            backend-java/skillforge-institution-service/build/test-results/test
+          if-no-files-found: warn
+      - name: Build publishable contract artifact
+        run: python tools/open_platform_contract.py publish --output-dir open-platform-v1-artifact
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: open-platform-v1-sdk-contract
+          path: open-platform-v1-artifact

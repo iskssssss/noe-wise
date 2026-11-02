@@ -1,0 +1,61 @@
+{
+  "entry": {
+    "language": "python",
+    "script_path": "scripts/generate_document.py"
+  },
+  "dependencies": [
+    {
+      "name": "lxml",
+      "version": "6.1.3"
+    },
+    {
+      "name": "python-docx",
+      "version": "1.1.2"
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0"
+    }
+  ],
+  "example_inputs": [
+    "examples/document.json",
+    "examples/document-word.json",
+    "examples/document-inspect.json",
+    "examples/document-modify.json",
+    "examples/document-weekly-update.json",
+    "examples/document-named.json"
+  ],
+  "references": [
+    "references/document-schema.md",
+    "references/enterprise-writing.md"
+  ],
+  "outputs": {
+    "markdown": [
+      "document.md",
+      "assets/"
+    ],
+    "docx": [
+      "document.docx"
+    ],
+    "pdf": [
+      "rendered.pdf"
+    ],
+    "zip": [
+      "document.zip"
+    ]
+  },
+  "version": "2.1.5",
+  "output_naming": {
+    "parameter": "output_name",
+    "meaning": "actual safe basename; title is display only",
+    "extensions": {
+      "markdown": "md",
+      "docx": "docx",
+      "pdf_candidate": "docx"
+    },
+    "defaults": {
+      "markdown": "document.md",
+      "docx": "document.docx"
+    }
+  }
+}

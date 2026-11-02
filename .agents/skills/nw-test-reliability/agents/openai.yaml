@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 测试可靠性"
+  short_description: "检查灵知 测试资源隔离、子进程与异步清理"
+
+policy:
+  allow_implicit_invocation: true

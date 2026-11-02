@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.integration.runtime.session.SessionCapabilitiesMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="lockInput" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended('session-capability:'||length(#{owner.sessionRef.tenantId.value})::text||':'||#{owner.sessionRef.tenantId.value}||':'||#{owner.target.kind}||':'||length(#{owner.target.id})::text||':'||#{owner.target.id}||':'||length(#{owner.sessionRef.sessionId})::text||':'||#{owner.sessionRef.sessionId}||':'||#{input},0))::text</select>
+    <insert id="ensureGeneration">
+        INSERT INTO public.nw_agent_capability_mount_sets(tenant_id,agent_id,generation)
+        SELECT a.tenant_id,a.id,1 FROM public.nw_agents a
+        WHERE a.tenant_id::text=#{tenant} AND a.id::text=#{agent}
+        ON CONFLICT(tenant_id,agent_id) DO NOTHING
+    </insert>
+    <select id="generation" resultType="long">
+        SELECT generation FROM public.nw_agent_capability_mount_sets
+        WHERE tenant_id::text=#{tenant} AND agent_id::text=#{agent} FOR UPDATE
+    </select>
+    <select id="mounts" resultType="com.skillforge.core.agent.integration.runtime.session.SessionCapabilityMountRow">
+        WITH mount_source AS (
+        <choose>
+          <when test="frozenMember != null">
+            SELECT (item-&gt;&gt;'mount_id')::bigint AS id, #{tenant}::bigint AS tenant_id,
+              #{agent}::bigint AS agent_id, item-&gt;'capability'-&gt;&gt;'type' AS capability_type,
+              (item-&gt;'capability'-&gt;&gt;'capability_id')::bigint AS capability_definition_id,
+              (item-&gt;'capability'-&gt;&gt;'version_id')::bigint AS capability_version_id,
+              (item-&gt;&gt;'priority')::integer AS priority, (item-&gt;&gt;'revision')::bigint AS revision,
+              item-&gt;'config'-&gt;&gt;'activation_mode' AS activation_mode,
+              (item-&gt;'config'-&gt;&gt;'token_budget')::bigint AS token_budget,
+              (SELECT td.id FROM public.nw_tool_deployments td WHERE td.tenant_id::text=#{tenant}
+                  AND td.deployment_key=item-&gt;'config'-&gt;&gt;'tool_deployment_id') AS tool_deployment_id,
+              (item-&gt;'config'-&gt;&gt;'tool_deployment_revision')::bigint AS tool_deployment_revision,
+              (item-&gt;'config'-&gt;&gt;'workflow_instance_id')::bigint AS workflow_instance_id,
+              (item-&gt;'config'-&gt;&gt;'workflow_instance_revision')::bigint AS workflow_instance_revision,
+              (item-&gt;'config'-&gt;&gt;'installation_revision')::bigint AS workflow_installation_revision,
+              item-&gt;'config'-&gt;&gt;'mode' AS knowledge_binding_mode,
+              (item-&gt;'config'-&gt;&gt;'pinned_revision_id')::bigint AS knowledge_pinned_revision_id,
+              CASE WHEN (item-&gt;&gt;'active')::boolean THEN 'ACTIVE' ELSE 'DISABLED' END AS status
+            FROM jsonb_array_elements(CAST(#{frozenMember} AS jsonb)-&gt;'mounts'-&gt;'mounts') item
+          </when>
+          <otherwise>SELECT id,tenant_id,agent_id,capability_type,capability_definition_id,
+            capability_version_id,priority,status,revision,created_at,
+            updated_at,activation_mode,token_budget,tool_deployment_id,tool_deployment_revision,
+            workflow_instance_id,workflow_instance_revision,knowledge_binding_mode,knowledge_pinned_revision_id,workflow_installation_revision FROM public.nw_agent_capability_mounts</otherwise>
+        </choose>
+        )
+        SELECT m.id::text AS mount_id,m.revision,m.priority,m.capability_type,m.capability_definition_id::text AS capability_id,
+          CASE WHEN m.capability_type='KNOWLEDGE_SOURCE' THEN kv.id ELSE mv.id END::text AS version_id,
+          <!-- 选择说明随实际能力版本冻结，不读取知识库或流程实例的当前可变名称。 -->
+          CASE WHEN m.capability_type='KNOWLEDGE_SOURCE'
+                 THEN kv.descriptor || jsonb_build_object('name',kv.name,'description',kv.description)
+               WHEN m.capability_type='WORKFLOW'
+                 THEN mv.descriptor || jsonb_build_object('name',mv.name,'description',mv.description)
+               ELSE mv.descriptor END::text AS descriptor,
+          CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL AND m.capability_type='SKILL'
+            THEN mv.descriptor-&gt;&gt;'activation_mode' ELSE m.activation_mode END AS activation_mode,
+          m.token_budget,d.provider_type AS provider_type,d.provider_ref AS provider_ref,d.deployment_key AS deployment_id,
+          CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL THEN d.revision ELSE m.tool_deployment_revision END AS deployment_revision,
+          wi.id::text AS instance_id,wv.id AS instance_revision,
+          CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL THEN wi.installation_revision ELSE m.workflow_installation_revision END AS installation_revision,
+          kr.kb_id::text AS knowledge_id,kr.revision AS knowledge_revision,kr.id::text AS knowledge_revision_id,
+          COALESCE(cd.status='PUBLISHED' AND cd.capability_type=m.capability_type
+            AND (cd.tenant_id IS NULL OR cd.tenant_id=m.tenant_id)
+            AND mv.status='PUBLISHED' AND mv.definition_id=cd.id AND mv.capability_type=m.capability_type
+            AND (mv.tenant_id IS NULL OR mv.tenant_id=m.tenant_id)
+            AND CASE m.capability_type
+              WHEN 'SKILL' THEN mv.descriptor-&gt;&gt;'activation_mode' IN ('ALWAYS','ON_DEMAND') AND m.token_budget&gt;0
+                AND (#{frozenMember,jdbcType=VARCHAR} IS NULL OR m.activation_mode = mv.descriptor->>'activation_mode')
+              WHEN 'TOOL' THEN d.tenant_id=m.tenant_id AND d.status='ACTIVE' AND d.provider_type IN
+                <foreach collection="toolProviderTypes" item="provider" open="(" separator="," close=")">#{provider}</foreach>
+                AND (#{frozenMember,jdbcType=VARCHAR} IS NULL OR d.revision&gt;=m.tool_deployment_revision)
+                AND dv.definition_id=mv.definition_id
+                AND jsonb_typeof(mv.descriptor->'input_schema')='object'
+                AND (NOT jsonb_exists(mv.descriptor,'output_schema')
+                     OR jsonb_typeof(mv.descriptor->'output_schema')='object')
+                AND jsonb_typeof(mv.descriptor->'model_invocable')='boolean'
+                AND jsonb_typeof(mv.descriptor->'confirmation_policy')='string'
+                AND mv.descriptor->>'confirmation_policy' IN ('NEVER','POLICY','ALWAYS')
+                AND (NOT jsonb_exists(mv.descriptor,'sensitive_fields')
+                     OR jsonb_typeof(mv.descriptor->'sensitive_fields') IN ('null','array'))
+                AND NOT EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(mv.descriptor->'sensitive_fields')='array'
+                         THEN mv.descriptor->'sensitive_fields' ELSE '[]'::jsonb END) item
+                  WHERE jsonb_typeof(item)&lt;&gt;'string' OR btrim(item#>>'{}')=''
+                    OR item#>>'{}'&lt;&gt;btrim(item#>>'{}'))
+                AND (NOT jsonb_exists(mv.descriptor,'provider_requirements')
+                     OR jsonb_typeof(mv.descriptor->'provider_requirements') IN ('null','array'))
+                AND NOT EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(mv.descriptor->'provider_requirements')='array'
+                         THEN mv.descriptor->'provider_requirements' ELSE '[]'::jsonb END) item
+                  WHERE jsonb_typeof(item)&lt;&gt;'string' OR btrim(item#>>'{}')=''
+                    OR item#>>'{}'&lt;&gt;btrim(item#>>'{}'))
+              WHEN 'WORKFLOW' THEN wi.tenant_id=m.tenant_id AND wi.status='published'
+                AND wv.capability_version_id=mv.id AND wir.installation_revision&gt;0
+                AND wc.status NOT IN ('archived','disabled')
+              WHEN 'KNOWLEDGE_SOURCE' THEN kb.tenant_id=m.tenant_id AND kb.status='active'
+                AND kr.tenant_id=m.tenant_id AND kr.status='published' AND kr.published_at IS NOT NULL
+                AND kv.definition_id=cd.id AND kv.capability_type='KNOWLEDGE_SOURCE' AND kv.status='PUBLISHED' AND kv.tenant_id=m.tenant_id
+                AND (m.knowledge_binding_mode='FOLLOW_ACTIVE' OR (m.knowledge_binding_mode='PINNED_REVISION' AND kr.capability_version_id=mv.id))
+              ELSE false END,false) AS valid,
+          (mv.descriptor->'input_schema')::text AS input_schema,
+          COALESCE(mv.descriptor->'output_schema','{}'::jsonb)::text AS output_schema,
+          CASE WHEN jsonb_typeof(mv.descriptor->'model_invocable')='boolean'
+               THEN (mv.descriptor->>'model_invocable')::boolean END AS model_invocable,
+          CASE WHEN jsonb_typeof(mv.descriptor->'confirmation_policy')='string'
+               THEN mv.descriptor->>'confirmation_policy' END AS confirmation_policy,
+          jsonb_exists(mv.descriptor,'output_schema') AS output_schema_declared,
+          (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                      ORDER BY convert_to(value,'UTF8')),'')
+             FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+               CASE WHEN jsonb_typeof(mv.descriptor->'sensitive_fields')='array'
+                    THEN mv.descriptor->'sensitive_fields' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS sensitive_fields,
+          (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                      ORDER BY convert_to(value,'UTF8')),'')
+             FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+               CASE WHEN jsonb_typeof(mv.descriptor->'provider_requirements')='array'
+                    THEN mv.descriptor->'provider_requirements' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS provider_requirements,
+          mv.descriptor->>'effect' AS effect,
+          CASE WHEN m.capability_type='TOOL' AND jsonb_typeof(mv.descriptor->'idempotent')='boolean'
+               THEN (mv.descriptor->>'idempotent')::boolean END AS idempotent,
+          CASE WHEN jsonb_typeof(mv.descriptor->'timeout_ms')='number'
+               THEN (mv.descriptor->>'timeout_ms')::bigint END AS timeout_ms,
+          NULLIF(btrim(COALESCE(mv.descriptor->>'tool_name',
+              CASE WHEN jsonb_typeof(ci.capabilities)='array' AND jsonb_array_length(ci.capabilities)=1
+                   THEN ci.capabilities->>0 END)),'') AS tool_name,
+          (SELECT string_agg(v, ',' ORDER BY v)
+             FROM jsonb_array_elements_text(COALESCE(kr.source_versions, '[]'::jsonb)) v) AS source_versions,
+          (SELECT string_agg(v, ',' ORDER BY v)
+             FROM jsonb_array_elements_text(COALESCE(kv.descriptor->'allowed_operators', '[]'::jsonb)) v)
+            AS allowed_operators
+        FROM mount_source m
+        LEFT JOIN public.nw_capability_definitions cd ON cd.id=m.capability_definition_id
+        <!-- Skill 挂载固定精确版本；Definition 默认指针仅供显式选择，不驱动新 Run 漂移。 -->
+        LEFT JOIN public.nw_capability_versions mv ON mv.id=CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL AND m.capability_type&lt;&gt;'SKILL'
+          THEN cd.default_version_id ELSE m.capability_version_id END
+        LEFT JOIN public.nw_tool_deployments d ON m.capability_type='TOOL' AND d.id=m.tool_deployment_id AND d.tenant_id=m.tenant_id
+        LEFT JOIN public.nw_capability_versions dv ON dv.id=d.tool_version_id
+        LEFT JOIN public.nw_connector_instances ci ON m.capability_type='TOOL' AND ci.instance_id=d.provider_ref AND ci.tenant_id=d.tenant_id
+        LEFT JOIN public.nw_workflow_instances wi ON m.capability_type='WORKFLOW' AND wi.id=m.workflow_instance_id AND wi.tenant_id=m.tenant_id
+        LEFT JOIN public.nw_workflow_installation_revisions wir ON wir.instance_id=wi.id AND wir.tenant_id=wi.tenant_id
+          AND wir.installation_revision=CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL
+            THEN wi.installation_revision ELSE m.workflow_installation_revision END
+        LEFT JOIN public.nw_workflow_definition_versions wa ON wa.id=wir.definition_version_id AND wa.tenant_id=wi.tenant_id
+        LEFT JOIN public.nw_workflow_containers wc ON wc.id=wa.container_id AND wc.tenant_id=wi.tenant_id
+        LEFT JOIN public.nw_workflow_definition_versions wv ON wv.container_id=wc.id AND wv.tenant_id=wi.tenant_id
+          AND wv.id=CASE WHEN #{frozenMember,jdbcType=VARCHAR} IS NULL THEN wc.active_definition_version_id ELSE m.workflow_instance_revision END
+        LEFT JOIN public.nw_knowledge_bases kb ON m.capability_type='KNOWLEDGE_SOURCE' AND kb.id::text=mv.descriptor-&gt;&gt;'source_id' AND kb.tenant_id=m.tenant_id
+        LEFT JOIN public.nw_knowledge_base_revisions kr ON kr.kb_id=kb.id AND kr.tenant_id=kb.tenant_id
+          AND kr.id=CASE WHEN m.knowledge_binding_mode='FOLLOW_ACTIVE' THEN kb.active_revision_id ELSE m.knowledge_pinned_revision_id END
+        LEFT JOIN public.nw_capability_versions kv ON kv.id=kr.capability_version_id
+        WHERE m.tenant_id::text=#{tenant} AND m.agent_id::text=#{agent}
+          AND m.status='ACTIVE' AND m.capability_type IN
+          <foreach collection="capabilityTypes" item="capabilityType" open="(" separator="," close=")">#{capabilityType}</foreach>
+        ORDER BY m.priority DESC,m.id
+    </select>
+    <select id="runBinding" resultType="com.skillforge.core.agent.integration.runtime.session.RunCapabilityBinding">
+        SELECT b.frozen_member::text AS frozen_member
+          FROM public.nw_runtime_agent_run_bindings b
+         WHERE b.tenant_id=#{owner.sessionRef.tenantId.value}
+           AND b.session_id=#{owner.sessionRef.sessionId}
+           AND b.target_kind=#{owner.target.kind}
+           AND b.target_id=#{owner.target.id}
+           AND b.end_user_id IS NOT DISTINCT FROM <choose><when test="owner.target.kind.name() == 'GROUP'">NULL</when><otherwise>#{owner.requireUser.value}</otherwise></choose>
+           AND b.actor_agent_id=#{agent}
+           AND (b.input_id=#{input} OR 'input:'||b.run_id=#{input})
+    </select>
+    <select id="now" resultType="java.time.Instant">SELECT clock_timestamp()</select>
+    <select id="find" resultType="com.skillforge.core.agent.integration.runtime.session.SessionCapabilityRow">
+        SELECT tenant_id, session_id, agent_id, end_user_id, input_id, snapshot_id, generation, snapshot_data, target_kind,
+               target_id FROM public.nw_runtime_session_capabilities
+        WHERE tenant_id=#{owner.sessionRef.tenantId.value}
+          AND target_kind=#{owner.target.kind} AND target_id=#{owner.target.id}
+          AND session_id=#{owner.sessionRef.sessionId} AND input_id=#{input}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.nw_runtime_session_capabilities(
+            tenant_id,session_id,target_kind,target_id,agent_id,end_user_id,
+            input_id,snapshot_id,generation,snapshot_data)
+        VALUES(#{owner.sessionRef.tenantId.value},#{owner.sessionRef.sessionId},
+            #{owner.target.kind},#{owner.target.id},#{agent},<choose><when test="owner.target.kind.name() == 'GROUP'">NULL</when><otherwise>#{owner.requireUser.value}</otherwise></choose>,
+            #{input},#{snapshot},#{generation},#{data})
+    </insert>
+</mapper>

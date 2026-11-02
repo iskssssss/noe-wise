@@ -1,0 +1,87 @@
+# Environment
+.env
+
+# Node
+/node_modules/
+/.pnpm-store/
+/frontend-platform/smoke-dist/
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Docker
+deploy/pgdata/
+deploy/esdata/
+deploy/kcdata/
+deploy/data/*
+!deploy/data/**/.gitkeep
+
+# Gradle / Java
+backend-java/.gradle/
+backend-java/agent-runtime-host-fixture/.gradle/
+backend-java/.gradle-ci/
+backend-java/.gradle-home/
+backend-java/build/
+backend-java/*/build/
+backend-java/logs/
+backend-java/*.log
+backend-java/test-args.txt
+backend-java/core-test-info.log
+backend-java/jdbc-test-info.log
+
+# 迁移前数据库备份（本地临时）
+skillforge_pre_migration_backup_*.sql
+
+# 技能上传测试残留
+skills/*.md
+
+# 本地工具崩溃转储
+bash.exe.stackdump
+
+
+# Project-local gradle home (ASCII path workaround for CN username)
+.gradle-user-home/
+/.gradle-user/
+node_modules/.vite/
+
+# Python (docs 校验/生成脚本)
+__pycache__/
+*.pyc
+
+backend-java/bootrun.log
+backend-java/demo-bootrun.log
+.tmp-layout-backup/
+
+/.gradle-test-home
+
+# Agent delivery snapshots and reusable local verification evidence
+/.agent-work-state/
+/.gradle-sdk3c/
+/.agents/runtime/
+/.runtime-logs
+/backend-java/data/artifacts/
+/backend-java/data/artifacts-*/
+/backend-java/data/foundation-files/
+/frontend-shared/node_modules
+/.run-logs/
+*/test-results/
+
+# Local configuration and diagnostic captures
+/frontend-admin/.chat-*-result.txt
+/frontend-chat/.chat-*-result.txt
+**/.env.local
+/.claude/settings.local.json
+/frontend-chat/dev-server*.log
+/backend-java/*.jfr
+/backend-java/chat-*threads.txt
+/backend-java/chat-thread-dump.txt
+/.pytest_cache/
+/tools/chat_regression/runs/
+/data/
+**/.gradle/*

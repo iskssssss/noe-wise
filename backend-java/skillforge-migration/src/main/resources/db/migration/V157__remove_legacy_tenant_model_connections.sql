@@ -1,0 +1,37 @@
+-- 平台模型目录成为唯一连接事实源；机构与 Agent 只保留平台模型引用。
+ALTER TABLE nw_tenants
+    DROP CONSTRAINT tenant_llm_provider_selection_complete,
+    DROP COLUMN custom_llm_endpoint,
+    DROP COLUMN custom_llm_api_key_encrypted,
+    DROP COLUMN custom_llm_model,
+    DROP COLUMN custom_llm_enabled,
+    DROP COLUMN custom_llm_provider_id,
+    DROP COLUMN custom_llm_service_id,
+    DROP COLUMN custom_llm_profile_version,
+    DROP COLUMN custom_llm_protocol,
+    DROP COLUMN custom_llm_authentication_scheme,
+    DROP COLUMN custom_llm_dialect_version,
+    DROP COLUMN embedding_provider,
+    DROP COLUMN embedding_base_url,
+    DROP COLUMN embedding_api_key_encrypted,
+    DROP COLUMN embedding_model,
+    DROP COLUMN embedding_dimensions,
+    DROP COLUMN embedding_enabled,
+    DROP COLUMN rerank_provider,
+    DROP COLUMN rerank_base_url,
+    DROP COLUMN rerank_api_key_encrypted,
+    DROP COLUMN rerank_model,
+    DROP COLUMN rerank_path,
+    DROP COLUMN rerank_enabled;
+
+ALTER TABLE nw_agents
+    DROP CONSTRAINT agent_llm_provider_selection_complete,
+    DROP COLUMN llm_endpoint,
+    DROP COLUMN llm_model,
+    DROP COLUMN llm_api_key_encrypted,
+    DROP COLUMN llm_provider_id,
+    DROP COLUMN llm_service_id,
+    DROP COLUMN llm_profile_version,
+    DROP COLUMN llm_protocol,
+    DROP COLUMN llm_authentication_scheme,
+    DROP COLUMN llm_dialect_version;

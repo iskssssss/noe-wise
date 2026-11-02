@@ -1,0 +1,34 @@
+# Spring Boot实际导出的Actuator Prometheus端点；容器服务名对应docker-compose.java.yml。
+# 仅部署监控网络可访问这些端点，不能把服务端口公开作为监控认证替代。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: "skillforge-institution"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["skillforge-institution-service:8000"]
+        labels:
+          service: "institution"
+  - job_name: "skillforge-platform"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["skillforge-platform-service:8100"]
+        labels:
+          service: "platform"
+  - job_name: "skillforge-gateway"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["skillforge-gateway:8080"]
+        labels:
+          service: "gateway"

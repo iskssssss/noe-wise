@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.browser.BrowserMapper">
+  <insert id="receipt">
+    INSERT INTO nw_browser_call_receipts(tenant_id,end_user_id,invocation_id,task_id,session_id,run_id,operation,status,public_receipt)
+    VALUES(#{tenant},#{user},#{invocation},#{task},#{session},#{run},#{operation},#{status},CAST(#{payload} AS jsonb))
+    ON CONFLICT(tenant_id,end_user_id,invocation_id) DO UPDATE SET status=EXCLUDED.status,
+      task_id=EXCLUDED.task_id,public_receipt=EXCLUDED.public_receipt,updated_at=now()
+    WHERE nw_browser_call_receipts.operation=EXCLUDED.operation AND nw_browser_call_receipts.run_id=EXCLUDED.run_id
+  </insert>
+</mapper>

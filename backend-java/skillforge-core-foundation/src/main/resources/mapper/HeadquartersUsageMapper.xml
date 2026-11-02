@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.institution.usage.HeadquartersUsageMapper">
+  <select id="currentTargets" resultType="com.skillforge.core.foundation.institution.usage.HeadquartersUsageMapper$TargetGrant" useCache="false" flushCache="true">
+    SELECT child.id AS tenant_id,g.id AS grant_id,g.revision AS grant_revision,
+      r.id AS relation_ref,r.revision AS relation_revision
+    FROM nw_institution_management_grants g
+    JOIN nw_institution_relation_revisions r ON r.id=g.relation_ref AND r.child_tenant_id=g.target_tenant_id
+    JOIN nw_tenants child ON child.id=g.target_tenant_id AND child.parent_tenant_id=#{actorTenant} AND child.relation_revision=r.revision
+    JOIN nw_tenants headquarters ON headquarters.id=#{actorTenant} AND r.parent_tenant_id=headquarters.id
+    WHERE g.actor_domain='tenant' AND g.actor_ref=concat('tenant:',#{actorTenant}::text)
+      AND g.action=#{action} AND g.status='active'
+      AND child.status IN('active','warning') AND headquarters.status IN('active','warning')
+    ORDER BY child.id,g.id
+  </select>
+</mapper>

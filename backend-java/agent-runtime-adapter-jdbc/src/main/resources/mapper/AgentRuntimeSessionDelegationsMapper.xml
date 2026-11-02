@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationsMapper">
+    <sql id="parentIdentity">
+        tenant_id=current_setting('app.tenant_id',true)
+        AND parent_session_id=#{parent.parentSessionId}
+        AND parent_target_kind=#{parent.parentTargetKind}
+        AND parent_target_id=#{parent.parentTargetId}
+        AND parent_end_user_id IS NOT DISTINCT FROM #{parent.parentEndUserId,jdbcType=BIGINT}
+        AND parent_agent_id=#{parent.parentAgentId}
+        AND parent_causation_input_id=#{parent.parentCausationInputId}
+        AND parent_run_id=#{parent.parentRunId}
+        AND parent_trace_id=#{parent.parentTraceId}
+        AND parent_span_id=#{parent.parentSpanId}
+        AND parent_root_input_id=#{parent.parentRootInputId}
+        AND parent_caused_by_event_id IS NOT DISTINCT FROM
+            #{parent.parentCausedByEventId}
+        AND parent_causation_identity_ref=#{parent.parentCausationIdentityRef}
+        AND parent_requester_kind=#{parent.parentRequesterKind}
+        AND parent_requester_end_user_id IS NOT DISTINCT FROM #{parent.parentRequesterEndUserId,jdbcType=BIGINT}
+        AND parent_requester_system_principal_id IS NOT DISTINCT FROM #{parent.parentRequesterSystemPrincipalId,jdbcType=VARCHAR}
+        AND parent_source_session_id IS NOT DISTINCT FROM #{parent.parentSourceSessionId,jdbcType=VARCHAR}
+        AND parent_source_message_id IS NOT DISTINCT FROM #{parent.parentSourceMessageId,jdbcType=VARCHAR}
+        AND parent_origin_ref=#{parent.parentOriginRef}
+    </sql>
+
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id',#{tenant},true)
+    </select>
+
+    <select id="lockEntry" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(lock_key,0))::text
+        FROM (VALUES
+            ('session-delegation:id:'||current_setting('app.tenant_id',true)||':'||#{parentRun}||':'||#{id}),
+            ('session-delegation:operation:'||current_setting('app.tenant_id',true)||':'||#{parentRun}||':'||#{operation})
+        ) AS locks(lock_key)
+        ORDER BY lock_key
+    </select>
+
+    <select id="findEntryCollisions"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationEntryRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               delegation_id, operation_key, child_run_id, child_input_id, previous_delegation_id, state, cancel_key,
+               revision, snapshot, created_epoch_second, created_nano, updated_epoch_second, updated_nano FROM public.agent_runtime_delegations
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND parent_run_id=#{parentRun}
+          AND (delegation_id=#{id} OR operation_key=#{operation})
+        ORDER BY delegation_id
+    </select>
+
+    <select id="findEntry"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationEntryRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               delegation_id, operation_key, child_run_id, child_input_id, previous_delegation_id, state, cancel_key,
+               revision, snapshot, created_epoch_second, created_nano, updated_epoch_second, updated_nano FROM public.agent_runtime_delegations
+        WHERE <include refid="parentIdentity"/> AND delegation_id=#{id}
+    </select>
+
+    <select id="listEntries"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationEntryRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               delegation_id, operation_key, child_run_id, child_input_id, previous_delegation_id, state, cancel_key,
+               revision, snapshot, created_epoch_second, created_nano, updated_epoch_second, updated_nano FROM public.agent_runtime_delegations
+        WHERE <include refid="parentIdentity"/>
+        ORDER BY created_epoch_second,created_nano,delegation_id
+    </select>
+
+    <select id="sessionEntries"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationEntryRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               delegation_id, operation_key, child_run_id, child_input_id, previous_delegation_id, state, cancel_key,
+               revision, snapshot, created_epoch_second, created_nano, updated_epoch_second, updated_nano FROM public.agent_runtime_delegations
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND parent_session_id=#{owner.sessionRef.sessionId}
+          AND parent_target_kind=#{owner.target.kind}
+          AND parent_target_id=#{owner.target.id}
+          AND parent_end_user_id IS NOT DISTINCT FROM <choose><when test="owner.target.kind.name() == 'GROUP'">NULL</when><otherwise>#{owner.requireUser.value}</otherwise></choose>
+        ORDER BY created_epoch_second,created_nano,delegation_id,parent_run_id
+        LIMIT #{limit}
+    </select>
+
+    <select id="activeEntries"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationEntryRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               delegation_id, operation_key, child_run_id, child_input_id, previous_delegation_id, state, cancel_key,
+               revision, snapshot, created_epoch_second, created_nano, updated_epoch_second, updated_nano FROM public.agent_runtime_delegations
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND state IN ('QUEUED','RUNNING','WAITING')
+        ORDER BY <if test="cursor != null">CASE WHEN (parent_run_id,delegation_id) &gt; (#{cursor.parentRun},#{cursor.id}) THEN 0 ELSE 1 END,</if>
+                 parent_run_id,delegation_id
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insertEntry">
+        INSERT INTO public.agent_runtime_delegations(
+            tenant_id,parent_session_id,parent_target_kind,parent_target_id,
+            parent_end_user_id,parent_agent_id,parent_causation_input_id,
+            parent_run_id,parent_trace_id,parent_span_id,parent_root_input_id,
+            parent_caused_by_event_id,parent_causation_identity_ref,parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+            delegation_id,operation_key,child_run_id,child_input_id,
+            previous_delegation_id,state,cancel_key,revision,snapshot,
+            created_epoch_second,created_nano,updated_epoch_second,updated_nano)
+        VALUES(current_setting('app.tenant_id',true),
+            #{row.parentSessionId},#{row.parentTargetKind},#{row.parentTargetId},
+            #{row.parentEndUserId},#{row.parentAgentId},
+            #{row.parentCausationInputId},#{row.parentRunId},
+            #{row.parentTraceId},#{row.parentSpanId},#{row.parentRootInputId},
+            #{row.parentCausedByEventId},#{row.parentCausationIdentityRef},#{row.parentRequesterKind},#{row.parentRequesterEndUserId},#{row.parentRequesterSystemPrincipalId},#{row.parentSourceSessionId},#{row.parentSourceMessageId},#{row.parentOriginRef},
+            #{row.delegationId},#{row.operationKey},#{row.childRunId},
+            #{row.childInputId},#{row.previousDelegationId},#{row.state},
+            #{row.cancelKey},#{row.revision},CAST(#{row.snapshot} AS jsonb),
+            #{row.createdEpochSecond},#{row.createdNano},
+            #{row.updatedEpochSecond},#{row.updatedNano})
+    </insert>
+
+    <update id="updateEntry">
+        UPDATE public.agent_runtime_delegations
+        SET state=#{row.state},cancel_key=#{row.cancelKey},revision=#{row.revision},
+            snapshot=CAST(#{row.snapshot} AS jsonb),
+            updated_epoch_second=#{row.updatedEpochSecond},
+            updated_nano=#{row.updatedNano}
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND parent_run_id=#{row.parentRunId}
+          AND delegation_id=#{row.delegationId}
+          AND operation_key=#{row.operationKey}
+          AND revision=#{expectedRevision}
+    </update>
+
+    <select id="lockWait" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(
+            'session-delegation-wait:'||current_setting('app.tenant_id',true)||':'||#{parentRun}||':'||#{id},0))::text
+    </select>
+
+    <select id="findWaitCollision"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationWaitRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               wait_id, delivered, revision, snapshot FROM public.agent_runtime_delegation_waits
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND parent_run_id=#{parentRun} AND wait_id=#{id}
+    </select>
+
+    <select id="findWait"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationWaitRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               wait_id, delivered, revision, snapshot FROM public.agent_runtime_delegation_waits
+        WHERE <include refid="parentIdentity"/> AND wait_id=#{id}
+    </select>
+
+    <select id="pendingWaits"
+            resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationWaitRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               wait_id, delivered, revision, snapshot FROM public.agent_runtime_delegation_waits
+        WHERE tenant_id=current_setting('app.tenant_id',true) AND delivered=false
+        ORDER BY <if test="cursor != null">CASE WHEN (parent_run_id,wait_id) &gt; (#{cursor.parentRun},#{cursor.id}) THEN 0 ELSE 1 END,</if>
+                 parent_run_id,wait_id
+        LIMIT #{limit}
+    </select>
+
+    <select id="countDelegations" resultType="long">
+        SELECT count(*) FROM public.agent_runtime_delegations
+        WHERE <include refid="parentIdentity"/>
+          AND delegation_id IN
+          <foreach collection="ids" item="id" open="(" separator="," close=")">
+              #{id}
+          </foreach>
+    </select>
+
+    <select id="parentPendingWaits" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionDelegationWaitRow">
+        SELECT tenant_id, parent_session_id, parent_target_kind, parent_target_id, parent_end_user_id, parent_agent_id,
+               parent_causation_input_id, parent_run_id, parent_trace_id, parent_span_id, parent_root_input_id,
+               parent_caused_by_event_id, parent_causation_identity_ref, parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+               wait_id, delivered, revision, snapshot
+        FROM public.agent_runtime_delegation_waits WHERE <include refid="parentIdentity"/> AND delivered=false
+        ORDER BY wait_id
+    </select>
+
+
+    <select id="countTerminal" resultType="long">
+        SELECT count(*) FROM public.agent_runtime_delegations
+        WHERE <include refid="parentIdentity"/> AND state IN ('COMPLETED','FAILED','CANCELLED')
+          AND delegation_id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+    <select id="ownedPlanWait" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM public.agent_runtime_session_events e
+            JOIN public.agent_runtime_dag_works w ON w.tenant_id=e.tenant_id AND w.session_id=e.session_id
+                AND w.root_input_id=e.input_id
+            JOIN public.agent_runtime_dag_control_runs c ON c.tenant_id=w.tenant_id AND c.session_id=w.session_id AND c.root_input_id=w.root_input_id
+            WHERE e.tenant_id=current_setting('app.tenant_id',true) AND e.session_id=#{parent.parentSessionId}
+                AND e.target_kind=#{parent.parentTargetKind} AND e.target_id=#{parent.parentTargetId}
+                AND e.end_user_id IS NOT DISTINCT FROM #{parent.parentEndUserId,jdbcType=BIGINT} AND e.agent_id=#{parent.parentAgentId}
+                AND e.run_id=#{parent.parentRunId} AND e.input_id=#{parent.parentCausationInputId}
+                AND e.event_id=('plan-wait:' || #{operation}) AND e.event_type='plan.wait.requested'
+                AND c.run_id=#{parent.parentRunId} AND c.agent_id=#{parent.parentAgentId})
+    </select>
+    <select id="ownedWork" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM public.agent_runtime_dag_works w
+            JOIN public.agent_runtime_dag_control_runs c USING(tenant_id,session_id,root_input_id)
+            WHERE w.tenant_id=current_setting('app.tenant_id',true) AND w.session_id=#{parent.parentSessionId}
+              AND w.target_kind=#{parent.parentTargetKind} AND w.target_id=#{parent.parentTargetId}
+              AND w.end_user_id IS NOT DISTINCT FROM #{parent.parentEndUserId,jdbcType=BIGINT} AND w.root_input_id=#{work}
+              AND w.root_input_id=#{parent.parentCausationInputId}
+              AND c.run_id=#{parent.parentRunId} AND c.agent_id=#{parent.parentAgentId}
+              AND (w.snapshot::jsonb #>> '{request,controlRun,runId}')=#{parent.parentRunId}
+              <if test="closed">AND w.status IN ('COMPLETED','CANCELLED')</if>)
+    </select>
+    <select id="parentEnded" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM public.agent_runtime_execution_runs
+            WHERE tenant_id=current_setting('app.tenant_id',true) AND session_id=#{parent.parentSessionId}
+              AND target_kind=#{parent.parentTargetKind} AND target_id=#{parent.parentTargetId}
+              AND end_user_id IS NOT DISTINCT FROM #{parent.parentEndUserId,jdbcType=BIGINT} AND agent_id=#{parent.parentAgentId}
+              AND run_id=#{parent.parentRunId} AND input_id=#{parent.parentCausationInputId}
+              AND trace_id=#{parent.parentTraceId} AND span_id=#{parent.parentSpanId}
+              AND root_input_id=#{parent.parentRootInputId}
+              AND caused_by_event_id IS NOT DISTINCT FROM #{parent.parentCausedByEventId,jdbcType=VARCHAR}
+              AND identity_ref=#{parent.parentCausationIdentityRef}
+              AND requester_kind=#{parent.parentRequesterKind}
+              AND requester_end_user_id IS NOT DISTINCT FROM #{parent.parentRequesterEndUserId,jdbcType=BIGINT}
+              AND requester_system_principal_id IS NOT DISTINCT FROM #{parent.parentRequesterSystemPrincipalId,jdbcType=VARCHAR}
+              AND source_session_id IS NOT DISTINCT FROM #{parent.parentSourceSessionId,jdbcType=VARCHAR}
+              AND source_message_id IS NOT DISTINCT FROM #{parent.parentSourceMessageId,jdbcType=VARCHAR}
+              AND origin_ref=#{parent.parentOriginRef}
+              AND (status IN ('COMPLETED','FAILED','CANCELLED','TERMINATED') OR cancelled))
+    </select>
+
+    <insert id="insertWait">
+        INSERT INTO public.agent_runtime_delegation_waits(
+            tenant_id,parent_session_id,parent_target_kind,parent_target_id,
+            parent_end_user_id,parent_agent_id,parent_causation_input_id,
+            parent_run_id,parent_trace_id,parent_span_id,parent_root_input_id,
+            parent_caused_by_event_id,parent_causation_identity_ref,parent_requester_kind,parent_requester_end_user_id,parent_requester_system_principal_id,parent_source_session_id,parent_source_message_id,parent_origin_ref,
+            wait_id,delivered,revision,snapshot)
+        VALUES(current_setting('app.tenant_id',true),
+            #{row.parentSessionId},#{row.parentTargetKind},#{row.parentTargetId},
+            #{row.parentEndUserId},#{row.parentAgentId},
+            #{row.parentCausationInputId},#{row.parentRunId},
+            #{row.parentTraceId},#{row.parentSpanId},#{row.parentRootInputId},
+            #{row.parentCausedByEventId},#{row.parentCausationIdentityRef},#{row.parentRequesterKind},#{row.parentRequesterEndUserId},#{row.parentRequesterSystemPrincipalId},#{row.parentSourceSessionId},#{row.parentSourceMessageId},#{row.parentOriginRef},
+            #{row.waitId},#{row.delivered},#{row.revision},
+            CAST(#{row.snapshot} AS jsonb))
+    </insert>
+
+    <update id="deliverWait">
+        UPDATE public.agent_runtime_delegation_waits
+        SET delivered=#{row.delivered},revision=#{row.revision},
+            snapshot=CAST(#{row.snapshot} AS jsonb)
+        WHERE tenant_id=current_setting('app.tenant_id',true)
+          AND parent_run_id=#{row.parentRunId} AND wait_id=#{row.waitId}
+          AND revision=#{expectedRevision} AND delivered=false
+    </update>
+
+
+</mapper>

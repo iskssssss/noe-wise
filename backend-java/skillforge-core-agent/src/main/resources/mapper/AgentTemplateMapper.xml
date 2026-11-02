@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.mapper.AgentTemplateMapper">
+  <select id="selectDisplayByIds" resultType="com.skillforge.core.agent.model.AgentTemplateDisplay">
+    SELECT id,name,version FROM nw_agent_templates
+    WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+  </select>
+  <select id="sourceTenantAvailable" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS(SELECT 1 FROM nw_tenants WHERE id=#{tenantId} AND status IN('active','warning'))
+  </select>
+  <select id="definitionOperation" resultType="com.skillforge.core.agent.model.AgentDefinitionOperationRow" useCache="false" flushCache="true">
+    SELECT actor_ref,operation,object_scope,request_key,fingerprint,definition_id,result_snapshot::text AS result_snapshot
+    FROM nw_agent_definition_operations WHERE actor_ref=#{actor} AND operation=#{operation} AND object_scope=#{scope} AND request_key=#{key}
+  </select>
+  <insert id="appendDefinitionOperation">
+    INSERT INTO nw_agent_definition_operations(actor_ref,operation,object_scope,request_key,fingerprint,definition_id,result_snapshot)
+    VALUES(#{actorRef},#{operation},#{objectScope},#{requestKey},#{fingerprint},#{definitionId},CAST(#{resultSnapshot} AS jsonb))
+  </insert>
+  <update id="restoreDraftContent">
+    UPDATE nw_agent_templates
+    SET name=#{name},category=#{category},
+        tags=#{tags,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+        description=#{description},icon_url=#{iconUrl},
+        definition=#{definition,typeHandler=com.skillforge.core.agent.model.AgentTemplateDefinitionJsonbTypeHandler},
+        price_type=#{priceType},price_cents=#{priceCents},draft_revision=#{draftRevision},
+        has_unpublished_changes=#{hasUnpublishedChanges},updated_at=#{updatedAt}
+    WHERE id=#{id}
+  </update>
+  <select id="lockFamily" resultType="long">
+    SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended('agent-template:' || #{templateKey}, 0))) locked
+  </select>
+  <update id="incrementInstallCount">
+    UPDATE nw_agent_templates SET install_count = install_count + 1 WHERE id = #{templateId}
+  </update>
+  <insert id="appendPublication">
+    INSERT INTO nw_agent_template_publications(template_id, version, snapshot)
+    VALUES (#{templateId}, #{version}, CAST(#{snapshot} AS jsonb))
+  </insert>
+  <select id="currentPublication" resultType="string">
+    SELECT p.snapshot::text FROM nw_agent_template_publications p
+    JOIN nw_agent_templates t ON t.id = p.template_id AND t.version = p.version
+    WHERE t.id = #{templateId}
+  </select>
+  <select id="publication" resultType="string">
+    SELECT snapshot::text FROM nw_agent_template_publications
+    WHERE template_id = #{templateId} AND version = #{version}
+  </select>
+  <select id="publications" resultType="string">
+    SELECT snapshot::text FROM nw_agent_template_publications
+    WHERE template_id = #{templateId} ORDER BY published_at DESC, version DESC
+  </select>
+  <select id="currentPublishedAll" resultType="string">
+    SELECT p.snapshot::text FROM nw_agent_template_publications p
+    JOIN nw_agent_templates t ON t.id = p.template_id AND t.version = p.version
+    WHERE t.status = 'published' ORDER BY t.created_at DESC
+  </select>
+  <select id="currentPublishedLibrary" resultType="string">
+    SELECT p.snapshot::text FROM nw_agent_template_publications p
+    JOIN nw_agent_templates t ON t.id=p.template_id AND t.version=p.version
+    WHERE t.status='published' AND t.distribution_policy='OPEN_INSTALL' ORDER BY t.created_at DESC
+  </select>
+</mapper>

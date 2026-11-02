@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.institution.InstitutionTargetOptionMapper">
+  <sql id="currentDirectRelation">
+    t.parent_tenant_id=#{actor} AND EXISTS(SELECT 1 FROM nw_institution_relation_revisions r
+      WHERE r.child_tenant_id=t.id AND r.parent_tenant_id=#{actor} AND r.revision=t.relation_revision)
+  </sql>
+  <sql id="filter">
+    t.status IN('active','warning') AND EXISTS(SELECT 1 FROM nw_tenants hq WHERE hq.id=#{actor} AND hq.status IN('active','warning'))
+    <choose>
+      <when test="direct">AND <include refid="currentDirectRelation"/></when>
+      <otherwise>
+        <choose><when test="targets != null and !targets.isEmpty()">
+          AND t.id IN <foreach collection="targets" item="target" open="(" separator="," close=")">#{target}</foreach>
+          AND (t.id=#{actor} OR (<include refid="currentDirectRelation"/>))
+        </when><otherwise>AND FALSE</otherwise></choose>
+      </otherwise>
+    </choose>
+    <if test="id != null">AND t.id=#{id}</if>
+    <if test="query != ''">AND (position(lower(#{query}) in lower(t.name))&gt;0 OR position(#{query} in t.id::text)&gt;0)</if>
+  </sql>
+  <select id="rows" resultType="com.skillforge.core.foundation.institution.InstitutionTargetOption">
+    SELECT t.id::text AS id,t.name AS label,t.id::text AS description FROM nw_tenants t WHERE <include refid="filter"/>
+    ORDER BY (t.id&lt;&gt;#{actor}),t.name,t.id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">SELECT count(t.id) FROM nw_tenants t WHERE <include refid="filter"/></select>
+</mapper>

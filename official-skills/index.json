@@ -1,0 +1,195 @@
+{
+  "packages": [
+    {
+      "name": "document",
+      "files": [
+        "SKILL.md",
+        "examples/document-inspect.json",
+        "examples/document-modify.json",
+        "examples/document-named.json",
+        "examples/document-weekly-update.json",
+        "examples/document-word.json",
+        "examples/document.json",
+        "manifest.json",
+        "references/document-schema.md",
+        "references/enterprise-writing.md",
+        "references/upstream/internal-comms/LICENSE.txt",
+        "references/upstream/internal-comms/SKILL.md",
+        "references/upstream/internal-comms/examples/3p-updates.md",
+        "references/upstream/internal-comms/examples/company-newsletter.md",
+        "references/upstream/internal-comms/examples/faq-answers.md",
+        "references/upstream/internal-comms/examples/general-comms.md",
+        "scripts/generate_document.py"
+      ]
+    },
+    {
+      "name": "spreadsheet",
+      "files": [
+        "SKILL.md",
+        "examples/spreadsheet-edit.json",
+        "examples/spreadsheet-formulas.json",
+        "examples/spreadsheet-named.json",
+        "examples/spreadsheet.json",
+        "manifest.json",
+        "references/calculation-and-quality.md",
+        "references/input-contract.md",
+        "scripts/generate_spreadsheet.py"
+      ]
+    },
+    {
+      "name": "presentation",
+      "files": [
+        "SKILL.md",
+        "examples/presentation-long.json",
+        "examples/presentation-named.json",
+        "examples/presentation-tool-call.json",
+        "examples/presentation-weekly-update.json",
+        "examples/presentation.json",
+        "manifest.json",
+        "references/enterprise-writing.md",
+        "references/input-schema.md",
+        "references/quality-checks.md",
+        "references/theme-presets.md",
+        "references/upstream/internal-comms/LICENSE.txt",
+        "references/upstream/internal-comms/SKILL.md",
+        "references/upstream/internal-comms/examples/3p-updates.md",
+        "references/upstream/internal-comms/examples/company-newsletter.md",
+        "references/upstream/internal-comms/examples/faq-answers.md",
+        "references/upstream/internal-comms/examples/general-comms.md",
+        "references/upstream/theme-factory/LICENSE.txt",
+        "references/upstream/theme-factory/SKILL.md",
+        "references/upstream/theme-factory/themes/arctic-frost.md",
+        "references/upstream/theme-factory/themes/botanical-garden.md",
+        "references/upstream/theme-factory/themes/desert-rose.md",
+        "references/upstream/theme-factory/themes/forest-canopy.md",
+        "references/upstream/theme-factory/themes/golden-hour.md",
+        "references/upstream/theme-factory/themes/midnight-galaxy.md",
+        "references/upstream/theme-factory/themes/modern-minimalist.md",
+        "references/upstream/theme-factory/themes/ocean-depths.md",
+        "references/upstream/theme-factory/themes/sunset-boulevard.md",
+        "references/upstream/theme-factory/themes/tech-innovation.md",
+        "resources/themes.json",
+        "scripts/generate_presentation.mjs",
+        "scripts/theme.mjs"
+      ]
+    },
+    {
+      "name": "web-app",
+      "files": [
+        "SKILL.md",
+        "examples/react-app.json",
+        "examples/site-themed.json",
+        "examples/site.json",
+        "licenses/anthropic-apache-2.0.txt",
+        "manifest.json",
+        "references/frontend-design.md",
+        "references/html-input.md",
+        "references/react-build.md",
+        "references/theme-presets.md",
+        "references/upstream/theme-factory/LICENSE.txt",
+        "references/upstream/theme-factory/SKILL.md",
+        "references/upstream/theme-factory/themes/arctic-frost.md",
+        "references/upstream/theme-factory/themes/botanical-garden.md",
+        "references/upstream/theme-factory/themes/desert-rose.md",
+        "references/upstream/theme-factory/themes/forest-canopy.md",
+        "references/upstream/theme-factory/themes/golden-hour.md",
+        "references/upstream/theme-factory/themes/midnight-galaxy.md",
+        "references/upstream/theme-factory/themes/modern-minimalist.md",
+        "references/upstream/theme-factory/themes/ocean-depths.md",
+        "references/upstream/theme-factory/themes/sunset-boulevard.md",
+        "references/upstream/theme-factory/themes/tech-innovation.md",
+        "references/web-artifacts-builder.md",
+        "resources/themes.json",
+        "scripts/build_react_app.mjs",
+        "scripts/generate_web_app.py",
+        "scripts/theme.mjs"
+      ]
+    },
+    {
+      "name": "code-delivery",
+      "files": [
+        "SKILL.md",
+        "examples/delivery.json",
+        "manifest.json",
+        "scripts/package_delivery.py"
+      ]
+    },
+    {
+      "name": "configuration",
+      "files": [
+        "SKILL.md",
+        "examples/configuration-file.json",
+        "examples/configuration.json",
+        "examples/schema.json",
+        "examples/source.yaml",
+        "manifest.json",
+        "references/input-schema.md",
+        "scripts/generate_configuration.py"
+      ]
+    },
+    {
+      "name": "document-read",
+      "files": [
+        "SKILL.md",
+        "examples/export.json",
+        "examples/read.json",
+        "licenses/docling-mit.txt",
+        "manifest.json",
+        "references/docling/SKILL.md",
+        "references/docling/references/cli.md",
+        "references/docling/references/extraction.md",
+        "references/docling/references/python-sdk.md",
+        "references/docling/references/rag.md",
+        "references/docling/references/service-client.md",
+        "references/docling/references/slim-packaging.md",
+        "references/input-contract.md",
+        "scripts/read_document.py"
+      ]
+    },
+    {
+      "name": "webapp-testing",
+      "files": [
+        "SKILL.md",
+        "examples/webapp-check.json",
+        "licenses/anthropic-apache-2.0.txt",
+        "manifest.json",
+        "references/check-contract.md",
+        "references/upstream-webapp-testing.md",
+        "scripts/check_webapp.mjs"
+      ]
+    },
+    {
+      "name": "research",
+      "files": [
+        "SKILL.md",
+        "examples/extract.json",
+        "examples/normalize.json",
+        "examples/requests.json",
+        "examples/research.json",
+        "examples/search.json",
+        "licenses/tavily-mit.txt",
+        "manifest.json",
+        "references/collect-responses.mjs",
+        "references/research-contract.md",
+        "references/upstream-tavily-extract.txt",
+        "references/upstream-tavily-search.txt",
+        "scripts/research.py"
+      ]
+    },
+    {
+      "name": "mcp-builder",
+      "files": [
+        "SKILL.md",
+        "examples/mcp-server.json",
+        "examples/mcp-sum.json",
+        "licenses/anthropic-apache-2.0.txt",
+        "manifest.json",
+        "references/input-contract.md",
+        "references/mcp-best-practices.md",
+        "references/python-mcp-server.md",
+        "references/upstream-mcp-builder.md",
+        "scripts/build_mcp_server.py"
+      ]
+    }
+  ]
+}

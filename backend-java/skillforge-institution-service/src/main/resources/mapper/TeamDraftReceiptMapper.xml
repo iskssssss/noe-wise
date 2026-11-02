@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.team.TeamDraftReceiptMapper">
+  <insert id="insert">INSERT INTO nw_team_draft_receipts(tenant_id,request_id,actor_ref,team_id,revision)
+    VALUES(#{tenant},CAST(#{requestId} AS uuid),#{actor},#{teamId},#{revision})</insert>
+  <select id="find" resultType="com.skillforge.institution.team.TeamDraftReceiptMapper$Row">
+    SELECT team_id,revision FROM nw_team_draft_receipts
+    WHERE tenant_id=#{tenant} AND request_id=CAST(#{requestId} AS uuid) AND actor_ref=#{actor}
+  </select>
+</mapper>

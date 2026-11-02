@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.service.HandoffCreateMapper">
+  <insert id="insert">
+    INSERT INTO nw_human_handoff_tickets
+        (id, ticket_id, tenant_id, end_user_id, session_id, execution_id, reason, summary,
+         priority, status, context, revision, created_at, updated_at, create_command_id, created_by, create_fingerprint)
+    VALUES (#{id}, #{ticketId}, #{tenantId}, #{endUserId}, #{sessionId}, #{executionId}, #{reason}, #{summary},
+            #{priority}, #{status}, '{}'::jsonb, #{revision}, #{createdAt}, #{updatedAt},
+            #{createCommandId}, #{createdBy}, #{createFingerprint})
+    ON CONFLICT (tenant_id, create_command_id) DO NOTHING
+  </insert>
+</mapper>

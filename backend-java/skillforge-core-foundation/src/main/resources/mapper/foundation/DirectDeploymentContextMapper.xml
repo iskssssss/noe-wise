@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.catalog.entitlements.DirectDeploymentScope$ContextMapper">
+    <resultMap id="state" type="com.skillforge.core.foundation.catalog.entitlements.DirectDeploymentScope$State">
+        <constructor><arg column="tenant" javaType="java.lang.String"/><arg column="platform_admin" javaType="java.lang.String"/></constructor>
+    </resultMap>
+    <select id="current" resultMap="state" flushCache="true" useCache="false">
+        SELECT COALESCE(current_setting('app.tenant_id',true),'') tenant,
+            COALESCE(current_setting('app.platform_admin',true),'false') platform_admin
+    </select>
+    <select id="bindTenant" resultType="java.lang.String" flushCache="true" useCache="false">
+        SELECT set_config('app.tenant_id',#{tenant},true)||set_config('app.platform_admin','false',true)
+    </select>
+    <select id="restore" resultType="java.lang.String" flushCache="true" useCache="false">
+        SELECT set_config('app.tenant_id',#{tenant},true)||set_config('app.platform_admin',#{platformAdmin},true)
+    </select>
+</mapper>

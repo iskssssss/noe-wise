@@ -1,0 +1,43 @@
+# Micrometer实际指标。不存在的配额/连接器gauge不能作为已具备的告警来源。
+
+groups:
+  - name: skillforge
+    rules:
+      - alert: HighErrorRate
+        expr: (sum by (job,instance) (rate(http_server_requests_seconds_count{status=~"5.."}[5m])) / clamp_min(sum by (job,instance) (rate(http_server_requests_seconds_count[5m])), 0.001)) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "高错误率: 5xx 超过 5%"
+
+      - alert: ServiceUnavailable
+        expr: up{job=~"skillforge-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务 {{ $labels.job }} Prometheus抓取失败"
+
+      - alert: DatabasePoolSaturated
+        expr: hikaricp_connections_active / clamp_min(hikaricp_connections_max, 1) > 0.9
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "服务 {{ $labels.job }} 数据库连接池使用超过90%"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum by (job,instance,le) (rate(http_server_requests_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 延迟超过 2 秒"
+      - alert: HeapNearLimit
+        expr: sum by (job,instance) (jvm_memory_used_bytes{area="heap"}) / clamp_min(sum by (job,instance) (jvm_memory_max_bytes{area="heap"}), 1) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "服务 {{ $labels.job }} JVM堆使用超过90%"

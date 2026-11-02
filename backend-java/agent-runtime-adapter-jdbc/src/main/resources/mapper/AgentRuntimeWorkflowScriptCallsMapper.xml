@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.execution.WorkflowScriptCallsMapper">
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenantId}, true)
+    </select>
+
+    <select id="storageNow"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionStorageTimeRow"
+            useCache="false" flushCache="true">
+        SELECT floor(extract(epoch FROM sampled_at))::bigint AS epoch_second,
+               floor((extract(epoch FROM sampled_at)
+                    - floor(extract(epoch FROM sampled_at)))
+                    * 1000000000)::integer AS nano
+          FROM (SELECT clock_timestamp() AS sampled_at) sampled
+    </select>
+
+    <!-- 所有写路径固定先锁 façade Run，再锁 Workflow Execution。 -->
+    <select id="lockRun"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.JdbcWorkflowScriptCalls$RunSource"
+            useCache="false" flushCache="true">
+        SELECT tenant_id, session_id, target_kind, target_id, agent_id,
+               end_user_id, run_id, input_id AS causation_input_id, status,
+               CASE WHEN cancelled THEN 'typed-cancelled' END AS cancel_request_id,
+               NULL::bigint AS cancel_requested_epoch_second,NULL::integer AS cancel_requested_nano
+          FROM public.agent_runtime_execution_runs
+         WHERE tenant_id = #{tenantId}
+           AND run_id = #{runId}
+         FOR UPDATE
+    </select>
+
+    <select id="lockExecution"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.JdbcWorkflowScriptCalls$ExecutionSource"
+            useCache="false" flushCache="true">
+        SELECT tenant_id, execution_id, session_id, agent_id, end_user_id, run_id, causation_input_id, execution_unit_id,
+               definition_version, execution_mode, causative_action_id, delegation_id, state, execution_revision,
+               checkpoint_schema_id, checkpoint_canonical_json, waiting_suspend_ref, waiting_action_key, result_ref,
+               reason_code, lease_claim_id, lease_worker_id, lease_fencing_token, lease_execution_revision,
+               lease_until_epoch_second, lease_until_nano, last_requested_epoch_second, last_requested_nano,
+               cancel_request_id, cancel_requested_epoch_second, cancel_requested_nano, record_data, created_epoch_second,
+               created_nano, updated_epoch_second, updated_nano, target_kind, target_id
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+         FOR UPDATE
+    </select>
+
+    <sql id="scriptCallColumns">
+        tenant_id, execution_id, session_id, target_kind, target_id,
+        agent_id, end_user_id, run_id, node_id, visit, call_index,
+        definition_revision, installation_revision,
+        prepared_execution_revision, task_id, request_schema_id,
+        deadline_epoch_second, deadline_nano,
+        source_checkpoint_fingerprint, request_fingerprint,
+        preparation_fingerprint, preparation_data, state,
+        terminal_fingerprint, terminal_data
+    </sql>
+
+    <select id="find"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.WorkflowScriptCallRow"
+            useCache="false">
+        SELECT <include refid="scriptCallColumns"/>
+          FROM public.agent_runtime_workflow_script_calls
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+           AND node_id = #{nodeId}
+           AND visit = #{visit}
+           AND call_index = #{callIndex}
+    </select>
+
+    <select id="active"
+            resultType="com.skillforge.runtime.adapter.jdbc.execution.WorkflowScriptCallRow"
+            useCache="false">
+        SELECT <include refid="scriptCallColumns"/>
+          FROM public.agent_runtime_workflow_script_calls
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+           AND session_id = #{sessionId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND agent_id = #{agentId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND run_id = #{runId}
+           AND state IN ('PREPARED', 'DISPATCHED')
+         ORDER BY node_id, visit, call_index
+    </select>
+
+    <insert id="insert">
+        INSERT INTO public.agent_runtime_workflow_script_calls (
+            <include refid="scriptCallColumns"/>)
+        VALUES (
+            #{tenantId}, #{executionId}, #{sessionId}, #{targetKind},
+            #{targetId}, #{agentId}, #{endUserId}, #{runId}, #{nodeId},
+            #{visit}, #{callIndex}, #{definitionRevision},
+            #{installationRevision}, #{preparedExecutionRevision},
+            #{taskId}, #{requestSchemaId}, #{deadlineEpochSecond},
+            #{deadlineNano}, #{sourceCheckpointFingerprint},
+            #{requestFingerprint}, #{preparationFingerprint},
+            #{preparationData}, #{state}, #{terminalFingerprint},
+            #{terminalData})
+    </insert>
+
+    <update id="dispatch">
+        UPDATE public.agent_runtime_workflow_script_calls
+           SET state = 'DISPATCHED',
+               dispatched_at = clock_timestamp()
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+           AND node_id = #{nodeId}
+           AND visit = #{visit}
+           AND call_index = #{callIndex}
+           AND state = 'PREPARED'
+    </update>
+
+    <update id="record">
+        UPDATE public.agent_runtime_workflow_script_calls
+           SET state = #{state},
+               terminal_fingerprint = #{terminalFingerprint},
+               terminal_data = #{terminalData},
+               terminal_at = clock_timestamp()
+         WHERE tenant_id = #{tenantId}
+           AND execution_id = #{executionId}
+           AND node_id = #{nodeId}
+           AND visit = #{visit}
+           AND call_index = #{callIndex}
+           AND state = 'DISPATCHED'
+    </update>
+</mapper>

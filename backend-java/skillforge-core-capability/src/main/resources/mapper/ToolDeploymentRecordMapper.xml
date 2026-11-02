@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.persistence.ToolDeploymentRecordMapper">
+  <select id="listAvailableTools" resultType="com.skillforge.core.capability.AvailableToolDeployment">
+    SELECT d.id AS definition_id, v.id AS version_id, v.name, v.description,
+           v.descriptor->>'tool_name' AS tool_name,
+           p.deployment_key, p.provider_type, p.provider_ref, p.environment
+      FROM nw_tool_deployments p
+      JOIN nw_capability_versions a ON a.id=p.tool_version_id
+      JOIN nw_capability_definitions d ON d.id=a.definition_id
+       AND d.tenant_id IS NOT DISTINCT FROM a.tenant_id AND d.capability_type=a.capability_type
+      JOIN nw_capability_versions v ON v.id=d.default_version_id AND v.definition_id=d.id
+       AND v.tenant_id IS NOT DISTINCT FROM d.tenant_id AND v.capability_type=d.capability_type
+     WHERE p.tenant_id=#{tenant} AND p.status='ACTIVE' AND p.provider_type IN ('MCP','PLATFORM')
+       AND (a.tenant_id=#{tenant} OR (a.tenant_id IS NULL AND a.status='PUBLISHED'))
+       AND (d.tenant_id=#{tenant} OR d.tenant_id IS NULL)
+       AND d.capability_type='TOOL' AND d.status='PUBLISHED' AND v.status='PUBLISHED'
+       AND v.descriptor->'model_invocable'='true'::jsonb
+       AND v.descriptor->'confirmation_policy'='"NEVER"'::jsonb
+     ORDER BY p.updated_at DESC, p.id DESC
+  </select>
+</mapper>

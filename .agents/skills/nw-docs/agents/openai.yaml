@@ -1,0 +1,7 @@
+interface:
+  display_name: "灵知 文档"
+  short_description: "维护灵知 文档事实归属，按需同步契约与长期记录"
+  default_prompt: "使用 $nw-docs 完成文档编辑，按事实归属和触发条件维护记录。"
+
+policy:
+  allow_implicit_invocation: true

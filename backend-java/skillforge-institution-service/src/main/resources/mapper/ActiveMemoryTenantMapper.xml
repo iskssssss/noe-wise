@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.ActiveMemoryTenantMapper">
+    <!-- tenants 是全局租户目录，仅供受信任后台任务发现活跃租户，不读取租户业务数据。 -->
+    <select id="after" resultType="string">
+        select id::text from nw_tenants where status='active' and id &gt; #{after} order by id limit 200
+    </select>
+</mapper>

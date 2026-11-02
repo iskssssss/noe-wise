@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 UI 与交互体验"
+  short_description: "按产品范围设计和评审界面层级、反馈、主题、弹层及响应式体验"
+
+policy:
+  allow_implicit_invocation: true

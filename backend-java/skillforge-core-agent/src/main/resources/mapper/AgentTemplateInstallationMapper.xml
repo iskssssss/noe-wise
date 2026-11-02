@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.mapper.AgentTemplateInstallationMapper">
+  <select id="lockRequest" resultType="long">
+    SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended('agent-install:' || #{tenantId}::text || ':' || #{requestId}, 0))) locked
+  </select>
+  <select id="find" resultType="com.skillforge.core.agent.mapper.AgentTemplateInstallationMapper$Receipt">
+    SELECT fingerprint, agent_id FROM nw_agent_template_installations WHERE tenant_id = #{tenantId} AND request_id = #{requestId}
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_agent_template_installations(tenant_id, request_id, fingerprint, template_id, agent_id)
+    VALUES (#{tenantId}, #{requestId}, #{fingerprint}, #{templateId}, #{agentId})
+  </insert>
+</mapper>

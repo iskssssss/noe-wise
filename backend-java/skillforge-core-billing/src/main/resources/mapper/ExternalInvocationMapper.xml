@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.billing.persistence.ExternalInvocationMapper">
+ <!-- 唯一尝试准入和辅助未知计量共享事务；并发重复不触发 PostgreSQL aborted transaction。 -->
+ <insert id="insert">
+  INSERT INTO public.nw_external_invocations
+   (id,tenant_id,invocation_id,attempt_id,operation_type,provider,service,idempotency_key,status,
+    input_id,root_input_id,operation_id,root_operation_id,trace_id,span_id,source_event_id,caused_by_event_id,
+    provider_request_id,error_code,started_at,ended_at,metadata,created_at,updated_at)
+  VALUES
+   (#{id},#{tenantId},#{invocationId},#{attemptId},#{operationType},#{provider},#{service},#{idempotencyKey},#{status},
+    #{inputId},#{rootInputId},#{operationId},#{rootOperationId},#{traceId},#{spanId},#{sourceEventId},#{causedByEventId},
+    #{providerRequestId},#{errorCode},#{startedAt},#{endedAt},#{metadata,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+    #{createdAt},#{updatedAt})
+  ON CONFLICT(tenant_id,attempt_id) DO NOTHING
+ </insert>
+</mapper>

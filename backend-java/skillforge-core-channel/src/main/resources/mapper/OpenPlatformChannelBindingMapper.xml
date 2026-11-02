@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.channel.persistence.OpenPlatformChannelBindingMapper">
+  <update id="advancePublication">
+    UPDATE nw_open_platform_channel_bindings target SET resource_revision=source.resource_revision,
+      binding_revision=source.revision,etag=source.etag,updated_at=now()
+    FROM (VALUES <foreach collection="rows" item="row" separator=",">
+      (#{row.id}::bigint,#{row.tenantId}::bigint,#{row.resourceRevision}::bigint,
+       #{row.bindingRevision}::bigint,#{row.etag}::text)
+    </foreach>) AS source(id,tenant_id,resource_revision,revision,etag)
+    WHERE target.id=source.id AND target.tenant_id=source.tenant_id
+  </update>
+</mapper>

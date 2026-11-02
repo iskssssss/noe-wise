@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryHistoryRetentionMapper">
+    <select id="cutoff" resultType="java.time.Instant">
+        select clock_timestamp()-make_interval(days=&gt;#{days}::integer)
+    </select>
+    <select id="candidates" resultType="com.skillforge.institution.memory.MemoryHistoryRetentionMapper$Revision">
+        select r.fact_id,r.revision from public.agent_runtime_memory_fact_revisions r
+        join public.agent_runtime_memory_fact_heads h on h.tenant_id=r.tenant_id and h.fact_id=r.fact_id
+        join public.agent_runtime_memory_fact_revisions retired on retired.tenant_id=h.tenant_id
+            and retired.fact_id=h.fact_id and retired.revision=h.current_revision
+        where r.tenant_id=#{tenant} and r.revision&gt;1 and r.revision&lt;h.current_revision
+            and r.revision&lt;&gt;r.content_revision and retired.status='ARCHIVED'
+            and retired.superseded_fact_id is not null and retired.valid_to_epoch_second is not null
+            and retired.recorded_at&lt;#{cutoff}::timestamptz and r.recorded_at&lt;#{cutoff}::timestamptz
+            and (r.fact_id,r.revision)&gt;(#{afterFact},#{afterRevision})
+        order by r.fact_id,r.revision limit #{limit} for update of h,r skip locked
+    </select>
+    <select id="bindCutoff" resultType="string">
+        select set_config('app.memory_history_retention_cutoff',#{cutoff}::text,true)
+    </select>
+    <delete id="deleteUnprotected">
+        delete from public.agent_runtime_memory_fact_revisions r using (values
+        <foreach collection="revisions" item="r" separator=",">(#{r.factId}::text,#{r.revision}::bigint)</foreach>
+        ) as candidate(fact_id,revision)
+        where r.tenant_id=#{tenant} and r.fact_id=candidate.fact_id and r.revision=candidate.revision
+            and public.agent_runtime_memory_history_unprotected(r.tenant_id,r.fact_id,r.revision,#{cutoff}::timestamptz)
+    </delete>
+</mapper>

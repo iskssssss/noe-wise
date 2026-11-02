@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.group.GroupMessageMapper">
+ <sql id="messageColumns">tenant_id,integration_id,group_binding_id,session_id,source_message_id,source_sequence,source_event_id,source_revision,author_kind,author_end_user_id,author_agent_id,author_run_id,source_ref,author_json::text AS author_json,content_json::text AS content_json,fingerprint</sql>
+ <sql id="triggerColumns">tenant_id,integration_id,group_binding_id,session_id,trigger_id,trigger_sequence,source_message_id,source_sequence,requester_end_user_id,agent_id,principal_id,credential_version,status,input_id,run_id,rejection_code</sql>
+ <select id="lockKey" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended(#{key},0))::text</select>
+ <select id="group" resultType="com.skillforge.institution.group.GroupBindingMapper$Row">SELECT id AS group_binding_id,tenant_id,integration_id,namespace,external_group_ref,lifecycle_ref,business_scope_id,session_id,status,revision FROM nw_group_bindings WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND id=#{group}</select>
+ <select id="message" resultType="com.skillforge.institution.group.GroupMessageMapper$Message" useCache="false" flushCache="true">SELECT <include refid="messageColumns"/> FROM nw_group_source_messages WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND source_message_id=#{id}</select>
+ <select id="source" resultType="com.skillforge.institution.group.GroupMessageMapper$Message" useCache="false" flushCache="true">SELECT <include refid="messageColumns"/> FROM nw_group_source_messages WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND source_event_id=#{event}</select>
+ <select id="trigger" resultType="com.skillforge.institution.group.GroupMessageMapper$TriggerRow" useCache="false" flushCache="true">SELECT <include refid="triggerColumns"/> FROM nw_group_triggers WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND trigger_id=#{id}</select>
+ <select id="sourceTrigger" resultType="com.skillforge.institution.group.GroupMessageMapper$TriggerRow" useCache="false" flushCache="true">SELECT <include refid="triggerColumns"/> FROM nw_group_triggers WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND source_message_id=#{id}</select>
+ <select id="head" resultType="com.skillforge.institution.group.GroupMessageMapper$TriggerRow" useCache="false" flushCache="true">SELECT <include refid="triggerColumns"/> FROM nw_group_triggers WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND status='queued' ORDER BY trigger_sequence LIMIT 1</select>
+ <select id="slot" resultType="com.skillforge.institution.group.GroupMessageMapper$Slot" useCache="false" flushCache="true">SELECT tenant_id,integration_id,group_binding_id,source_sequence,trigger_sequence,active_trigger_id,active_run_id FROM nw_group_front_slots WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group}</select>
+ <select id="lockSlot" resultType="com.skillforge.institution.group.GroupMessageMapper$Slot" useCache="false" flushCache="true">SELECT tenant_id,integration_id,group_binding_id,source_sequence,trigger_sequence,active_trigger_id,active_run_id FROM nw_group_front_slots WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} FOR UPDATE</select>
+
+ <insert id="ensureSlot">INSERT INTO nw_group_front_slots(tenant_id,integration_id,group_binding_id) VALUES(#{tenant},#{integration},#{group}) ON CONFLICT DO NOTHING</insert>
+ <insert id="insertMessage">INSERT INTO nw_group_source_messages(tenant_id,integration_id,group_binding_id,session_id,source_message_id,source_sequence,source_event_id,source_revision,author_kind,author_end_user_id,author_agent_id,author_run_id,source_ref,author_json,content_json,fingerprint) VALUES(#{tenantId},#{integrationId},#{groupBindingId},#{sessionId},#{sourceMessageId},#{sourceSequence},#{sourceEventId},#{sourceRevision},#{authorKind},#{authorEndUserId},#{authorAgentId},#{authorRunId},#{sourceRef},#{authorJson}::jsonb,#{contentJson}::jsonb,#{fingerprint})</insert>
+ <insert id="insertTrigger">INSERT INTO nw_group_triggers(tenant_id,integration_id,group_binding_id,session_id,trigger_id,trigger_sequence,source_message_id,source_sequence,requester_end_user_id,agent_id,principal_id,credential_version,status) VALUES(#{tenantId},#{integrationId},#{groupBindingId},#{sessionId},#{triggerId},#{triggerSequence},#{sourceMessageId},#{sourceSequence},#{requesterEndUserId},#{agentId},#{principalId},#{credentialVersion},'queued')</insert>
+ <update id="advanceSource">UPDATE nw_group_front_slots SET source_sequence=#{sequence} WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND source_sequence=#{sequence}-1</update>
+ <update id="advanceTrigger">UPDATE nw_group_front_slots SET trigger_sequence=#{sequence} WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND trigger_sequence=#{sequence}-1</update>
+ <update id="accept">UPDATE nw_group_triggers SET status='accepted',input_id=#{input},run_id=#{run} WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND trigger_id=#{id} AND status='queued'</update>
+ <update id="occupy">UPDATE nw_group_front_slots SET active_trigger_id=#{id},active_run_id=#{run} WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND active_trigger_id IS NULL</update>
+ <update id="reject">UPDATE nw_group_triggers SET status='rejected',rejection_code=#{reason} WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND trigger_id=#{id} AND status='queued'</update>
+ <update id="releaseSlot">UPDATE nw_group_front_slots SET active_trigger_id=NULL,active_run_id=NULL WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND active_run_id=#{run}</update>
+ <select id="terminal" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM agent_runtime_execution_runs WHERE tenant_id=#{tenant}::text AND session_id=#{session} AND run_id=#{run} AND phase='FINISHED')</select>
+ <select id="history" resultType="com.skillforge.institution.group.GroupMessageMapper$Message">SELECT <include refid="messageColumns"/> FROM nw_group_source_messages WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND source_sequence &lt;= #{through} ORDER BY source_sequence</select>
+ <select id="pollTenantPage" resultType="string">SELECT id::text FROM nw_tenants WHERE id::text &gt; #{after} ORDER BY id::text LIMIT #{limit}</select>
+ <select id="pendingSlots" resultType="com.skillforge.institution.group.GroupMessageMapper$Slot">SELECT s.tenant_id,s.integration_id,s.group_binding_id,s.source_sequence,s.trigger_sequence,s.active_trigger_id,s.active_run_id FROM nw_group_front_slots s WHERE s.tenant_id=#{tenant} AND (s.active_run_id IS NOT NULL OR EXISTS(SELECT 1 FROM nw_group_triggers t WHERE t.tenant_id=s.tenant_id AND t.integration_id=s.integration_id AND t.group_binding_id=s.group_binding_id AND t.status='queued')) ORDER BY s.group_binding_id LIMIT 100</select>
+ <select id="pendingSlotPage" resultType="com.skillforge.institution.group.GroupMessageMapper$Slot">SELECT s.tenant_id,s.integration_id,s.group_binding_id,s.source_sequence,s.trigger_sequence,s.active_trigger_id,s.active_run_id FROM nw_group_front_slots s WHERE s.tenant_id=#{tenant} AND s.group_binding_id &gt; #{after} AND (s.active_run_id IS NOT NULL OR EXISTS(SELECT 1 FROM nw_group_triggers t WHERE t.tenant_id=s.tenant_id AND t.integration_id=s.integration_id AND t.group_binding_id=s.group_binding_id AND t.status='queued')) ORDER BY s.group_binding_id LIMIT #{limit}</select>
+ <select id="activeGroup" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM (
+ SELECT g.id FROM nw_group_bindings g JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+ JOIN nw_tenants n ON n.id=g.tenant_id WHERE g.tenant_id=#{tenant} AND g.integration_id=#{integration} AND g.id=#{group}
+ AND g.status='active' AND b.status='active' AND n.status IN('active','warning') FOR SHARE OF g,b,n) qualification)</select>
+ <select id="messageAuthorEligible" resultType="boolean" useCache="false" flushCache="true">SELECT EXISTS(SELECT 1 FROM (
+ SELECT m.end_user_id FROM nw_group_memberships m JOIN nw_end_users e ON e.tenant_id=m.tenant_id AND e.external_integration_id=m.integration_id AND e.id=m.end_user_id
+ WHERE m.tenant_id=#{tenant} AND m.integration_id=#{integration} AND m.group_binding_id=#{group} AND m.end_user_id=#{user}
+ AND m.status='active' AND e.status='active' FOR SHARE OF m,e) qualification)</select>
+ <select id="eligible" resultType="boolean" useCache="false" flushCache="true">
+ SELECT EXISTS(SELECT 1 FROM (
+ SELECT g.id FROM nw_group_bindings g
+ JOIN nw_group_memberships m ON (m.tenant_id,m.integration_id,m.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+ JOIN nw_group_service_agents a ON (a.tenant_id,a.integration_id,a.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+ JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+ JOIN nw_end_users e ON e.tenant_id=g.tenant_id AND e.external_integration_id=g.integration_id AND e.id=m.end_user_id
+ JOIN nw_service_principals p ON p.tenant_id=g.tenant_id AND p.integration_id=g.integration_id
+ JOIN nw_tenants n ON n.id=g.tenant_id
+ WHERE g.tenant_id=#{tenant} AND g.integration_id=#{integration} AND g.id=#{group}
+ AND g.status='active' AND m.end_user_id=#{user} AND m.status='active' AND a.agent_id=#{agent} AND a.status='active'
+ AND b.status='active' AND e.status='active' AND n.status IN('active','warning')
+ AND p.principal_id=#{principal} AND p.status='active' AND p.scopes @&gt; '["groups.triggers.write"]'::jsonb
+ FOR SHARE OF g,m,a,b,e,p,n) current_qualification)
+ </select>
+ <select id="command" resultType="com.skillforge.institution.group.GroupMessageMapper$Receipt">SELECT tenant_id,integration_id,actor_ref,operation,group_binding_id,request_key,fingerprint,response::text AS response FROM nw_group_message_requests WHERE tenant_id=#{tenant} AND integration_id=#{integration} AND group_binding_id=#{group} AND actor_ref=#{actor} AND operation=#{operation} AND request_key=#{key}</select>
+ <insert id="receipt">INSERT INTO nw_group_message_requests(tenant_id,integration_id,actor_ref,operation,group_binding_id,request_key,fingerprint,response) VALUES(#{tenantId},#{integrationId},#{actorRef},#{operation},#{groupBindingId},#{requestKey},#{fingerprint},#{response}::jsonb)</insert>
+ <insert id="pendingExtraction">INSERT INTO nw_group_memory_extraction_pending(tenant_id,integration_id,group_binding_id,source_message_id,source_sequence,status) VALUES(#{tenantId},#{integrationId},#{groupBindingId},#{sourceMessageId},#{sourceSequence},'pending')</insert>
+</mapper>

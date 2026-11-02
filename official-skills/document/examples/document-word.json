@@ -1,0 +1,25 @@
+{
+  "format": "docx",
+  "title": "项目方案示例",
+  "subtitle": "示例资料，实际生成时替换为用户已确认事实",
+  "styles": {"western_font": "Liberation Sans", "cjk_font": "Noto Sans CJK SC", "body_size_pt": 11},
+  "page": {"size": "A4", "margin_mm": 22, "header": "项目方案示例", "footer": "内部讨论资料", "page_numbers": true},
+  "sections": [
+    {
+      "heading": "方案目标",
+      "level": 1,
+      "blocks": [
+        {"type": "paragraph", "runs": [{"text": "实施范围：", "bold": true}, {"text": "按用户提供的事实说明目标与范围。"}], "keep_with_next": true},
+        {"type": "table", "headers": ["事项", "处理结果"], "rows": [["已确认条件", "按资料填入"], ["交付形式", "Word"]], "column_widths_mm": [60, 106], "allow_row_split": false},
+        {"type": "numbered", "items": ["确认实施范围", "按约定开展验收"]}
+      ]
+    },
+    {
+      "heading": "待确认事项",
+      "level": 1,
+      "page_break_before": true,
+      "blocks": [{"type": "paragraph", "text": "用户尚未提供的信息保持待确认，不自行补齐。"}]
+    },
+    {"heading": "验收安排", "level": 2, "blocks": [{"type": "paragraph", "text": "验收人员和时间待确认。"}]}
+  ]
+}

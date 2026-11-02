@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.integration.runtime.workflow.WorkflowBindingMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="lockBinding" resultType="string" flushCache="true" useCache="false">
+        SELECT pg_advisory_xact_lock(hashtextextended('workflow-binding:' || length(#{tenant})::text || ':' || #{tenant} || #{instance},0))::text
+    </select>
+    <select id="source" resultType="com.skillforge.core.workflow.integration.runtime.workflow.WorkflowBindingSource">
+        SELECT c.workflow_id AS workflow_key,v.definition::text AS definition_json,r.config::text AS config_json,
+               r.custom_prompt,p.descriptor::text AS descriptor,r.bindings::text AS bindings_json
+        FROM public.nw_workflow_instances i
+        JOIN public.nw_workflow_installation_revisions r ON r.instance_id=i.id AND r.tenant_id=i.tenant_id AND r.installation_revision=#{target.installationRevision}
+        JOIN public.nw_workflow_definition_versions installed ON installed.id=r.definition_version_id AND installed.tenant_id=i.tenant_id
+        JOIN public.nw_workflow_containers c ON c.id=installed.container_id AND c.tenant_id=installed.tenant_id
+        JOIN public.nw_workflow_definition_versions v ON v.id=#{target.instanceRevision} AND v.container_id=c.id AND v.tenant_id=c.tenant_id
+        JOIN public.nw_capability_versions p ON p.id=v.capability_version_id AND p.tenant_id=v.tenant_id
+        WHERE i.tenant_id::text=#{tenant} AND i.id::text=#{target.instanceId} AND i.status='published'
+          AND v.id=#{target.instanceRevision} AND p.id::text=#{target.capability.versionId}
+          AND p.definition_id::text=#{target.capability.capabilityId} AND p.capability_type='WORKFLOW' AND p.status='PUBLISHED'
+          AND jsonb_typeof(v.definition)='object' AND jsonb_typeof(r.config)='object'
+    </select>
+    <select id="find" resultType="com.skillforge.core.workflow.integration.runtime.workflow.WorkflowBindingRow">
+        SELECT tenant_id, handle, instance_id, instance_revision, installation_revision, capability_id, version_id, timeout,
+               workflow_key, definition_json, config_json, bindings_json, resolved_bindings_json, custom_prompt, descriptor,
+               digest FROM public.nw_runtime_workflow_bindings
+        WHERE tenant_id=current_setting('app.tenant_id',true) AND handle=#{target.handle.value}
+          AND instance_id=#{target.instanceId} AND instance_revision=#{target.instanceRevision}
+          AND installation_revision=#{target.installationRevision}
+          AND capability_id=#{target.capability.capabilityId} AND version_id=#{target.capability.versionId}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.nw_runtime_workflow_bindings
+          (tenant_id,handle,instance_id,instance_revision,capability_id,version_id,timeout,workflow_key,
+           definition_json,config_json,custom_prompt,descriptor,digest,installation_revision,bindings_json,resolved_bindings_json)
+        VALUES (#{tenantId},#{handle},#{instanceId},#{instanceRevision},#{capabilityId},#{versionId},#{timeout},#{workflowKey},
+           #{definitionJson},#{configJson},#{customPrompt},#{descriptor},#{digest},#{installationRevision},#{bindingsJson},#{resolvedBindingsJson})
+    </insert>
+</mapper>

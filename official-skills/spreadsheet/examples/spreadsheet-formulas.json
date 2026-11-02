@@ -1,0 +1,30 @@
+{
+  "operation": "create",
+  "recalculate": true,
+  "sheets": [
+    {
+      "name": "流水",
+      "columns": [
+        {"key": "category", "title": "分类", "type": "text"},
+        {"key": "amount", "title": "金额", "type": "number", "number_format": "#,##0.00"}
+      ],
+      "rows": [{"category": "设备", "amount": 120.5}, {"category": "设备", "amount": 120.5}, {"category": "服务", "amount": 249}]
+    },
+    {
+      "name": "汇总",
+      "cells": [
+        {"cell": "A1", "value": "分类", "style": {"bold": true}},
+        {"cell": "B1", "value": "金额", "style": {"bold": true}},
+        {"cell": "A2", "value": "设备"},
+        {"cell": "B2", "value": {"type": "formula", "value": "=SUMIF('流水'!A2:A4,A2,'流水'!B2:B4)"}, "style": {"number_format": "#,##0.00"}},
+        {"cell": "A3", "value": "服务"},
+        {"cell": "B3", "value": {"type": "formula", "value": "=SUMIF('流水'!A2:A4,A3,'流水'!B2:B4)"}, "style": {"number_format": "#,##0.00"}},
+        {"cell": "A5", "value": "总额"},
+        {"cell": "B5", "value": {"type": "formula", "value": "=SUM('流水'!B2:B4)"}, "style": {"bold": true, "number_format": "#,##0.00"}}
+      ],
+      "charts": [{"type": "bar", "title": "分类金额", "data": "B1:B3", "categories": "A2:A3", "anchor": "D2", "axis_min": 0}],
+      "print": {"area": "A1:O24", "orientation": "landscape"}
+    }
+  ],
+  "checks": [{"sheet": "汇总", "cell": "B2", "expected": 241}, {"sheet": "汇总", "cell": "B5", "expected": 490}]
+}

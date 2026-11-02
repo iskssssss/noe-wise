@@ -1,0 +1,38 @@
+{
+  "name": "agentforge-frontend-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": "^22.18.0 || ^24.0.0"
+  },
+  "scripts": {
+    "desktop:dev": "corepack pnpm --filter @noewise/desktop-client dev",
+    "desktop:build": "corepack pnpm --filter @noewise/desktop-client build",
+    "desktop:package:win": "corepack pnpm --filter @noewise/desktop-client package:win",
+    "build": "corepack pnpm --filter frontend-admin --filter frontend-platform --filter frontend-chat build",
+    "test": "corepack pnpm --filter frontend-admin --filter frontend-platform --filter frontend-chat --filter @skillforge/shared test",
+    "lint": "corepack pnpm -r --if-present lint",
+    "lint:fix": "corepack pnpm -r --if-present lint:fix",
+    "format": "corepack pnpm -r --if-present format",
+    "format:check": "corepack pnpm -r --if-present format:check",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "unplugin-vue-components": "^28.4.1",
+    "unplugin-element-plus": "catalog:",
+    "sass": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "@vitejs/plugin-vue": "catalog:",
+    "eslint": "catalog:",
+    "@eslint/js": "catalog:",
+    "typescript-eslint": "catalog:",
+    "eslint-plugin-vue": "catalog:",
+    "globals": "catalog:",
+    "prettier": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7"
+  }
+}

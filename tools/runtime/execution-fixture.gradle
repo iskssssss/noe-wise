@@ -1,0 +1,14 @@
+// 仅暴露正式测试运行类路径；Flyway与资源均来自当前工程，不拼装或复制迁移SQL。
+gradle.projectsEvaluated {
+    def host = gradle.rootProject.project(':skillforge-institution-service')
+    host.tasks.register('exportExecutionFixtureClasspath') {
+        dependsOn host.tasks.named('testClasses')
+        doLast {
+            def destination = gradle.rootProject.findProperty('executionFixtureClasspath')
+            if (!destination) throw new GradleException('需要 -PexecutionFixtureClasspath=<私有输出文件>')
+            def target = new File(destination.toString())
+            target.parentFile.mkdirs()
+            target.setText(host.sourceSets.test.runtimeClasspath.asPath, 'UTF-8')
+        }
+    }
+}

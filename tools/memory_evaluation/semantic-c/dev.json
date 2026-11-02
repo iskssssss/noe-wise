@@ -1,0 +1,1044 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-semantic-c-dev-v1",
+  "split": "dev",
+  "repeats": 1,
+  "language": "zh-CN",
+  "evidenceStatus": "NOT_RUN",
+  "evidenceLane": "REAL_MODEL_SYSTEM_AGENT_CANDIDATE_V2",
+  "annotationProtocol": "人工先按原始来源含义标注，标签不来自模型输出；允许同义表达，内容、主体、范围、时间、条件、来源和关系均须逐例复核。",
+  "exposure": "AUTHORED_KNOWN_CASES_NOT_BLIND_NO_FAMILY_GENERALIZATION_CLAIM",
+  "budget": {
+    "approval": "PENDING_ROOT_CONFIGURATION_FREEZE",
+    "maxModelCalls": 16,
+    "repeats": 1,
+    "modelConfiguration": null,
+    "price": null
+  },
+  "thresholds": {
+    "criticalTemporaryPromotionFailures": 0,
+    "otherTemporaryPromotionRateMaximum": 0.02,
+    "stableOmissionRateMaximum": 0.1,
+    "sourceSupportRateMinimum": 1.0,
+    "possibleConflictDetectionRateMinimum": 0.9,
+    "criticalStableDiscardFailures": 0,
+    "wrongAutomaticMergeOrRevisionFailures": 0
+  },
+  "scenarios": [
+    {
+      "id": "CD01",
+      "name": "稳定的结论先行",
+      "family": "dev-case-01",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "以后给我经营分析时，先用一句话说结论，再列数据依据。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "summary-first",
+            "meaning": "经营分析先一句结论后数据依据",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "经营分析"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "稳定的结论先行"
+    },
+    {
+      "id": "CD02",
+      "name": "引号中的临时短语不否定长期偏好",
+      "family": "dev-case-02",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "以后默认中文，不要每次再问我“这次用哪种语言”。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "default-chinese",
+            "meaning": "长期默认中文且不反复询问语言",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "将引号内的问题视为用户尚未确定长期语言"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "引号中的临时短语不否定长期偏好"
+    },
+    {
+      "id": "CD03",
+      "name": "历史临时要求与当前长期安排",
+      "family": "dev-case-03",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "上周我说“这一回请写英文”只是给那位客户看的；从现在起，我自己的报告一直用中文。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "reports-chinese",
+            "meaning": "自己的报告从现在起长期中文",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "用户自己的报告"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "将上周英文安排推广为当前长期偏好"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "历史临时要求与当前长期安排"
+    },
+    {
+      "id": "CD04",
+      "name": "关键临时要求不得长期晋升",
+      "family": "dev-case-04",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "这次事故通报只写三条；这不是以后默认的写作习惯。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [
+          {
+            "label": "incident-three",
+            "meaning": "当前事故通报只写三条",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [
+          "长期默认只写三条"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "关键临时要求不得长期晋升"
+    },
+    {
+      "id": "CD05",
+      "name": "普通单次格式限制",
+      "family": "dev-case-05",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "本次发货清单按箱号排序，下一单按什么顺序届时再说。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [
+          {
+            "label": "shipment-order",
+            "meaning": "当前发货清单按箱号排序",
+            "critical": false
+          }
+        ],
+        "forbiddenClaims": [
+          "未来全部发货清单按箱号排序"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "普通单次格式限制"
+    },
+    {
+      "id": "CD06",
+      "name": "第三方引文不属于用户",
+      "family": "dev-case-06",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "客户在邮件里写“我只接受短信提醒”；这是他的偏好，不是我的，请帮我翻译这封邮件。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "用户只接受短信提醒",
+          "将客户偏好挂到user:7"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": true,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "第三方引文不属于用户"
+    },
+    {
+      "id": "CD07",
+      "name": "将来计划保留明确时间区间",
+      "family": "dev-case-07",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "请记录我的培训安排：北京时间2026年10月26日09:00至10:00参加消防培训，其他日期没有这个安排。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "training-window",
+            "meaning": "消防培训仅2026-10-26北京时间09:00到10:00",
+            "subject": "user:7",
+            "type": "episode",
+            "scope": "user_agent",
+            "temporalKind": "interval",
+            "conditions": [],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": "2026-10-26T01:00:00Z",
+            "temporalTo": "2026-10-26T02:00:00Z"
+          }
+        ],
+        "temporaryConstraints": [
+          {
+            "label": "training-is-bounded",
+            "meaning": "培训不能作为长期每日报名安排",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "interval期望UTC为2026-10-26T01:00:00Z至02:00:00Z；不能因来源发生在10月23日而记成已完成。"
+    },
+    {
+      "id": "CD08",
+      "name": "不确定的未来变更不能补造时间",
+      "family": "dev-case-08",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "我可能下个月改用短信收预约通知，还没决定，也没定哪一天开始。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [
+          {
+            "label": "uncertain-not-stable",
+            "meaning": "尚未确定的短信计划不得长期生效",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [
+          "已决定短信",
+          "补造具体生效日期"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ],
+        "allowedOmission": "未确定计划可不提取；若提取须temporal unknown并保留uncertainties。"
+      },
+      "annotationRationale": "允许不产生候选；若产生必须表达未知/不确定，不能写成稳定事实。"
+    },
+    {
+      "id": "CD09",
+      "name": "相同条件的疑似矛盾",
+      "family": "dev-case-09",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "我整理门店月报时只想看含税金额。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-tax",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "amount_basis",
+            "object": {
+              "value": {
+                "text": "门店月报只看未税金额"
+              },
+              "conditions": [
+                "门店月报"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "tax-conflict",
+            "meaning": "门店月报现在表达只看含税金额",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "门店月报"
+            ],
+            "relation": {
+              "kind": "possible_conflict",
+              "target": "f-tax"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [
+          "f-tax"
+        ],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "新旧同主体、关系、月报条件与有效时间重叠；仅标记疑似矛盾，不自动改旧版本。"
+    },
+    {
+      "id": "CD10",
+      "name": "不同条件下并存的偏好",
+      "family": "dev-case-10",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "给客户的报价单请用美元；我内部核算仍按人民币。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-cny",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "currency",
+            "object": {
+              "value": {
+                "text": "内部核算用人民币"
+              },
+              "conditions": [
+                "内部核算"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "customer-usd",
+            "meaning": "客户报价单用美元",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "给客户的报价单"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          },
+          {
+            "label": "internal-cny",
+            "meaning": "内部核算用人民币",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "内部核算"
+            ],
+            "relation": {
+              "kind": "similar",
+              "target": "f-cny"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "将美元与人民币标成相同条件的矛盾",
+          "删除内部人民币偏好"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "不同条件下并存的偏好"
+    },
+    {
+      "id": "CD11",
+      "name": "明确修订只提议关联旧事实",
+      "family": "dev-case-11",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "更正我之前留的办公楼层：不是三层，应该是五层，从现在起按五层。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-floor",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "office_floor",
+            "object": {
+              "value": {
+                "text": "办公楼层三层"
+              },
+              "conditions": [],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "floor-correction",
+            "meaning": "当前办公楼层由三层更正为五层",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [],
+            "relation": {
+              "kind": "correction",
+              "target": "f-floor"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "correction只是候选关系；现有f-floor revision3不得由评估runner写成revision4。"
+    },
+    {
+      "id": "CD12",
+      "name": "同义复述不生成自动合并命令",
+      "family": "dev-case-12",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "也就是说，我希望读完一句核心判断再看支撑数字，做经营分析一直这样就好。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-style",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "value": {
+                "text": "经营分析先结论再数据"
+              },
+              "conditions": [
+                "经营分析"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "same-style",
+            "meaning": "经营分析先核心判断后支撑数字",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "经营分析"
+            ],
+            "relation": {
+              "kind": "similar",
+              "target": "f-style"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "允许similar关系，但不能以同义为由自动合并或删除已有事实。"
+    },
+    {
+      "id": "CD13",
+      "name": "跨助手共享意图保留范围",
+      "family": "dev-case-13",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "请让所有助手都记住我的习惯：长期把日期写成YYYY-MM-DD。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "shared-date",
+            "meaning": "长期YYYY-MM-DD日期格式",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user",
+            "temporalKind": "stable",
+            "conditions": [],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "user候选只表达跨助手意图，正式共享确认由治理工程套件验收。"
+    },
+    {
+      "id": "CD14",
+      "name": "敏感健康事实保留敏感标记",
+      "family": "dev-case-14",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "请记住我对青霉素过敏，以后涉及我的用药建议都要注意。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "allergy",
+            "meaning": "用户青霉素过敏，涉及用药时适用",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "涉及用户用药建议"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": true,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "敏感候选可被提取但不得据此宣称自动持久激活或跨助手共享通过。"
+    },
+    {
+      "id": "CD15",
+      "name": "寒暄不生成事实",
+      "family": "dev-case-15",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "谢谢，今天就先到这里。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "用户长期偏好今天就结束",
+          "从寒暄生成稳定偏好"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": true,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "寒暄不生成事实"
+    },
+    {
+      "id": "CD16",
+      "name": "多来源疑似矛盾不让后句静默覆盖",
+      "family": "dev-case-16",
+      "split": "dev",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "今后每周经营周报请在周一上午发给我。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          },
+          {
+            "id": "s2",
+            "text": "补充：我没有说要删掉历史记录，先把这次新说法与旧安排的差异列出来。",
+            "occurredAt": "2026-10-23T02:01:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-weekday",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "report_time",
+            "object": {
+              "value": {
+                "text": "经营周报周五下午发送"
+              },
+              "conditions": [
+                "每周经营周报"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "weekly-conflict",
+            "meaning": "经营周报周一上午发送",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "每周经营周报"
+            ],
+            "relation": {
+              "kind": "possible_conflict",
+              "target": "f-weekday"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [
+          "f-weekday"
+        ],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "s1支持新发送安排，s2明确不删除历史；同条件相反安排须关联f-weekday。"
+    }
+  ]
+}

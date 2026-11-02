@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeBindingMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="currentTenant" resultType="string">SELECT current_setting('app.tenant_id',true)</select>
+    <select id="configureRead" resultType="map">SELECT set_config('app.tenant_id',#{tenant},true),set_config('statement_timeout',#{timeout},true)</select>
+    <sql id="documentVersions">
+        FROM public.nw_runtime_knowledge_sources s
+        JOIN public.nw_knowledge_document_versions v
+          ON v.tenant_id=s.source_tenant_id AND v.kb_id=s.source_base_id
+         AND v.source_version=s.source_version AND v.chunk_set_id=s.chunk_set_id
+        JOIN public.nw_knowledge_document_contents c
+          ON c.tenant_id=v.tenant_id AND c.document_id=v.document_id AND c.id=v.content_id
+        WHERE s.tenant_id=b.tenant_id AND s.binding_id=b.binding_id AND v.status='ready'
+          AND (s.source_id,s.source_version) IN
+            <foreach collection="scope.versions" item="version" open="(" separator="," close=")">
+                (#{version.sourceId},#{version.sourceVersion})
+            </foreach>
+          AND v.created_at&lt;=#{scope.asOf} AND b.published_at&lt;=#{scope.asOf}
+          AND (#{scope.freshness,jdbcType=TIMESTAMP}::timestamptz IS NULL OR v.created_at&gt;=#{scope.freshness,jdbcType=TIMESTAMP}::timestamptz)
+    </sql>
+    <select id="documentList" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeDocumentRow">
+        SELECT b.binding_id,hit.source_id,hit.source_version,hit.document_id,hit.title,hit.total_characters
+        FROM public.nw_runtime_knowledge_bindings b LEFT JOIN LATERAL (
+            SELECT s.source_id,s.source_version,v.document_id::text AS document_id,v.title,char_length(c.content) AS total_characters
+            <include refid="documentVersions"/>
+              AND (#{titleFilter}='' OR strpos(lower(v.title),lower(#{titleFilter}))&gt;0)
+              <if test="after != null">
+              AND (s.source_id,v.document_id::text,s.source_version)&gt;(#{after.sourceId},#{after.documentId},#{after.sourceVersion})
+              </if>
+            ORDER BY s.source_id,v.document_id::text,s.source_version LIMIT #{limit}
+        ) hit ON true WHERE b.tenant_id=#{scope.tenant} AND b.binding_id=#{scope.id} AND b.target_digest=#{scope.digest}
+    </select>
+    <select id="documentSlice" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeDocumentRow">
+        SELECT b.binding_id,hit.source_id,hit.source_version,hit.document_id,hit.title,hit.total_characters,hit.content
+        FROM public.nw_runtime_knowledge_bindings b LEFT JOIN LATERAL (
+            SELECT s.source_id,s.source_version,v.document_id::text AS document_id,v.title,char_length(c.content) AS total_characters,
+                   CASE WHEN c.content IS NULL THEN NULL
+                        WHEN #{offset}::integer&gt;=char_length(c.content) THEN ''
+                        ELSE substring(c.content FROM (LEAST(#{offset}::integer,char_length(c.content))+1) FOR #{limit}::integer) END AS content
+            <include refid="documentVersions"/>
+              AND v.document_id::text=#{documentId}
+        ) hit ON true WHERE b.tenant_id=#{scope.tenant} AND b.binding_id=#{scope.id} AND b.target_digest=#{scope.digest}
+    </select>
+    <select id="keyword" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeKeywordRow">
+        SELECT b.binding_id,hit.source_id,hit.source_version,hit.document_id,hit.chunk_id,hit.chunk_index,hit.content,hit.created_at
+        FROM public.nw_runtime_knowledge_bindings b LEFT JOIN LATERAL (
+            SELECT r.tenant_id, r.binding_id, r.source_id, r.source_version, r.document_id, r.chunk_id, r.chunk_index, c.content,
+               r.created_at FROM public.nw_runtime_knowledge_chunks r
+            JOIN public.knowledge_chunk_values c ON c.tenant_id=r.source_tenant_id
+              AND c.kb_id::text=r.source_id AND c.source_version=r.source_version
+              AND c.document_id::text=r.document_id AND c.id::text=r.chunk_id
+            WHERE r.tenant_id=b.tenant_id AND r.binding_id=b.binding_id
+              AND (r.source_id,r.source_version) IN
+                <foreach collection="versions" item="version" open="(" separator="," close=")">
+                    (#{version.sourceId},#{version.sourceVersion})
+                </foreach>
+              AND strpos(lower(c.content),lower(#{query}))&gt;0 AND c.created_at&lt;=#{asOf} AND b.published_at&lt;=#{asOf}
+              AND (#{freshness,jdbcType=TIMESTAMP}::timestamptz IS NULL OR c.created_at&gt;=#{freshness,jdbcType=TIMESTAMP}::timestamptz)
+            ORDER BY CASE WHEN lower(c.content)=lower(#{query}) THEN 0 ELSE 1 END,r.source_id,r.source_version,r.document_id,r.chunk_index,r.chunk_id LIMIT #{limit}
+        ) hit ON true WHERE b.tenant_id=#{tenant} AND b.binding_id=#{id} AND b.target_digest=#{digest}
+    </select>
+    <select id="lockBinding" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended('knowledge-binding:'||#{id},0))::text</select>
+    <select id="find" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeBindingRow">
+        SELECT tenant_id, binding_id, target_digest, handle, descriptor_id, descriptor_revision, capability_id, version_id,
+               descriptor_json, source_count, published_at FROM public.nw_runtime_knowledge_bindings WHERE tenant_id=current_setting('app.tenant_id',true) AND binding_id=#{id}
+    </select>
+    <select id="source" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeBindingSource">
+        SELECT c.descriptor::text AS descriptor_json,r.published_at
+        FROM public.nw_knowledge_base_revisions r
+        JOIN public.nw_knowledge_bases b ON b.tenant_id=r.tenant_id AND b.id=r.kb_id
+        JOIN public.nw_capability_versions c ON c.tenant_id=r.tenant_id AND c.id=r.capability_version_id
+        WHERE r.tenant_id::text=#{tenant} AND r.kb_id::text=#{target.descriptorId} AND r.revision=#{target.descriptorRevision}
+          AND r.status IN ('published','archived') AND r.published_at IS NOT NULL AND b.status='active'
+          AND c.id::text=#{target.capability.versionId} AND c.definition_id::text=#{target.capability.capabilityId}
+          AND c.capability_type='KNOWLEDGE_SOURCE' AND c.status='PUBLISHED'
+          AND c.descriptor-'link_follow_up'=(r.capability_policy || jsonb_build_object('source_id',r.kb_id::text,'source_versions',r.source_versions))
+          AND (NOT jsonb_exists(c.descriptor,'link_follow_up') OR jsonb_typeof(c.descriptor->'link_follow_up')='object')
+          AND (SELECT count(*) FROM jsonb_object_keys(r.capability_policy))=5
+          AND jsonb_exists_all(r.capability_policy,ARRAY['model_invocable','user_invocable','allowed_operators','freshness_policy','citation_required'])
+          AND jsonb_typeof(r.capability_policy->'model_invocable')='boolean'
+          AND jsonb_typeof(r.capability_policy->'user_invocable')='boolean'
+          AND jsonb_typeof(r.capability_policy->'citation_required')='boolean'
+          AND jsonb_typeof(r.capability_policy->'freshness_policy')='string'
+          AND btrim(r.capability_policy->>'freshness_policy')&lt;&gt;''
+          AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(r.source_versions) v WHERE jsonb_typeof(v)&lt;&gt;'string')
+          AND ARRAY(SELECT v FROM jsonb_array_elements_text(r.source_versions) v ORDER BY v)=
+            ARRAY[<foreach collection="versions" item="version" separator=",">#{version.sourceVersion}</foreach>]::text[]
+          AND ARRAY(SELECT v FROM jsonb_array_elements_text(r.capability_policy->'allowed_operators') v ORDER BY v)=
+            ARRAY[<foreach collection="operators" item="operator" separator=",">#{operator}</foreach>]::text[]
+        FOR UPDATE OF b
+    </select>
+    <insert id="insertBinding">
+        INSERT INTO public.nw_runtime_knowledge_bindings(tenant_id,binding_id,target_digest,handle,descriptor_id,descriptor_revision,
+            capability_id,version_id,descriptor_json,source_count,published_at)
+        VALUES(#{tenantId},#{bindingId},#{targetDigest},#{handle},#{descriptorId},#{descriptorRevision},#{capabilityId},#{versionId},#{descriptorJson},#{sourceCount},#{publishedAt})
+    </insert>
+    <insert id="copySource">
+        INSERT INTO public.nw_runtime_knowledge_sources(tenant_id,binding_id,source_id,source_version,chunk_count,chunk_set_id)
+        SELECT #{tenant},#{id},#{version.sourceId},#{version.sourceVersion},v.chunk_count,v.chunk_set_id
+        FROM public.nw_knowledge_document_versions v
+        WHERE v.tenant_id::text=#{tenant}
+          AND v.kb_id::text=#{version.sourceId}
+          AND v.source_version=#{version.sourceVersion}
+          AND v.status='ready'
+          AND v.chunk_count&gt;0
+          AND v.chunk_count=(SELECT count(*) FROM public.knowledge_chunk_values c
+              WHERE c.tenant_id=v.tenant_id AND c.document_id=v.document_id
+                AND c.source_version=v.source_version
+                AND c.created_at IS NOT NULL AND c.chunk_index&gt;=0)
+    </insert>
+    <insert id="copyChunks">
+        INSERT INTO public.nw_runtime_knowledge_chunks(tenant_id,binding_id,source_id,source_version,document_id,chunk_id,chunk_index,created_at,chunk_set_id)
+        SELECT #{tenant},#{id},c.kb_id::text,c.source_version,c.document_id::text,c.id::text,c.chunk_index,c.created_at,c.chunk_set_id
+        FROM public.knowledge_chunk_values c JOIN public.nw_knowledge_document_versions v
+          ON v.tenant_id=c.tenant_id AND v.kb_id=c.kb_id
+         AND v.document_id=c.document_id AND v.source_version=c.source_version
+        JOIN public.nw_runtime_knowledge_sources s ON s.tenant_id=c.tenant_id::text AND s.source_id=c.kb_id::text AND s.source_version=c.source_version
+        WHERE s.tenant_id=#{tenant} AND s.binding_id=#{id} AND v.status='ready'
+          AND c.created_at IS NOT NULL AND c.chunk_index&gt;=0
+    </insert>
+    <select id="sources" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeSourceRow">
+        SELECT s.source_id,s.source_version,s.chunk_count,
+          (SELECT count(*) FROM public.nw_runtime_knowledge_chunks c WHERE c.tenant_id=s.tenant_id AND c.binding_id=s.binding_id
+            AND c.source_id=s.source_id AND c.source_version=s.source_version) AS actual_count
+        FROM public.nw_runtime_knowledge_sources s WHERE s.tenant_id=current_setting('app.tenant_id',true) AND s.binding_id=#{id}
+    </select>
+</mapper>

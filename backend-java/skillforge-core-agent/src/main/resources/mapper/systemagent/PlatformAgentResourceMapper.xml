@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.systemagent.PlatformAgentResourceMapper">
+  <insert id="reserveReceipt">
+    INSERT INTO public.nw_platform_agent_tool_receipts(actor, request_id, fingerprint)
+    VALUES (#{actor}, CAST(#{requestId} AS uuid), #{fingerprint}) ON CONFLICT DO NOTHING
+  </insert>
+  <select id="receipt" resultType="com.skillforge.core.agent.systemagent.PlatformAgentResourceMapper$Receipt" useCache="false" flushCache="true">
+    SELECT fingerprint, response::text AS response FROM public.nw_platform_agent_tool_receipts
+    WHERE actor = #{actor} AND request_id = CAST(#{requestId} AS uuid)
+  </select>
+  <update id="completeReceipt">
+    UPDATE public.nw_platform_agent_tool_receipts SET response = CAST(#{response} AS jsonb)
+    WHERE actor = #{actor} AND request_id = CAST(#{requestId} AS uuid) AND response IS NULL
+  </update>
+  <sql id="publishedCapability">
+    FROM public.nw_capability_versions v
+    INNER JOIN public.nw_capability_definitions d ON d.id = v.definition_id
+    WHERE v.id = CAST(#{versionId} AS bigint)
+      AND v.capability_type = #{type}
+      AND v.tenant_id IS NULL AND v.trust_level = 'PLATFORM' AND v.status = 'PUBLISHED'
+      AND d.tenant_id IS NULL AND d.trust_level = 'PLATFORM' AND d.status = 'PUBLISHED'
+      AND d.capability_type = #{type}
+  </sql>
+
+  <sql id="deploymentView">
+    SELECT jsonb_build_object(
+      'id', v.id::text,
+      'name', v.name,
+      'tool_version_id', v.tool_version_id::text,
+      'tool_definition_id', v.tool_definition_id::text,
+      'published_revision', v.revision,
+      'has_unpublished_changes', FALSE,
+      'provider_type', v.provider_type,
+      'provider_ref', v.provider_ref,
+      'environment', v.environment,
+      'active', v.active,
+      'revision', v.revision)::text
+    FROM public.nw_platform_agent_tool_deployments h
+    INNER JOIN public.nw_platform_agent_tool_deployment_versions v
+      ON v.id = h.id AND v.revision = h.current_revision
+  </sql>
+
+  <select id="optionSkills" resultType="string">
+    SELECT jsonb_build_object('id', d.id::text, 'name', v.name)::text
+    FROM public.nw_capability_versions v
+    INNER JOIN public.nw_capability_definitions d ON d.id = v.definition_id
+    WHERE v.capability_type = 'SKILL'
+      AND v.tenant_id IS NULL AND v.trust_level = 'PLATFORM' AND v.status = 'PUBLISHED'
+      AND d.tenant_id IS NULL AND d.trust_level = 'PLATFORM' AND d.status = 'PUBLISHED'
+      AND d.default_version_id = v.id
+    ORDER BY v.name, v.id
+  </select>
+
+  <select id="optionTools" resultType="string">
+    SELECT jsonb_build_object('id', d.id::text, 'name', v.name)::text
+    FROM public.nw_capability_versions v
+    INNER JOIN public.nw_capability_definitions d ON d.id = v.definition_id
+    WHERE v.capability_type = 'TOOL'
+      AND v.tenant_id IS NULL AND v.trust_level = 'PLATFORM' AND v.status = 'PUBLISHED'
+      AND d.tenant_id IS NULL AND d.trust_level = 'PLATFORM' AND d.status = 'PUBLISHED'
+      AND d.default_version_id = v.id
+    ORDER BY v.name, v.id
+  </select>
+
+  <select id="optionDeployments" resultType="string">
+    <include refid="deploymentView"/>
+    WHERE v.active = TRUE
+    ORDER BY v.name, v.id
+  </select>
+
+  <select id="deployments" resultType="string">
+    SELECT (h.draft || jsonb_build_object('id', h.id::text, 'revision', h.draft_revision,
+      'published_revision', h.current_revision, 'has_unpublished_changes', h.draft_changed))::text
+    FROM public.nw_platform_agent_tool_deployments h ORDER BY h.id
+  </select>
+  <select id="draft" resultType="string">
+    SELECT (h.draft || jsonb_build_object('id', h.id::text, 'revision', h.draft_revision,
+      'published_revision', h.current_revision, 'has_unpublished_changes', h.draft_changed))::text
+    FROM public.nw_platform_agent_tool_deployments h WHERE h.id = CAST(#{id} AS bigint)
+  </select>
+  <insert id="createDraft">
+    INSERT INTO public.nw_platform_agent_tool_deployments(id,current_revision,draft_revision,draft,draft_changed)
+    VALUES(CAST(#{id} AS bigint),NULL,1,CAST(#{config} AS jsonb),TRUE)
+  </insert>
+  <update id="saveDraft">
+    UPDATE public.nw_platform_agent_tool_deployments SET draft=CAST(#{config} AS jsonb),
+      draft_revision=draft_revision+1,draft_changed=TRUE,updated_at=now()
+    WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expectedRevision}
+  </update>
+  <update id="publishDraft">
+    UPDATE public.nw_platform_agent_tool_deployments SET current_revision=#{revision},draft_changed=FALSE,updated_at=now()
+    WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expectedRevision} AND draft_changed=TRUE
+      AND (current_revision IS NULL OR current_revision=#{revision}-1)
+  </update>
+  <select id="history" resultType="string">
+    SELECT jsonb_build_object('id', id::text,'name', name,'tool_version_id',tool_version_id::text,
+      'tool_definition_id',tool_definition_id::text,'provider_type',provider_type,'provider_ref',provider_ref,
+      'environment',environment,'active',active,'revision',revision,'published_revision',revision,
+      'has_unpublished_changes',FALSE)::text FROM public.nw_platform_agent_tool_deployment_versions
+    WHERE id=CAST(#{id} AS bigint) ORDER BY revision DESC
+  </select>
+
+  <select id="deployment" resultType="string">
+    <include refid="deploymentView"/>
+    WHERE h.id = CAST(#{id} AS bigint)
+  </select>
+
+  <select id="deploymentRevision" resultType="string">
+    SELECT jsonb_build_object(
+      'id', v.id::text,
+      'name', v.name,
+      'tool_version_id', v.tool_version_id::text,
+      'tool_definition_id', v.tool_definition_id::text,
+      'published_revision', v.revision,
+      'has_unpublished_changes', FALSE,
+      'provider_type', v.provider_type,
+      'provider_ref', v.provider_ref,
+      'environment', v.environment,
+      'active', v.active,
+      'revision', v.revision)::text
+    FROM public.nw_platform_agent_tool_deployment_versions v
+    WHERE v.id = CAST(#{id} AS bigint) AND v.revision = #{revision}
+  </select>
+
+  <select id="capability" resultType="string">
+    SELECT jsonb_build_object(
+      'id', v.id::text,
+      'name', v.name,
+      'definition_id', v.definition_id::text,
+      'descriptor', v.descriptor)::text
+    <include refid="publishedCapability"/>
+  </select>
+  <select id="currentCapability" resultType="string">
+    SELECT jsonb_build_object('id', v.id::text, 'name', v.name,
+      'definition_id', d.id::text, 'descriptor', v.descriptor)::text
+    FROM public.nw_capability_definitions d JOIN public.nw_capability_versions v ON v.id = d.default_version_id
+    WHERE d.id = CAST(#{definitionId} AS bigint) AND d.capability_type = #{type}
+      AND d.tenant_id IS NULL AND d.trust_level = 'PLATFORM' AND d.status = 'PUBLISHED'
+      AND v.tenant_id IS NULL AND v.trust_level = 'PLATFORM' AND v.status = 'PUBLISHED'
+      AND v.capability_type = #{type}
+  </select>
+
+  <select id="bindRuntimeRead" resultType="string">
+    SELECT set_config('app.system_agent_runtime', 'true', true)
+  </select>
+
+  <insert id="appendRevision">
+    INSERT INTO public.nw_platform_agent_tool_deployment_versions(
+      id, revision, name, tool_version_id, tool_definition_id, provider_type, provider_ref, environment, active, actor)
+    VALUES (
+      CAST(#{id} AS bigint), #{revision}, #{name}, CAST(#{toolVersionId} AS bigint), CAST(#{toolDefinitionId} AS bigint),
+      #{providerType}, #{providerRef}, #{environment}, #{active}, #{actor})
+  </insert>
+
+  <insert id="audit">
+    INSERT INTO public.nw_platform_agent_tool_deployment_audits(
+      deployment_id, revision, operation, actor, payload)
+    VALUES (
+      CAST(#{id} AS bigint), #{revision}, #{operation}, #{actor}, CAST(#{payload} AS jsonb))
+  </insert>
+</mapper>

@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "title": "项目周报（示例结构，非业务事实）",
+  "theme": {"preset": "ocean-depths"},
+  "slides": [
+    {"type": "title", "title": "项目周报", "subtitle": "示例结构；团队与覆盖时间待确认"},
+    {"type": "bullets", "title": "已完成事项与证据", "bullets": ["已确认成果待提供；此页只记录已发生的事项。", "来源与适用时间待确认。"]},
+    {"type": "two-column", "title": "下一步计划与当前阻塞", "left": {"heading": "计划", "bullets": ["计划事项、负责人和期限待确认。"]}, "right": {"heading": "问题与依赖", "bullets": ["阻塞与影响待确认；未知不等于无风险。"]}},
+    {"type": "summary", "title": "需要协助或决策", "bullets": ["决策事项、可选方案与决策期限待确认。"]}
+  ]
+}

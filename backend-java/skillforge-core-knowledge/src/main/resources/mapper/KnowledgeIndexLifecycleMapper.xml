@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeIndexLifecycleMapper">
+    <select id="lockBase" resultType="long">SELECT id FROM nw_knowledge_bases WHERE tenant_id=#{tenant} AND id=#{kb} FOR UPDATE</select>
+    <insert id="insertHold">INSERT INTO nw_knowledge_index_projection_holds(id,tenant_id,kb_id,source_version,status)
+      SELECT #{id},tenant_id,kb_id,source_version,'PENDING' FROM nw_knowledge_document_versions
+      WHERE tenant_id=#{tenant} AND kb_id=#{kb} AND source_version=#{source} AND status='ready'</insert>
+    <delete id="releaseHold">DELETE FROM nw_knowledge_index_projection_holds WHERE tenant_id=#{tenant} AND id=#{id}</delete>
+    <update id="markUnknown">UPDATE nw_knowledge_index_projection_holds SET status='UNKNOWN' WHERE tenant_id=#{tenant} AND id=#{id} AND status='PENDING'</update>
+    <insert id="enqueue">INSERT INTO nw_knowledge_index_cleanup_intents(tenant_id,kb_id,source_version)
+      SELECT tenant_id,kb_id,source_version FROM nw_knowledge_document_versions WHERE tenant_id=#{tenant} AND kb_id=#{kb} AND id=#{version}
+      ON CONFLICT DO NOTHING</insert>
+    <select id="claim" resultType="com.skillforge.core.knowledge.KnowledgeIndexLifecycleService$Cleanup" affectData="true">
+      WITH candidates AS (SELECT tenant_id,kb_id,source_version FROM nw_knowledge_index_cleanup_intents
+        WHERE tenant_id=#{tenant} AND next_attempt_at&lt;=now() AND (lease_until IS NULL OR lease_until&lt;now())
+        ORDER BY next_attempt_at,kb_id,source_version LIMIT #{limit} FOR UPDATE SKIP LOCKED)
+      UPDATE nw_knowledge_index_cleanup_intents i SET lease_until=now()+interval '60 seconds',attempt=i.attempt+1
+      FROM candidates c WHERE i.tenant_id=c.tenant_id AND i.kb_id=c.kb_id AND i.source_version=c.source_version
+      RETURNING i.kb_id,i.source_version,i.attempt
+    </select>
+    <delete id="complete">DELETE FROM nw_knowledge_index_cleanup_intents WHERE tenant_id=#{tenant} AND kb_id=#{kb} AND source_version=#{source} AND attempt=#{attempt}</delete>
+    <update id="defer">UPDATE nw_knowledge_index_cleanup_intents SET lease_until=NULL,next_attempt_at=now()+interval '60 seconds'
+      WHERE tenant_id=#{tenant} AND kb_id=#{kb} AND source_version=#{source} AND attempt=#{attempt}</update>
+</mapper>

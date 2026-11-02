@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "title": "演示用交付计划",
+  "slides": [
+    {"type": "title", "title": "让业务资料形成可编辑成果", "subtitle": "演示用资料，所有指标仅用于展示版式"},
+    {"type": "section", "title": "第一部分：目标与范围", "subtitle": "按受众组织内容，使用真实任务资料"},
+    {"type": "bullets", "title": "交付目标", "bullets": ["使用标题、图文、表格与图表表达不同类型内容", "保持普通文字、表格与图表可编辑", "长内容分页，并检查所有渲染页"]},
+    {"type": "two-column", "title": "输入与输出", "left": {"heading": "明确输入", "bullets": ["受众、目标和业务事实", "显式授权的图片与数据"]}, "right": {"heading": "可验证输出", "bullets": ["可编辑 PPTX", "逐页预览与内容检查"]}},
+    {"type": "metrics", "title": "演示指标", "subtitle": "下列数值为虚构演示数据", "metrics": [{"label": "演示页面数", "value": "8", "detail": "用于样例结构"}, {"label": "演示审查批次", "value": "2", "detail": "用于说明流程"}, {"label": "正式业务数据", "value": "待提供", "detail": "不以样例数值代替"}]},
+    {"type": "table", "title": "检查分工", "columns": ["对象", "检查内容", "结论"], "rows": [["文字", "完整性、字体、越界", "待渲染检查"], ["图表", "原生对象与数据对应", "待文件检查"], ["交付", "用户指定格式", "待确认候选"]]},
+    {"type": "chart", "title": "演示数据对比", "subtitle": "虚构数据，仅展示原生可编辑图表", "chart": {"type": "bar", "series": [{"name": "样例甲", "labels": ["阶段一", "阶段二", "阶段三"], "values": [3, 5, 8]}, {"name": "样例乙", "labels": ["阶段一", "阶段二", "阶段三"], "values": [2, 4, 6]}]}},
+    {"type": "summary", "title": "下一步", "bullets": ["用真实用户资料替换演示内容", "逐页检查实际渲染结果", "交付当前用户要求的格式"]}
+  ]
+}

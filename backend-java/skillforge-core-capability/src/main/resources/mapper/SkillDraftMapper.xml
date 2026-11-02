@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.SkillDraftMapper">
+  <select id="find" resultType="com.skillforge.core.capability.SkillDraftMapper$Row">
+SELECT id, definition_id, base_version_id, revision, content::text,
+       published_version_id, published_definition_revision, updated_at
+  FROM nw_skill_editing_drafts
+ WHERE id=#{id} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+<if test="lock">FOR UPDATE</if>
+  </select>
+  <select id="active" resultType="com.skillforge.core.capability.SkillDraftMapper$Row">
+SELECT id, definition_id, base_version_id, revision, content::text,
+       published_version_id, published_definition_revision, updated_at
+  FROM nw_skill_editing_drafts
+ WHERE definition_id=#{definitionId}
+   AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+ ORDER BY updated_at DESC, id DESC LIMIT 1
+  </select>
+  <select id="lockDefinition" resultType="Long">
+SELECT id FROM nw_capability_definitions
+ WHERE id=#{id} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+   AND capability_type='SKILL' FOR UPDATE
+  </select>
+  <insert id="insert">
+INSERT INTO nw_skill_editing_drafts(id, definition_id, tenant_id, base_version_id, content)
+VALUES(#{id}, #{definitionId}, #{tenantId,jdbcType=BIGINT},
+       #{baseVersionId,jdbcType=BIGINT}, #{content}::jsonb)
+  </insert>
+  <update id="save">
+UPDATE nw_skill_editing_drafts SET content=#{content}::jsonb, revision=revision+1, updated_at=now(),
+       base_version_id=COALESCE(published_version_id,base_version_id),
+       published_version_id=NULL, published_definition_revision=NULL
+ WHERE id=#{id} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+   AND revision=#{revision}
+  </update>
+  <update id="restore">
+UPDATE nw_skill_editing_drafts SET content=#{content}::jsonb, base_version_id=#{baseVersionId},
+       revision=revision+1, updated_at=now(), published_version_id=NULL, published_definition_revision=NULL
+ WHERE id=#{id} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+   AND revision=#{revision}
+  </update>
+  <update id="published">
+UPDATE nw_skill_editing_drafts SET published_version_id=#{versionId},
+       published_definition_revision=#{definitionRevision}, updated_at=now()
+ WHERE id=#{id} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+   AND revision=#{revision} AND published_version_id IS NULL
+  </update>
+</mapper>

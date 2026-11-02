@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.integration.runtime.tool.McpBindingMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenant}, true)</select>
+    <select id="lockRoute" resultType="string" flushCache="true" useCache="false">
+        SELECT pg_advisory_xact_lock(hashtextextended('mcp-route:' || length(#{tenant})::text || ':' || #{tenant} || #{deployment},0))::text
+    </select>
+    <select id="source" resultType="com.skillforge.core.capability.integration.runtime.tool.McpSourceRow">
+        <bind name="identityField" value="@com.skillforge.runtime.api.port.ToolPortal$ToolCallIdentityPolicy@DESCRIPTOR_FIELD"/>
+        SELECT c.instance_id AS connector_id,c.base_url AS endpoint,c.auth_type,c.auth_credential_encrypted AS encrypted_credential,
+               v.descriptor::text AS descriptor,v.content_hash AS descriptor_hash,
+               COALESCE(c.headers->>'MCP-Protocol-Version','2026-07-28') AS protocol_version,
+               CASE WHEN jsonb_typeof(v.descriptor->'model_invocable')='boolean'
+                    THEN (v.descriptor->>'model_invocable')::boolean END AS model_invocable,
+               CASE WHEN jsonb_typeof(v.descriptor->'confirmation_policy')='string'
+                    THEN v.descriptor->>'confirmation_policy' END AS confirmation_policy,
+               jsonb_exists(v.descriptor,'output_schema') AS output_schema_declared,
+               COALESCE(v.descriptor->>#{identityField}, CASE WHEN v.descriptor->>'effect' IN ('READ_ONLY','IDEMPOTENT_WRITE')
+                        THEN 'ARGUMENTS' ELSE 'HANDLE' END) AS call_identity_policy,
+               (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                           ORDER BY convert_to(value,'UTF8')),'')
+                  FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+                    CASE WHEN jsonb_typeof(v.descriptor->'sensitive_fields')='array'
+                         THEN v.descriptor->'sensitive_fields' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS sensitive_fields,
+               (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                           ORDER BY convert_to(value,'UTF8')),'')
+                  FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+                    CASE WHEN jsonb_typeof(v.descriptor->'provider_requirements')='array'
+                         THEN v.descriptor->'provider_requirements' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS provider_requirements
+        FROM public.nw_tool_deployments d
+        JOIN public.nw_capability_versions anchor ON anchor.id=d.tool_version_id
+        JOIN public.nw_capability_versions v ON v.id::text=#{target.capability.versionId}
+          AND v.definition_id=anchor.definition_id
+        JOIN public.nw_connector_instances c ON c.tenant_id=d.tenant_id AND c.instance_id=d.provider_ref
+        WHERE d.tenant_id::text=#{tenant} AND d.deployment_key=#{target.deploymentId}
+          AND d.revision=#{target.deploymentRevision} AND d.provider_type='MCP' AND d.status='ACTIVE'
+          AND v.id::text=#{target.capability.versionId} AND v.definition_id::text=#{target.capability.capabilityId}
+          AND v.capability_type='TOOL' AND v.status='PUBLISHED' AND (v.tenant_id IS NULL OR v.tenant_id=d.tenant_id)
+          AND c.status='active' AND c.executor_type='mcp' AND c.auth_type IN ('none','bearer')
+          AND (c.vault_secret_path IS NULL OR btrim(c.vault_secret_path)='') AND (c.headers='{}'::jsonb OR c.headers IN ('{"MCP-Protocol-Version":"2026-07-28"}'::jsonb,'{"MCP-Protocol-Version":"2025-11-25"}'::jsonb))
+          AND jsonb_typeof(c.capabilities)='array' AND jsonb_exists(c.capabilities,#{tool})
+          AND jsonb_typeof(v.descriptor->'input_schema')='object'
+          AND jsonb_typeof(COALESCE(v.descriptor->'output_schema','{}'::jsonb))='object'
+          AND v.descriptor->'input_schema'=CAST(#{target.inputSchema.canonicalJson} AS jsonb)
+          AND COALESCE(v.descriptor->'output_schema','{}'::jsonb)=CAST(#{target.outputSchema.canonicalJson} AS jsonb)
+          AND jsonb_typeof(v.descriptor->'model_invocable')='boolean'
+          AND jsonb_typeof(v.descriptor->'confirmation_policy')='string'
+          AND v.descriptor->>'confirmation_policy' IN ('NEVER','POLICY','ALWAYS')
+          AND (NOT jsonb_exists(v.descriptor,'sensitive_fields')
+               OR jsonb_typeof(v.descriptor->'sensitive_fields') IN ('null','array'))
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(v.descriptor->'sensitive_fields')='array'
+                   THEN v.descriptor->'sensitive_fields' ELSE '[]'::jsonb END) item
+            WHERE jsonb_typeof(item)&lt;&gt;'string' OR btrim(item#>>'{}')=''
+              OR item#>>'{}'&lt;&gt;btrim(item#>>'{}'))
+          AND (NOT jsonb_exists(v.descriptor,'provider_requirements')
+               OR jsonb_typeof(v.descriptor->'provider_requirements') IN ('null','array'))
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(v.descriptor->'provider_requirements')='array'
+                   THEN v.descriptor->'provider_requirements' ELSE '[]'::jsonb END) item
+            WHERE jsonb_typeof(item)&lt;&gt;'string' OR btrim(item#>>'{}')=''
+              OR item#>>'{}'&lt;&gt;btrim(item#>>'{}'))
+          AND v.descriptor->>'effect'=#{target.effect}
+          AND v.descriptor->'idempotent'=to_jsonb(CAST(#{target.idempotent} AS boolean))
+          AND v.descriptor->'timeout_ms'=to_jsonb(CAST(#{timeout} AS bigint))
+    </select>
+    <select id="find" resultType="com.skillforge.core.capability.integration.runtime.tool.McpBindingRow">
+        <bind name="identityField" value="@com.skillforge.runtime.api.port.ToolPortal$ToolCallIdentityPolicy@DESCRIPTOR_FIELD"/>
+        SELECT b.tenant_id, b.handle, b.deployment_id, b.deployment_revision, b.capability_id, b.version_id,
+               b.input_schema_id, b.input_schema, b.output_schema_id, b.output_schema, b.effect, b.idempotent, b.timeout,
+               b.connector_id, b.endpoint, b.auth_type, b.encrypted_credential, b.descriptor, b.descriptor_hash, b.tool_name,
+               b.protocol_version, b.content_digest,
+          CASE WHEN jsonb_typeof(b.descriptor::jsonb->'model_invocable')='boolean'
+               THEN (b.descriptor::jsonb->>'model_invocable')::boolean END AS model_invocable,
+          CASE WHEN jsonb_typeof(b.descriptor::jsonb->'confirmation_policy')='string'
+               THEN b.descriptor::jsonb->>'confirmation_policy' END AS confirmation_policy,
+          jsonb_exists(b.descriptor::jsonb,'output_schema') AS output_schema_declared,
+          COALESCE(b.descriptor::jsonb->>#{identityField}, CASE WHEN b.effect IN ('READ_ONLY','IDEMPOTENT_WRITE')
+                   THEN 'ARGUMENTS' ELSE 'HANDLE' END) AS call_identity_policy,
+          (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                      ORDER BY convert_to(value,'UTF8')),'')
+             FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+               CASE WHEN jsonb_typeof(b.descriptor::jsonb->'sensitive_fields')='array'
+                    THEN b.descriptor::jsonb->'sensitive_fields' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS sensitive_fields,
+          (SELECT COALESCE(string_agg(octet_length(convert_to(value,'UTF8'))::text||':'||value,''
+                                      ORDER BY convert_to(value,'UTF8')),'')
+             FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(
+               CASE WHEN jsonb_typeof(b.descriptor::jsonb->'provider_requirements')='array'
+                    THEN b.descriptor::jsonb->'provider_requirements' ELSE '[]'::jsonb END) elements(value)) unique_elements) AS provider_requirements
+        FROM public.nw_runtime_mcp_bindings b
+        WHERE b.tenant_id=current_setting('app.tenant_id',true)
+          AND b.handle=#{target.handle.value} AND b.deployment_id=#{target.deploymentId} AND b.deployment_revision=#{target.deploymentRevision}
+          AND b.capability_id=#{target.capability.capabilityId} AND b.version_id=#{target.capability.versionId}
+    </select>
+    <insert id="insert">
+        INSERT INTO public.nw_runtime_mcp_bindings
+          (tenant_id,handle,deployment_id,deployment_revision,capability_id,version_id,input_schema_id,input_schema,
+           output_schema_id,output_schema,effect,idempotent,timeout,connector_id,endpoint,auth_type,encrypted_credential,
+           descriptor,descriptor_hash,tool_name,protocol_version,content_digest)
+        VALUES (#{tenantId},#{handle},#{deploymentId},#{deploymentRevision},#{capabilityId},#{versionId},#{inputSchemaId},#{inputSchema},
+           #{outputSchemaId},#{outputSchema},#{effect},#{idempotent},#{timeout},#{connectorId},#{endpoint},#{authType},#{encryptedCredential},
+           #{descriptor},#{descriptorHash},#{toolName},#{protocolVersion},#{contentDigest})
+    </insert>
+</mapper>

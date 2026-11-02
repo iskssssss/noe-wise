@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.chat.ChatClientProfileMapper">
+  <select id="lock" resultType="java.lang.String">
+    SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))::text
+  </select>
+  <select id="channelExists" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM nw_channels WHERE id=#{channel} AND tenant_id=#{tenant} AND status='active')
+  </select>
+  <select id="find" resultType="java.lang.Long">
+    SELECT end_user_id FROM nw_chat_client_profiles
+    WHERE tenant_id=#{tenant} AND channel_id=#{channel} AND client_ref=CAST(#{ref} AS uuid)
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_chat_client_profiles(tenant_id,channel_id,client_ref,end_user_id)
+    VALUES(#{tenant},#{channel},CAST(#{ref} AS uuid),#{user})
+  </insert>
+</mapper>

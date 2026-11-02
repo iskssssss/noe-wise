@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.catalog.preferences.PreferenceMapper">
+  <select id="tenantName" resultType="string">SELECT name FROM nw_tenants WHERE id=CAST(#{tenant} AS bigint)</select>
+  <select id="branding" resultType="com.skillforge.core.foundation.catalog.preferences.PreferenceContracts$Branding">SELECT display_name,logo_url,primary_color,contact_email,support_url,revision FROM nw_foundation_tenant_branding WHERE tenant_id=CAST(#{tenant} AS bigint)</select>
+  <insert id="insertBranding">INSERT INTO nw_foundation_tenant_branding(tenant_id,display_name,logo_url,primary_color,contact_email,support_url,created_by,updated_by) VALUES(CAST(#{tenant} AS bigint),#{command.displayName},#{command.logoUrl},#{command.primaryColor},#{command.contactEmail},#{command.supportUrl},#{actor},#{actor}) ON CONFLICT DO NOTHING</insert>
+  <update id="updateBranding">UPDATE nw_foundation_tenant_branding SET display_name=#{command.displayName},logo_url=#{command.logoUrl},primary_color=#{command.primaryColor},contact_email=#{command.contactEmail},support_url=#{command.supportUrl},revision=revision+1,updated_at=clock_timestamp(),updated_by=#{actor} WHERE tenant_id=CAST(#{tenant} AS bigint) AND revision=#{command.expectedRevision}</update>
+  <select id="personal" resultType="com.skillforge.core.foundation.catalog.preferences.PreferenceContracts$Personal">SELECT theme,locale,page_size,compact_navigation,revision FROM nw_foundation_personal_preferences WHERE owner_key=#{owner} AND member_id=#{member}</select>
+  <insert id="insertPersonal">INSERT INTO nw_foundation_personal_preferences(owner_key,tenant_id,member_id,theme,locale,page_size,compact_navigation) VALUES(#{owner},CAST(#{tenant} AS bigint),#{member},#{command.theme},#{command.locale},#{command.pageSize},#{command.compactNavigation}) ON CONFLICT DO NOTHING</insert>
+  <update id="updatePersonal">UPDATE nw_foundation_personal_preferences SET theme=#{command.theme},locale=#{command.locale},page_size=#{command.pageSize},compact_navigation=#{command.compactNavigation},revision=revision+1,updated_at=clock_timestamp() WHERE owner_key=#{owner} AND member_id=#{member} AND revision=#{command.expectedRevision}</update>
+</mapper>

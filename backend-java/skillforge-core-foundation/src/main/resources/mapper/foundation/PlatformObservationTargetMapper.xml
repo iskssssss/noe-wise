@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.access.PlatformObservationTargetMapper">
+  <select id="targets" resultType="long">
+    SELECT id FROM public.nw_tenants WHERE id&gt;#{after}
+    <if test="requested != null">AND id=#{requested}</if>
+    ORDER BY id LIMIT #{limit}
+  </select>
+</mapper>

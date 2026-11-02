@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.SessionTraceMapper">
+    <resultMap id="eventRow" type="com.skillforge.core.chat.tracing.SessionTraceEventRow">
+        <result column="event_type" property="eventType"/>
+        <result column="payload_schema_id" property="payloadSchemaId"/>
+        <result column="payload_canonical_json" property="payloadCanonicalJson"/>
+    </resultMap>
+    <select id="findEvent" resultMap="eventRow">
+        SELECT event.type AS event_type, event.schema_id AS payload_schema_id,
+               event.canonical_json AS payload_canonical_json
+          FROM public.agent_runtime_execution_events event
+         WHERE event.tenant_id = #{tenantId}
+           AND event.session_id = #{sessionId}
+           AND event.event_id = #{eventId}
+    </select>
+</mapper>

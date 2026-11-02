@@ -1,0 +1,7 @@
+{
+  "package_name": "hello-service",
+  "bundle_zip": true,
+  "files": [{"path": "src/hello.py", "content": "def greet(name):\n    return f'Hello, {name}'\n"}],
+  "patch": "diff --git a/src/hello.py b/src/hello.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/hello.py\n@@ -0,0 +1,2 @@\n+def greet(name):\n+    return f'Hello, {name}'\n",
+  "verification": [{"check": "python -m py_compile src/hello.py", "result": "not_run", "evidence": "此项仅为输入示例，不代表已执行语法检查"}]
+}

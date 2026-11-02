@@ -1,0 +1,17 @@
+# 显式启用覆盖层：先启动 sandbox/compose.yml，再与 docker-compose.java.yml 合并。
+services:
+  skillforge-institution-service:
+    environment:
+      CODE_EXECUTION_ENABLED: "true"
+      SANDBOX_ENDPOINT: http://sandbox-service:8200
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:?SANDBOX_SERVICE_TOKEN is required}
+      ARTIFACT_TICKET_KEY: ${ARTIFACT_TICKET_KEY:?ARTIFACT_TICKET_KEY is required}
+      ARTIFACT_PREVIEW_PORT: "8091"
+    networks:
+      - default
+      - sandbox-control
+
+networks:
+  sandbox-control:
+    external: true
+    name: skillforge-sandbox-control

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryExtractionPolicyMapper">
+    <select id="automaticExtractionEnabled" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1 FROM nw_agents a
+            JOIN nw_agent_publications p ON p.tenant_id=a.tenant_id AND p.agent_id=a.id
+                AND p.id=a.published_revision_id
+            WHERE a.tenant_id::text=#{tenant} AND a.id::text=#{agent} AND a.status='published'
+              AND NOT EXISTS(SELECT 1 FROM nw_workflow_test_sessions wt WHERE wt.tenant_id=a.tenant_id AND wt.agent_id=a.id)
+              AND p.snapshot #> '{agent,config,memory,automatic_extraction}' = 'true'::jsonb
+        )
+    </select>
+</mapper>

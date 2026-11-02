@@ -1,0 +1,7 @@
+// 三轮验收必须实际执行 Test；允许复用编译，禁用测试结果缓存。
+allprojects {
+    tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+    }
+}

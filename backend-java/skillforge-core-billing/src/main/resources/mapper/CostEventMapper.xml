@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.billing.persistence.CostEventMapper">
+ <select id="countRequestsForBilling" resultType="long">
+  SELECT count(*) FROM nw_usage_events WHERE tenant_id=#{tenantId} AND event_type='request'
+   AND occurred_at &gt;= #{from} AND occurred_at &lt; #{to}
+ </select>
+ <resultMap id="effectiveCost" type="com.skillforge.core.billing.application.BillingTraceFacts$EffectiveCost">
+  <constructor>
+   <idArg column="event_id" javaType="java.lang.String"/>
+   <arg column="attempt_id" javaType="java.lang.String"/>
+   <arg column="tenant_id" javaType="_long"/>
+   <arg column="session_id" javaType="java.lang.String"/>
+   <arg column="run_id" javaType="java.lang.String"/>
+   <arg column="root_input_id" javaType="java.lang.String"/>
+   <arg column="cost_status" javaType="java.lang.String"/>
+   <arg column="confirmed_cost_cents" javaType="java.math.BigDecimal"/>
+  </constructor>
+ </resultMap>
+ <select id="listEffectiveCostsByScopes" resultMap="effectiveCost">
+  SELECT e.event_id,e.attempt_id,e.tenant_id,e.session_id,e.run_id,e.root_input_id,
+         e.cost_status,e.confirmed_cost_cents
+  FROM billing_effective_usage e
+  WHERE e.tenant_id=#{tenantId} AND e.event_type&lt;&gt;'request'
+  <choose>
+   <when test="scopes != null and scopes.size() &gt; 0 and scopes.size() &lt;= 200">
+    AND (
+     <foreach collection="scopes" item="scope" separator=" OR ">
+      (e.session_id=#{scope.sessionId} AND e.run_id=#{scope.runId} AND e.root_input_id=#{scope.rootInputId})
+     </foreach>
+    )
+   </when>
+   <otherwise>AND FALSE</otherwise>
+  </choose>
+  ORDER BY e.occurred_at,e.id
+ </select>
+ <select id="modelAttemptStartedAt" resultType="java.time.Instant" useCache="false">
+  SELECT started_at FROM public.nw_external_invocations WHERE tenant_id=#{tenantId} AND attempt_id=#{attemptId} LIMIT 1
+ </select>
+ <select id="lockUsageAttempt" resultType="java.lang.String" useCache="false" flushCache="true">
+  SELECT pg_advisory_xact_lock(hashtextextended('usage-report:'||#{tenantId}::text||':'||#{attemptId},0))::text
+ </select>
+ <sql id="effectiveUsageFields">
+  SELECT MAX(report_revision) AS report_revision,
+   (array_agg(prompt_tokens ORDER BY COALESCE(report_revision,usage_snapshot_revision,-1) DESC,id DESC)
+    FILTER(WHERE prompt_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS prompt_tokens,
+   (array_agg(completion_tokens ORDER BY COALESCE(report_revision,usage_snapshot_revision,-1) DESC,id DESC)
+    FILTER(WHERE completion_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS completion_tokens,
+   (array_agg(cached_input_tokens ORDER BY COALESCE(report_revision,usage_snapshot_revision,-1) DESC,id DESC)
+    FILTER(WHERE cached_input_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS cached_input_tokens,
+   (array_agg(cache_write_input_tokens ORDER BY COALESCE(report_revision,usage_snapshot_revision,-1) DESC,id DESC)
+    FILTER(WHERE cache_write_input_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS cache_write_input_tokens,
+   (array_agg(reasoning_output_tokens ORDER BY COALESCE(report_revision,usage_snapshot_revision,-1) DESC,id DESC)
+    FILTER(WHERE reasoning_output_tokens IS NOT NULL AND usage_source='PROVIDER_REPORTED'))[1] AS reasoning_output_tokens
+ </sql>
+ <select id="effectiveUsageReport" resultType="com.skillforge.core.billing.metering.CostEventDO" useCache="false">
+  <include refid="effectiveUsageFields"/>
+  FROM public.nw_usage_events WHERE tenant_id=#{tenantId} AND attempt_id=#{attemptId}
+   AND usage_event_kind IN ('measured','usage_report') HAVING COUNT(*)&gt;0
+ </select>
+ <select id="effectiveProviderReports" resultType="com.skillforge.core.billing.metering.CostEventDO" useCache="false">
+  <include refid="effectiveUsageFields"/>
+  FROM public.nw_usage_events WHERE tenant_id=#{tenantId} AND attempt_id=#{attemptId}
+   AND usage_event_kind='usage_report' HAVING COUNT(*)&gt;0
+ </select>
+ <resultMap id="mediaUsage" type="com.skillforge.core.billing.metering.CostEventDO" autoMapping="true">
+  <id column="id" property="id"/>
+  <result column="meta" property="meta" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+ </resultMap>
+ <sql id="mediaUsageColumns">
+  id,tenant_id,origin_kind,actor_ref,responsibility_ref,deployment_id,integration_id,business_scope_id,agent_definition_version,
+  source_owner_kind,source_owner_tenant_id,agent_definition_id,agent_revision_id,agent_revision,deployment_revision,grant_id,grant_revision,
+  group_binding_id,requester_kind,requester_ref,origin_session_id,origin_event_id,responsibility_agent_id,
+  system_agent_run_id,system_agent_configuration_ref,system_agent_invocation_ref,
+  event_type,provider,model,occurred_at,ingested_at,quantity,measurement_unit,
+  pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds,tokens,prompt_tokens,completion_tokens,
+  cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,report_revision,usage_snapshot_revision,
+  estimator_version,input_amount_cents,output_amount_cents,total_amount_cents,input_amount,output_amount,total_amount,
+  exchange_rate_to_cny,pricing_snapshot_version,currency,usage_event_kind,amount_status,adjustment_of_event_id,
+  event_id,invocation_id,attempt_id,request_id,root_input_id,parent_event_id,
+  session_id,end_user_id,channel_id,agent_id,run_id,workflow_instance_id,execution_id,scope_id,scope_type,call_point,meta,created_at
+ </sql>
+ <select id="mediaStarted" resultMap="mediaUsage" useCache="false">
+  SELECT <include refid="mediaUsageColumns"/> FROM public.nw_usage_events WHERE tenant_id=#{tenantId} AND invocation_id=#{invocationId}
+   AND event_type IN ('media.image','media.video','media.transcription','media.speech')
+   AND usage_event_kind='usage_report' AND report_revision=0
+ </select>
+ <select id="latestMediaObservation" resultMap="mediaUsage" useCache="false">
+  SELECT <include refid="mediaUsageColumns"/> FROM public.nw_usage_events WHERE tenant_id=#{tenantId} AND attempt_id=#{attemptId}
+   AND event_type IN ('media.image','media.video','media.transcription','media.speech')
+   AND usage_event_kind IN ('usage_report','measured')
+  ORDER BY COALESCE(report_revision,usage_snapshot_revision,0) DESC,(usage_event_kind='measured') DESC,id DESC LIMIT 1
+ </select>
+ <select id="lockReconciliation" resultType="java.lang.String" useCache="false" flushCache="true">
+  SELECT pg_advisory_xact_lock(hashtextextended('usage-reconciliation:'||#{tenantId}::text||':'||#{originalEventId}::text,0))::text
+ </select>
+ <select id="latestReconciliation" resultType="com.skillforge.core.billing.metering.CostEventDO" useCache="false">
+  SELECT id,tenant_id,event_type,provider,model,
+   occurred_at,ingested_at,quantity,tokens,prompt_tokens,
+   completion_tokens,input_amount_cents,output_amount_cents,total_amount_cents,currency,
+   event_id,request_id,parent_event_id,session_id,end_user_id,
+   channel_id,agent_id,root_input_id,run_id,execution_id,
+   scope_id,scope_type,call_point,meta,created_at,
+   usage_source,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,estimator_version,
+   invocation_id,attempt_id,input_amount,output_amount,total_amount,
+   exchange_rate_to_cny,pricing_snapshot_version,usage_event_kind,amount_status,adjustment_of_event_id,
+   workflow_instance_id,report_revision,origin_kind,actor_ref,responsibility_ref,deployment_id,integration_id,business_scope_id,
+   agent_definition_version,usage_snapshot_revision,source_owner_kind,source_owner_tenant_id,agent_definition_id,
+   agent_revision_id,agent_revision,deployment_revision,grant_id,grant_revision,measurement_unit,group_binding_id,requester_kind,requester_ref,origin_session_id,origin_event_id,responsibility_agent_id,system_agent_run_id,system_agent_configuration_ref,system_agent_invocation_ref FROM public.nw_usage_events WHERE tenant_id=#{tenantId}
+   AND adjustment_of_event_id=#{originalEventId} AND usage_event_kind='reconciliation'
+  ORDER BY ingested_at DESC,id DESC LIMIT 1
+ </select>
+ <!-- 并发同幂等键冲突不使 PostgreSQL 事务失败；可选meta为空时沿用数据库空对象语义，来源身份仍必填。 -->
+ <insert id="insert">
+ INSERT INTO public.nw_usage_events
+ (id,tenant_id,origin_kind,actor_ref,responsibility_ref,deployment_id,integration_id,business_scope_id,agent_definition_version,
+ source_owner_kind,source_owner_tenant_id,agent_definition_id,agent_revision_id,agent_revision,deployment_revision,grant_id,grant_revision,
+ group_binding_id,requester_kind,requester_ref,origin_session_id,origin_event_id,responsibility_agent_id,system_agent_run_id,system_agent_configuration_ref,system_agent_invocation_ref,
+ event_type,provider,model,occurred_at,ingested_at,quantity,pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds,tokens,prompt_tokens,completion_tokens,
+ cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,report_revision,usage_snapshot_revision,
+ estimator_version,input_amount_cents,output_amount_cents,total_amount_cents,input_amount,output_amount,
+ total_amount,exchange_rate_to_cny,pricing_snapshot_version,currency,usage_event_kind,amount_status,
+ adjustment_of_event_id,event_id,invocation_id,attempt_id,request_id,root_input_id,parent_event_id,
+ session_id,end_user_id,channel_id,agent_id,run_id,workflow_instance_id,execution_id,scope_id,scope_type,
+ call_point,meta,created_at)
+ VALUES (#{id},#{tenantId},#{originKind},#{actorRef},#{responsibilityRef},#{deploymentId},#{integrationId},#{businessScopeId},#{agentDefinitionVersion},
+ #{sourceOwnerKind},#{sourceOwnerTenantId},#{agentDefinitionId},#{agentRevisionId},#{agentRevision},#{deploymentRevision},#{grantId},#{grantRevision},
+ #{groupBindingId},#{requesterKind},#{requesterRef},#{originSessionId},#{originEventId},#{responsibilityAgentId},#{systemAgentRunId},#{systemAgentConfigurationRef},#{systemAgentInvocationRef},
+ #{eventType},#{provider},#{model},#{occurredAt},#{ingestedAt},#{quantity},#{pricingModelId},#{pricingModelRevision},#{imageCount},#{videoCount},#{characters},#{durationSeconds},#{tokens},#{promptTokens},#{completionTokens},
+ #{cachedInputTokens},#{cacheWriteInputTokens},#{reasoningOutputTokens},#{usageSource},#{reportRevision},#{usageSnapshotRevision},
+ #{estimatorVersion},#{inputAmountCents},#{outputAmountCents},#{totalAmountCents},#{inputAmount},#{outputAmount},
+ #{totalAmount},#{exchangeRateToCny},#{pricingSnapshotVersion},#{currency},#{usageEventKind},#{amountStatus},
+ #{adjustmentOfEventId},#{eventId},#{invocationId},#{attemptId},#{requestId},#{rootInputId},#{parentEventId},
+ #{sessionId},#{endUserId},#{channelId},#{agentId},#{runId},#{workflowInstanceId},#{executionId},#{scopeId},#{scopeType},
+ #{callPoint},COALESCE(#{meta,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},'{}'::jsonb),#{createdAt})
+ ON CONFLICT(tenant_id,event_id) DO NOTHING
+ </insert>
+ <insert id="insertUsageReport">
+ INSERT INTO public.nw_usage_events
+ (id,tenant_id,event_type,provider,model,occurred_at,ingested_at,created_at,quantity,
+  pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds,currency,pricing_snapshot_version,tokens,parent_event_id,
+  prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,
+  usage_source,usage_event_kind,amount_status,event_id,invocation_id,attempt_id,request_id,root_input_id,
+  session_id,end_user_id,agent_id,run_id,execution_id,call_point,report_revision,meta,
+  origin_kind,actor_ref,responsibility_ref,deployment_id,integration_id,business_scope_id,agent_definition_version,channel_id,scope_id,scope_type,
+  source_owner_kind,source_owner_tenant_id,agent_definition_id,agent_revision_id,agent_revision,deployment_revision,grant_id,grant_revision,
+  group_binding_id,requester_kind,requester_ref,origin_session_id,origin_event_id,responsibility_agent_id,system_agent_run_id,system_agent_configuration_ref,system_agent_invocation_ref)
+ VALUES (#{event.id},#{event.tenantId},#{event.eventType},#{event.provider},#{event.model},#{event.occurredAt},
+ #{event.ingestedAt},#{event.createdAt},#{event.quantity},
+ #{event.pricingModelId},#{event.pricingModelRevision},#{event.imageCount},#{event.videoCount},#{event.characters},#{event.durationSeconds},COALESCE(#{event.currency},'CNY'),#{event.pricingSnapshotVersion},#{event.tokens},#{event.parentEventId},#{event.promptTokens},#{event.completionTokens},#{event.cachedInputTokens},
+ #{event.cacheWriteInputTokens},#{event.reasoningOutputTokens},#{event.usageSource},'usage_report','unresolved',
+ #{event.eventId},#{event.invocationId},#{event.attemptId},#{event.requestId},#{event.rootInputId},#{event.sessionId},
+ #{event.endUserId},#{event.agentId},#{event.runId},#{event.executionId},#{event.callPoint},#{event.reportRevision},
+ COALESCE(#{event.meta,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},'{}'::jsonb),
+ #{event.originKind},#{event.actorRef},#{event.responsibilityRef},#{event.deploymentId},#{event.integrationId},#{event.businessScopeId},#{event.agentDefinitionVersion},
+ #{event.channelId},#{event.scopeId},#{event.scopeType},
+ #{event.sourceOwnerKind},#{event.sourceOwnerTenantId},#{event.agentDefinitionId},#{event.agentRevisionId},#{event.agentRevision},
+ #{event.deploymentRevision},#{event.grantId},#{event.grantRevision},
+ #{event.groupBindingId},#{event.requesterKind},#{event.requesterRef},#{event.originSessionId},#{event.originEventId},#{event.responsibilityAgentId},#{event.systemAgentRunId},#{event.systemAgentConfigurationRef},#{event.systemAgentInvocationRef})
+ ON CONFLICT DO NOTHING
+ </insert>
+ <sql id="amounts">
+ COALESCE(SUM(CASE WHEN event_type&lt;&gt;'request' THEN tokens END),0) AS tokens,
+ COALESCE(SUM(CASE WHEN event_type&lt;&gt;'request' THEN prompt_tokens END),0) AS prompt_tokens,
+ COALESCE(SUM(CASE WHEN event_type&lt;&gt;'request' THEN completion_tokens END),0) AS completion_tokens,
+ ROUND(SUM(CASE WHEN event_type&lt;&gt;'request' THEN confirmed_cost_cents END))::bigint AS total_amount_cents,
+ (COALESCE(SUM(CASE WHEN event_type&lt;&gt;'request' THEN confirmed_cost_cents END),0)/100)::text AS confirmed_cost,
+ COUNT(*) FILTER(WHERE event_type&lt;&gt;'request' AND cost_status NOT IN ('priced','not_applicable')) AS missing_cost_count
+ </sql>
+ <sql id="monthWindow">tenant_id=#{tenantId} AND occurred_at&gt;=#{from} AND occurred_at&lt;(((#{from}::timestamptz AT TIME ZONE 'Asia/Shanghai') + interval '1 month') AT TIME ZONE 'Asia/Shanghai')</sql>
+ <select id="sumMonthly" resultType="com.skillforge.core.billing.dto.billing.UsageAggregateRow">
+ SELECT a.calls,a.tokens,a.prompt_tokens,a.completion_tokens,a.total_amount_cents,a.confirmed_cost,
+ a.missing_cost_count+i.missing AS missing_cost_count,
+ CASE WHEN a.missing_cost_count+i.missing&gt;0 THEN 'unresolved' ELSE 'recorded' END AS usage_status
+ FROM (SELECT COUNT(*) FILTER(WHERE event_type='request') AS calls,<include refid="amounts"/>
+ FROM billing_effective_usage WHERE <include refid="monthWindow"/>) a
+ CROSS JOIN (SELECT COUNT(*) AS missing FROM nw_external_invocations e WHERE e.tenant_id=#{tenantId}
+ AND e.started_at&gt;=#{from} AND e.started_at&lt;(((#{from}::timestamptz AT TIME ZONE 'Asia/Shanghai') + interval '1 month') AT TIME ZONE 'Asia/Shanghai')
+ AND NOT EXISTS(SELECT 1 FROM nw_usage_events u WHERE u.tenant_id=e.tenant_id AND u.attempt_id=e.attempt_id AND u.usage_event_kind='measured')) i
+ </select>
+ <select id="groupByType" resultType="com.skillforge.core.billing.dto.billing.UsageByTypeRow">
+ SELECT event_type,COUNT(*) FILTER(WHERE NOT(event_type IN ('media.image','media.video','media.transcription','media.speech') AND quantity=0 AND amount_status='not_applicable')) AS quantity,<include refid="amounts"/> FROM billing_effective_usage WHERE <include refid="monthWindow"/> GROUP BY event_type ORDER BY event_type
+ </select>
+ <select id="groupByDimension" resultType="com.skillforge.core.billing.dto.billing.UsageGroupedRow">
+ SELECT <choose><when test="dimension == 'agent'">COALESCE(agent_id::text,'-')</when><when test="dimension == 'end_user'">COALESCE(end_user_id::text,'-')</when><when test="dimension == 'channel'">COALESCE(channel_id,'-')</when><when test="dimension == 'model'">COALESCE(model,'-')</when><otherwise>event_type</otherwise></choose> AS dimension,
+ COUNT(*) FILTER(WHERE event_type='request') AS calls,<include refid="amounts"/> FROM billing_effective_usage WHERE <include refid="monthWindow"/> GROUP BY 1 ORDER BY tokens DESC
+ </select>
+ <select id="sumByRequest" resultType="com.skillforge.core.billing.dto.billing.UsageAggregateRow">
+ SELECT COUNT(*) FILTER(WHERE event_type LIKE 'llm.%') AS calls,<include refid="amounts"/>
+ FROM billing_effective_usage WHERE tenant_id=#{tenantId} AND (request_id=#{requestId} OR root_input_id=#{requestId})
+ </select>
+ <select id="sumByRequests" resultType="com.skillforge.core.billing.dto.billing.UsageAggregateRow">
+ WITH requests(request_id) AS (VALUES <foreach collection="requestIds" item="id" separator=",">(#{id}::text)</foreach>)
+ SELECT q.request_id,a.calls,a.tokens,a.prompt_tokens,a.completion_tokens,a.total_amount_cents,a.confirmed_cost,
+ a.missing_cost_count+i.missing AS missing_cost_count,
+ CASE WHEN i.running&gt;0 THEN 'running' WHEN i.failed&gt;0 THEN 'failed' WHEN i.missing+a.missing_cost_count&gt;0 THEN 'unresolved'
+ WHEN a.calls=0 THEN 'pending_or_no_usage' ELSE 'recorded' END AS usage_status
+ FROM requests q CROSS JOIN LATERAL(
+ SELECT COUNT(*) FILTER(WHERE event_type LIKE 'llm.%') AS calls,<include refid="amounts"/>
+ FROM billing_effective_usage WHERE tenant_id=#{tenantId} AND (request_id=q.request_id OR root_input_id=q.request_id)) a
+ CROSS JOIN LATERAL(SELECT COUNT(*) FILTER(WHERE i.status='STARTED') AS running, COUNT(*) FILTER(WHERE i.status='FAILED') AS failed,
+ COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM nw_usage_events u WHERE u.tenant_id=i.tenant_id AND u.attempt_id=i.attempt_id AND u.usage_event_kind='measured')) AS missing
+ FROM nw_external_invocations i WHERE i.tenant_id=#{tenantId} AND (i.input_id=q.request_id OR i.root_input_id=q.request_id)) i
+ </select>
+ <select id="listByRootInputId" resultType="com.skillforge.core.billing.metering.CostEventDO">
+ SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds FROM nw_usage_events WHERE tenant_id=#{tenantId} AND root_input_id=#{rootInputId}
+ AND usage_event_kind='measured' AND event_type NOT IN ('llm.chat','media.image','media.video','media.transcription','media.speech')
+ UNION ALL SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,NULL::bigint AS pricing_model_id,NULL::bigint AS pricing_model_revision,NULL::bigint AS image_count,NULL::bigint AS video_count,NULL::bigint AS characters,NULL::numeric AS duration_seconds FROM observation_effective_model_usage
+ WHERE tenant_id=#{tenantId} AND root_input_id=#{rootInputId}
+ UNION ALL SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds FROM nw_observation_effective_media_usage
+ WHERE tenant_id=#{tenantId} AND root_input_id=#{rootInputId} ORDER BY occurred_at,id
+ </select>
+ <select id="listEffectiveBySessionId" resultType="com.skillforge.core.billing.metering.CostEventDO">
+ SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds
+ FROM nw_usage_events WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+ AND usage_event_kind='measured' AND event_type NOT IN ('llm.chat','media.image','media.video','media.transcription','media.speech')
+ UNION ALL
+ SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,NULL::bigint AS pricing_model_id,NULL::bigint AS pricing_model_revision,NULL::bigint AS image_count,NULL::bigint AS video_count,NULL::bigint AS characters,NULL::numeric AS duration_seconds
+ FROM observation_effective_model_usage
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+ UNION ALL SELECT id,tenant_id,event_id,event_type,provider,model,occurred_at,created_at,request_id,root_input_id,session_id,run_id,invocation_id,attempt_id,call_point,tokens,prompt_tokens,completion_tokens,cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens,usage_source,total_amount_cents,currency,meta,pricing_model_id,pricing_model_revision,image_count,video_count,characters,duration_seconds FROM nw_observation_effective_media_usage
+ WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+ ORDER BY occurred_at,id
+ </select>
+</mapper>

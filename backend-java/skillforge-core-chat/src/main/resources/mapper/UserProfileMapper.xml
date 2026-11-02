@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.UserProfileMapper">
+
+    <resultMap id="profileSnapshot" type="com.skillforge.core.chat.persistence.UserProfileDO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="summary" column="summary"/>
+        <result property="summaries" column="summaries" typeHandler="com.skillforge.core.chat.persistence.ProfileSummariesTypeHandler"/>
+        <result property="interactionCount" column="interaction_count"/>
+        <result property="revision" column="revision"/>
+        <result property="lastSessionAt" column="last_session_at"/>
+    </resultMap>
+
+    <!-- 原子写入返回快照，不在 Java 中读后整体覆写。窗口按追加位置保留最近 max 条。 -->
+    <select id="appendRawSummary" resultMap="profileSnapshot" affectData="true" flushCache="true">
+        INSERT INTO nw_user_profiles(id,tenant_id,end_user_id,summary,summaries,interaction_count,revision,last_session_at)
+        VALUES(#{id},#{tenantId},#{endUserId},#{initialSummary},
+            #{entries,typeHandler=com.skillforge.core.chat.persistence.ProfileSummariesTypeHandler},1,1,#{lastSessionAt})
+        ON CONFLICT(tenant_id,end_user_id) DO UPDATE SET
+            summaries = (SELECT COALESCE(jsonb_agg(summary_window.entry ORDER BY summary_window.position), '[]'::jsonb)
+                FROM jsonb_array_elements(nw_user_profiles.summaries || EXCLUDED.summaries)
+                    WITH ORDINALITY AS summary_window(entry,position)
+                WHERE summary_window.position > jsonb_array_length(nw_user_profiles.summaries || EXCLUDED.summaries) - #{max}),
+            interaction_count = nw_user_profiles.interaction_count + 1,
+            revision = nw_user_profiles.revision + 1,
+            last_session_at = EXCLUDED.last_session_at,
+            updated_at = now()
+        RETURNING id,tenant_id,end_user_id,summary,summaries,interaction_count,revision,last_session_at
+    </select>
+
+    <update id="mergeSummaryIfRevision">
+        UPDATE nw_user_profiles SET summary=#{summary},revision=revision+1,updated_at=now()
+        WHERE tenant_id=#{tenantId} AND end_user_id=#{endUserId} AND revision=#{revision}
+    </update>
+
+    <!-- 按租户 + 用户 upsert 画像摘要：并发写入避免重复行 -->
+    <insert id="upsert">
+        INSERT INTO nw_user_profiles
+            (id, tenant_id, end_user_id, summary, structured_fields, preferences,
+             interaction_count, revision, last_session_at, created_at, updated_at)
+        VALUES
+            (#{id}, #{tenantId}, #{endUserId}, #{summary},
+             #{structuredFields,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+             #{preferences,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+             #{interactionDelta}, 1, #{lastSessionAt}, now(), now())
+        ON CONFLICT (tenant_id, end_user_id) DO UPDATE SET
+            summary = EXCLUDED.summary,
+            structured_fields = EXCLUDED.structured_fields,
+            preferences = EXCLUDED.preferences,
+            interaction_count = nw_user_profiles.interaction_count + EXCLUDED.interaction_count,
+            revision = nw_user_profiles.revision + 1,
+            last_session_at = EXCLUDED.last_session_at,
+            updated_at = now()
+    </insert>
+
+</mapper>

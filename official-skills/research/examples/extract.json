@@ -1,0 +1,5 @@
+{
+  "mode": "prepare_extract",
+  "urls": ["https://docling-project.github.io/docling/"],
+  "options": {"extract_depth": "basic", "format": "markdown", "timeout": 20}
+}

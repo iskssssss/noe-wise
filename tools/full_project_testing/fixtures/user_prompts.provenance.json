@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "accessed_on": "2026-10-12",
+  "access_timezone": "Asia/Shanghai",
+  "adaptation_policy": "公开样本不是本产品已实现能力清单；不保存作者账号、附件或完整原文；仅保留URL、标题、检索日期及需求摘要，再编写独立脱敏多轮场景。无法确定的原文发布日期为null。",
+  "sources": [
+    {
+      "id": "source-data",
+      "url": "https://www.reddit.com/r/ChatGPTPro/comments/1anz92y/analysing_excel_data_via_chatgpt/",
+      "title": "Analysing Excel Data via ChatGPT",
+      "accessed_on": "2026-10-12",
+      "published_on": null,
+      "observed_need": "非程序员上传表格，查询趋势、异常，并在分析后连续追问。",
+      "transformation": "改写为合成门店、采购、客服数据；增加纠正口径、缺失值、原始数据保留和固定版本引用。"
+    },
+    {
+      "id": "source-clippings",
+      "url": "https://www.reddit.com/r/ChatGPT/comments/1bw1dj6/",
+      "title": "How do I use AI to analyze articles and fill in data in excel?",
+      "accessed_on": "2026-10-12",
+      "published_on": null,
+      "observed_need": "报道图片及文字抽取公司、态度、摘要等结构化字段。",
+      "transformation": "改写为合成客户反馈、会议纪要、验收记录和Unicode长粘贴；增加未知信息不猜测的oracle。"
+    },
+    {
+      "id": "source-email",
+      "url": "https://www.reddit.com/r/ChatGPT/comments/1h0uehd/",
+      "title": "I primarily use it to help me write work emails",
+      "accessed_on": "2026-10-12",
+      "published_on": null,
+      "observed_need": "日常工作邮件改写、语气和不同受众调整。",
+      "transformation": "改写为合成机构合作、团队通知、询价和模板多版本；不授权邮件真实发送。"
+    },
+    {
+      "id": "source-travel",
+      "url": "https://www.reddit.com/r/ChatGPT/comments/1h9xq7p/",
+      "title": "Travel Itinerary FAIL - suggests to improve results?",
+      "accessed_on": "2026-10-12",
+      "published_on": null,
+      "observed_need": "用户希望计划能遵循实际地点、行程和约束，避免不可用安排。",
+      "transformation": "改写为合成机构培训、来访、活动；只测试已有规划、补充、取消能力，不实施预订。"
+    },
+    {
+      "id": "source-code",
+      "url": "https://community.openai.com/t/chat-gpt-code-interpreter-tips-tricks-documentation/292046",
+      "title": "Chat GPT - Code Interpreter - Tips / Tricks / Documentation",
+      "accessed_on": "2026-10-12",
+      "published_on": null,
+      "observed_need": "文件分析、程序执行和多文件报告生成的公开交流。",
+      "transformation": "改写为本产品当前执行、交付、恢复、协作和受控富内容需求；不照搬社区工具指令。"
+    }
+  ]
+}

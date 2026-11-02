@@ -1,0 +1,7 @@
+{
+  "operation": "edit",
+  "source": {"artifact_id": "00000000-0000-0000-0000-000000000001", "path": "report.xlsx"},
+  "updates": [{"sheet": "流水", "cells": [{"cell": "B4", "value": {"type": "number", "value": 300}}]}],
+  "recalculate": true,
+  "checks": [{"sheet": "汇总", "cell": "B5", "expected": 541}]
+}

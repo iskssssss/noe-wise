@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeRebuildJobMapper">
+<!-- 两个入口共享完整作业投影，保留租约、fence 和发布恢复所需字段。 -->
+<sql id="jobColumns">
+    id, tenant_id, kb_id, idempotency_key, fingerprint, status, revision, fence,
+    lease_until, target_model_id, target_model_revision, target_dimensions,
+    original_active_revision_id, original_model_id, original_model_revision,
+    error_code, published_revision, created_at, updated_at, metering_request_id, metering_root_input_id,
+    metering_session_id, metering_run_id, metering_scope_type, metering_scope_id,
+    metering_end_user_id, metering_agent_id, metering_channel_id
+</sql>
+<!-- 管理快照仅返回数量；运行/恢复仍读取原items、batches和不可变回执。 -->
+<select id="progress" resultType="com.skillforge.core.knowledge.mapper.KnowledgeRebuildJobMapper$Progress">
+SELECT documents.document_count,documents.ready_documents,batches.unknown_batches
+FROM (SELECT count(*)::integer AS document_count,count(*) FILTER(WHERE status='READY') AS ready_documents
+      FROM nw_knowledge_rebuild_items WHERE tenant_id=#{tenantId} AND job_id=#{jobId}) documents
+CROSS JOIN (SELECT count(*) AS unknown_batches FROM nw_knowledge_rebuild_batches
+            WHERE tenant_id=#{tenantId} AND job_id=#{jobId} AND status='UNKNOWN') batches
+</select>
+<select id="lock" resultType="com.skillforge.core.knowledge.model.KnowledgeRebuildJobDO">
+SELECT <include refid="jobColumns"/> FROM nw_knowledge_rebuild_jobs WHERE tenant_id=#{tenantId} AND id=#{jobId} FOR UPDATE
+</select>
+<select id="due" resultType="com.skillforge.core.knowledge.model.KnowledgeRebuildJobDO">
+SELECT <include refid="jobColumns"/> FROM nw_knowledge_rebuild_jobs WHERE tenant_id=#{tenantId}
+AND (status='QUEUED' OR (status='RUNNING' AND lease_until &lt; now())) ORDER BY created_at LIMIT 10
+</select>
+</mapper>

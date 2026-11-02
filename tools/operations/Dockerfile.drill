@@ -1,0 +1,4 @@
+FROM postgres:16-alpine
+RUN apk add --no-cache python3
+USER postgres
+ENTRYPOINT ["python3", "/repo/tools/operations/recovery_drill.py"]

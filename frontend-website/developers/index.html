@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>开发者 · 灵知</title>
+    <meta
+      name="description"
+      content="灵知的渠道与应用接入、开放接口、运行时 SDK、桌面原型和能力扩展说明。"
+    />
+    <link rel="icon" href="/brand.svg" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <!--site-header-->
+    <main id="main">
+      <header class="page-intro container">
+        <div class="breadcrumb"><a href="/">首页</a><span aria-hidden="true">/</span>开发者</div>
+        <h1>开发者</h1>
+        <p>选择服务入口和扩展方式。具体接口地址、鉴权与字段以目标环境的已发布契约为准。</p>
+      </header>
+      <div class="container content-section">
+        <section id="integration">
+          <div class="section-heading"><h2>接入路径</h2></div>
+          <dl class="definition-list">
+            <div class="catalog-row">
+              <dt>会话端与渠道</dt>
+              <dd>
+                使用现有会话端时，先配置可访问的智能体；接入机构渠道或多人群时，补充用户身份映射、消息事件与响应投递。
+              </dd>
+            </div>
+            <div class="catalog-row">
+              <dt>自有应用与开放接口</dt>
+              <dd>
+                在自有应用中提供服务时，准备应用凭据与用户身份，连接会话、事件和业务回调。接口范围以目标环境为准，完整开放平台仍在分阶段完善。
+              </dd>
+            </div>
+            <div class="catalog-row">
+              <dt>运行时 SDK</dt>
+              <dd>
+                将智能体执行集成到自己的服务时，由宿主提供模型、存储、策略与能力适配，并验证等待恢复、取消和结果保存。
+              </dd>
+            </div>
+            <div class="catalog-row">
+              <dt>桌面原型<span class="tag">原型</span></dt>
+              <dd>
+                使用桌面原型前，配置模型并选择允许访问的本地目录。任务上下文会发送给所配置的云端模型，文件与命令在本地执行。
+              </dd>
+            </div>
+          </dl>
+        </section>
+        <section class="subsection" id="extensions">
+          <div class="section-heading">
+            <h2>能力扩展</h2>
+            <a class="text-link" href="/product/#capabilities">查看四类能力职责 ↗</a>
+          </div>
+          <p>
+            通过技能包、工具、知识源和工作流扩展业务能力。模型提供方、连接器与渠道按接入职责装配；专业智能体委派单独授权。
+          </p>
+        </section>
+        <section class="subsection">
+          <div class="section-heading"><h2>接入前确认</h2></div>
+          <ol class="checklist">
+            <li>明确用户目标、输入材料与交付要求。</li>
+            <li>确认机构范围、身份来源及资源授权。</li>
+            <li>配置模型、知识、工具和所需运行环境。</li>
+            <li>验证一次真实调用及其业务回执或成果。</li>
+            <li>检查等待、取消、失败和结果未知时的处理。</li>
+          </ol>
+        </section>
+        <div class="related-links">
+          <a href="/product/#integration">完整接入能力目录 ↗</a
+          ><a href="/governance/">权限与运营说明 ↗</a>
+        </div>
+      </div>
+    </main>
+    <!--site-footer-->
+  </body>
+</html>

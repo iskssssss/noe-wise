@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.model.invocation.ModelCallRecordMapper">
+  <resultMap id="record" type="com.skillforge.core.model.invocation.ModelCallRecordMapper$Row">
+    <result column="tenant_id" property="tenantId"/>
+    <result column="invocation_id" property="invocationId"/>
+    <result column="attempt_id" property="attemptId"/>
+    <result column="request_schema" property="requestSchema"/>
+    <result column="request_json" property="requestJson"/>
+    <result column="outcome_schema" property="outcomeSchema"/>
+    <result column="outcome_json" property="outcomeJson"/>
+  </resultMap>
+  <resultMap id="statuses" type="com.skillforge.core.model.invocation.ModelCallRecordMapper$StatusRow">
+    <constructor>
+      <arg column="invocation_id" javaType="java.lang.String"/>
+      <arg column="attempt_id" javaType="java.lang.String"/>
+      <arg column="request_recorded" javaType="_boolean"/>
+      <arg column="outcome_recorded" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+  <select id="statuses" resultMap="statuses">
+    SELECT invocation_id,attempt_id,
+           (request_schema=#{requestSchema} AND request_json IS NOT NULL) AS request_recorded,
+           (outcome_schema=#{outcomeSchema} AND outcome_json IS NOT NULL) IS TRUE AS outcome_recorded
+      FROM public.nw_model_call_records
+     WHERE tenant_id=#{tenant} AND (invocation_id,attempt_id) IN
+       <foreach collection="keys" item="key" open="(" separator="," close=")">(#{key.invocationId},#{key.attemptId})</foreach>
+  </select>
+  <select id="find" resultMap="record">
+    SELECT tenant_id,invocation_id,attempt_id,request_schema,request_json,outcome_schema,outcome_json
+      FROM public.nw_model_call_records
+     WHERE tenant_id=#{tenant} AND invocation_id=#{invocation} AND attempt_id=#{attempt}
+  </select>
+  <!-- 原外调账本已经登记此精确物理尝试；不按时间或invocation字符串推导归属。 -->
+  <insert id="insertRequest">
+    INSERT INTO public.nw_model_call_records(tenant_id,invocation_id,attempt_id,request_schema,request_json)
+    SELECT tenant_id,invocation_id,attempt_id,#{schema},#{body}
+      FROM public.nw_external_invocations
+     WHERE tenant_id=#{tenant} AND invocation_id=#{invocation} AND attempt_id=#{attempt} AND operation_type='model.chat'
+    ON CONFLICT(tenant_id,attempt_id) DO NOTHING
+  </insert>
+  <update id="saveOutcome">
+    UPDATE public.nw_model_call_records
+       SET outcome_schema=#{schema},outcome_json=#{body},outcome_recorded_at=clock_timestamp()
+     WHERE tenant_id=#{tenant} AND invocation_id=#{invocation} AND attempt_id=#{attempt} AND outcome_schema IS NULL
+  </update>
+</mapper>

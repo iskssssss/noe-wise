@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.sqlite.SqliteDesktopSessions$Mapper">
+    <resultMap id="session" type="com.skillforge.runtime.adapter.sqlite.SqliteDesktopSessions$Session">
+        <constructor><arg column="id" javaType="string"/><arg column="title" javaType="string"/><arg column="workspace" javaType="string"/><arg column="created_at" javaType="java.time.Instant"/></constructor>
+    </resultMap>
+    <insert id="create">INSERT INTO agent_runtime_desktop_sessions(id,title,workspace,created_at) VALUES(#{id},#{title},#{workspace},#{createdAt}) ON CONFLICT DO NOTHING</insert>
+    <select id="find" resultMap="session">SELECT id,title,workspace,created_at FROM agent_runtime_desktop_sessions WHERE id=#{id}</select>
+    <select id="list" resultMap="session">SELECT id,title,workspace,created_at FROM agent_runtime_desktop_sessions ORDER BY created_at DESC,id</select>
+</mapper>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryGovernanceMapper">
+    <sql id="ownerColumns">
+        select h.fact_id,coalesce(h.end_user_id,o.end_user_id) as end_user_id,
+            coalesce(h.agent_id,(select s.agent_id from agent_runtime_memory_fact_sources s
+                where s.tenant_id=h.tenant_id and s.fact_id=h.fact_id and s.revision=r.content_revision
+                order by s.source_ordinal limit 1)) as agent_id,
+            coalesce(r.session_id,r.source_session_id) as session_id,
+            coalesce(p.projected_decay_score,0)::double precision as decay_score
+        from agent_runtime_memory_fact_heads h join agent_runtime_memory_fact_revisions r
+            on r.tenant_id=h.tenant_id and r.fact_id=h.fact_id and r.revision=h.current_revision
+        join agent_runtime_session_owners o on o.tenant_id=h.tenant_id and o.session_id=r.source_session_id and o.subject_kind='USER'
+        left join agent_runtime_memory_usage_projection p on p.tenant_id=h.tenant_id and p.fact_id=h.fact_id
+        where h.tenant_id=#{tenant} and h.group_binding_id is null
+    </sql>
+    <select id="owners" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$Owner">
+        <include refid="ownerColumns"/>
+        <if test="status != null">and r.status=#{status}</if>
+        <if test="scope != null">and h.scope=#{scope}</if>
+        <if test="type != null">and h.type_id=#{type}</if>
+        <if test="agent != null">and coalesce(h.agent_id,(select s.agent_id from agent_runtime_memory_fact_sources s
+                where s.tenant_id=h.tenant_id and s.fact_id=h.fact_id and s.revision=r.content_revision
+                order by s.source_ordinal limit 1))=#{agent}</if>
+        <if test="endUser != null">and coalesce(h.end_user_id,o.end_user_id)=#{endUser}</if>
+        order by r.created_epoch_second desc,r.created_nano desc limit #{limit}
+    </select>
+    <select id="owner" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$Owner">
+        <include refid="ownerColumns"/> and h.fact_id=#{fact}
+    </select>
+    <insert id="insertGovernanceReceipt">
+        insert into public.nw_runtime_memory_governance_receipts
+            (tenant_id,request_key,fact_id,expected_revision,operation,request_fingerprint)
+        select #{request.tenantId},#{key},#{request.factId},#{request.expectedRevision},#{request.operation},#{request.fingerprint}
+          from public.agent_runtime_memory_fact_revisions
+         where tenant_id=#{request.tenantId} and fact_id=#{request.factId} and revision=#{request.expectedRevision}
+        on conflict (tenant_id,request_key) do nothing
+    </insert>
+    <select id="governanceReceipt" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$GovernanceReceiptRow">
+        select request_key,fact_id,expected_revision,operation,request_fingerprint,accepted_at
+          from public.nw_runtime_memory_governance_receipts
+         where tenant_id=#{tenant} and request_key=#{key}
+    </select>
+    <select id="revisionTargets" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$RevisionTargetRow">
+        select distinct target_fact_id,target_revision
+          from public.agent_runtime_memory_extraction_candidates
+         where tenant_id=#{tenant} and fact_id=#{proposalFactId}
+           and target_fact_id is not null and target_revision is not null
+         order by target_fact_id,target_revision
+    </select>
+</mapper>

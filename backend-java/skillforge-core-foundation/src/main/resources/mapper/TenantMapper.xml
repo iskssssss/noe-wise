@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.persistence.TenantMapper">
+    <select id="selectTenantIds" resultType="long">
+        SELECT id FROM nw_tenants ORDER BY id
+    </select>
+    <select id="selectActiveTenantIds" resultType="long">
+        SELECT id FROM nw_tenants WHERE status = 'active' ORDER BY id
+    </select>
+    <select id="selectBillingCandidates"
+            resultType="com.skillforge.core.foundation.application.TenantBillingProfileService$BillingCandidate">
+        SELECT id AS tenant_id, plan_id, override_quota_api_calls_per_month, status
+        FROM nw_tenants WHERE status IN ('active', 'warning') ORDER BY id
+    </select>
+    <update id="transitionBillingState">
+        UPDATE nw_tenants SET status = #{targetStatus}
+        WHERE id = #{tenantId} AND status = #{expectedStatus}
+          AND status IN ('active', 'warning') AND #{targetStatus} IN ('active', 'warning')
+          AND #{expectedStatus} &lt;&gt; #{targetStatus}
+    </update>
+    <update id="updateUsageReconciliation">
+        UPDATE nw_tenants SET
+            usage_reconciliation_provider = #{profile.provider},
+            usage_reconciliation_endpoint = #{profile.endpoint},
+            usage_reconciliation_api_key_encrypted = #{profile.apiKeyEncrypted},
+            usage_reconciliation_api_key_header = #{profile.apiKeyHeader},
+            usage_reconciliation_response_schema = #{profile.responseSchema,jdbcType=OTHER,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler}
+        WHERE id = #{tenantId}
+    </update>
+</mapper>

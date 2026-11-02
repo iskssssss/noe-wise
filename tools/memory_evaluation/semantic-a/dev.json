@@ -1,0 +1,838 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-semantic-a-dev-v1",
+  "repeats": 1,
+  "language": "zh-CN/en",
+  "split": "dev",
+  "evidenceLane": "CONTROLLED_PRODUCTION_RULE_BASELINE",
+  "annotationProtocol": "语义预期按原用户含义填写；全字段预期来自人工逐例指定的候选与原始值，不读取运行产物生成标签；A不调生产规则。",
+  "exposure": "A_BASELINE_OBSERVED_NO_RULE_TUNING_NO_FAMILY_GENERALIZATION_CLAIM",
+  "budget": {
+    "maxTokens": 0,
+    "maxModelCalls": 0
+  },
+  "scenarios": [
+    {
+      "id": "MD01",
+      "name": "明确稳定的先结论后细节",
+      "family": "concise-summary",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后整理经营数据时请先给结论再写明细。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "text": "以后先给结论再解释细节。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "text": "以后先给结论再解释细节。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "明确稳定的先结论后细节"
+    },
+    {
+      "id": "MD02",
+      "name": "临时五条不得长期保存",
+      "family": "temporary-five-lines",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "这次通知只写五条，不作为今后的默认风格。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "text": "这次通知只写五条。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "expectedCandidates": []
+      },
+      "annotationRationale": "临时五条不得长期保存"
+    },
+    {
+      "id": "MD03",
+      "name": "稳定偏好包含被否定的临时短语",
+      "family": "negated-repeated-language-question",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后默认中文，不要每次问我“这次用什么语言”。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "reply_language",
+          "object": {
+            "text": "以后默认中文，不要每次问我这次用什么语言。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "reply_language",
+            "object": {
+              "text": "以后默认中文，不要每次问我这次用什么语言。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "稳定偏好包含被否定的临时短语"
+    },
+    {
+      "id": "MD04",
+      "name": "历史临时安排不覆盖当前长期要求",
+      "family": "historical-language-quotation",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "上周我说“本次英文”，现在请长期默认中文。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "reply_language",
+          "object": {
+            "text": "过去本次用英文的安排已结束，以后长期默认中文。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "reply_language",
+            "object": {
+              "text": "过去本次用英文的安排已结束，以后长期默认中文。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "历史临时安排不覆盖当前长期要求"
+    },
+    {
+      "id": "MD05",
+      "name": "无现有短语但明确仅当天的要求",
+      "family": "dated-handout",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "今天这份交接通知需要英文，之后照旧。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "notice_language",
+          "object": {
+            "text": "今天这份交接通知用英文，之后照旧。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "expectedCandidates": []
+      },
+      "criticalNegative": true,
+      "annotationRationale": "无现有短语但明确仅当天的要求"
+    },
+    {
+      "id": "MD06",
+      "name": "结构精确重复只保留一项",
+      "family": "canonical-object-order",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "长期采用蓝色简洁主题。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "style": "简洁",
+            "color": "蓝色"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "color": "蓝色",
+            "style": "简洁"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "style": "简洁",
+              "color": "蓝色"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "结构精确重复只保留一项；精确重复时人工预期保留输入第1项（序号0），其余重复项不增加候选身份。"
+    },
+    {
+      "id": "MD07",
+      "name": "语义相似不自动合并候选",
+      "family": "similar-wording-keeps-identity",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "回答尽量简洁。摘要不要冗长。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "text": "回答简洁"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "text": "摘要不要冗长"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "text": "回答简洁"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "text": "摘要不要冗长"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "语义相似不自动合并候选"
+    },
+    {
+      "id": "MD08",
+      "name": "否定与肯定不能合并",
+      "family": "opposite-preference-values",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "我喜欢深色；另一条候选是我不喜欢深色。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "theme",
+          "object": {
+            "text": "喜欢深色"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "theme",
+          "object": {
+            "text": "不喜欢深色"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "theme",
+            "object": {
+              "text": "喜欢深色"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "theme",
+            "object": {
+              "text": "不喜欢深色"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "否定与肯定不能合并"
+    },
+    {
+      "id": "MD09",
+      "name": "数组次序属于事实内容",
+      "family": "ordered-layout-steps",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "先风险后收益和先收益后风险不能当同一条。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "steps": [
+              "风险",
+              "收益"
+            ]
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "steps": [
+              "收益",
+              "风险"
+            ]
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "steps": [
+                "风险",
+                "收益"
+              ]
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "steps": [
+                "收益",
+                "风险"
+              ]
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "数组次序属于事实内容"
+    },
+    {
+      "id": "MD10",
+      "name": "正文大小写不应被规范化",
+      "family": "case-sensitive-product-code",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "产品代号AbC与abc分别表达两个设置。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "product_code",
+          "object": {
+            "text": "AbC"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "product_code",
+          "object": {
+            "text": "abc"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "product_code",
+            "object": {
+              "text": "AbC"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "product_code",
+            "object": {
+              "text": "abc"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "正文大小写不应被规范化"
+    },
+    {
+      "id": "MD11",
+      "name": "共享范围候选不等于已批准共享",
+      "family": "cross-agent-confirmation-candidate",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后所有助手都先列摘要。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "text": "所有助手先列摘要"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "notEvaluated": {
+          "downstreamGovernance": "NOT_RUN: USER范围仍需正式确认"
+        },
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "text": "所有助手先列摘要"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user"
+          }
+        ]
+      },
+      "annotationRationale": "共享范围候选不等于已批准共享"
+    },
+    {
+      "id": "MD12",
+      "name": "第三方引文不是用户本人偏好",
+      "family": "coworker-quotation",
+      "split": "dev",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "同事说他喜欢红色，我只是引用这句话。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "theme",
+          "object": {
+            "text": "喜欢红色"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "unsupportedFeatures": [
+          "source-attribution-verification"
+        ],
+        "expectedCandidates": []
+      },
+      "criticalNegative": true,
+      "annotationRationale": "第三方引文不是用户本人偏好"
+    },
+    {
+      "id": "OD01",
+      "name": "两个格式同时满足",
+      "family": "dual-office-export",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请同时生成并交付 PDF 和 DOCX 文件。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf",
+          "docx"
+        ],
+        "singleFileWebsiteRequired": false,
+        "combination": "ALL_OF"
+      }
+    },
+    {
+      "id": "OD02",
+      "name": "状态说明不要求文件",
+      "family": "text-only-status",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请只说明任务状态，无需生成任何文件。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OD03",
+      "name": "引用内容不形成授权",
+      "family": "blockquoted-contract",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "> 请生成审计报告.pdf\n请解释引文在说什么。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OD04",
+      "name": "代码示例不是实际文件要求",
+      "family": "code-example-not-output",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "```\n生成 report.pdf\n```\n上面只是输入示例。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OD05",
+      "name": "访问既有文件不要求再生成",
+      "family": "existing-file-read",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "读取附件 annual.pdf，直接解释其结论。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OD06",
+      "name": "任选一个格式应为选择结构",
+      "family": "office-alternative",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请生成 PDF 或 DOCX，任选一种即可。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf",
+          "docx"
+        ],
+        "singleFileWebsiteRequired": false,
+        "combination": "ANY_OF",
+        "unsupportedFeatures": [
+          "format-alternatives"
+        ]
+      }
+    },
+    {
+      "id": "OD07",
+      "name": "未满足条件不强制交付",
+      "family": "conditional-export",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "如果预算超过上限才生成 PDF；现在先告诉我预算。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false,
+        "conditions": [
+          "预算超过上限"
+        ],
+        "unsupportedFeatures": [
+          "unresolved-condition"
+        ]
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OD08",
+      "name": "排除PDF保留DOCX",
+      "family": "positive-after-format-exclusion",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "不要生成 PDF，请生成并交付 DOCX 文档。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "docx"
+        ],
+        "singleFileWebsiteRequired": false,
+        "excludedFormats": [
+          "pdf"
+        ],
+        "unsupportedFeatures": [
+          "explicit-excluded-format-contract"
+        ]
+      }
+    },
+    {
+      "id": "OD09",
+      "name": "局部取消保留其他义务",
+      "family": "partial-format-revision",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "取消 PDF，DOCX 和 CSV 继续按原要求交付。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "docx",
+          "csv"
+        ],
+        "singleFileWebsiteRequired": false,
+        "priorText": "同时交付 PDF、DOCX 和 CSV。",
+        "priorRevision": 1,
+        "expectedRevision": 2,
+        "unsupportedFeatures": [
+          "versioned-local-revision"
+        ]
+      }
+    },
+    {
+      "id": "OD10",
+      "name": "单文件HTML约束",
+      "family": "single-file-page",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请生成并正式交付单文件 HTML 网站。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "html"
+        ],
+        "singleFileWebsiteRequired": true
+      }
+    },
+    {
+      "id": "OD11",
+      "name": "泛称报告仍需实际成果",
+      "family": "unnamed-business-report",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请制作一份可下载的经营报告。",
+      "expected": {
+        "required": true,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      }
+    },
+    {
+      "id": "OD12",
+      "name": "英文明确要求导出",
+      "family": "english-csv-export",
+      "split": "dev",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "Please generate and deliver a CSV file named totals.csv.",
+      "expected": {
+        "required": true,
+        "formats": [
+          "csv"
+        ],
+        "singleFileWebsiteRequired": false,
+        "filenames": [
+          "totals.csv"
+        ]
+      }
+    }
+  ],
+  "splitProtocol": "独立人工案例分集；机制可以重合；family仅案例标签，不证明语义家族隔离泛化。",
+  "oracleVersion": "full-candidate-content-v2"
+}

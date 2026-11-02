@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.WorkflowPolicyMapper">
+    <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenant}, true)</select>
+    <select id="executionOwner" resultType="com.skillforge.runtime.adapter.jdbc.session.WorkflowExecutionOwnerRow">
+        SELECT tenant_id,session_id,target_kind,target_id,agent_id,end_user_id
+          FROM public.agent_runtime_executions
+          WHERE tenant_id=#{tenant} AND execution_id=#{execution}
+    </select>
+</mapper>

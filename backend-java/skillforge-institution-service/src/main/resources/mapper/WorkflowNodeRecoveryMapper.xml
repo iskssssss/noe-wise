@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.WorkflowNodeRecoveryMapper">
+    <select id="pendingParents" resultType="string">
+        SELECT parent.run_id
+        FROM agent_runtime_execution_runs parent
+        JOIN agent_runtime_execution_waits waiting ON waiting.tenant_id=parent.tenant_id AND waiting.run_id=parent.run_id
+          AND waiting.action_id=parent.waiting_action_id AND waiting.generation=parent.waiting_generation
+        JOIN agent_runtime_executions execution ON execution.tenant_id=waiting.tenant_id AND execution.execution_id=waiting.execution_id
+        WHERE parent.tenant_id=#{tenant} AND parent.phase='WAITING' AND NOT parent.cancelled
+          AND waiting.kind='WORKFLOW' AND waiting.input_id IS NULL
+          AND execution.state='WAITING_EXTERNAL' AND execution.cancel_request_id IS NULL
+          AND execution.execution_revision=waiting.execution_revision
+          AND execution.waiting_suspend_ref=waiting.suspend_ref AND execution.waiting_action_key=waiting.action_key
+        ORDER BY parent.run_id LIMIT #{limit}
+    </select>
+</mapper>

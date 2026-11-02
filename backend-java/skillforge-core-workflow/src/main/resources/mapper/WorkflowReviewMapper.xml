@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.mapper.WorkflowReviewMapper">
+    <resultMap id="reviewTemplate" type="com.skillforge.core.workflow.model.WorkflowTemplateDO">
+        <result property="configSchema" column="config_schema" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result property="requiredPermissions" column="required_permissions" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result property="tools" column="tools" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result property="connectorRequirements" column="connector_requirements" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    </resultMap>
+    <select id="bindPlatform" resultType="string">SELECT set_config('app.platform_admin', 'true', true)</select>
+    <!-- 与资源写入共用模板锁：读取修订及资源期间，草稿写入和审核决定不能替换所见对象。 -->
+    <select id="detailTemplate" resultMap="reviewTemplate">
+        SELECT t.id, t.workflow_id, t.tenant_id, t.name, t.version, t.status, t.updated_at, t.description, t.author,
+               t.config_schema, t.required_permissions, t.tools, t.connector_requirements
+        FROM nw_workflow_templates t WHERE t.workflow_id = #{workflowId}
+          AND (t.status = 'review' OR EXISTS (SELECT 1 FROM nw_workflow_review_decisions d WHERE d.template_id = t.id))
+        FOR SHARE OF t
+    </select>
+    <select id="detailAssets" resultType="com.skillforge.core.workflow.mapper.WorkflowReviewMapper$ReviewAsset">
+        SELECT asset_name AS name, content FROM nw_workflow_assets
+        WHERE workflow_id = #{workflowId} AND tenant_id IS NOT DISTINCT FROM #{tenantId,jdbcType=BIGINT}
+        ORDER BY asset_name
+    </select>
+    <select id="list" resultType="com.skillforge.core.workflow.mapper.WorkflowReviewMapper$ReviewRow">
+        SELECT t.workflow_id AS id, t.name AS workflow_name, t.author,
+               CASE WHEN t.status = 'review' THEN 'pending' ELSE d.decision END AS status,
+               t.version, CASE WHEN t.status = 'review' THEN t.updated_at ELSE d.source_updated_at END AS revision_at,
+               t.updated_at, CASE WHEN t.status != 'review' THEN d.reason END AS reason,
+               CASE WHEN t.status != 'review' THEN d.actor_id END AS reviewer_id,
+               CASE WHEN t.status != 'review' THEN d.created_at END AS reviewed_at
+        FROM nw_workflow_templates t
+        LEFT JOIN LATERAL (
+            SELECT decision, reason, actor_id, created_at, source_updated_at FROM nw_workflow_review_decisions
+            WHERE template_id = t.id ORDER BY created_at DESC, id DESC LIMIT 1
+        ) d ON true
+        WHERE (t.status = 'review' OR d.decision IS NOT NULL)
+        <if test="status != ''">
+            AND CASE WHEN t.status = 'review' THEN 'pending' ELSE d.decision END = #{status}
+        </if>
+        <if test="search != ''">
+            AND (strpos(lower(t.name), lower(#{search})) &gt; 0 OR strpos(lower(t.workflow_id), lower(#{search})) &gt; 0)
+        </if>
+        ORDER BY COALESCE(d.created_at, t.updated_at) DESC, t.id DESC
+    </select>
+    <select id="lockTemplate" resultType="com.skillforge.core.workflow.mapper.WorkflowReviewMapper$TemplateReview">
+        SELECT id, workflow_id, tenant_id, version, status, updated_at
+        FROM nw_workflow_templates WHERE workflow_id = #{workflowId} FOR UPDATE
+    </select>
+    <update id="decide">
+        UPDATE nw_workflow_templates SET status = #{status}, updated_at = #{at},
+            published_at = CASE WHEN #{status} = 'published' THEN #{at} ELSE published_at END
+        WHERE id = #{templateId} AND status = 'review'
+    </update>
+    <insert id="appendDecision">
+        INSERT INTO nw_workflow_review_decisions(id, template_id, tenant_id, version, source_updated_at, decision, reason, actor_id, created_at)
+        VALUES(#{id}, #{template.id}, #{template.tenantId}, #{template.version}, #{template.updatedAt},
+               #{decision}, #{reason}, #{actorId}, #{at})
+    </insert>
+</mapper>

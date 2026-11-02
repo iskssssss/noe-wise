@@ -1,0 +1,16 @@
+{
+  "contexts": [
+    {
+      "id": "store-a",
+      "label": "门店 A 群服务",
+      "origin": "http://127.0.0.1:8081",
+      "group_binding_id": "替换为已有群绑定ID",
+      "operator_end_user_id": "替换为当前真实操作者EndUserID",
+      "agent_id": "替换为当前服务AgentID",
+      "api_key_env": "SKILLFORGE_GROUP_API_KEY",
+      "signing_secret_env": "SKILLFORGE_GROUP_SIGNING_SECRET",
+      "sender_origin": "http://127.0.0.1:8097",
+      "sender_token_env": "SKILLFORGE_GROUP_SENDER_TOKEN"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "mode": "prepare_search",
+  "query": "Docling official document parsing supported formats",
+  "options": {"max_results": 3, "include_domains": ["docling-project.github.io", "github.com"]}
+}

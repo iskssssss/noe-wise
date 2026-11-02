@@ -1,0 +1,9 @@
+{
+  "mode": "report",
+  "title": "公开资料研究报告",
+  "scope": "示例结构，实际运行时必须挂载 normalize 返回的真实 corpus.json，并替换 corpus_sha256 与来源支持的结论。",
+  "corpus_file": "/input/artifacts/真实corpus候选ID/corpus.json",
+  "corpus_sha256": "替换为normalize公开回执中的64位小写SHA256",
+  "sections": [{"heading": "已核实信息", "claims": [{"text": "替换为来源支持的具体事实。", "status": "fact", "citations": ["S1"]}]}],
+  "limitations": ["此示例中的候选ID和摘要未替换，脚本会拒绝生成报告。"]
+}

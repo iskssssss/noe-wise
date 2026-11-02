@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.access.FoundationOrganizationMapper">
+  <select id="recipients" resultType="com.skillforge.core.foundation.access.AccessRows$Member">
+    SELECT m.id,m.username,coalesce(p.display_name,m.username) AS display_name,m.email,m.status,p.department_id,p.position_id
+    <include refid="memberFrom"/>
+    AND m.status='active'
+    <choose>
+      <when test="targetType == 'member'">AND m.id::text IN <foreach collection="targetIds" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+      <when test="targetType == 'department'">AND p.department_id::text IN <foreach collection="targetIds" item="id" open="(" separator="," close=")">#{id}</foreach> AND EXISTS(SELECT 1 FROM nw_foundation_departments d WHERE d.scope_key=#{scope} AND d.id=p.department_id AND d.enabled)</when>
+      <when test="targetType == 'role'">AND EXISTS(SELECT 1 FROM nw_foundation_member_roles mr JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id AND r.enabled WHERE mr.scope_key=#{scope} AND mr.member_id=m.id AND mr.role_id::text IN <foreach collection="targetIds" item="id" open="(" separator="," close=")">#{id}</foreach>)</when>
+    </choose>
+    ORDER BY m.id LIMIT 10001
+  </select>
+  <select id="lockScope" resultType="string" useCache="false">SELECT scope_key FROM nw_foundation_access_scopes WHERE scope_key=#{scope} FOR UPDATE</select>
+  <insert id="ensureScope">INSERT INTO nw_foundation_access_scopes(scope_key,tenant_id) VALUES(#{scope},#{tenantId}) ON CONFLICT(scope_key) DO NOTHING</insert>
+  <update id="bumpScope">UPDATE nw_foundation_access_scopes SET authorization_version=authorization_version+1 WHERE scope_key=#{scope}</update>
+  <select id="scopeVersion" resultType="long" useCache="false">SELECT authorization_version FROM nw_foundation_access_scopes WHERE scope_key=#{scope}</select>
+  <sql id="departmentColumns">id,code,name,parent_id,enabled,lock_version</sql>
+  <select id="departments" resultType="com.skillforge.core.foundation.access.AccessRows$Department">SELECT <include refid="departmentColumns"/> FROM nw_foundation_departments WHERE scope_key=#{scope} ORDER BY code</select>
+  <select id="department" resultType="com.skillforge.core.foundation.access.AccessRows$Department">SELECT <include refid="departmentColumns"/> FROM nw_foundation_departments WHERE scope_key=#{scope} AND id=#{id}</select>
+  <insert id="insertDepartment">INSERT INTO nw_foundation_departments(id,scope_key,code,name,parent_id,created_by_id,updated_by_id) VALUES(#{row.id},#{scope},#{row.code},#{row.name},#{row.parentId},#{actorId},#{actorId})</insert>
+  <update id="updateDepartment">UPDATE nw_foundation_departments SET name=#{row.name},parent_id=#{row.parentId},enabled=#{row.enabled},lock_version=lock_version+1,updated_at=clock_timestamp(),updated_by_id=#{actorId} WHERE scope_key=#{scope} AND id=#{row.id} AND lock_version=#{row.lockVersion}</update>
+  <delete id="deleteDepartment">DELETE FROM nw_foundation_departments WHERE scope_key=#{scope} AND id=#{id} AND lock_version=#{version}</delete>
+  <sql id="positionColumns">id,code,name,enabled,lock_version</sql>
+  <select id="positions" resultType="com.skillforge.core.foundation.access.AccessRows$Position">SELECT <include refid="positionColumns"/> FROM nw_foundation_positions WHERE scope_key=#{scope} ORDER BY code</select>
+  <select id="position" resultType="com.skillforge.core.foundation.access.AccessRows$Position">SELECT <include refid="positionColumns"/> FROM nw_foundation_positions WHERE scope_key=#{scope} AND id=#{id}</select>
+  <insert id="insertPosition">INSERT INTO nw_foundation_positions(id,scope_key,code,name,created_by_id,updated_by_id) VALUES(#{row.id},#{scope},#{row.code},#{row.name},#{actorId},#{actorId})</insert>
+  <update id="updatePosition">UPDATE nw_foundation_positions SET name=#{row.name},enabled=#{row.enabled},lock_version=lock_version+1,updated_at=clock_timestamp(),updated_by_id=#{actorId} WHERE scope_key=#{scope} AND id=#{row.id} AND lock_version=#{row.lockVersion}</update>
+  <delete id="deletePosition">DELETE FROM nw_foundation_positions WHERE scope_key=#{scope} AND id=#{id} AND lock_version=#{version}</delete>
+  <sql id="memberFrom">
+    <choose><when test="scope == 'platform'">FROM nw_platform_members m</when><otherwise>FROM nw_tenant_members m</otherwise></choose>
+    LEFT JOIN nw_foundation_member_profiles p ON p.scope_key=#{scope} AND p.member_id=m.id
+    WHERE <choose><when test="scope == 'platform'">true</when><otherwise>m.tenant_id::text=#{scope}</otherwise></choose>
+    <if test="_parameter.containsKey('keyword') and keyword != null and keyword != ''">AND (m.username ILIKE '%'||#{keyword}||'%' OR p.display_name ILIKE '%'||#{keyword}||'%')</if>
+    <if test="filter != null and !filter.all">
+      AND (m.id::text=#{filter.memberId}
+      <if test="filter.departmentIds != null and !filter.departmentIds.isEmpty()">OR p.department_id::text IN <foreach collection="filter.departmentIds" item="departmentId" open="(" separator="," close=")">#{departmentId}</foreach></if>)
+    </if>
+  </sql>
+  <select id="members" resultType="com.skillforge.core.foundation.access.AccessRows$Member">
+    SELECT m.id,m.username,coalesce(p.display_name,m.username) AS display_name,m.email,m.status,p.department_id,p.position_id,
+      coalesce(p.authorization_version,1) AS authorization_version,coalesce(p.lock_version,1) AS lock_version,m.created_at
+    <include refid="memberFrom"/> ORDER BY m.id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="memberCount" resultType="long">SELECT count(*) <include refid="memberFrom"/></select>
+  <select id="memberRoleRows" resultType="com.skillforge.core.foundation.access.AccessRows$MemberRole">
+    SELECT mr.member_id,mr.role_id,r.code FROM nw_foundation_member_roles mr
+      JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id
+    WHERE mr.scope_key=#{scope} AND mr.member_id IN <foreach collection="memberIds" item="id" open="(" separator="," close=")">#{id}</foreach> ORDER BY r.code
+  </select>
+  <insert id="insertMember">
+    <choose><when test="scope == 'platform'">
+      INSERT INTO nw_platform_members(id,username,password_hash,email,display_name,status) VALUES(#{row.id},#{row.username},#{passwordHash},#{row.email},#{row.displayName},#{row.status})
+    </when><otherwise>
+      INSERT INTO nw_tenant_members(id,tenant_id,username,password_hash,email,role,permissions,status) VALUES(#{row.id},#{scope}::bigint,#{row.username},#{passwordHash},#{row.email},'operator','[]'::jsonb,#{row.status})
+    </otherwise></choose>
+  </insert>
+  <insert id="ensureProfile">INSERT INTO nw_foundation_member_profiles(scope_key,member_id,display_name) VALUES(#{scope},#{memberId},#{displayName}) ON CONFLICT(scope_key,member_id) DO NOTHING</insert>
+  <update id="updateProfile">UPDATE nw_foundation_member_profiles SET display_name=#{row.displayName},department_id=#{row.departmentId},position_id=#{row.positionId},authorization_version=authorization_version+1,lock_version=lock_version+1,updated_at=clock_timestamp() WHERE scope_key=#{scope} AND member_id=#{row.id} AND lock_version=#{row.lockVersion}</update>
+  <update id="updateMemberAccount">
+    <choose><when test="scope == 'platform'">UPDATE nw_platform_members SET email=#{row.email},display_name=#{row.displayName},status=#{row.status},updated_at=clock_timestamp() WHERE id=#{row.id}</when>
+    <otherwise>UPDATE nw_tenant_members SET email=#{row.email},status=#{row.status} WHERE tenant_id::text=#{scope} AND id=#{row.id}</otherwise></choose>
+  </update>
+  <update id="bumpMember">UPDATE nw_foundation_member_profiles SET authorization_version=authorization_version+1,lock_version=lock_version+1,updated_at=clock_timestamp() WHERE scope_key=#{scope} AND member_id=#{memberId} AND lock_version=#{version}</update>
+  <sql id="roleColumns">id,code,name,data_scope,built_in,administrator,enabled,lock_version</sql>
+  <select id="roles" resultType="com.skillforge.core.foundation.access.AccessRows$Role">SELECT <include refid="roleColumns"/> FROM nw_foundation_roles WHERE scope_key=#{scope} ORDER BY built_in DESC,code</select>
+  <select id="role" resultType="com.skillforge.core.foundation.access.AccessRows$Role">SELECT <include refid="roleColumns"/> FROM nw_foundation_roles WHERE scope_key=#{scope} AND id=#{id}</select>
+  <select id="roleByCode" resultType="com.skillforge.core.foundation.access.AccessRows$Role">SELECT <include refid="roleColumns"/> FROM nw_foundation_roles WHERE scope_key=#{scope} AND code=#{code}</select>
+  <insert id="insertRole">INSERT INTO nw_foundation_roles(id,scope_key,code,name,data_scope,built_in,administrator,enabled) VALUES(#{row.id},#{scope},#{row.code},#{row.name},#{row.dataScope},#{row.builtIn},#{row.administrator},#{row.enabled})</insert>
+  <update id="updateRole">UPDATE nw_foundation_roles SET name=#{row.name},data_scope=#{row.dataScope},enabled=#{row.enabled},lock_version=lock_version+1,updated_at=clock_timestamp() WHERE scope_key=#{scope} AND id=#{row.id} AND lock_version=#{row.lockVersion} AND NOT built_in</update>
+  <delete id="deleteRole">DELETE FROM nw_foundation_roles WHERE scope_key=#{scope} AND id=#{id} AND lock_version=#{version} AND NOT built_in</delete>
+  <select id="rolePermissionRows" resultType="com.skillforge.core.foundation.access.AccessRows$RolePermission">SELECT role_id,permission_code FROM nw_foundation_role_permissions WHERE scope_key=#{scope} ORDER BY role_id,permission_code</select>
+  <select id="roleDepartmentRows" resultType="com.skillforge.core.foundation.access.AccessRows$RoleDepartment">SELECT role_id,department_id FROM nw_foundation_role_departments WHERE scope_key=#{scope} ORDER BY role_id,department_id</select>
+  <delete id="deleteRolePermissions">DELETE FROM nw_foundation_role_permissions WHERE scope_key=#{scope} AND role_id=#{roleId}</delete>
+  <insert id="insertRolePermission">INSERT INTO nw_foundation_role_permissions(scope_key,role_id,permission_code) VALUES(#{scope},#{roleId},#{permission}) ON CONFLICT DO NOTHING</insert>
+  <delete id="deleteRoleDepartments">DELETE FROM nw_foundation_role_departments WHERE scope_key=#{scope} AND role_id=#{roleId}</delete>
+  <insert id="insertRoleDepartment">INSERT INTO nw_foundation_role_departments(scope_key,role_id,department_id) VALUES(#{scope},#{roleId},#{departmentId})</insert>
+  <delete id="deleteMemberRoles">DELETE FROM nw_foundation_member_roles WHERE scope_key=#{scope} AND member_id=#{memberId}</delete>
+  <insert id="insertMemberRole">INSERT INTO nw_foundation_member_roles(scope_key,member_id,role_id) VALUES(#{scope},#{memberId},#{roleId}) ON CONFLICT DO NOTHING</insert>
+  <select id="activeAdministratorsExcept" resultType="long">
+    SELECT count(DISTINCT mr.member_id) FROM nw_foundation_member_roles mr
+    JOIN nw_foundation_roles r ON r.scope_key=mr.scope_key AND r.id=mr.role_id AND r.administrator AND r.enabled
+    <choose><when test="scope == 'platform'">JOIN nw_platform_members m ON m.id=mr.member_id</when>
+    <otherwise>JOIN nw_tenant_members m ON m.id=mr.member_id AND m.tenant_id::text=#{scope}</otherwise></choose>
+    WHERE mr.scope_key=#{scope} AND m.status='active' AND mr.member_id&lt;&gt;#{memberId}
+  </select>
+  <select id="roleMembers" resultType="long">SELECT member_id FROM nw_foundation_member_roles WHERE scope_key=#{scope} AND role_id=#{roleId}</select>
+  <insert id="insertResource">INSERT INTO nw_foundation_resource_ownership(scope_key,kind,resource_id,owner_member_id,department_id) VALUES(#{scope},#{row.kind},#{row.resourceId}::bigint,#{row.ownerMemberId},#{row.departmentId})</insert>
+  <update id="updateResource">UPDATE nw_foundation_resource_ownership SET owner_member_id=#{row.ownerMemberId},department_id=#{row.departmentId},lock_version=lock_version+1,updated_at=clock_timestamp() WHERE scope_key=#{scope} AND kind=#{row.kind} AND resource_id=#{row.resourceId}::bigint AND lock_version=#{row.lockVersion}</update>
+  <delete id="deleteResourceGrants">DELETE FROM nw_foundation_resource_grants WHERE scope_key=#{scope} AND kind=#{kind} AND resource_id=#{resourceId}::bigint</delete>
+  <insert id="insertResourceGrant">INSERT INTO nw_foundation_resource_grants(id,scope_key,kind,resource_id,grantee_type,grantee_id,action,created_by_id) VALUES(#{row.id},#{scope},#{kind},#{resourceId}::bigint,#{row.granteeType},#{row.granteeId},#{row.action},#{actorId})</insert>
+  <select id="resourceGrants" resultType="com.skillforge.core.foundation.access.AccessRows$Grant">SELECT id,grantee_type,grantee_id,action FROM nw_foundation_resource_grants WHERE scope_key=#{scope} AND kind=#{kind} AND resource_id=#{resourceId}::bigint ORDER BY id</select>
+  <delete id="deleteResource">DELETE FROM nw_foundation_resource_ownership WHERE scope_key=#{scope} AND kind=#{kind} AND resource_id=#{resourceId}::bigint</delete>
+</mapper>

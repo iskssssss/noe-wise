@@ -1,0 +1,57 @@
+{
+  "operation": "create",
+  "sheets": [
+    {
+      "name": "流水",
+      "columns": [
+        {
+          "key": "transaction",
+          "title": "交易编号",
+          "type": "text"
+        },
+        {
+          "key": "date",
+          "title": "日期",
+          "type": "date"
+        },
+        {
+          "key": "amount",
+          "title": "金额",
+          "type": "number",
+          "number_format": "#,##0.00"
+        },
+        {
+          "key": "note",
+          "title": "备注",
+          "type": "text",
+          "width": 32
+        }
+      ],
+      "rows": [
+        {
+          "transaction": "T001",
+          "date": "2026-10-01",
+          "amount": 120.5,
+          "note": "=这是用户的普通文本"
+        },
+        {
+          "transaction": "T001",
+          "date": "2026-10-01",
+          "amount": 120.5,
+          "note": "=这是用户的普通文本"
+        },
+        {
+          "transaction": "T003",
+          "date": "2026-10-02",
+          "amount": 249,
+          "note": "示例数据，实际交付须使用用户数据"
+        }
+      ],
+      "print": {
+        "orientation": "landscape",
+        "repeat_rows": "1:1"
+      }
+    }
+  ],
+  "output_name": "department-expenses.xlsx"
+}

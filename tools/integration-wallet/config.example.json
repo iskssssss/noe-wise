@@ -1,0 +1,48 @@
+{
+  "accounts": [
+    {
+      "wallet_account_id": "account-institution-a",
+      "execution_tenant_id": "7",
+      "currency": "CNY",
+      "name": "机构 A 模拟钱包",
+      "initial_balance_cents": "10000",
+      "overdraft_limit_cents": "0"
+    },
+    {
+      "wallet_account_id": "account-institution-b",
+      "execution_tenant_id": "8",
+      "currency": "CNY",
+      "name": "机构 B 模拟钱包",
+      "initial_balance_cents": "10000",
+      "overdraft_limit_cents": "1000"
+    },
+    {
+      "wallet_account_id": "account-platform-business",
+      "execution_tenant_id": "9",
+      "currency": "CNY",
+      "name": "platform-business 模拟钱包",
+      "initial_balance_cents": "10000",
+      "overdraft_limit_cents": "0"
+    },
+    {
+      "wallet_account_id": "account-other-institution",
+      "execution_tenant_id": "10",
+      "currency": "CNY",
+      "name": "other-institution 模拟钱包",
+      "initial_balance_cents": "10000",
+      "overdraft_limit_cents": "0"
+    }
+  ],
+  "callers": [
+    {
+      "caller_service_id": "integration-settlement-adapter",
+      "token_env": "SKILLFORGE_WALLET_SERVICE_TOKEN",
+      "allowed_account_ids": [
+        "account-institution-a",
+        "account-institution-b",
+        "account-platform-business",
+        "account-other-institution"
+      ]
+    }
+  ]
+}

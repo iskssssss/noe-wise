@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.AgentRuntimeCompactionMapper">
+    <!-- 不筛scope或取最后一条：同owner的非法schema/scope及旧匹配事实仍由来源边界拒绝。 -->
+    <select id="forOwner" resultType="com.skillforge.institution.runtime.AgentRuntimeCompactionMapper$Fact" useCache="false" flushCache="true">
+        SELECT event.event_sequence AS sequence, event.schema_id, event.canonical_json
+        FROM public.agent_runtime_execution_events event
+        JOIN public.agent_runtime_execution_runs run
+          ON run.tenant_id=event.tenant_id AND run.run_id=event.run_id AND run.session_id=event.session_id
+        WHERE event.tenant_id=#{owner.sessionRef.tenantId.value}
+          AND event.session_id=#{owner.sessionRef.sessionId}
+          AND event.type=#{eventType}
+          AND run.target_kind=#{owner.target.kind} AND run.target_id=#{owner.target.id}
+          <choose>
+              <when test="owner.target.kind.name() == 'GROUP'">AND run.end_user_id IS NULL</when>
+              <otherwise>AND run.end_user_id=#{owner.requireUser.value}</otherwise>
+          </choose>
+          AND event.event_sequence &gt; #{after}
+        ORDER BY event.event_sequence
+        LIMIT #{limit}
+    </select>
+</mapper>

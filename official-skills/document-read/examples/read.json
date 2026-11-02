@@ -1,0 +1,5 @@
+{
+  "source_path": "/input/artifacts/source/report.docx",
+  "action": "read",
+  "text_limit": 12000
+}

@@ -1,0 +1,1067 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-semantic-c-heldout-v1",
+  "split": "heldout",
+  "repeats": 1,
+  "language": "zh-CN",
+  "evidenceStatus": "NOT_RUN",
+  "evidenceLane": "REAL_MODEL_SYSTEM_AGENT_CANDIDATE_V2",
+  "annotationProtocol": "人工先按原始来源含义标注，标签不来自模型输出；允许同义表达，内容、主体、范围、时间、条件、来源和关系均须逐例复核。",
+  "exposure": "AUTHORED_KNOWN_CASES_NOT_BLIND_NO_FAMILY_GENERALIZATION_CLAIM",
+  "budget": {
+    "approval": "PENDING_ROOT_CONFIGURATION_FREEZE",
+    "maxModelCalls": 16,
+    "repeats": 1,
+    "modelConfiguration": null,
+    "price": null
+  },
+  "thresholds": {
+    "criticalTemporaryPromotionFailures": 0,
+    "otherTemporaryPromotionRateMaximum": 0.02,
+    "stableOmissionRateMaximum": 0.1,
+    "sourceSupportRateMinimum": 1.0,
+    "possibleConflictDetectionRateMinimum": 0.9,
+    "criticalStableDiscardFailures": 0,
+    "wrongAutomaticMergeOrRevisionFailures": 0
+  },
+  "scenarios": [
+    {
+      "id": "CH01",
+      "name": "稳定的要点再表格",
+      "family": "heldout-case-01",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "今后帮我核对采购记录，先列异常要点，再给明细表。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "exceptions-first",
+            "meaning": "采购核对先异常要点后明细表",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "核对采购记录"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "稳定的要点再表格"
+    },
+    {
+      "id": "CH02",
+      "name": "否定反复询问中的今天短语",
+      "family": "heldout-case-02",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "以后和我用英文交流，不用每回都问“今天要英文吗”。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "default-english",
+            "meaning": "长期英文交流且不反复询问",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "将引号内今天问题解释为仅限今天英文"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "否定反复询问中的今天短语"
+    },
+    {
+      "id": "CH03",
+      "name": "旧一次性安排不抵消长期表格",
+      "family": "heldout-case-03",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "上次那张海报我让你不要表格，那只针对海报；以后给我的对账结果一律用表格。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "reconcile-table",
+            "meaning": "对账结果长期用表格",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "给用户的对账结果"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": true,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "长期不使用表格",
+          "把海报的临时限制推广到对账"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "旧一次性安排不抵消长期表格"
+    },
+    {
+      "id": "CH04",
+      "name": "关键单次字数不得成为默认",
+      "family": "heldout-case-04",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "这份停电通知控制在80字内，只约束这一份，不要当成我以后都要短文。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [
+          {
+            "label": "power-notice",
+            "meaning": "当前停电通知80字内",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [
+          "长期所有文案80字内"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "关键单次字数不得成为默认"
+    },
+    {
+      "id": "CH05",
+      "name": "有截止日期的工作安排",
+      "family": "heldout-case-05",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "北京时间2026年10月26日00:00到11月1日00:00这段时间，给我的值班提醒只走短信，之后恢复原方式。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "sms-window",
+            "meaning": "值班提醒在明确日期窗口仅短信，窗口后恢复",
+            "subject": "user:7",
+            "type": "episode",
+            "scope": "user_agent",
+            "temporalKind": "interval",
+            "conditions": [
+              "值班提醒"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": "2026-10-25T16:00:00Z",
+            "temporalTo": "2026-10-31T16:00:00Z"
+          }
+        ],
+        "temporaryConstraints": [
+          {
+            "label": "sms-not-permanent",
+            "meaning": "窗口内短信不得长期晋升",
+            "critical": false
+          }
+        ],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "UTC区间2026-10-25T16:00:00Z至2026-10-31T16:00:00Z；不得猜测原方式是什么。"
+    },
+    {
+      "id": "CH06",
+      "name": "他人偏好与用户明确区分",
+      "family": "heldout-case-06",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "同事小赵说“我的报销单永远按项目排”，这句是培训材料的例子，不是我自己的要求。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "用户报销单长期按项目排序",
+          "把培训引用当用户事实"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": true,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "他人偏好与用户明确区分"
+    },
+    {
+      "id": "CH07",
+      "name": "未来预约时间不可变成已发生",
+      "family": "heldout-case-07",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "我的设备检修预约定在北京时间2026年11月3日14:00至15:00，请记录这个时间段。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "repair-window",
+            "meaning": "检修预约2026-11-03北京时间14:00到15:00",
+            "subject": "user:7",
+            "type": "episode",
+            "scope": "user_agent",
+            "temporalKind": "interval",
+            "conditions": [],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": "2026-11-03T06:00:00Z",
+            "temporalTo": "2026-11-03T07:00:00Z"
+          }
+        ],
+        "temporaryConstraints": [
+          {
+            "label": "repair-bounded",
+            "meaning": "检修预约不成为每日长期安排",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "UTC区间2026-11-03T06:00:00Z至07:00:00Z；来源10月23日，预约尚未发生。"
+    },
+    {
+      "id": "CH08",
+      "name": "待定未来选择不落稳定事实",
+      "family": "heldout-case-08",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "也许明年我会把工作邮件切到另一个地址，现在还没选地址，切换日期也没定。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [
+          {
+            "label": "email-not-final",
+            "meaning": "未定邮件计划不得变成当前长期地址",
+            "critical": true
+          }
+        ],
+        "forbiddenClaims": [
+          "补造新邮箱",
+          "补造切换日期",
+          "用户已经切换邮箱"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ],
+        "allowedOmission": "未确定计划可不提取；若提取须temporal unknown并保留uncertainties。"
+      },
+      "annotationRationale": "不提取可接受；若提取须保留unknown/uncertainties。"
+    },
+    {
+      "id": "CH09",
+      "name": "相同开票条件的冲突",
+      "family": "heldout-case-09",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "我的培训费用报销还是要纸质发票。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-invoice",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "invoice_type",
+            "object": {
+              "value": {
+                "text": "培训费用报销只要电子发票"
+              },
+              "conditions": [
+                "培训费用报销"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "invoice-conflict",
+            "meaning": "培训费用报销要求纸质发票",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "培训费用报销"
+            ],
+            "relation": {
+              "kind": "possible_conflict",
+              "target": "f-invoice"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [
+          "f-invoice"
+        ],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "相同开票条件的冲突"
+    },
+    {
+      "id": "CH10",
+      "name": "线上线下条件不同不冲突",
+      "family": "heldout-case-10",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "线下签到给我二维码，远程培训则发邮件链接。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-remote",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "checkin_method",
+            "object": {
+              "value": {
+                "text": "远程培训发邮件链接"
+              },
+              "conditions": [
+                "远程培训"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "onsite-qr",
+            "meaning": "线下签到二维码",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "线下签到"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          },
+          {
+            "label": "remote-email",
+            "meaning": "远程培训邮件链接",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "远程培训"
+            ],
+            "relation": {
+              "kind": "similar",
+              "target": "f-remote"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "把线上线下不同条件误报为同条件冲突"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "线上线下条件不同不冲突"
+    },
+    {
+      "id": "CH11",
+      "name": "明确更正仓库编号只给关联",
+      "family": "heldout-case-11",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "更正一下，我负责的仓库是B7，不是之前说的B2，今后按B7联系。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-warehouse",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "warehouse_code",
+            "object": {
+              "value": {
+                "text": "负责仓库B2"
+              },
+              "conditions": [],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "warehouse-correction",
+            "meaning": "负责仓库由B2更正为B7",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [],
+            "relation": {
+              "kind": "correction",
+              "target": "f-warehouse"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "只输出correction关联，不让候选层自动修订已有revision。"
+    },
+    {
+      "id": "CH12",
+      "name": "相同要求换一种说法",
+      "family": "heldout-case-12",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "我的长期习惯没变，任务清单里每条前面都放序号，就是1、2、3那样。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-numbering",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "list_style",
+            "object": {
+              "value": {
+                "text": "任务清单使用数字编号"
+              },
+              "conditions": [
+                "任务清单"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "same-numbering",
+            "meaning": "任务清单每条前面用数字序号",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "任务清单"
+            ],
+            "relation": {
+              "kind": "similar",
+              "target": "f-numbering"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "相同要求换一种说法"
+    },
+    {
+      "id": "CH13",
+      "name": "跨助手单位显示偏好",
+      "family": "heldout-case-13",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "不管哪个助手都请记住：以后给我看长度时统一用厘米。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "shared-cm",
+            "meaning": "长期所有助手长度显示使用厘米",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user",
+            "temporalKind": "stable",
+            "conditions": [
+              "显示长度"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "跨助手单位显示偏好"
+    },
+    {
+      "id": "CH14",
+      "name": "敏感财务内容不能失去敏感属性",
+      "family": "heldout-case-14",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "请记住我目前月薪是18000元；以后给我做个人收支分析可以用这个数。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "salary",
+            "meaning": "用户当前月薪18000元，仅个人收支分析适用",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "用户个人收支分析"
+            ],
+            "relation": {
+              "kind": "new",
+              "target": null
+            },
+            "sensitive": true,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "人工合成财务事实；只评候选敏感属性，自动写入/共享必须另验。"
+    },
+    {
+      "id": "CH15",
+      "name": "确认收到不构成偏好",
+      "family": "heldout-case-15",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "收到了，辛苦。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          }
+        ],
+        "existingFacts": []
+      },
+      "expected": {
+        "requiredFacts": [],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [
+          "根据收到二字生成长期偏好或生活事实"
+        ],
+        "possibleConflictTargets": [],
+        "noCandidates": true,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "确认收到不构成偏好"
+    },
+    {
+      "id": "CH16",
+      "name": "两来源保留冲突待确认",
+      "family": "heldout-case-16",
+      "split": "heldout",
+      "kind": "MODEL_MEMORY_EXTRACTION_V2",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "input": {
+        "schemaVersion": 2,
+        "userId": 7,
+        "sources": [
+          {
+            "id": "s1",
+            "text": "以后库存预警到10件再提醒我。",
+            "occurredAt": "2026-10-23T02:00:00Z"
+          },
+          {
+            "id": "s2",
+            "text": "只是先提这个新想法，旧阈值的记录别自动删，差异让我确认。",
+            "occurredAt": "2026-10-23T02:02:00Z"
+          }
+        ],
+        "existingFacts": [
+          {
+            "id": "f-stock",
+            "type": "preference",
+            "scope": "user_agent",
+            "subject": "user:7",
+            "predicate": "stock_threshold",
+            "object": {
+              "value": {
+                "text": "库存低于20件提醒"
+              },
+              "conditions": [
+                "库存预警"
+              ],
+              "temporal": {
+                "kind": "stable",
+                "from": null,
+                "to": null
+              }
+            },
+            "revision": 3,
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": null
+          }
+        ]
+      },
+      "expected": {
+        "requiredFacts": [
+          {
+            "label": "stock-conflict",
+            "meaning": "库存预警阈值为10件",
+            "subject": "user:7",
+            "type": "preference",
+            "scope": "user_agent",
+            "temporalKind": "stable",
+            "conditions": [
+              "库存预警"
+            ],
+            "relation": {
+              "kind": "possible_conflict",
+              "target": "f-stock"
+            },
+            "sensitive": false,
+            "criticalStable": false,
+            "sourceIds": [
+              "s1"
+            ],
+            "temporalFrom": null,
+            "temporalTo": null
+          }
+        ],
+        "temporaryConstraints": [],
+        "forbiddenClaims": [],
+        "possibleConflictTargets": [
+          "f-stock"
+        ],
+        "noCandidates": false,
+        "governanceNotEvaluated": [
+          "AUTOMATIC_MERGE",
+          "AUTOMATIC_REVISION",
+          "DURABLE_PROMOTION",
+          "USER_SHARED_CONFIRMATION"
+        ]
+      },
+      "annotationRationale": "新旧阈值存在同条件差异，应标记possible_conflict；s2不授权自动覆盖旧事实。"
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryExtractionMapper">
+    <sql id="columns">tenant_id,source_event_id,memory_type,canonical_fact_key as canonical_key,
+        agent_id,source_target_kind,source_target_id,end_user_id,source_session_id as session_id,
+        source_execution_id,source_event_type,policy_version,
+        source_time_epoch_second,source_time_nano,model_status,system_run_id,configuration_ref,invocation_ref,claim_token,
+        integration_id,group_binding_id::text as group_binding_id</sql>
+    <sql id="jobKey">tenant_id=#{job.tenantId} and source_event_id=#{job.sourceEventId}
+        and extractor_version=#{extractor} and policy_version=#{job.policyVersion}
+        and memory_type=#{job.memoryType} and canonical_fact_key=#{job.canonicalKey}</sql>
+    <sql id="fence"><include refid="jobKey"/> and status='PROCESSING'
+        and claim_token=#{job.claimToken} and lease_until&gt;clock_timestamp()</sql>
+    <select id="next" resultType="com.skillforge.institution.memory.MemoryExtractionMapper$Job" useCache="false" flushCache="true">
+        select <include refid="columns"/> from agent_runtime_memory_extraction_jobs
+        where tenant_id=#{tenant} and extractor_version=#{extractor} and policy_version=#{policy}
+          and (status in ('READY','WAITING','ACK_PENDING') or status='PROCESSING' and lease_until&lt;clock_timestamp())
+          and available_at&lt;=clock_timestamp() order by created_at,source_event_id for update skip locked limit 1
+    </select>
+    <update id="claim">update agent_runtime_memory_extraction_jobs set status='PROCESSING',attempts=attempts+1,
+        claimed_at=clock_timestamp(),lease_until=clock_timestamp()+interval '5 minutes',claim_token=#{job.claimToken},updated_at=clock_timestamp()
+        where <include refid="jobKey"/> and (status in ('READY','WAITING','ACK_PENDING') or status='PROCESSING' and lease_until&lt;clock_timestamp())
+    </update>
+    <update id="freezeInputTime">update agent_runtime_memory_extraction_jobs
+        set source_time_epoch_second=#{input.sourceTimeEpochSecond},source_time_nano=#{input.sourceTimeNano},
+            frozen_fact_count=#{input.factCount},frozen_subject_count=#{input.subjectCount},updated_at=clock_timestamp()
+        where <include refid="fence"/> and source_time_epoch_second IS NULL</update>
+    <select id="inputTime" resultType="com.skillforge.institution.memory.MemoryExtractionMaterial$InputTime">
+        select source_time_epoch_second as epoch_second,source_time_nano as nano
+        from agent_runtime_memory_extraction_jobs where <include refid="jobKey"/> and source_time_epoch_second is not null
+    </select>
+    <select id="aliases" resultType="com.skillforge.institution.memory.MemoryExtractionMaterial$FactAlias">
+        select alias,fact_id,fact_revision as revision from agent_runtime_memory_extraction_fact_aliases
+        where <include refid="jobKey"/> order by alias_ordinal
+    </select>
+    <insert id="insertSourceAlias">
+        insert into agent_runtime_memory_extraction_sources(tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,source_alias,source_ordinal)
+        select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,'s0',0
+        from agent_runtime_memory_extraction_jobs where <include refid="fence"/>
+    </insert>
+    <insert id="insertAlias">
+        insert into agent_runtime_memory_extraction_fact_aliases(tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,alias_ordinal,alias,fact_id,fact_revision)
+        select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,#{ordinal},#{alias.alias},#{alias.factId},#{alias.revision}
+        from agent_runtime_memory_extraction_jobs where <include refid="fence"/>
+    </insert>
+    <select id="subjects" resultType="long">
+        select subject_end_user_id from agent_runtime_memory_extraction_subjects
+        where <include refid="jobKey"/> order by subject_ordinal
+    </select>
+    <insert id="insertSubject">
+        insert into agent_runtime_memory_extraction_subjects(tenant_id,source_event_id,extractor_version,policy_version,
+            memory_type,canonical_fact_key,subject_ordinal,subject_end_user_id)
+        select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,#{ordinal},#{subject}
+        from agent_runtime_memory_extraction_jobs where <include refid="fence"/>
+    </insert>
+    <select id="lockClaim" resultType="string" useCache="false" flushCache="true">
+        select claim_token from agent_runtime_memory_extraction_jobs where <include refid="fence"/> for update
+    </select>
+    <update id="modelResult">
+        update agent_runtime_memory_extraction_jobs set model_status=#{status},system_run_id=#{run},
+            configuration_ref=#{configuration},invocation_ref=#{invocation},updated_at=clock_timestamp()
+        where <include refid="fence"/> and (model_status is null or model_status='WAITING')
+          and ((system_run_id is null and configuration_ref is null and invocation_ref is null)
+            or (system_run_id is not distinct from #{run} and configuration_ref is not distinct from #{configuration}
+                and invocation_ref is not distinct from #{invocation}))
+    </update>
+    <sql id="candidateFence">exists(select 1 from agent_runtime_memory_extraction_jobs j
+        where j.tenant_id=c.tenant_id and j.source_event_id=c.source_event_id and j.extractor_version=c.extractor_version
+          and j.policy_version=c.policy_version and j.memory_type=c.memory_type and j.canonical_fact_key=c.canonical_fact_key
+          and j.status='PROCESSING' and j.claim_token=#{job.claimToken} and j.lease_until&gt;clock_timestamp())</sql>
+    <select id="candidateData" resultType="com.skillforge.institution.memory.MemoryExtractionMaterial$CandidateData" useCache="false" flushCache="true">
+        select candidate_ordinal as ordinal,command_key,state as status,candidate_type as type,subject,predicate,value_json::text as value_json,
+            signal,sensitive,candidate_scope as scope,temporal_kind,temporal_from_epoch_second,temporal_from_nano,
+            temporal_to_epoch_second,temporal_to_nano,relation_kind,relation_target,condition_count,uncertainty_count,evidence_count,
+            target_fact_id,target_revision,fact_id,fact_revision,error_code
+        from agent_runtime_memory_extraction_candidates c where <include refid="jobKey"/>
+        order by candidate_ordinal
+    </select>
+    <insert id="insertCandidateData">
+        insert into agent_runtime_memory_extraction_candidates(tenant_id,source_event_id,extractor_version,policy_version,
+            memory_type,canonical_fact_key,candidate_ordinal,command_key,candidate_type,subject,predicate,value_json,signal,sensitive,candidate_scope,
+            temporal_kind,temporal_from_epoch_second,temporal_from_nano,temporal_to_epoch_second,temporal_to_nano,relation_kind,relation_target,
+            condition_count,uncertainty_count,evidence_count)
+        select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,#{candidate.ordinal},#{candidate.commandKey},
+            #{candidate.type},#{candidate.subject},#{candidate.predicate},CAST(#{candidate.valueJson} AS jsonb),#{candidate.signal},#{candidate.sensitive},#{candidate.scope},
+            #{candidate.temporalKind},#{candidate.temporalFromEpochSecond},#{candidate.temporalFromNano},#{candidate.temporalToEpochSecond},#{candidate.temporalToNano},
+            #{candidate.relationKind},#{candidate.relationTarget},#{candidate.conditionCount},#{candidate.uncertaintyCount},#{candidate.evidenceCount}
+        from agent_runtime_memory_extraction_jobs where <include refid="fence"/>
+    </insert>
+    <select id="preparedColumns" resultType="com.skillforge.institution.memory.MemoryExtractionMaterial$PreparedColumns">
+        select prepared_type as type,prepared_scope as scope,retention_class,schema_version,payload_schema_id,
+            valid_from_epoch_second,valid_from_nano,valid_to_epoch_second,valid_to_nano,expires_epoch_second,expires_nano,
+            confidence,importance,review_required,initial_status,target_fact_id,target_revision
+        from agent_runtime_memory_extraction_candidates where <include refid="jobKey"/>
+            and candidate_ordinal=#{ordinal} and prepared_scope is not null
+    </select>
+    <update id="prepareCandidateData">
+        update agent_runtime_memory_extraction_candidates c set prepared_type=#{prepared.type},prepared_scope=#{prepared.scope},
+            retention_class=#{prepared.retentionClass},schema_version=#{prepared.schemaVersion},payload_schema_id=#{prepared.payloadSchemaId},
+            valid_from_epoch_second=#{prepared.validFromEpochSecond},valid_from_nano=#{prepared.validFromNano},
+            valid_to_epoch_second=#{prepared.validToEpochSecond},valid_to_nano=#{prepared.validToNano},
+            expires_epoch_second=#{prepared.expiresEpochSecond},expires_nano=#{prepared.expiresNano},confidence=#{prepared.confidence},importance=#{prepared.importance},
+            review_required=#{prepared.reviewRequired},initial_status=#{prepared.initialStatus},review_reason_count=#{prepared.reviewReasonCount},
+            target_fact_id=#{prepared.targetFactId},target_revision=#{prepared.targetRevision},state='PREPARED',updated_at=clock_timestamp()
+        where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} and state='READY' and prepared_scope is null
+          and <include refid="candidateFence"/>
+    </update>
+    <select id="conditions" resultType="string">select item_text from agent_runtime_memory_extraction_conditions where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} order by item_ordinal</select>
+    <select id="uncertainties" resultType="string">select item_text from agent_runtime_memory_extraction_uncertainties where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} order by item_ordinal</select>
+    <select id="reviewReasons" resultType="string">select item_text from agent_runtime_memory_extraction_review_reasons where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} order by item_ordinal</select>
+    <select id="evidence" resultType="com.skillforge.core.agent.systemagent.MemoryExtractionCandidates$Evidence">
+        select source_alias as source_id,quote from agent_runtime_memory_extraction_candidate_evidence where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} order by item_ordinal
+    </select>
+    <sql id="detailColumns">tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,candidate_ordinal,item_ordinal</sql>
+    <sql id="detailValues">select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key,candidate_ordinal,#{item}</sql>
+    <sql id="detailSource">from agent_runtime_memory_extraction_candidates c where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} and <include refid="candidateFence"/></sql>
+    <insert id="insertCondition">insert into agent_runtime_memory_extraction_conditions(<include refid="detailColumns"/>,item_text)
+        <include refid="detailValues"/>,#{text} <include refid="detailSource"/></insert>
+    <insert id="insertUncertainty">insert into agent_runtime_memory_extraction_uncertainties(<include refid="detailColumns"/>,item_text)
+        <include refid="detailValues"/>,#{text} <include refid="detailSource"/></insert>
+    <insert id="insertReviewReason">insert into agent_runtime_memory_extraction_review_reasons(<include refid="detailColumns"/>,item_text)
+        <include refid="detailValues"/>,#{text} <include refid="detailSource"/></insert>
+    <insert id="insertEvidence">insert into agent_runtime_memory_extraction_candidate_evidence(<include refid="detailColumns"/>,source_alias,quote)
+        <include refid="detailValues"/>,#{evidence.sourceId},#{evidence.quote} <include refid="detailSource"/></insert>
+    <update id="candidateResult">
+        update agent_runtime_memory_extraction_candidates c set state=#{status},fact_id=#{fact},fact_revision=#{revision},
+            error_code=#{error},updated_at=clock_timestamp()
+        where <include refid="jobKey"/> and candidate_ordinal=#{ordinal} and state in ('READY','PREPARED','ACK_PENDING')
+          and <include refid="candidateFence"/>
+    </update>
+    <select id="sourcePayload" resultType="string">
+        select public.agent_runtime_session_event_payload(tenant_id,session_id,target_kind,target_id,
+            end_user_id,run_id,event_id,event_type,payload_schema_id,payload_canonical_json)
+        from agent_runtime_session_events where tenant_id=#{job.tenantId} and target_kind=#{job.sourceTargetKind}
+          and target_id=#{job.sourceTargetId} and agent_id=#{job.agentId} and session_id=#{job.sessionId} and event_id=#{job.sourceEventId}
+    </select>
+    <update id="finish">update agent_runtime_memory_extraction_jobs set status=#{status},result_fact_id=#{fact},result_revision=#{revision},
+        error_code=#{error},updated_at=clock_timestamp(),
+        completed_at=case when #{status} in ('WAITING','ACK_PENDING','UNKNOWN') then null else clock_timestamp() end,
+        available_at=case when #{status} in ('WAITING','ACK_PENDING') then clock_timestamp()+interval '5 seconds' else available_at end,
+        claimed_at=case when #{status} in ('COMPLETED','SKIPPED') then null else claimed_at end,
+        lease_until=null,claim_token=null where <include refid="fence"/>
+    </update>
+    <update id="compactTerminalCandidates">
+        with expired as (select tenant_id,source_event_id,extractor_version,policy_version,memory_type,canonical_fact_key
+          from agent_runtime_memory_extraction_jobs where tenant_id=#{tenant} and status in ('COMPLETED','SKIPPED') and completed_at is not null
+            and claimed_at is not null order by completed_at,source_event_id limit #{limit} for update skip locked)
+        update agent_runtime_memory_extraction_jobs j set claimed_at=null from expired p
+        where (j.tenant_id,j.source_event_id,j.extractor_version,j.policy_version,j.memory_type,j.canonical_fact_key)=
+              (p.tenant_id,p.source_event_id,p.extractor_version,p.policy_version,p.memory_type,p.canonical_fact_key)
+    </update>
+</mapper>

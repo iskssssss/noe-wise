@@ -1,0 +1,109 @@
+name: Runtime E2E
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "backend-java/**"
+      - "frontend-admin/**"
+      - "frontend-shared/**"
+      - "frontend-vendor/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tools/e2e/**"
+      - "!**/*.md"
+      - "backend-java/skillforge-prompts/src/main/resources/**"
+      - ".github/workflows/runtime-e2e.yml"
+  pull_request:
+    paths:
+      - "backend-java/**"
+      - "frontend-admin/**"
+      - "frontend-shared/**"
+      - "frontend-vendor/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tools/e2e/**"
+      - "!**/*.md"
+      - "backend-java/skillforge-prompts/src/main/resources/**"
+      - ".github/workflows/runtime-e2e.yml"
+
+jobs:
+  api:
+    name: API Runtime E2E
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run real HTTP/SSE Runtime gate
+        run: >-
+          ./gradlew --no-daemon -Dorg.gradle.workers.max=2
+          :skillforge-institution-service:test
+          --tests com.skillforge.institution.integration.ChatRuntimeChannelE2ETest
+          --tests com.skillforge.institution.integration.ChatReactKnowledgeE2ETest
+      - name: Preserve sanitized API evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-api-evidence
+          if-no-files-found: warn
+          path: |
+            backend-java/skillforge-institution-service/build/test-results/test/**
+            backend-java/skillforge-institution-service/build/reports/tests/test/**
+            backend-java/skillforge-institution-service/build/runtime-e2e/**
+
+  browser:
+    name: Admin Playwright Runtime Smoke
+    needs: api
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend workspace
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        working-directory: .
+        run: pnpm --filter frontend-admin exec playwright install --with-deps chromium
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run self-contained browser smoke
+        run: ./gradlew --no-daemon -Dorg.gradle.workers.max=2 :skillforge-institution-service:chatProcessBrowserE2E
+      - name: Preserve Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-browser-evidence
+          if-no-files-found: warn
+          path: backend-java/skillforge-institution-service/build/runtime-e2e/chat-process-browser-*/**
+      - name: Preserve backend browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-browser-backend-evidence
+          if-no-files-found: warn
+          path: |
+            backend-java/skillforge-institution-service/build/test-results/chatProcessBrowserE2E/**
+            backend-java/skillforge-institution-service/build/reports/tests/chatProcessBrowserE2E/**
+            backend-java/skillforge-institution-service/build/runtime-e2e/**

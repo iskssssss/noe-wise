@@ -1,0 +1,175 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: skillforge-java-pg
+    command: ["postgres", "-c", "timezone=Asia/Shanghai", "-c", "log_timezone=Asia/Shanghai"]
+    environment:
+      TZ: Asia/Shanghai
+      POSTGRES_USER: skillforge
+      POSTGRES_PASSWORD: skillforge_dev
+      POSTGRES_DB: skillforge
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./pg-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: skillforge-java-redis
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:6380:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: skillforge-java-nacos
+    environment:
+      TZ: Asia/Shanghai
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+    volumes:
+      - ./data/nacos/data:/home/nacos/data
+      - ./data/nacos/logs:/home/nacos/logs
+    ports:
+      - "127.0.0.1:9000:8848"
+      - "127.0.0.1:9848:9848"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: skillforge-java-es
+    environment:
+      TZ: Asia/Shanghai
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    ports:
+      - "127.0.0.1:9215:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  skillforge-institution-service:
+    build:
+      context: ../backend-java
+      dockerfile: skillforge-institution-service/Dockerfile
+    container_name: skillforge-institution-service
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/skillforge
+      SPRING_DATASOURCE_USERNAME: skillforge_institution
+      SPRING_DATASOURCE_PASSWORD: skillforge_institution_dev
+      SPRING_FLYWAY_USER: skillforge
+      SPRING_FLYWAY_PASSWORD: skillforge_dev
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      PLATFORM_SECRET_KEY: ${PLATFORM_SECRET_KEY:?PLATFORM_SECRET_KEY is required}
+      REDIS_HOST: redis
+      NACOS_SERVER_ADDR: nacos:8848
+      NACOS_DISCOVERY_ENABLED: "true"
+      INSTITUTION_SERVICE_PORT: "8000"
+      SKILLFORGE_ELASTICSEARCH_ENABLED: "true"
+      SKILLFORGE_ELASTICSEARCH_URI: http://elasticsearch:9200
+      CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-false}
+      SANDBOX_ENDPOINT: ${SANDBOX_ENDPOINT:-http://host.docker.internal:18200}
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-}
+      ARTIFACT_ROOT: /var/lib/skillforge/artifacts
+      SKILLFORGE_MODEL_MEDIA_ROOT: /var/lib/skillforge/model-media
+      ARTIFACT_TICKET_KEY: ${ARTIFACT_TICKET_KEY:-}
+      ARTIFACT_RETENTION: ${ARTIFACT_RETENTION:-P7D}
+      PLATFORM_ORIGIN: ${PLATFORM_ORIGIN:-http://localhost:5173}
+      ARTIFACT_PREVIEW_ORIGIN: ${ARTIFACT_PREVIEW_ORIGIN:-http://preview.localhost:8091}
+      ARTIFACT_PREVIEW_PORT: ${ARTIFACT_PREVIEW_PORT:-0}
+    volumes:
+      - artifact-files:/var/lib/skillforge/artifacts
+      - model-media-files:/var/lib/skillforge/model-media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8091:8091"
+
+  skillforge-platform-service:
+    build:
+      context: ../backend-java
+      dockerfile: skillforge-platform-service/Dockerfile
+    container_name: skillforge-platform-service
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/skillforge
+      SPRING_DATASOURCE_USERNAME: skillforge_platform
+      SPRING_DATASOURCE_PASSWORD: skillforge_platform_dev
+      PLATFORM_DATASOURCE_USERNAME: skillforge_platform
+      PLATFORM_DATASOURCE_PASSWORD: skillforge_platform_dev
+      SPRING_FLYWAY_USER: skillforge
+      SPRING_FLYWAY_PASSWORD: skillforge_dev
+      REDIS_HOST: redis
+      NACOS_SERVER_ADDR: nacos:8848
+      NACOS_DISCOVERY_ENABLED: "true"
+      PLATFORM_SERVICE_PORT: "8100"
+      SKILLFORGE_MODEL_MEDIA_ROOT: /var/lib/skillforge/model-media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      PLATFORM_SECRET_KEY: ${PLATFORM_SECRET_KEY:?PLATFORM_SECRET_KEY is required}
+      PLATFORM_ADMIN_USERNAME: ${PLATFORM_ADMIN_USERNAME:-platform-admin}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is required}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+    volumes:
+      - model-media-files:/var/lib/skillforge/model-media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8100:8100"
+
+  skillforge-gateway:
+    build:
+      context: ../backend-java
+      dockerfile: skillforge-gateway/Dockerfile
+    container_name: skillforge-gateway
+    environment:
+      TZ: Asia/Shanghai
+      INSTITUTION_URI: http://skillforge-institution-service:8000
+      INSTITUTION_WS_URI: ws://skillforge-institution-service:8000
+      PLATFORM_URI: http://skillforge-platform-service:8100
+      NACOS_SERVER_ADDR: nacos:8848
+      NACOS_DISCOVERY_ENABLED: "true"
+    depends_on:
+      - skillforge-institution-service
+      - skillforge-platform-service
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  artifact-files:
+  model-media-files:

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.mapper.WorkflowContainerMapper">
+
+    <select id="lockContainer" resultType="com.skillforge.core.workflow.model.WorkflowContainerDO">
+        SELECT id,tenant_id,workflow_id,status,current_draft_revision,active_definition_version_id,created_at,updated_at
+        FROM nw_workflow_containers WHERE tenant_id=#{tenantId} AND workflow_id=#{workflowId} FOR UPDATE
+    </select>
+
+    <update id="advanceBuilderSnapshot">
+        UPDATE nw_workflow_builder_snapshots SET draft_revision=#{nextRevision},updated_at=now()
+        WHERE tenant_id=#{tenantId} AND container_id=#{containerId} AND draft_revision=#{expectedRevision}
+    </update>
+
+    <update id="advanceDraftRevision">
+        UPDATE nw_workflow_containers
+        SET current_draft_revision = #{nextRevision},
+            status = 'draft',
+            updated_at = now()
+        WHERE id = #{containerId}
+          AND tenant_id = #{tenantId}
+          AND current_draft_revision = #{expectedRevision}
+          AND status IN ('draft','published')
+    </update>
+
+    <update id="forkPublishedDraft">
+        UPDATE nw_workflow_containers
+        SET current_draft_revision = #{nextRevision},
+            status = 'draft',
+            updated_at = now()
+        WHERE id = #{containerId}
+          AND tenant_id = #{tenantId}
+          AND status = 'published'
+          AND current_draft_revision = #{expectedRevision}
+    </update>
+
+    <update id="activateDefinitionVersion">
+        UPDATE nw_workflow_containers
+        SET active_definition_version_id = #{definitionVersionId},
+            status = 'published',
+            updated_at = now()
+        WHERE id = #{containerId}
+          AND tenant_id = #{tenantId}
+          AND current_draft_revision = #{expectedRevision}
+    </update>
+</mapper>

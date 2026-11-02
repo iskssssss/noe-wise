@@ -1,0 +1,9 @@
+{
+  "action": "modify",
+  "format": "docx",
+  "source_path": "/input/artifacts/source/document.docx",
+  "operations": [
+    {"type": "replace_text", "scope": "body", "find": "验收人员和时间待确认。", "replace": "按本轮用户提供的事实更新验收安排。", "expected_count": 1},
+    {"type": "set_table_cell", "table": 0, "row": 1, "cell": 1, "expected_text": "按资料填入", "text": "按本轮确认资料填写"}
+  ]
+}

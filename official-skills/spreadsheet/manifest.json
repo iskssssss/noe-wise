@@ -1,0 +1,49 @@
+{
+  "version": "2.0.5",
+  "entry": {
+    "language": "python",
+    "script_path": "scripts/generate_spreadsheet.py"
+  },
+  "dependencies": [
+    {
+      "name": "et-xmlfile",
+      "version": "2.0.0"
+    },
+    {
+      "name": "openpyxl",
+      "version": "3.1.5"
+    }
+  ],
+  "system_dependencies": [
+    "LibreOffice Calc: formula recalculation and chart cache"
+  ],
+  "expects_typed_results": true,
+  "example_inputs": [
+    "examples/spreadsheet.json",
+    "examples/spreadsheet-formulas.json",
+    "examples/spreadsheet-edit.json",
+    "examples/spreadsheet-named.json"
+  ],
+  "outputs": {
+    "xlsx": [
+      "report.xlsx"
+    ],
+    "zip": [
+      "report.zip"
+    ]
+  },
+  "source": {
+    "implementation": "NoeWise independent implementation",
+    "upstream_skill_content": "none",
+    "library": "openpyxl 3.1.5 MIT",
+    "library_documentation": "https://openpyxl.readthedocs.io/en/3.1/",
+    "conversion_runtime": "LibreOffice Calc provided by sandbox image; no binaries bundled"
+  },
+  "output_naming": {
+    "parameter": "output_name",
+    "extension": "xlsx",
+    "default": "report.xlsx",
+    "meaning": "actual safe basename; workbook values, formulas and edit source identity remain unchanged",
+    "bundle": "report.zip contains the actual XLSX basename"
+  }
+}

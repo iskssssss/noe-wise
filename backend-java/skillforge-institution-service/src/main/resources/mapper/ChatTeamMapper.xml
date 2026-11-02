@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.chat.ChatTeamMapper">
+  <select id="teamIds" resultType="string">SELECT team_id FROM nw_chat_user_teams WHERE tenant_id=#{tenant} AND channel_id=#{channel} AND client_ref=#{clientRef}::uuid ORDER BY created_at</select>
+  <insert id="insertOwner">INSERT INTO nw_chat_user_teams(tenant_id,team_id,channel_id,client_ref) VALUES(#{tenant},#{team},#{channel},#{clientRef}::uuid)</insert>
+  <select id="available" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_chat_user_teams t
+                  JOIN nw_chat_client_profiles p USING(tenant_id,channel_id,client_ref)
+                  JOIN nw_end_users u ON u.tenant_id=p.tenant_id AND u.id=p.end_user_id AND u.status='active'
+                  WHERE t.tenant_id=#{tenant} AND t.channel_id=#{channel} AND t.team_id=#{team} AND p.end_user_id::text=#{endUser})</select>
+  <select id="authorizedAgent" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_channel_agent_bindings b
+                  JOIN nw_channels c ON c.tenant_id=b.tenant_id AND c.id=b.channel_id AND c.status='active'
+                  JOIN nw_agents a ON a.tenant_id=b.tenant_id AND a.id=b.agent_id AND a.status='published'
+                  WHERE b.tenant_id=#{tenant} AND b.channel_id=#{channel} AND a.id::text=#{agent})</select>
+  <select id="owns" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_chat_user_teams WHERE tenant_id=#{tenant} AND channel_id=#{channel} AND client_ref=#{clientRef}::uuid AND team_id=#{team})</select>
+</mapper>

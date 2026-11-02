@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.SessionOutboxSequenceMapper">
+    <select id="projectionCheckpoint" resultType="com.skillforge.core.chat.session.SessionOutboxProjectionCheckpoint">
+        SELECT projection_checkpoint_sequence AS sequence, projection_checkpoint_event_id AS "eventId",
+               projection_checkpoint_policy AS "policyVersion", projection_checkpoint_state::text AS "stateJson"
+        FROM nw_chat_session_outbox_sequences
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND projection_checkpoint_sequence IS NOT NULL
+    </select>
+    <insert id="ensure">
+INSERT INTO nw_chat_session_outbox_sequences (tenant_id, session_id, next_sequence)
+VALUES (#{tenantId}, #{sessionId}, 0)
+ON CONFLICT (tenant_id, session_id) DO NOTHING
+    </insert>
+    <select id="lock" resultType="Long">
+SELECT next_sequence FROM nw_chat_session_outbox_sequences
+WHERE tenant_id = #{tenantId} AND session_id = #{sessionId}
+FOR UPDATE
+    </select>
+    <select id="lockProjection" resultType="com.skillforge.core.chat.session.SessionOutboxProjectionState" flushCache="true" useCache="false">
+SELECT next_sequence AS "nextSequence",
+       projection_source_sequence AS "sourceSequence", projection_source_event_id AS "sourceEventId",
+       projection_policy_version AS "policyVersion", projection_error_code AS "errorCode",
+       projection_checkpoint_sequence AS "checkpointSequence", projection_checkpoint_event_id AS "checkpointEventId",
+       projection_checkpoint_policy AS "checkpointPolicy", projection_checkpoint_state::text AS "checkpointStateJson"
+FROM nw_chat_session_outbox_sequences
+WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+FOR UPDATE
+    </select>
+    <select id="projectionRecord" resultType="com.skillforge.core.chat.session.SessionOutboxProjectionRecord">
+SELECT projection_source_sequence AS "sourceSequence", projection_source_event_id AS "sourceEventId",
+       projection_policy_version AS "policyVersion", projection_error_code AS "errorCode"
+FROM nw_chat_session_outbox_sequences WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+    </select>
+    <sql id="successReceiptEligible">
+        (projection_source_sequence IS NULL OR projection_source_sequence &lt;= #{source.sequence})
+    </sql>
+    <update id="recordProjectionCompletion">
+UPDATE nw_chat_session_outbox_sequences
+SET projection_checkpoint_sequence=#{source.sequence}, projection_checkpoint_event_id=#{source.eventId},
+    projection_checkpoint_policy=#{source.policyVersion}, projection_checkpoint_state=CAST(#{state} AS jsonb),
+    projection_source_sequence=CASE WHEN <include refid="successReceiptEligible"/>
+        THEN #{source.sequence} ELSE projection_source_sequence END,
+    projection_source_event_id=CASE WHEN <include refid="successReceiptEligible"/>
+        THEN #{source.eventId} ELSE projection_source_event_id END,
+    projection_policy_version=CASE WHEN <include refid="successReceiptEligible"/>
+        THEN #{source.policyVersion} ELSE projection_policy_version END,
+    projection_error_code=CASE WHEN <include refid="successReceiptEligible"/>
+        THEN NULL ELSE projection_error_code END,
+    updated_at=now()
+WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+    </update>
+    <update id="recordProjectionRejection">
+UPDATE nw_chat_session_outbox_sequences
+SET projection_source_sequence=#{source.sequence}, projection_source_event_id=#{source.eventId},
+    projection_policy_version=#{source.policyVersion}, projection_error_code=#{errorCode}, updated_at=now()
+WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+  AND (projection_source_sequence IS NULL OR projection_source_sequence &lt; #{source.sequence}
+       OR (projection_source_sequence=#{source.sequence}
+           AND (projection_source_event_id IS DISTINCT FROM #{source.eventId}
+                OR projection_policy_version IS DISTINCT FROM #{source.policyVersion})))
+    </update>
+    <select id="reserve" resultType="Long" affectData="true" flushCache="true" useCache="false">
+UPDATE nw_chat_session_outbox_sequences
+SET next_sequence = next_sequence + #{count}, updated_at = now()
+WHERE tenant_id = #{tenantId} AND session_id = #{sessionId}
+RETURNING next_sequence
+    </select>
+</mapper>

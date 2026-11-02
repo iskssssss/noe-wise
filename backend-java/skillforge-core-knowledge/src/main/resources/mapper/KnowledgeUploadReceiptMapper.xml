@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeUploadReceiptMapper">
+  <insert id="claim">
+    INSERT INTO nw_knowledge_upload_receipts (tenant_id, request_id, kb_id, actor_ref, request_fingerprint, status)
+    VALUES (#{tenant}, CAST(#{requestId} AS uuid), #{kbId}, #{actor}, #{fingerprint}, 'PROCESSING')
+    ON CONFLICT (tenant_id, request_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.core.knowledge.mapper.KnowledgeUploadReceiptMapper$Row">
+    SELECT kb_id, actor_ref, request_fingerprint AS fingerprint, status, document_id, source_version, chunks, error_message
+    FROM nw_knowledge_upload_receipts WHERE tenant_id=#{tenant} AND request_id=CAST(#{requestId} AS uuid)
+  </select>
+  <update id="succeed">
+    UPDATE nw_knowledge_upload_receipts SET status='SUCCEEDED', document_id=#{documentId},
+    source_version=#{sourceVersion}, chunks=#{chunks}, completed_at=now()
+    WHERE tenant_id=#{tenant} AND request_id=CAST(#{requestId} AS uuid) AND status='PROCESSING'
+  </update>
+  <update id="reject">
+    UPDATE nw_knowledge_upload_receipts SET status='REJECTED', error_message=#{message}, completed_at=now()
+    WHERE tenant_id=#{tenant} AND request_id=CAST(#{requestId} AS uuid) AND status='PROCESSING'
+  </update>
+</mapper>

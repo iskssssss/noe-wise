@@ -1,0 +1,18 @@
+import org.gradle.api.initialization.resolve.RepositoriesMode
+
+// 一次验收只有一个临时独立工程，SDK group 的唯一来源是指定发布仓库。
+rootProject.name = 'sdk-published-consumer'
+def sdkRepository = providers.gradleProperty('sdkRepository').orNull
+if (sdkRepository == null || !new File(sdkRepository).isDirectory()) {
+    throw new GradleException('sdkRepository must name the current isolated Maven repository')
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        exclusiveContent {
+            forRepository { maven { name = 'currentSdkPublication'; url = uri(sdkRepository) } }
+            filter { includeGroup('com.skillforge') }
+        }
+        mavenCentral { content { excludeGroup('com.skillforge') } }
+    }
+}

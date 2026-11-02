@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.access.FoundationOptionMapper">
+  <!-- 精确身份解析和名称搜索始终在调用方的对象过滤之后执行。 -->
+  <sql id="selection">
+    <choose>
+      <when test="!query.ids.isEmpty()">AND o.id::text IN <foreach collection="query.ids" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+      <when test="query.keyword != ''">AND (strpos(lower(o.name),lower(#{query.keyword}))&gt;0 OR strpos(lower(o.code),lower(#{query.keyword}))&gt;0 OR o.id::text=#{query.keyword})</when>
+    </choose>
+    ORDER BY o.name,o.id LIMIT #{query.limit} OFFSET #{query.offset}
+  </sql>
+  <select id="resources" resultType="com.skillforge.core.foundation.access.FoundationOptionService$Option">
+    SELECT o.id::text AS id,o.name,o.code,o.status FROM (
+      <choose>
+        <when test="kind == 'agent'">SELECT id,name,agent_key AS code,status FROM nw_agents WHERE tenant_id=CAST(#{tenantId} AS bigint) AND NOT EXISTS(SELECT 1 FROM nw_workflow_test_sessions wt WHERE wt.tenant_id=nw_agents.tenant_id AND wt.agent_id=nw_agents.id)</when>
+        <when test="kind == 'workflow'">SELECT id,workflow_id AS name,workflow_id AS code,status FROM nw_workflow_containers WHERE tenant_id=CAST(#{tenantId} AS bigint) AND NOT EXISTS(SELECT 1 FROM nw_workflow_test_sessions wt WHERE wt.tenant_id=nw_workflow_containers.tenant_id AND wt.container_id=nw_workflow_containers.id)</when>
+        <when test="kind == 'knowledge'">SELECT id,name,id::text AS code,status FROM nw_knowledge_bases WHERE tenant_id=CAST(#{tenantId} AS bigint)</when>
+        <otherwise>SELECT CAST(NULL AS bigint) AS id,'' AS name,'' AS code,'' AS status WHERE false</otherwise>
+      </choose>
+    ) o WHERE true
+    <if test="!filter.all"><choose>
+      <when test="!filter.resourceIds.isEmpty()">AND o.id::text IN <foreach collection="filter.resourceIds" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+      <otherwise>AND false</otherwise>
+    </choose></if>
+    <include refid="selection"/>
+  </select>
+  <select id="members" resultType="com.skillforge.core.foundation.access.FoundationOptionService$Option">
+    SELECT o.id::text AS id,o.name,o.code,o.status FROM (
+      SELECT m.id,coalesce(p.display_name,m.username) AS name,m.username AS code,m.status
+      <include refid="com.skillforge.core.foundation.access.FoundationOrganizationMapper.memberFrom"/>
+      <if test="activeOnly">AND m.status='active'</if>
+    ) o WHERE true <include refid="selection"/>
+  </select>
+  <select id="recipientGroups" resultType="com.skillforge.core.foundation.access.FoundationOptionService$Option">
+    SELECT o.id::text AS id,o.name,o.code,o.status FROM (
+      <choose>
+        <when test="kind == 'department'">
+          SELECT g.id,g.name,g.code,'active' AS status FROM nw_foundation_departments g
+          WHERE g.scope_key=#{scope} AND g.enabled AND EXISTS(
+            SELECT 1 <include refid="com.skillforge.core.foundation.access.FoundationOrganizationMapper.memberFrom"/>
+            AND m.status='active' AND p.department_id=g.id)
+        </when>
+        <when test="kind == 'role'">
+          SELECT g.id,g.name,g.code,'active' AS status FROM nw_foundation_roles g
+          WHERE g.scope_key=#{scope} AND g.enabled AND EXISTS(
+            SELECT 1 <include refid="com.skillforge.core.foundation.access.FoundationOrganizationMapper.memberFrom"/>
+            AND m.status='active' AND EXISTS(SELECT 1 FROM nw_foundation_member_roles mr
+              WHERE mr.scope_key=#{scope} AND mr.role_id=g.id AND mr.member_id=m.id))
+        </when>
+        <otherwise>SELECT CAST(NULL AS bigint) AS id,'' AS name,'' AS code,'' AS status WHERE false</otherwise>
+      </choose>
+    ) o WHERE true <include refid="selection"/>
+  </select>
+  <select id="tenants" resultType="com.skillforge.core.foundation.access.FoundationOptionService$Option">
+    SELECT o.id::text AS id,o.name,o.code,o.status FROM (
+      SELECT id,name,slug AS code,status FROM nw_tenants
+    ) o WHERE true <include refid="selection"/>
+  </select>
+</mapper>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.group.GroupMemoryExtractionMapper">
+    <select id="policy" resultType="com.skillforge.institution.group.GroupMemoryExtractionMapper$Policy" useCache="false" flushCache="true">
+        SELECT tenant_id::text AS tenant_id,integration_id,group_binding_id::text AS group_binding_id,
+            enabled,extractor_agent_id::text AS extractor_agent_id,revision,updated_by_principal
+        FROM nw_group_memory_extraction_policies WHERE tenant_id::text=#{tenant} AND integration_id=#{integration}
+            AND group_binding_id::text=#{group}
+    </select>
+    <select id="agentEnabled" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM nw_agents a JOIN nw_agent_publications p ON p.tenant_id=a.tenant_id AND p.agent_id=a.id AND p.id=a.published_revision_id
+            WHERE a.tenant_id::text=#{tenant} AND a.id::text=#{agent} AND a.status='published'
+              AND p.snapshot #&gt; '{agent,config,memory,automatic_extraction}'='true'::jsonb)
+    </select>
+    <insert id="savePolicy">
+        INSERT INTO nw_group_memory_extraction_policies(tenant_id,integration_id,group_binding_id,enabled,extractor_agent_id,revision,updated_by_principal)
+        VALUES(CAST(#{row.tenantId} AS bigint),#{row.integrationId},CAST(#{row.groupBindingId} AS bigint),#{row.enabled},
+            CAST(#{row.extractorAgentId} AS bigint),#{row.revision},#{row.updatedByPrincipal})
+        ON CONFLICT(tenant_id,integration_id,group_binding_id) DO UPDATE SET enabled=excluded.enabled,
+            extractor_agent_id=excluded.extractor_agent_id,revision=excluded.revision,updated_by_principal=excluded.updated_by_principal,
+            updated_at=clock_timestamp() WHERE nw_group_memory_extraction_policies.revision=#{expected}
+    </insert>
+    <select id="next" resultType="com.skillforge.institution.group.GroupMemoryExtractionMapper$Pending" useCache="false" flushCache="true">
+        SELECT p.tenant_id::text AS tenant_id,p.integration_id,p.group_binding_id::text AS group_binding_id,
+            s.session_id,p.source_message_id,p.source_sequence,s.source_revision,s.author_end_user_id,
+            c.extractor_agent_id::text AS agent_id
+        FROM nw_group_memory_extraction_pending p
+        JOIN nw_group_source_messages s USING(tenant_id,integration_id,group_binding_id,source_message_id,source_sequence)
+        JOIN nw_group_memory_extraction_policies c USING(tenant_id,integration_id,group_binding_id)
+        WHERE p.tenant_id::text=#{tenant} AND c.enabled AND s.author_kind='end_user'
+          AND EXISTS(SELECT 1 FROM nw_group_bindings g
+            JOIN nw_group_service_agents sa ON (sa.tenant_id,sa.integration_id,sa.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+            JOIN nw_agents a ON (a.tenant_id,a.id)=(sa.tenant_id,sa.agent_id)
+            JOIN nw_agent_publications ap ON ap.tenant_id=a.tenant_id AND ap.agent_id=a.id AND ap.id=a.published_revision_id
+            JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+            JOIN nw_tenants t ON t.id=g.tenant_id
+            WHERE (g.tenant_id,g.integration_id,g.id)=(p.tenant_id,p.integration_id,p.group_binding_id)
+              AND g.status='active' AND sa.agent_id=c.extractor_agent_id AND sa.status='active' AND a.status='published'
+              AND b.status='active' AND t.status IN('active','warning')
+              AND ap.snapshot #&gt; '{agent,config,memory,automatic_extraction}'='true'::jsonb)
+          AND NOT EXISTS(SELECT 1 FROM nw_group_control_states g WHERE g.tenant_id=p.tenant_id
+            AND g.integration_id=p.integration_id AND g.group_binding_id=p.group_binding_id
+            AND g.target_ref='*' AND g.scope='memory_extraction' AND g.paused)
+        ORDER BY p.created_at,p.group_binding_id,p.source_sequence FOR UPDATE OF p SKIP LOCKED LIMIT 1
+    </select>
+    <select id="eligible" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM (
+          SELECT g.id FROM nw_group_bindings g
+          JOIN nw_group_memory_extraction_policies c ON (c.tenant_id,c.integration_id,c.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+          JOIN nw_group_service_agents s ON (s.tenant_id,s.integration_id,s.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+          JOIN nw_agents a ON (a.tenant_id,a.id)=(s.tenant_id,s.agent_id)
+          JOIN nw_agent_publications p ON p.tenant_id=a.tenant_id AND p.agent_id=a.id AND p.id=a.published_revision_id
+          JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+          JOIN nw_tenants t ON t.id=g.tenant_id
+          WHERE g.tenant_id::text=#{tenant} AND g.integration_id=#{integration} AND g.id::text=#{group}
+            AND g.status='active' AND s.agent_id::text=#{agent} AND s.status='active' AND a.status='published'
+            AND c.enabled AND b.status='active' AND t.status IN('active','warning')
+            AND p.snapshot #&gt; '{agent,config,memory,automatic_extraction}'='true'::jsonb
+          FOR SHARE OF g,c,s,a,b,t
+        ) qualification)
+    </select>
+    <select id="subjects" resultType="long">
+        SELECT end_user_id FROM nw_group_memberships WHERE tenant_id::text=#{tenant}
+          AND integration_id=#{integration} AND group_binding_id::text=#{group}
+        ORDER BY end_user_id
+    </select>
+    <insert id="enqueue">
+        INSERT INTO agent_runtime_memory_extraction_jobs(tenant_id,source_event_id,extractor_version,policy_version,
+            memory_type,canonical_fact_key,agent_id,end_user_id,source_session_id,source_target_kind,source_target_id,
+            source_event_type,integration_id,group_binding_id)
+        VALUES(#{source.tenantId},#{event},#{extractor},#{policy},'group-hydrate','source',#{source.agentId},
+            #{source.authorEndUserId},#{source.sessionId},'GROUP',#{source.groupBindingId},'group.memory.source',
+            #{source.integrationId},CAST(#{source.groupBindingId} AS bigint)) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="queued" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM agent_runtime_memory_extraction_jobs WHERE tenant_id=#{source.tenantId}
+            AND source_event_id=#{event} AND extractor_version=#{extractor} AND policy_version=#{policy}
+            AND memory_type='group-hydrate' AND canonical_fact_key='source' AND source_target_kind='GROUP'
+            AND source_target_id=#{source.groupBindingId} AND source_session_id=#{source.sessionId}
+            AND integration_id=#{source.integrationId} AND group_binding_id=CAST(#{source.groupBindingId} AS bigint)
+            AND end_user_id=#{source.authorEndUserId})
+    </select>
+    <delete id="acknowledge">
+        DELETE FROM nw_group_memory_extraction_pending WHERE tenant_id::text=#{source.tenantId}
+            AND integration_id=#{source.integrationId} AND group_binding_id::text=#{source.groupBindingId}
+            AND source_message_id=#{source.sourceMessageId} AND source_sequence=#{source.sourceSequence}
+    </delete>
+</mapper>

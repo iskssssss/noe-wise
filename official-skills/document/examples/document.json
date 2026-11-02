@@ -1,0 +1,16 @@
+{
+  "title": "项目周报示例",
+  "subtitle": "示例资料，实际生成时替换为用户已确认事实",
+  "sections": [
+    {
+      "heading": "本周进展",
+      "level": 1,
+      "blocks": [
+        {"type": "paragraph", "text": "完成需求访谈并整理优先级。"},
+        {"type": "bullets", "items": ["确认范围", "安排验收"]},
+        {"type": "table", "headers": ["任务", "状态"], "rows": [["需求确认", "已完成"], ["验收安排", "待确认"]]}
+      ]
+    },
+    {"heading": "下周计划", "level": 1, "blocks": [{"type": "paragraph", "text": "开始原型评审，时间待确认。"}]}
+  ]
+}

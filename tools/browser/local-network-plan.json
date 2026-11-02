@@ -1,0 +1,356 @@
+{
+  "upstream": "3f10983c09fcd443c7420830ab984c9d409954bf",
+  "variables": {
+    "originA": "http://127.0.0.1:18581",
+    "originB": "http://127.0.0.1:18582"
+  },
+  "steps": [
+    {
+      "name": "start",
+      "operation": "start",
+      "parameters": {
+        "browser": "${browser}"
+      },
+      "expectedStatus": "active"
+    },
+    {
+      "name": "navigate",
+      "operation": "navigate",
+      "parameters": {
+        "url": "${originA}/"
+      }
+    },
+    {
+      "name": "debug-start",
+      "operation": "debug",
+      "parameters": {
+        "action": "start",
+        "name": "Owned local network acceptance"
+      }
+    },
+    {
+      "name": "mock-rule",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_add",
+        "rule": "{\"name\":\"Owned mock once\",\"match\":{\"url\":\"${originA}/api/echo?case=mock\",\"method\":\"GET\"},\"effect\":{\"type\":\"mock\",\"status\":200,\"body\":\"owned-mock\"},\"times\":1}"
+      },
+      "capture": {
+        "ruleId": {
+          "path": "result.rules",
+          "where": {
+            "field": "name",
+            "equals": "Owned mock once"
+          },
+          "value": "id"
+        }
+      }
+    },
+    {
+      "name": "mock-fetch",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=mock').then(r=>r.text())",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "mock",
+          "count": 0
+        }
+      ],
+      "result": [
+        {
+          "path": "result.value",
+          "equals": "owned-mock"
+        }
+      ]
+    },
+    {
+      "name": "mock-exhausted",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=mock').then(r=>r.text())",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "mock",
+          "count": 1,
+          "method": "GET"
+        }
+      ]
+    },
+    {
+      "name": "rule-remove",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_remove",
+        "id": "${ruleId}"
+      }
+    },
+    {
+      "name": "modify-rule",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_add",
+        "rule": "{\"name\":\"Owned modify once\",\"match\":{\"url\":\"${originA}/api/echo?case=modify\",\"method\":\"POST\"},\"effect\":{\"type\":\"modify\",\"body\":\"owned-modified\",\"headers\":{\"X-Fixture-Value\":\"modified-header\"}},\"times\":1}"
+      },
+      "capture": {
+        "modifyRuleId": {
+          "path": "result.rules",
+          "where": {
+            "field": "name",
+            "equals": "Owned modify once"
+          },
+          "value": "id"
+        }
+      }
+    },
+    {
+      "name": "modify-fetch",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=modify',{method:'POST',body:'owned-original'}).then(r=>r.text())",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "modify",
+          "count": 1,
+          "method": "POST",
+          "body": "owned-modified",
+          "testHeader": "modified-header"
+        }
+      ]
+    },
+    {
+      "name": "modify-remove",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_remove",
+        "id": "${modifyRuleId}"
+      }
+    },
+    {
+      "name": "block-rule",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_add",
+        "rule": "{\"name\":\"Owned block persistent\",\"match\":{\"url\":\"${originA}/api/echo?case=block\",\"method\":\"GET\"},\"effect\":{\"type\":\"block\"},\"times\":0}"
+      },
+      "capture": {
+        "blockRuleId": {
+          "path": "result.rules",
+          "where": {
+            "field": "name",
+            "equals": "Owned block persistent"
+          },
+          "value": "id"
+        }
+      }
+    },
+    {
+      "name": "block-fetch",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=block').then(r=>r.text()).catch(()=> 'owned-blocked')",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "block",
+          "count": 0
+        }
+      ],
+      "result": [
+        {
+          "path": "result.value",
+          "equals": "owned-blocked"
+        }
+      ]
+    },
+    {
+      "name": "block-disable",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_disable",
+        "id": "${blockRuleId}"
+      }
+    },
+    {
+      "name": "disabled-fetch",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=block').then(r=>r.text())",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "block",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "block-enable",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_enable",
+        "id": "${blockRuleId}"
+      }
+    },
+    {
+      "name": "enabled-fetch",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=block').then(r=>r.text()).catch(()=> 'owned-blocked')",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "block",
+          "count": 1
+        }
+      ],
+      "result": [
+        {
+          "path": "result.value",
+          "equals": "owned-blocked"
+        }
+      ]
+    },
+    {
+      "name": "block-remove",
+      "operation": "debug",
+      "parameters": {
+        "action": "rule_remove",
+        "id": "${blockRuleId}"
+      }
+    },
+    {
+      "name": "source-post",
+      "operation": "evaluate",
+      "parameters": {
+        "expression": "fetch('/api/echo?case=replay',{method:'POST',body:'owned-original'}).then(r=>r.text())",
+        "await_promise": true,
+        "return_by_value": true
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "replay",
+          "count": 1,
+          "method": "POST",
+          "body": "owned-original"
+        }
+      ]
+    },
+    {
+      "name": "requests",
+      "operation": "debug",
+      "parameters": {
+        "action": "requests",
+        "url": "case=replay",
+        "method": "POST"
+      },
+      "capture": {
+        "requestId": "result.requests.0.id"
+      }
+    },
+    {
+      "name": "replay",
+      "operation": "debug",
+      "parameters": {
+        "action": "replay",
+        "id": "${requestId}",
+        "replay": "{\"key\":\"local-owned-replay-once\"}"
+      },
+      "capture": {
+        "replayId": "result.replay.id"
+      },
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "replay",
+          "count": 2,
+          "method": "POST",
+          "body": "owned-original"
+        }
+      ]
+    },
+    {
+      "name": "replay-same-key",
+      "operation": "debug",
+      "parameters": {
+        "action": "replay",
+        "id": "${requestId}",
+        "replay": "{\"key\":\"local-owned-replay-once\"}"
+      },
+      "result": [
+        {
+          "path": "result.replay.id",
+          "equals": "${replayId}"
+        }
+      ],
+      "network": [
+        {
+          "origin": "${originA}",
+          "case": "replay",
+          "count": 2
+        },
+        {
+          "origin": "${originB}",
+          "case": "replay",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "name": "cross-origin-replay",
+      "operation": "debug",
+      "parameters": {
+        "action": "replay",
+        "id": "${requestId}",
+        "replay": "{\"key\":\"local-owned-cross-origin\",\"url\":\"${originB}/api/echo?case=cross-origin\"}"
+      },
+      "expectedStatus": "failed",
+      "network": [
+        {
+          "origin": "${originB}",
+          "case": "cross-origin",
+          "count": 0
+        },
+        {
+          "origin": "${originA}",
+          "case": "replay",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "debug-stop",
+      "operation": "debug",
+      "parameters": {
+        "action": "stop"
+      }
+    },
+    {
+      "name": "stop",
+      "operation": "stop",
+      "parameters": {}
+    }
+  ]
+}

@@ -1,0 +1,492 @@
+{
+  "platform": "linux-x86_64",
+  "runtimes": {
+    "python": "3.12",
+    "node": "24"
+  },
+  "entries": {
+    "web-app": {
+      "language": "node",
+      "packages": [
+        {
+          "name": "@babel/standalone",
+          "version": "7.28.4",
+          "integrity": "sha512-Qc1BNCfuJZBKs2SC5lqRmSYOw7Ka0X7urZQ7oVsGIax4eGDUIHX+CDg752N4jDxC2rbBh3li098ReGOtjT0x4g==",
+          "url": "https://registry.npmjs.org/@babel/standalone/-/standalone-7.28.4.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "js-tokens",
+          "version": "4.0.0",
+          "integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==",
+          "url": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "loose-envify",
+          "version": "1.4.0",
+          "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+          "url": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "react",
+          "version": "18.3.1",
+          "integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
+          "url": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "react-dom",
+          "version": "18.3.1",
+          "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+          "url": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "scheduler",
+          "version": "0.23.2",
+          "integrity": "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==",
+          "url": "https://registry.npmjs.org/scheduler/-/scheduler-0.23.2.tgz",
+          "license": "MIT"
+        }
+      ]
+    },
+    "presentation": {
+      "language": "node",
+      "packages": [
+        {
+          "name": "@types/node",
+          "version": "18.19.130",
+          "integrity": "sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==",
+          "url": "https://registry.npmjs.org/@types/node/-/node-18.19.130.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "core-util-is",
+          "version": "1.0.3",
+          "integrity": "sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==",
+          "url": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "https",
+          "version": "1.0.0",
+          "integrity": "sha512-4EC57ddXrkaF0x83Oj8sM6SLQHAWXw90Skqu2M4AEWENZ3F02dFJE/GARA8igO79tcgYqGrD7ae4f5L3um2lgg==",
+          "url": "https://registry.npmjs.org/https/-/https-1.0.0.tgz",
+          "license": "ISC"
+        },
+        {
+          "name": "image-size",
+          "version": "1.2.1",
+          "integrity": "sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==",
+          "url": "https://registry.npmjs.org/image-size/-/image-size-1.2.1.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "immediate",
+          "version": "3.0.6",
+          "integrity": "sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==",
+          "url": "https://registry.npmjs.org/immediate/-/immediate-3.0.6.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "inherits",
+          "version": "2.0.4",
+          "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
+          "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+          "license": "ISC"
+        },
+        {
+          "name": "isarray",
+          "version": "1.0.0",
+          "integrity": "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==",
+          "url": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "jszip",
+          "version": "3.10.2",
+          "integrity": "sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ==",
+          "url": "https://registry.npmjs.org/jszip/-/jszip-3.10.2.tgz",
+          "license": "(MIT OR GPL-3.0-or-later)"
+        },
+        {
+          "name": "lie",
+          "version": "3.3.0",
+          "integrity": "sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==",
+          "url": "https://registry.npmjs.org/lie/-/lie-3.3.0.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "pako",
+          "version": "1.0.11",
+          "integrity": "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==",
+          "url": "https://registry.npmjs.org/pako/-/pako-1.0.11.tgz",
+          "license": "(MIT AND Zlib)"
+        },
+        {
+          "name": "pptxgenjs",
+          "version": "3.12.0",
+          "integrity": "sha512-ZozkYKWb1MoPR4ucw3/aFYlHkVIJxo9czikEclcUVnS4Iw/M+r+TEwdlB3fyAWO9JY1USxJDt0Y0/r15IR/RUA==",
+          "url": "https://registry.npmjs.org/pptxgenjs/-/pptxgenjs-3.12.0.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "process-nextick-args",
+          "version": "2.0.1",
+          "integrity": "sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==",
+          "url": "https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "queue",
+          "version": "6.0.2",
+          "integrity": "sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==",
+          "url": "https://registry.npmjs.org/queue/-/queue-6.0.2.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "readable-stream",
+          "version": "2.3.8",
+          "integrity": "sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==",
+          "url": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.8.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "safe-buffer",
+          "version": "5.1.2",
+          "integrity": "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==",
+          "url": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "setimmediate",
+          "version": "1.0.5",
+          "integrity": "sha512-MATJdZp8sLqDl/68LfQmbP8zKPLQNV6BIZoIgrscFDQ+RsvK/BxeDQOgyxKKoh0y/8h3BqVFnCqQ/gd+reiIXA==",
+          "url": "https://registry.npmjs.org/setimmediate/-/setimmediate-1.0.5.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "string_decoder",
+          "version": "1.1.1",
+          "integrity": "sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==",
+          "url": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "undici-types",
+          "version": "5.26.5",
+          "integrity": "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==",
+          "url": "https://registry.npmjs.org/undici-types/-/undici-types-5.26.5.tgz",
+          "license": "MIT"
+        },
+        {
+          "name": "util-deprecate",
+          "version": "1.0.2",
+          "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==",
+          "url": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+          "license": "MIT"
+        }
+      ]
+    },
+    "document": {
+      "language": "python",
+      "packages": [
+        {
+          "name": "lxml",
+          "version": "6.1.3",
+          "sha256": "909f4e927bb051f7740d6367285fc60cdcfdaf0258c2dba4ff5ba7eadadc250c",
+          "url": "https://files.pythonhosted.org/packages/0a/20/e022dbc6b4753a9bc9fc5fb28a27163430c1731b9913997f6544c1b2518c/lxml-6.1.3-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl",
+          "license": "BSD-3-Clause"
+        },
+        {
+          "name": "python-docx",
+          "version": "1.1.2",
+          "sha256": "08c20d6058916fb19853fcf080f7f42b6270d89eac9fa5f8c15f691c0017fabe",
+          "url": "https://files.pythonhosted.org/packages/3e/3d/330d9efbdb816d3f60bf2ad92f05e1708e4a1b9abe80461ac3444c83f749/python_docx-1.1.2-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "typing-extensions",
+          "version": "4.16.0",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+          "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+          "license": "PSF-2.0"
+        }
+      ]
+    },
+    "spreadsheet": {
+      "language": "python",
+      "packages": [
+        {
+          "name": "et-xmlfile",
+          "version": "2.0.0",
+          "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa",
+          "url": "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "openpyxl",
+          "version": "3.1.5",
+          "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2",
+          "url": "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl",
+          "license": "MIT"
+        }
+      ]
+    },
+    "configuration": {
+      "language": "python",
+      "packages": [
+        {
+          "name": "PyYAML",
+          "version": "6.0.2",
+          "sha256": "80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476",
+          "url": "https://files.pythonhosted.org/packages/b9/2b/614b4752f2e127db5cc206abc23a8c19678e92b23c3db30fc86ab731d3bd/PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "jsonschema",
+          "version": "4.25.1",
+          "sha256": "3fba0169e345c7175110351d456342c364814cfcf3b964ba4587f22915230a63",
+          "url": "https://files.pythonhosted.org/packages/bf/9c/8c95d856233c1f82500c2450b8c68576b4cf1c871db3afac5c34ff84e6fd/jsonschema-4.25.1-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "attrs",
+          "version": "25.3.0",
+          "sha256": "427318ce031701fea540783410126f03899a97ffc6f61596ad581ac2e40e3bc3",
+          "url": "https://files.pythonhosted.org/packages/77/06/bb80f5f86020c4551da315d78b3ab75e8228f89f0162f2c3a819e407941a/attrs-25.3.0-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "jsonschema-specifications",
+          "version": "2025.9.1",
+          "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+          "url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "referencing",
+          "version": "0.36.2",
+          "sha256": "e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0",
+          "url": "https://files.pythonhosted.org/packages/c1/b1/3baf80dc6d2b7bc27a95a67752d0208e410351e3feb4eb78de5f77454d8d/referencing-0.36.2-py3-none-any.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "rpds-py",
+          "version": "0.27.1",
+          "sha256": "466bfe65bd932da36ff279ddd92de56b042f2266d752719beb97b08526268ec5",
+          "url": "https://files.pythonhosted.org/packages/ed/7b/8f4fee9ba1fb5ec856eb22d725a4efa3deb47f769597c809e03578b0f9d9/rpds_py-0.27.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "license": "MIT"
+        },
+        {
+          "name": "typing-extensions",
+          "version": "4.16.0",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+          "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+          "license": "PSF-2.0"
+        }
+      ]
+    },
+    "webapp-testing": {
+      "language": "node",
+      "packages": [
+        {
+          "name": "playwright-core",
+          "version": "1.62.1",
+          "integrity": "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==",
+          "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.1.tgz",
+          "license": "Apache-2.0"
+        }
+      ]
+    },
+    "mcp-builder": {
+      "language": "python",
+      "packages": [
+        {
+          "name": "PyJWT",
+          "version": "2.15.1",
+          "sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193",
+          "url": "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl"
+        },
+        {
+          "name": "annotated-types",
+          "version": "0.8.0",
+          "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+          "url": "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl"
+        },
+        {
+          "name": "anyio",
+          "version": "4.15.1",
+          "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101",
+          "url": "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl"
+        },
+        {
+          "name": "attrs",
+          "version": "26.1.0",
+          "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+          "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl"
+        },
+        {
+          "name": "certifi",
+          "version": "2026.7.22",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl"
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf",
+          "url": "https://files.pythonhosted.org/packages/b1/db/dceb9dd5b231e1da801793f8acc9f3c52a7e1afe40bb1aae37e02b0faad5/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+        },
+        {
+          "name": "click",
+          "version": "8.5.0",
+          "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+          "url": "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl"
+        },
+        {
+          "name": "cryptography",
+          "version": "50.0.2",
+          "sha256": "9dab55f57c74c3cad24c323bacbbd04be4705ba6eb0d92e920b1fc4837ed5079",
+          "url": "https://files.pythonhosted.org/packages/d3/69/2c833a049475e0a3444e94c7d0aca0aa51d166374a449b09e92ac98138de/cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl"
+        },
+        {
+          "name": "h11",
+          "version": "0.16.0",
+          "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+          "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl"
+        },
+        {
+          "name": "httpcore",
+          "version": "1.0.9",
+          "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+          "url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl"
+        },
+        {
+          "name": "httpx",
+          "version": "0.28.1",
+          "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+          "url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl"
+        },
+        {
+          "name": "httpx-sse",
+          "version": "0.4.3",
+          "sha256": "0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc",
+          "url": "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl"
+        },
+        {
+          "name": "idna",
+          "version": "3.20",
+          "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+          "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl"
+        },
+        {
+          "name": "jsonschema",
+          "version": "4.26.0",
+          "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
+          "url": "https://files.pythonhosted.org/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl"
+        },
+        {
+          "name": "jsonschema-specifications",
+          "version": "2025.9.1",
+          "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+          "url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl"
+        },
+        {
+          "name": "mcp",
+          "version": "1.26.0",
+          "sha256": "904a21c33c25aa98ddbeb47273033c435e595bbacfdb177f4bd87f6dceebe1ca",
+          "url": "https://files.pythonhosted.org/packages/fd/d9/eaa1f80170d2b7c5ba23f3b59f766f3a0bb41155fbc32a69adfa1adaaef9/mcp-1.26.0-py3-none-any.whl"
+        },
+        {
+          "name": "pycparser",
+          "version": "3.0",
+          "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+          "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl"
+        },
+        {
+          "name": "pydantic",
+          "version": "2.13.5",
+          "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73",
+          "url": "https://files.pythonhosted.org/packages/eb/47/c95ffc2009878c7aac0c5e08528022dcb885933252a88b5f170058014464/pydantic-2.13.5-py3-none-any.whl"
+        },
+        {
+          "name": "pydantic-core",
+          "version": "2.46.5",
+          "sha256": "0fc5be0abd4a407e200d844b404e33639a554e7bd0d448e7b9ae181be4789ac2",
+          "url": "https://files.pythonhosted.org/packages/c0/a4/eb9409ec0736e50aa70a412f16c204ed149516846912f7e6724d4c73ee53/pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+        },
+        {
+          "name": "pydantic-settings",
+          "version": "2.15.0",
+          "sha256": "0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42",
+          "url": "https://files.pythonhosted.org/packages/30/a4/2bffa9f8e804325a09867f0e9d30795c80ea9f8d62560bd1b6ad6220eb2f/pydantic_settings-2.15.0-py3-none-any.whl"
+        },
+        {
+          "name": "python-dotenv",
+          "version": "1.2.4",
+          "sha256": "42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc",
+          "url": "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl"
+        },
+        {
+          "name": "python-multipart",
+          "version": "0.0.32",
+          "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23",
+          "url": "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl"
+        },
+        {
+          "name": "referencing",
+          "version": "0.37.0",
+          "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
+          "url": "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl"
+        },
+        {
+          "name": "rpds-py",
+          "version": "2026.9.1",
+          "sha256": "addeda51556dac7c1a2f14cda62db8b621cd12afba3091d03a96c72932387eab",
+          "url": "https://files.pythonhosted.org/packages/1d/6d/b26eb1e75395925b3a142ed351cbed2ec8212f5c9d937aee3df32c701baa/rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+        },
+        {
+          "name": "sse-starlette",
+          "version": "3.5.0",
+          "sha256": "3e6e1070df3f0f5d9cea81496de92dbb72f6721871d99748ece67441dd8b7997",
+          "url": "https://files.pythonhosted.org/packages/be/e4/cdda14023c316d71493bc54fdffc3dd006631b88866145c9d3cc33e0f1df/sse_starlette-3.5.0-py3-none-any.whl"
+        },
+        {
+          "name": "starlette",
+          "version": "1.7.0",
+          "sha256": "67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e",
+          "url": "https://files.pythonhosted.org/packages/4e/d6/1ec1b290f9e0fb067899b61e1d37a30c923068bad260b216dbe37a7d2967/starlette-1.7.0-py3-none-any.whl"
+        },
+        {
+          "name": "typing-extensions",
+          "version": "4.16.0",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+          "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl"
+        },
+        {
+          "name": "typing-inspection",
+          "version": "0.4.4",
+          "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147",
+          "url": "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl"
+        },
+        {
+          "name": "uvicorn",
+          "version": "0.54.0",
+          "sha256": "505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf",
+          "url": "https://files.pythonhosted.org/packages/38/0c/b54a4fdd7f90a3af8b02ebc9ce6712c2c208b7926a2f7bad95c33ebbe943/uvicorn-0.54.0-py3-none-any.whl"
+        }
+      ]
+    },
+    "research": {
+      "language": "python",
+      "packages": []
+    },
+    "document-read": {
+      "language": "python",
+      "packages": []
+    }
+  }
+}

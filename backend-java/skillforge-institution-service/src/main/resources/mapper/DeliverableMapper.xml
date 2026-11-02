@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.artifact.DeliverableMapper">
+  <select id="completionPending" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM nw_task_output_plans WHERE tenant_id=CAST(#{tenant} AS bigint)
+      AND run_id=#{run} AND goal_completion_state='pending')
+  </select>
+  <select id="completionPlan" resultType="map">
+    SELECT tenant_id,run_id,session_id,owner_session_id,frozen::text AS frozen,run_identity::text AS run_identity,goal_completion_state,state,abandonment_reason
+    FROM nw_task_output_plans WHERE tenant_id=CAST(#{tenant} AS bigint) AND run_id=#{run}
+    <if test="lock">FOR UPDATE</if>
+  </select>
+  <select id="publication" resultType="map">
+    SELECT status,reason FROM nw_task_results WHERE tenant_id=CAST(#{tenant} AS bigint) AND run_id=#{run}
+  </select>
+  <select id="revisionIds" resultType="string">
+    SELECT revision_id FROM nw_task_result_deliverables
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND run_id=#{run} ORDER BY ordinal
+  </select>
+  <select id="pendingRuns" resultType="string">
+    SELECT p.run_id FROM nw_task_output_plans p
+    JOIN agent_runtime_execution_runs r ON r.tenant_id=p.tenant_id::text AND r.run_id=p.run_id
+    WHERE p.tenant_id=CAST(#{tenant} AS bigint) AND r.phase='FINISHED'
+      AND (p.state IN ('planned','finalizing') OR p.goal_completion_state='pending')
+    ORDER BY CASE WHEN p.goal_completion_state='pending' AND p.state IN ('finalized','abandoned') THEN 0
+                  WHEN p.goal_completion_state='pending' THEN 1 ELSE 2 END,p.updated_at,p.run_id LIMIT #{limit}
+  </select>
+  <update id="freeze">
+    UPDATE nw_task_output_plans SET state='finalizing',frozen=CAST(#{frozen} AS jsonb),frozen_hash=#{hash},
+      goal_completion_state=#{completionState},updated_at=now()
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND run_id=#{run} AND state='planned'
+  </update>
+  <update id="markCompletion">
+    UPDATE nw_task_output_plans SET goal_completion_state=#{state},updated_at=now()
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND run_id=#{run} AND goal_completion_state='pending'
+  </update>
+  <delete id="releaseHolds">
+    DELETE FROM nw_deliverable_file_holds h WHERE h.tenant_id=CAST(#{tenant} AS bigint) AND h.run_id=#{run}
+      AND EXISTS(SELECT 1 FROM nw_task_output_plans p WHERE p.tenant_id=h.tenant_id AND p.run_id=h.run_id
+        AND p.state IN ('finalized','abandoned'))
+    <if test="!includePending">
+      AND NOT EXISTS(SELECT 1 FROM nw_task_output_plans p WHERE p.tenant_id=h.tenant_id AND p.run_id=h.run_id
+        AND p.goal_completion_state='pending')
+    </if>
+  </delete>
+
+    <select id="currentPlans" resultType="com.skillforge.institution.artifact.DeliverableMapper$CurrentPlanRow">
+        SELECT d.logical_key AS key,r.title,r.kind,r.id AS base_revision_id,p.plan::text AS plan
+        FROM nw_deliverables d
+        JOIN nw_deliverable_revisions r ON r.tenant_id=d.tenant_id AND r.id=d.current_revision_id
+        JOIN nw_task_output_plans p ON p.tenant_id=r.tenant_id AND p.run_id=r.run_id
+        WHERE d.tenant_id=#{tenant} AND d.session_id=#{session}
+        ORDER BY d.logical_key
+    </select>
+    <insert id="insertPlan">
+        INSERT INTO nw_task_output_plans(tenant_id,run_id,session_id,owner_session_id,run_identity,state,plan) VALUES(#{tenant},#{runId},#{session},#{sessionId},#{runIdentity}::jsonb,'planned',#{payload}::jsonb) ON CONFLICT(tenant_id,run_id) DO NOTHING
+    </insert>
+    <update id="abandonPlan">
+        UPDATE nw_task_output_plans SET state='abandoned',abandonment_reason=#{abandonReason},updated_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <insert id="insertFailedResult">
+        INSERT INTO nw_task_results(tenant_id,run_id,session_id,status,reason) VALUES(#{tenant},#{runId},#{sessionId},'failed',#{abandonReason})
+    </insert>
+    <insert id="insertPendingResult">
+        INSERT INTO nw_task_results(tenant_id,run_id,session_id,status) VALUES(#{tenant},#{runId},#{sessionId},'pending')
+    </insert>
+    <insert id="ensureDeliverable">
+        INSERT INTO nw_deliverables(tenant_id,id,session_id,logical_key) VALUES(#{tenant},#{id},#{session},#{key}) ON CONFLICT(tenant_id,session_id,logical_key) DO NOTHING
+    </insert>
+    <select id="lockDeliverableKey" resultType="map">
+        SELECT tenant_id, id, session_id, logical_key, current_revision_id, reserved_run_id, created_at FROM nw_deliverables WHERE tenant_id=#{tenant} AND session_id=#{session} AND logical_key=#{key} FOR UPDATE
+    </select>
+    <update id="reserveDeliverable">
+        UPDATE nw_deliverables SET reserved_run_id=#{runId} WHERE tenant_id=#{tenant} AND id=#{id}
+    </update>
+    <select id="lockFileId" resultType="map">
+        SELECT tenant_id, id, artifact_id, path, size, sha256, expires_at, status FROM nw_execution_artifact_files WHERE tenant_id=#{tenant} AND id=#{fileId} FOR UPDATE
+    </select>
+    <select id="lockFilePath" resultType="map">
+        SELECT tenant_id, id, artifact_id, path, size, sha256, expires_at, status FROM nw_execution_artifact_files WHERE tenant_id=#{tenant} AND artifact_id=#{artifactId} AND path=#{path} FOR UPDATE
+    </select>
+    <insert id="holdFile">
+        INSERT INTO nw_deliverable_file_holds(tenant_id,run_id,file_id) VALUES(#{tenant},#{runId},#{fileId}) ON CONFLICT DO NOTHING
+    </insert>
+    <insert id="upsertTerminalResult">
+        INSERT INTO nw_task_results(tenant_id,run_id,session_id,status,reason) VALUES(#{tenant},#{runId},#{sessionId},#{state},#{reason}) ON CONFLICT(tenant_id,run_id) DO UPDATE SET status=excluded.status,reason=excluded.reason
+    </insert>
+    <update id="abandonTerminalPlan">
+        UPDATE nw_task_output_plans SET state='abandoned',updated_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <update id="failValidationResult">
+        UPDATE nw_task_results SET status='failed',reason='publication_validation_failed' WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <update id="abandonValidationPlan">
+        UPDATE nw_task_output_plans SET state='abandoned',abandonment_reason='publication_validation_failed',updated_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <select id="lockReservation" resultType="map">
+        SELECT current_revision_id,reserved_run_id FROM nw_deliverables WHERE tenant_id=#{tenant} AND id=#{deliverableId} FOR UPDATE
+    </select>
+    <select id="lockDeliverableId" resultType="map">
+        SELECT tenant_id, id, session_id, logical_key, current_revision_id, reserved_run_id, created_at FROM nw_deliverables WHERE tenant_id=#{tenant} AND id=#{deliverableId} FOR UPDATE
+    </select>
+    <select id="revision" resultType="map">
+        SELECT tenant_id, id, deliverable_id, revision_no, run_id, previous_revision_id, title, kind, fingerprint, change_type, created_at FROM nw_deliverable_revisions WHERE tenant_id=#{tenant} AND id=#{baseRevisionId}
+    </select>
+    <insert id="insertRevision">
+        INSERT INTO nw_deliverable_revisions(tenant_id,id,deliverable_id,revision_no,run_id,previous_revision_id,title,kind,fingerprint,change_type) VALUES(#{tenant},#{revision},#{deliverableId},#{number},#{runId},#{baseRevisionId},#{title},#{kind},#{fingerprint},#{changeType})
+    </insert>
+    <insert id="insertRepresentation">
+        INSERT INTO nw_deliverable_representations(tenant_id,id,revision_id,role,format,primary_preview,entry_path,source_hash) VALUES(#{tenant},#{id},#{revision},#{role},#{format},#{primaryPreview},#{entryPath},#{sourceHash})
+    </insert>
+    <insert id="insertRepresentationFile">
+        INSERT INTO nw_deliverable_representation_files(tenant_id,representation_id,file_id,relative_path,download_name,ordinal) VALUES(#{tenant},#{id},#{fileId},#{path},#{downloadName},#{index})
+    </insert>
+    <insert id="insertRepresentationSource">
+        INSERT INTO nw_deliverable_representation_sources(tenant_id,representation_id,file_id,sha256) VALUES(#{tenant},#{id},#{fileId},#{sha256})
+    </insert>
+    <update id="advanceRevision">
+        UPDATE nw_deliverables SET current_revision_id=#{revision} WHERE tenant_id=#{tenant} AND id=#{deliverableId}
+    </update>
+    <insert id="linkResultRevision">
+        INSERT INTO nw_task_result_deliverables(tenant_id,run_id,revision_id,ordinal) VALUES(#{tenant},#{runId},#{revision},#{ordinal})
+    </insert>
+    <insert id="insertEvidence">
+        INSERT INTO nw_task_evidence(tenant_id,id,run_id,file_id,summary) VALUES(#{tenant},#{id},#{runId},#{fileId},#{summary})
+    </insert>
+    <update id="publishResult">
+        UPDATE nw_task_results SET status='published',published_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <update id="finalizePlan">
+        UPDATE nw_task_output_plans SET state='finalized',updated_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <select id="currentOutputs" resultType="map">
+        SELECT d.logical_key AS key,r.title,r.kind,r.id AS base_revision_id,r.revision_no,
+              rp.role,rp.format,rp.primary_preview,rp.entry_path,rf.file_id,f.artifact_id,f.path,f.sha256,
+              CASE WHEN fmt->>'decision_source' IN ('user_explicit','previous_explicit')
+                   THEN 'previous_explicit' ELSE fmt->>'decision_source' END AS decision_source,
+              (fmt->>'required')::boolean AS required
+            FROM nw_deliverables d JOIN nw_deliverable_revisions r ON r.tenant_id=d.tenant_id AND r.id=d.current_revision_id
+            JOIN nw_deliverable_representations rp ON rp.tenant_id=r.tenant_id AND rp.revision_id=r.id
+            JOIN nw_task_output_plans p ON p.tenant_id=r.tenant_id AND p.run_id=r.run_id
+            JOIN LATERAL jsonb_array_elements(p.plan->'deliverables') item ON item->>'key'=d.logical_key
+            JOIN LATERAL jsonb_array_elements(item->'formats') fmt ON fmt->>'format'=rp.format
+            JOIN nw_deliverable_representation_files rf ON rf.tenant_id=rp.tenant_id AND rf.representation_id=rp.id
+            JOIN nw_execution_artifact_files f ON f.tenant_id=rf.tenant_id AND f.id=rf.file_id
+            WHERE d.tenant_id=#{tenant} AND d.session_id=#{sessionId} ORDER BY d.logical_key,rp.format,rf.ordinal
+    </select>
+    <update id="failResult">
+        UPDATE nw_task_results SET status='failed',reason=#{reason} WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <update id="abandonFailedPlan">
+        UPDATE nw_task_output_plans SET state='abandoned',abandonment_reason=#{reason},updated_at=now() WHERE tenant_id=#{tenant} AND run_id=#{runId}
+    </update>
+    <update id="releaseReservations">
+        UPDATE nw_deliverables SET reserved_run_id=null WHERE tenant_id=#{tenant} AND reserved_run_id=#{runId}
+    </update>
+    <select id="planRows" resultType="map">
+        SELECT tenant_id, run_id, session_id, owner_session_id, run_identity, state, frozen_hash, abandonment_reason, goal_completion_state, created_at, updated_at,plan::text AS plan,frozen::text AS frozen FROM nw_task_output_plans WHERE tenant_id=#{tenant} AND run_id=#{runId} <if test="lock">FOR UPDATE</if>
+    </select>
+    <select id="readRevisions" resultType="map">
+        SELECT r.tenant_id, r.id, r.deliverable_id, r.revision_no, r.run_id, r.previous_revision_id, r.title, r.kind, r.fingerprint, r.change_type, r.created_at,d.current_revision_id FROM nw_deliverable_revisions r JOIN nw_deliverables d
+                ON d.tenant_id=r.tenant_id AND d.id=r.deliverable_id
+                WHERE d.tenant_id=#{tenant} AND d.session_id=#{session} ORDER BY r.created_at,r.id
+    </select>
+    <select id="readFiles" resultType="map">
+        SELECT rp.revision_id,rp.id AS representation_id,rp.format,rp.primary_preview,rp.entry_path,
+                  rf.relative_path,rf.download_name,f.tenant_id, f.id, f.artifact_id, f.path, f.size, f.sha256, f.expires_at, f.status FROM nw_deliverable_representation_files rf
+                JOIN nw_execution_artifact_files f ON f.tenant_id=rf.tenant_id AND f.id=rf.file_id
+                JOIN nw_deliverable_representations rp ON rp.tenant_id=rf.tenant_id AND rp.id=rf.representation_id
+                JOIN nw_deliverable_revisions r ON r.tenant_id=rp.tenant_id AND r.id=rp.revision_id
+                JOIN nw_deliverables d ON d.tenant_id=r.tenant_id AND d.id=r.deliverable_id
+                WHERE d.tenant_id=#{tenant} AND d.session_id=#{session} ORDER BY r.id,rp.primary_preview DESC,rp.id,rf.ordinal
+    </select>
+    <select id="readResultLinks" resultType="map">
+        SELECT rd.revision_id,rd.run_id FROM nw_task_result_deliverables rd JOIN nw_task_results t
+                ON t.tenant_id=rd.tenant_id AND t.run_id=rd.run_id
+                WHERE t.tenant_id=#{tenant} AND t.session_id=#{session} AND t.status='published' ORDER BY t.published_at
+    </select>
+    <select id="readEvidence" resultType="map">
+        SELECT e.run_id,e.summary,f.artifact_id,f.path FROM nw_task_evidence e
+                JOIN nw_execution_artifact_files f ON f.tenant_id=e.tenant_id AND f.id=e.file_id
+                JOIN nw_task_results t ON t.tenant_id=e.tenant_id AND t.run_id=e.run_id
+                WHERE t.tenant_id=#{tenant} AND t.session_id=#{session} AND t.status='published' AND e.expires_at&gt;now()
+    </select>
+    <select id="revisionSessions" resultType="map">
+        SELECT d.session_id FROM nw_deliverable_revisions r JOIN nw_deliverables d ON d.tenant_id=r.tenant_id AND d.id=r.deliverable_id WHERE r.tenant_id=#{tenant} AND r.id=#{revision}
+    </select>
+    <select id="revisionFile" resultType="map">
+        SELECT f.tenant_id, f.id, f.artifact_id, f.path, f.size, f.sha256, f.expires_at, f.status,rf.download_name,rf.relative_path,rp.format,rp.entry_path,rp.id AS representation_id,
+                       d.session_id,r.title,r.revision_no,d.current_revision_id
+                FROM nw_deliverable_representation_files rf
+                JOIN nw_execution_artifact_files f ON f.tenant_id=rf.tenant_id AND f.id=rf.file_id
+                JOIN nw_deliverable_representations rp ON rp.tenant_id=rf.tenant_id AND rp.id=rf.representation_id
+                JOIN nw_deliverable_revisions r ON r.tenant_id=rp.tenant_id AND r.id=rp.revision_id
+                JOIN nw_deliverables d ON d.tenant_id=r.tenant_id AND d.id=r.deliverable_id
+                WHERE r.tenant_id=#{tenant} AND r.id=#{revision} AND f.id=#{fileId}
+    </select>
+    <select id="representationPath" resultType="map">
+        SELECT file_id FROM nw_deliverable_representation_files WHERE tenant_id=#{tenant} AND representation_id=#{representation} AND relative_path=#{relativePath}
+    </select>
+    <select id="representationFileCount" resultType="integer">
+        SELECT count(*) FROM nw_deliverable_representation_files WHERE tenant_id=#{tenant} AND representation_id=#{representation}
+    </select>
+</mapper>

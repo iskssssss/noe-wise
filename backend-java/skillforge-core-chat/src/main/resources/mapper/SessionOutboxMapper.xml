@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.SessionOutboxMapper">
+
+    <resultMap id="traceEntry" type="com.skillforge.core.chat.persistence.SessionOutboxMapper$TraceEntry">
+        <constructor>
+            <arg column="event_id" javaType="java.lang.String"/>
+            <arg column="event_type" javaType="java.lang.String"/>
+            <arg column="trace_id" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="session_sequence" javaType="java.lang.Long"/>
+            <arg column="source_event_id" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+    <select id="traceEntries" resultMap="traceEntry">
+        SELECT event_id,event_type,trace_id,created_at,session_sequence,source_event_id
+        FROM nw_chat_session_outbox
+        WHERE tenant_id=#{tenantId} AND root_input_id=#{rootInputId}
+        ORDER BY created_at ASC,session_sequence ASC
+    </select>
+
+    <resultMap id="outputRow" type="com.skillforge.core.chat.persistence.SessionOutboxEntryDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="session_id" property="sessionId"/>
+        <result column="runtime_run_id" property="runtimeRunId"/>
+        <result column="event_id" property="eventId"/>
+        <result column="input_id" property="inputId"/>
+        <result column="root_input_id" property="rootInputId"/>
+        <result column="trace_id" property="traceId"/>
+        <result column="source_event_id" property="sourceEventId"/>
+        <result column="caused_by_event_id" property="causedByEventId"/>
+        <result column="session_sequence" property="sessionSequence"/>
+        <result column="event_type" property="eventType"/>
+        <result column="payload" property="payload" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="first_message_sequence" property="firstMessageSequence"/>
+        <result column="first_message_created_at" property="firstMessageCreatedAt"/>
+    </resultMap>
+    <select id="findEvents" resultMap="outputRow" useCache="false" flushCache="true">
+        SELECT id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+               caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at
+        FROM nw_chat_session_outbox WHERE tenant_id=#{tenantId}
+          AND event_id=ANY(#{eventIds,typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+    </select>
+    <insert id="insertOutputs">
+        INSERT INTO nw_chat_session_outbox
+            (id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+             caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.id},#{row.tenantId},#{row.sessionId},#{row.runtimeRunId},#{row.eventId},#{row.inputId},#{row.rootInputId},
+             #{row.traceId},#{row.sourceEventId},#{row.causedByEventId},#{row.sessionSequence},#{row.eventType},
+             #{row.payload,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},#{row.createdAt},#{row.updatedAt})
+        </foreach>
+    </insert>
+
+    <select id="outputSequence" resultType="java.lang.Long">
+        SELECT session_sequence FROM nw_chat_session_outbox
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND event_id=#{eventId}
+    </select>
+
+    <select id="committedCursor" resultType="string">
+        SELECT o.event_id FROM nw_chat_session_outbox o
+        WHERE o.tenant_id=#{tenantId} AND o.session_id=#{sessionId}
+        ORDER BY o.session_sequence DESC LIMIT 1
+    </select>
+
+    <select id="recentMessages" resultMap="outputRow" useCache="false" flushCache="true">
+        WITH snapshots AS (
+            SELECT id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+                   caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at,
+                   min(session_sequence) OVER (PARTITION BY payload #>> '{data,message_id}') AS first_sequence,
+                   min(created_at) OVER (PARTITION BY payload #>> '{data,message_id}') AS first_created_at,
+                   row_number() OVER (PARTITION BY payload #>> '{data,message_id}'
+                     ORDER BY COALESCE(payload #>> '{data,message_version}', '1')::numeric DESC,
+                              session_sequence DESC) AS snapshot_rank
+            FROM nw_chat_session_outbox
+            WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+              AND event_type IN ('message.delta','message.card','message.card.update')
+              AND payload #>> '{data,message_id}' IS NOT NULL
+        )
+        SELECT id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+               caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at,
+               first_sequence AS first_message_sequence,first_created_at AS first_message_created_at
+        FROM snapshots WHERE snapshot_rank=1
+        ORDER BY first_sequence DESC LIMIT #{limit}
+    </select>
+
+    <select id="message" resultMap="outputRow" useCache="false" flushCache="true">
+        WITH snapshots AS (
+            SELECT id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+                   caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at,
+                   min(session_sequence) OVER () AS first_sequence, min(created_at) OVER () AS first_created_at,
+                   row_number() OVER (ORDER BY COALESCE(payload #>> '{data,message_version}', '1')::numeric DESC,
+                                      session_sequence ASC) AS snapshot_rank
+              FROM nw_chat_session_outbox
+             WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+               AND event_type IN ('message.delta','message.card','message.card.update')
+               AND payload #>> '{data,message_id}'=#{messageId}
+        )
+        SELECT id,tenant_id,session_id,runtime_run_id,event_id,input_id,root_input_id,trace_id,source_event_id,
+               caused_by_event_id,session_sequence,event_type,payload,created_at,updated_at,
+               first_sequence AS first_message_sequence,first_created_at AS first_message_created_at
+          FROM snapshots WHERE snapshot_rank=1
+    </select>
+
+    <resultMap id="deliveryCountsResult" type="com.skillforge.core.chat.persistence.DeliveryCounts">
+        <constructor>
+            <arg column="outbox_total" javaType="_long"/>
+            <arg column="webhook_pending" javaType="_long"/>
+            <arg column="webhook_delivered" javaType="_long"/>
+            <arg column="webhook_failed" javaType="_long"/>
+            <arg column="webhook_unknown" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <select id="deliveryCounts" resultMap="deliveryCountsResult">
+        SELECT
+            count(DISTINCT o.id) AS outbox_total,
+            count(d.id) FILTER (WHERE d.status IN ('queued', 'publishing')) AS webhook_pending,
+            count(d.id) FILTER (WHERE d.status = 'delivered') AS webhook_delivered,
+            count(d.id) FILTER (WHERE d.status = 'unresolved') AS webhook_failed,
+            count(d.id) FILTER (WHERE d.status NOT IN ('queued', 'publishing', 'delivered', 'unresolved')) AS webhook_unknown
+        FROM public.nw_chat_session_outbox o
+        LEFT JOIN public.nw_chat_session_outbox_webhook_deliveries d
+          ON d.tenant_id = o.tenant_id AND d.outbox_event_id = o.id
+        WHERE o.tenant_id = #{tenantId}
+          AND o.session_id = #{sessionId}
+          AND o.runtime_run_id = #{runtimeRunId}
+    </select>
+
+    <select id="latestDeliveryFailures" resultType="com.skillforge.core.chat.persistence.SessionOutboxWebhookDeliveryDO">
+        SELECT d.id, d.tenant_id, d.subscription_id, d.outbox_event_id, d.event_id,
+               d.session_id, d.session_sequence, d.status, d.attempts, d.available_at,
+               d.claimed_at, d.delivered_at, d.error_code, d.created_at, d.updated_at
+        FROM public.nw_chat_session_outbox_webhook_deliveries d
+        INNER JOIN public.nw_chat_session_outbox o
+          ON o.tenant_id = d.tenant_id AND o.id = d.outbox_event_id
+        WHERE o.tenant_id = #{tenantId}
+          AND o.session_id = #{sessionId}
+          AND o.runtime_run_id = #{runtimeRunId}
+          AND d.status = 'unresolved'
+        ORDER BY d.updated_at DESC, d.id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

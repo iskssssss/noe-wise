@@ -1,0 +1,2 @@
+# 仅显式启用本机 PostgreSQL 内部证据通道时需要。
+psycopg2-binary==2.9.12

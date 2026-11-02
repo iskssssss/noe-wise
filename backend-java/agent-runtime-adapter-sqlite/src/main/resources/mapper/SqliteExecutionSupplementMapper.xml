@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.sqlite.ExecutionSupplementMapper">
+    <select id="find" resultType="com.skillforge.runtime.adapter.sqlite.ExecutionSupplementRow" useCache="false" flushCache="true">
+        SELECT tenant_id,run_id,input_id,content_ref,fingerprint,actor_ref,ordinal,applied_revision
+        FROM agent_runtime_execution_supplements WHERE tenant_id=#{tenant} AND run_id=#{run} AND input_id=#{input}
+    </select>
+    <select id="inputs" resultType="com.skillforge.runtime.adapter.sqlite.ExecutionSupplementRow" useCache="false" flushCache="true">
+        SELECT tenant_id,run_id,input_id,content_ref,fingerprint,actor_ref,ordinal,applied_revision
+        FROM agent_runtime_execution_supplements WHERE tenant_id=#{tenant} AND run_id=#{run} AND ordinal&gt;#{after}
+        <if test="pendingOnly">AND applied_revision IS NULL</if>
+        ORDER BY ordinal LIMIT #{limit}
+    </select>
+    <select id="nextOrdinal" resultType="long" useCache="false" flushCache="true">
+        SELECT COALESCE(MAX(ordinal),0)+1 FROM agent_runtime_execution_supplements WHERE tenant_id=#{tenant} AND run_id=#{run}
+    </select>
+    <insert id="insert">
+        INSERT INTO agent_runtime_execution_supplements(tenant_id,run_id,input_id,content_ref,fingerprint,actor_ref,ordinal)
+        VALUES(#{tenantId},#{runId},#{inputId},#{contentRef},#{fingerprint},#{actorRef},#{ordinal}) ON CONFLICT DO NOTHING
+    </insert>
+    <update id="apply">
+        UPDATE agent_runtime_execution_supplements SET applied_revision=#{appliedRevision}
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND input_id=#{inputId} AND applied_revision IS NULL
+    </update>
+</mapper>

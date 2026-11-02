@@ -1,0 +1,9 @@
+{
+  "entry": { "language": "node", "script_path": "scripts/check_webapp.mjs" },
+  "dependencies": [{ "name": "playwright-core", "version": "1.62.1" }],
+  "expects_typed_results": true,
+  "default_output_format": "json",
+  "runtime_requirements": { "browser": "Chromium bundled for Playwright 1.62.1", "network": "none during execution" },
+  "example_inputs": ["examples/webapp-check.json"],
+  "outputs": { "json": ["check-report.json"], "png": ["viewport-0.png", "viewport-1.png", "viewport-2.png", "viewport-3.png"] }
+}

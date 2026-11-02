@@ -1,0 +1,23 @@
+{
+  "name": "department_mcp",
+  "tools": [
+    {
+      "name": "department_sum",
+      "description": "对明确提供的数值数组求和",
+      "operation": "sum",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "values": {"type": "array", "items": {"type": "number"}, "maxItems": 1000}
+        },
+        "required": ["values"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tests": [
+    {"tool": "department_sum", "arguments": {"values": [120.5, 120.5, 249]}, "expected_json": {"sum": 490}},
+    {"tool": "department_sum", "arguments": {"values": ["120.5"]}, "expect_error": true}
+  ],
+  "bundle_zip": false
+}

@@ -1,0 +1,24 @@
+{
+  "group_binding_id": "replace-with-ensured-group-id",
+  "messages": [
+    {
+      "idempotency_key": "group-lifecycle-1:message:1",
+      "source_event_id": "message:1",
+      "source_revision": 1,
+      "author": { "kind": "end_user", "end_user_id": "2001" },
+      "content": [{ "type": "text", "text": "登记这条普通沟通，不触发回复。" }]
+    },
+    {
+      "idempotency_key": "group-lifecycle-1:message:2",
+      "source_event_id": "message:2",
+      "source_revision": 1,
+      "author": { "kind": "end_user", "end_user_id": "2001" },
+      "content": [{ "type": "text", "text": "请助手处理这条明确请求。" }],
+      "trigger": {
+        "idempotency_key": "group-lifecycle-1:trigger:message:2",
+        "requester_end_user_id": "2001",
+        "agent_id": "3001"
+      }
+    }
+  ]
+}

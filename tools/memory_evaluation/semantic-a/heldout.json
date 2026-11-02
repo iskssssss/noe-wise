@@ -1,0 +1,810 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-semantic-a-heldout-v1",
+  "repeats": 1,
+  "language": "zh-CN/en",
+  "split": "heldout",
+  "evidenceLane": "CONTROLLED_PRODUCTION_RULE_BASELINE",
+  "annotationProtocol": "语义预期按原用户含义填写；全字段预期来自人工逐例指定的候选与原始值，不读取运行产物生成标签；A不调生产规则。",
+  "exposure": "A_BASELINE_OBSERVED_NO_RULE_TUNING_NO_FAMILY_GENERALIZATION_CLAIM",
+  "budget": {
+    "maxTokens": 0,
+    "maxModelCalls": 0
+  },
+  "scenarios": [
+    {
+      "id": "MH01",
+      "name": "稳定沟通偏好包含本次引文",
+      "family": "avoid-current-run-questions",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后不要反复确认“本次要不要详细解释”，默认给简明结论。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "explanation_depth",
+          "object": {
+            "text": "以后不要再问本次要不要详细解释，默认给简明结论。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "explanation_depth",
+            "object": {
+              "text": "以后不要再问本次要不要详细解释，默认给简明结论。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "稳定沟通偏好包含本次引文"
+    },
+    {
+      "id": "MH02",
+      "name": "英文稳定否定不应被临时词误删",
+      "family": "english-negated-transient-quote",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "From now on use English; never ask whether this time should be different.",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "language",
+          "object": {
+            "text": "From now on use English; do not ask about this time."
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "language",
+            "object": {
+              "text": "From now on use English; do not ask about this time."
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "英文稳定否定不应被临时词误删"
+    },
+    {
+      "id": "MH03",
+      "name": "限定活动文案不是稳定偏好",
+      "family": "limited-event-copy",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "周六开业活动的宣传稿采用活泼风格，活动结束后恢复正式风格。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "campaign_tone",
+          "object": {
+            "text": "周六开业宣传稿用活泼风格，活动结束恢复正式风格。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "expectedCandidates": []
+      },
+      "criticalNegative": true,
+      "annotationRationale": "限定活动文案不是稳定偏好"
+    },
+    {
+      "id": "MH04",
+      "name": "明确区间不得无期限晋升",
+      "family": "quarter-bounded-policy",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "七月至九月底的促销提醒采用短信，其余月份另议。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "promotion_channel",
+          "object": {
+            "text": "七月至九月底促销用短信，其余月份另议。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "expectedCandidates": []
+      },
+      "criticalNegative": true,
+      "annotationRationale": "明确区间不得无期限晋升"
+    },
+    {
+      "id": "MH05",
+      "name": "稳定领域要求",
+      "family": "invoice-number-precision",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后财务发票汇总统一保留两位小数。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "invoice_precision",
+          "object": {
+            "text": "以后发票汇总保留两位小数。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "invoice_precision",
+            "object": {
+              "text": "以后发票汇总保留两位小数。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "稳定领域要求"
+    },
+    {
+      "id": "MH06",
+      "name": "标题中的当前任务不是时效",
+      "family": "book-title-with-transient-term",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后推荐书单时优先推荐《当前任务管理》，这是长期阅读偏好。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "reading_title",
+          "object": {
+            "text": "长期阅读偏好为优先推荐《当前任务管理》。"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "reading_title",
+            "object": {
+              "text": "长期阅读偏好为优先推荐《当前任务管理》。"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "标题中的当前任务不是时效"
+    },
+    {
+      "id": "MH07",
+      "name": "字面正文空格差异不自动去重",
+      "family": "literal-whitespace-significance",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "签名A B与AB是两个不同的登记名。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "signature",
+          "object": {
+            "text": "A B"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "signature",
+          "object": {
+            "text": "AB"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "signature",
+            "object": {
+              "text": "A B"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "signature",
+            "object": {
+              "text": "AB"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "字面正文空格差异不自动去重"
+    },
+    {
+      "id": "MH08",
+      "name": "中文emoji正文保真",
+      "family": "unicode-style-value",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后通知标题保留这个标记🌱。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "notice_marker",
+          "object": {
+            "text": "通知标题保留🌱"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "notice_marker",
+            "object": {
+              "text": "通知标题保留🌱"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "中文emoji正文保真"
+    },
+    {
+      "id": "MH09",
+      "name": "不确定推断不能伪造来源支持",
+      "family": "uncertain-source-no-evidence",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "我还没决定是否订阅周报，别替我做决定。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "weekly_subscription",
+          "object": {
+            "text": "已经决定订阅周报"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 0,
+        "unsupportedFeatures": [
+          "source-support-verification"
+        ],
+        "expectedCandidates": []
+      },
+      "criticalNegative": true,
+      "annotationRationale": "不确定推断不能伪造来源支持"
+    },
+    {
+      "id": "MH10",
+      "name": "提醒关系的不同否定值不合并",
+      "family": "opposite-reminder-choice",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "需要提醒与不需要提醒应保留为不同待治理候选。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "reminder",
+          "object": {
+            "text": "需要提醒"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "reminder",
+          "object": {
+            "text": "不需要提醒"
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 2,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "reminder",
+            "object": {
+              "text": "需要提醒"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          },
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "reminder",
+            "object": {
+              "text": "不需要提醒"
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "提醒关系的不同否定值不合并"
+    },
+    {
+      "id": "MH11",
+      "name": "嵌套稳定值中的短语也不应被误删",
+      "family": "nested-stable-quoted-marker",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后不要用“当前请求”开头，听起来太生硬。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "style": {
+              "avoidOpening": "不要以当前请求开头",
+              "duration": "长期"
+            }
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "style": {
+                "avoidOpening": "不要以当前请求开头",
+                "duration": "长期"
+              }
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "criticalNegative": true,
+      "annotationRationale": "嵌套稳定值中的短语也不应被误删"
+    },
+    {
+      "id": "MH12",
+      "name": "嵌套键顺序规范化仍保留数组顺序",
+      "family": "nested-canonical-object-order",
+      "split": "heldout",
+      "kind": "MEMORY_CANDIDATE_FILTER",
+      "dimensions": [
+        "EXTRACTION"
+      ],
+      "sourceText": "以后先发邮件再打电话。",
+      "candidates": [
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "config": {
+              "channel": [
+                "邮件",
+                "电话"
+              ],
+              "enabled": true
+            }
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        },
+        {
+          "type": "preference",
+          "subject": "user:7",
+          "predicate": "response_style",
+          "object": {
+            "config": {
+              "enabled": true,
+              "channel": [
+                "邮件",
+                "电话"
+              ]
+            }
+          },
+          "signal": "explicit_save",
+          "sensitive": false,
+          "scope": "user_agent"
+        }
+      ],
+      "expected": {
+        "acceptedCandidates": 1,
+        "expectedCandidates": [
+          {
+            "type": "preference",
+            "subject": "user:7",
+            "predicate": "response_style",
+            "object": {
+              "config": {
+                "channel": [
+                  "邮件",
+                  "电话"
+                ],
+                "enabled": true
+              }
+            },
+            "signal": "explicit_save",
+            "sensitive": false,
+            "scope": "user_agent"
+          }
+        ]
+      },
+      "annotationRationale": "嵌套键顺序规范化仍保留数组顺序；精确重复时人工预期保留输入第1项（序号0），其余重复项不增加候选身份。"
+    },
+    {
+      "id": "OH01",
+      "name": "中文改写明确下载表格",
+      "family": "downloadable-table-paraphrase",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "麻烦给我一份能下载的 Excel 汇总表。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "xlsx"
+        ],
+        "singleFileWebsiteRequired": false
+      }
+    },
+    {
+      "id": "OH02",
+      "name": "双重否定是明确交付",
+      "family": "double-negated-delivery",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "我不是不要 PDF，而是要求你生成并交付 PDF。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf"
+        ],
+        "singleFileWebsiteRequired": false
+      }
+    },
+    {
+      "id": "OH03",
+      "name": "行内转述客户的话不是本人授权",
+      "family": "inline-customer-quote",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "客户曾说“生成报价.pdf”，我只想知道这句话的意思。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OH04",
+      "name": "修改说明不重生原文件",
+      "family": "read-old-design-source",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请读取既有 design.docx 并在聊天中解释第三段，无需输出文件。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OH05",
+      "name": "三个候选择一不能全部强制",
+      "family": "three-format-choice",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "请从 PDF、DOCX、ODT 中择一生成，任意一种都可以。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf",
+          "docx",
+          "odt"
+        ],
+        "singleFileWebsiteRequired": false,
+        "combination": "ANY_OF",
+        "unsupportedFeatures": [
+          "format-alternatives"
+        ]
+      }
+    },
+    {
+      "id": "OH06",
+      "name": "只改报告格式不取消表格",
+      "family": "preserve-spreadsheet-obligation",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "把报告从 PDF 改为 DOCX，原来的 XLSX 数据表仍须交付。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "docx",
+          "xlsx"
+        ],
+        "singleFileWebsiteRequired": false,
+        "priorText": "最终交付 PDF 报告和 XLSX 数据表。",
+        "priorRevision": 3,
+        "expectedRevision": 4,
+        "unsupportedFeatures": [
+          "versioned-local-revision"
+        ]
+      }
+    },
+    {
+      "id": "OH07",
+      "name": "措辞改为中文不取消获批交付",
+      "family": "unrelated-revision-verb",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "把解释改为中文，其他都照已批准计划。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf",
+          "csv"
+        ],
+        "singleFileWebsiteRequired": false,
+        "priorText": "已批准最终交付 PDF 和 CSV。",
+        "priorRevision": 2,
+        "expectedRevision": 2,
+        "unsupportedFeatures": [
+          "versioned-local-revision"
+        ]
+      }
+    },
+    {
+      "id": "OH08",
+      "name": "Markdown文字不等于文件",
+      "family": "markdown-in-chat",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "在聊天里用 Markdown 表格列出数据，不要保存为文件。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OH09",
+      "name": "引用否定与当前正向请求区分",
+      "family": "quoted-negative-and-real-positive",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "他之前说“不要 PDF”；我现在明确要求生成并交付 PDF。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "pdf"
+        ],
+        "singleFileWebsiteRequired": false
+      }
+    },
+    {
+      "id": "OH10",
+      "name": "审批前不产生条件后义务",
+      "family": "pending-approval-file",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "等我批准后再交付合同 PDF，目前只列问题。",
+      "expected": {
+        "required": false,
+        "formats": [],
+        "singleFileWebsiteRequired": false,
+        "conditions": [
+          "用户批准"
+        ],
+        "unsupportedFeatures": [
+          "unresolved-condition"
+        ]
+      },
+      "criticalNegative": true
+    },
+    {
+      "id": "OH11",
+      "name": "三种成果及精确文件名",
+      "family": "three-exact-files",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "生成并交付 metrics.json、trend.svg 和 meeting.md。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "json",
+          "svg",
+          "md"
+        ],
+        "singleFileWebsiteRequired": false,
+        "filenames": [
+          "metrics.json",
+          "trend.svg",
+          "meeting.md"
+        ],
+        "combination": "ALL_OF"
+      }
+    },
+    {
+      "id": "OH12",
+      "name": "明确放开单文件限制",
+      "family": "external-assets-page-allowed",
+      "split": "heldout",
+      "kind": "OUTPUT_REQUIREMENT_PARSE",
+      "dimensions": [
+        "GOVERNANCE"
+      ],
+      "text": "生成并交付 HTML 网站，不限制单文件，可以有本地CSS资源。",
+      "expected": {
+        "required": true,
+        "formats": [
+          "html"
+        ],
+        "singleFileWebsiteRequired": false
+      }
+    }
+  ],
+  "splitProtocol": "独立人工案例分集；机制可以重合；family仅案例标签，不证明语义家族隔离泛化。",
+  "oracleVersion": "full-candidate-content-v2"
+}

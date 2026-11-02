@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "noewise-retrieval-b-heldout-v1",
+  "split": "heldout",
+  "evidenceStatus": "NOT_RUN",
+  "splitClaim": "独立人工案例；机制可重合，非盲测，不宣称语义家族隔离泛化。",
+  "annotationProtocol": "人工先按用户语义给相关度0/1/2；未读取检索分数生成标签。未列出的事实为0，越权/失效事实只记expectedForbidden，不能当相关候选参与指标。",
+  "defaults": {
+    "tenantKey": "own-tenant",
+    "userKey": "own-user",
+    "agentKey": "own-agent",
+    "groupKey": "own-group",
+    "status": "ACTIVE",
+    "revision": 1
+  },
+  "metricPlan": {
+    "recallAtK": [
+      5
+    ],
+    "ndcgAtK": [
+      5
+    ],
+    "falsePositiveQueries": "单独统计人工零相关查询的非空结果率，不将其混为Recall分母",
+    "cost": "实际模型/Token/耗时未运行保持NOT_RUN"
+  },
+  "facts": [
+    {
+      "id": "H-INVOICE",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "发票汇总必须显示含税总价，并统一保留两位小数。"
+    },
+    {
+      "id": "H-TRAINING",
+      "type": "episode",
+      "scope": "USER_AGENT",
+      "body": "员工培训暂定2026年12月12日，日期仍待确认。"
+    },
+    {
+      "id": "H-MEMBER-SMS",
+      "type": "preference",
+      "scope": "GROUP_MEMBER",
+      "subjectKey": "member-lin",
+      "body": "林女士希望预约改期先发短信，不要私自致电。"
+    },
+    {
+      "id": "H-DARK-NOISE",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "产品展示采用深色配色。"
+    },
+    {
+      "id": "H-CSV",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "body": "对账CSV以逗号分隔，逐行保留人民币数额。"
+    },
+    {
+      "id": "H-CONTACT-CURRENT",
+      "type": "episode",
+      "scope": "USER_AGENT",
+      "body": "更正后的联系人邮箱是ops@example.test，旧地址不再使用。",
+      "revision": 2
+    },
+    {
+      "id": "H-CONTACT-OLD",
+      "type": "episode",
+      "scope": "USER_AGENT",
+      "body": "联系人邮箱是old@example.test。",
+      "revision": 1,
+      "status": "ARCHIVED"
+    },
+    {
+      "id": "H-OTHER-TENANT",
+      "type": "preference",
+      "scope": "USER_AGENT",
+      "tenantKey": "other-tenant",
+      "body": "发票含税金额统一保留两位小数。"
+    }
+  ],
+  "queries": [
+    {
+      "id": "HQ01",
+      "caseLabel": "invoice-paraphrase",
+      "text": "财务开票金额应该如何显示？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "H-INVOICE": 2
+      },
+      "expectedForbidden": [
+        "H-OTHER-TENANT"
+      ]
+    },
+    {
+      "id": "HQ02",
+      "caseLabel": "training-time-modality",
+      "text": "培训哪天安排，目前是否敲定？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "H-TRAINING": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "HQ03",
+      "caseLabel": "explicit-member-contact",
+      "text": "林女士改期时该怎么联系她？",
+      "ownerKey": "own-group",
+      "relevanceGrades": {
+        "H-MEMBER-SMS": 2
+      },
+      "expectedForbidden": [],
+      "subjectKey": "member-lin",
+      "scopes": [
+        "GROUP",
+        "GROUP_MEMBER"
+      ]
+    },
+    {
+      "id": "HQ04",
+      "caseLabel": "irrelevant-theme-noise",
+      "text": "装修预算付款的银行账号是什么？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {},
+      "expectedForbidden": [],
+      "maxRelevant": 0
+    },
+    {
+      "id": "HQ05",
+      "caseLabel": "csv-paraphrase",
+      "text": "导出核账明细如何处理分隔符与金额？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "H-CSV": 2
+      },
+      "expectedForbidden": []
+    },
+    {
+      "id": "HQ06",
+      "caseLabel": "current-contact-only",
+      "text": "当前有效联系人邮箱是什么？",
+      "ownerKey": "own-personal",
+      "relevanceGrades": {
+        "H-CONTACT-CURRENT": 2
+      },
+      "expectedForbidden": [
+        "H-CONTACT-OLD"
+      ]
+    }
+  ]
+}

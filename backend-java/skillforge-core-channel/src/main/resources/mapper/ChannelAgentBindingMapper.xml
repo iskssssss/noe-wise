@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.channel.mapper.ChannelAgentBindingMapper">
+    <select id="lockPublishedAgents" resultType="long">
+        SELECT id FROM nw_agents WHERE tenant_id=#{tenantId} AND status=#{status} AND id IN
+        <foreach collection="agentIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+        FOR SHARE
+    </select>
+    <delete id="deleteForChannel">
+        DELETE FROM nw_channel_agent_bindings WHERE tenant_id=#{tenantId} AND channel_id=#{channelId}
+    </delete>
+    <insert id="insertBindings">
+        INSERT INTO nw_channel_agent_bindings
+        (id,tenant_id,channel_id,agent_id,priority,is_default,traffic_percentage,created_at) VALUES
+        <foreach collection="bindings" item="binding" separator=",">
+            (#{binding.id},#{binding.tenantId},#{binding.channelId},#{binding.agentId},#{binding.priority},
+             #{binding.isDefault},#{binding.trafficPercentage},#{binding.createdAt})
+        </foreach>
+    </insert>
+    <delete id="deleteForAgent">
+        DELETE FROM nw_channel_agent_bindings
+        WHERE tenant_id=#{tenantId} AND channel_id=#{channelId} AND agent_id=#{agentId}
+    </delete>
+</mapper>

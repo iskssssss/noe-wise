@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.trajectory.TrajectoryMapper">
+  <select id="productSession" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$ProductSession">
+    SELECT tenant.name AS tenant_name,session.agent_id::text AS agent_id,agent.name AS agent_name
+      FROM public.nw_chat_sessions session
+      JOIN public.nw_tenants tenant ON tenant.id=session.tenant_id
+      LEFT JOIN public.nw_agents agent ON agent.tenant_id=session.tenant_id AND agent.id=session.agent_id
+     WHERE session.tenant_id=CAST(#{tenant} AS bigint) AND session.session_id=#{session}
+  </select>
+  <sql id="edges">
+    SELECT parent_run_id,parent_action_id,parent_attempt_id,child_run_id,origin_kind
+      FROM public.agent_runtime_execution_child_runs WHERE tenant_id=#{tenant}
+    UNION
+    SELECT parent_run_id,parent_action_id,parent_attempt_id,child_run_id,'PROGRAM' AS origin_kind
+      FROM public.agent_runtime_execution_program_child_runs WHERE tenant_id=#{tenant}
+    UNION
+    SELECT parent_run_id,NULL::varchar AS parent_action_id,NULL::text AS parent_attempt_id,child_run_id,'PLAN' AS origin_kind
+      FROM public.agent_runtime_execution_plan_child_runs WHERE tenant_id=#{tenant}
+  </sql>
+  <select id="runs" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$RunFact">
+    WITH RECURSIVE edges AS (<include refid="edges"/>), reachable(run_id) AS (
+      SELECT run_id FROM public.agent_runtime_execution_runs
+       WHERE tenant_id=#{tenant} AND session_id=#{session} AND root_input_id=#{root}
+      UNION
+      SELECT edge.child_run_id FROM reachable source JOIN edges edge ON edge.parent_run_id=source.run_id
+    )
+    SELECT run.run_id,run.session_id,run.root_input_id,run.input_id,run.trace_id,run.span_id,
+           run.agent_id,run.status,run.phase,run.created_second,run.created_nano,run.updated_second,run.updated_nano,
+           COALESCE((SELECT max(event_sequence) FROM public.agent_runtime_execution_events event
+             WHERE event.tenant_id=run.tenant_id AND event.run_id=run.run_id),0) AS execution_upper,
+           COALESCE((SELECT max(session_sequence) FROM public.agent_runtime_session_events event
+             WHERE event.tenant_id=run.tenant_id AND event.session_id=run.session_id AND event.run_id=run.run_id
+               AND event.agent_id=run.agent_id AND event.end_user_id IS NOT DISTINCT FROM run.end_user_id
+               AND event.target_kind=run.target_kind AND event.target_id=run.target_id),0) AS memory_upper
+      FROM reachable JOIN public.agent_runtime_execution_runs run ON run.tenant_id=#{tenant} AND run.run_id=reachable.run_id
+     ORDER BY run.created_second,run.created_nano,run.run_id
+  </select>
+  <select id="edges" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$Edge">
+    SELECT parent_run_id,parent_action_id,parent_attempt_id,child_run_id,origin_kind FROM (<include refid="edges"/>) edge
+     WHERE parent_run_id IN <foreach collection="runs" item="run" open="(" separator="," close=")">#{run}</foreach>
+       AND child_run_id IN <foreach collection="runs" item="run" open="(" separator="," close=")">#{run}</foreach>
+     ORDER BY parent_run_id,parent_action_id NULLS FIRST,parent_attempt_id,child_run_id
+  </select>
+  <select id="events" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$EventFact">
+    SELECT 'EXECUTION' AS source,event.session_id,event.run_id,NULL::text AS action_id,
+           event.event_id,event.type AS event_type,event.schema_id,event.canonical_json,
+           run.input_id,run.root_input_id,run.trace_id,run.span_id,event.event_sequence AS sequence,
+           event.occurred_second,event.occurred_nano
+      FROM public.agent_runtime_execution_events event
+      JOIN public.agent_runtime_execution_runs run ON run.tenant_id=event.tenant_id AND run.run_id=event.run_id AND run.session_id=event.session_id
+     WHERE event.tenant_id=#{tenant} AND
+       <foreach collection="runs" item="bound" open="(" separator=" OR " close=")">
+         (event.run_id=#{bound.runId} AND event.session_id=#{bound.sessionId} AND event.event_sequence&lt;=#{bound.executionUpper})
+       </foreach>
+       <if test="executionEventType != null">AND event.type=#{executionEventType}</if>
+    UNION ALL
+    SELECT 'SESSION' AS source,event.session_id,event.run_id,event.action_id,event.event_id,
+           event.event_type,event.payload_schema_id AS schema_id,event.payload_canonical_json AS canonical_json,
+           event.input_id,event.root_input_id,event.trace_id,event.span_id,event.session_sequence AS sequence,
+           event.occurred_at_epoch_second AS occurred_second,event.occurred_at_nano AS occurred_nano
+      FROM public.agent_runtime_session_events event
+      JOIN public.agent_runtime_execution_runs run ON run.tenant_id=event.tenant_id AND run.run_id=event.run_id
+       AND run.session_id=event.session_id AND run.agent_id=event.agent_id AND run.end_user_id IS NOT DISTINCT FROM event.end_user_id
+       AND run.target_kind=event.target_kind AND run.target_id=event.target_id
+     WHERE event.tenant_id=#{tenant} AND event.event_type IN ('retrieval.performed','memory.written') AND
+       <foreach collection="runs" item="bound" open="(" separator=" OR " close=")">
+         (event.run_id=#{bound.runId} AND event.session_id=#{bound.sessionId} AND event.session_sequence&lt;=#{bound.memoryUpper})
+       </foreach>
+     ORDER BY occurred_second,occurred_nano,source,sequence
+  </select>
+  <select id="attempts" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$AttemptFact">
+    SELECT attempt.run_id,run.session_id,attempt.action_id,action.kind,action.target_handle AS target,
+           attempt.attempt_id,attempt.observation_sequence,attempt.request_ref,attempt.result_ref,attempt.result_kind,
+           source.action_id AS batch_model_action_id,invocation.provider,
+           COALESCE(NULLIF(invocation.metadata->>'model',''),NULLIF(invocation.service,'')) AS model,
+           invocation.invocation_id,invocation.started_at,invocation.ended_at AS finished_at,
+           usage.prompt_tokens,usage.completion_tokens,usage.cached_input_tokens,usage.cache_write_input_tokens,
+           usage.reasoning_output_tokens,usage.usage_source,usage.call_point,usage.ingested_at,
+           (action.kind='MODEL' AND EXISTS(SELECT 1 FROM public.agent_runtime_execution_materials material
+             WHERE material.tenant_id=attempt.tenant_id AND material.reference=attempt.request_ref
+               AND material.schema_id IN (#{modelRequestSchema},#{modelManifestSchema}))) AS diagnostic_available
+      FROM public.agent_runtime_execution_attempts attempt
+      JOIN public.agent_runtime_execution_actions action ON action.tenant_id=attempt.tenant_id AND action.action_id=attempt.action_id AND action.run_id=attempt.run_id
+      JOIN public.agent_runtime_execution_runs run ON run.tenant_id=attempt.tenant_id AND run.run_id=attempt.run_id
+      LEFT JOIN public.agent_runtime_execution_attempts source ON source.tenant_id=attempt.tenant_id AND source.run_id=attempt.run_id AND source.attempt_id=action.batch_source_attempt
+      LEFT JOIN LATERAL(SELECT invocation.provider,invocation.metadata,invocation.service,invocation.invocation_id,invocation.started_at,invocation.ended_at FROM public.nw_external_invocations invocation
+        WHERE invocation.tenant_id::text=attempt.tenant_id AND invocation.attempt_id=attempt.attempt_id
+        ORDER BY invocation.id LIMIT 1) invocation ON true
+      LEFT JOIN public.observation_effective_model_usage usage ON usage.tenant_id::text=attempt.tenant_id AND usage.attempt_id=attempt.attempt_id
+        AND usage.session_id=run.session_id AND usage.run_id=run.run_id AND usage.root_input_id IS NOT DISTINCT FROM run.root_input_id
+     WHERE attempt.tenant_id=#{tenant} AND attempt.run_id IN
+       <foreach collection="runs" item="run" open="(" separator="," close=")">#{run}</foreach>
+     ORDER BY attempt.observation_sequence
+  </select>
+  <select id="auxiliaryAttempts" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$AuxiliaryAttemptFact">
+    SELECT budget.run_id,run.session_id,run.root_input_id,invocation.input_id,budget.attempt_id,
+           invocation.invocation_id,invocation.status,invocation.provider,
+           COALESCE(NULLIF(usage.model,''),NULLIF(invocation.service,'')) AS model,
+           invocation.trace_id,invocation.span_id,invocation.started_at,invocation.ended_at AS finished_at,
+           usage.prompt_tokens,usage.completion_tokens,usage.cached_input_tokens,usage.cache_write_input_tokens,
+           usage.reasoning_output_tokens,usage.usage_source,usage.call_point,usage.ingested_at,
+           invocation.root_input_id AS source_root_input_id
+      FROM public.agent_runtime_budget_attempts budget
+      JOIN public.agent_runtime_execution_runs run ON run.tenant_id=budget.tenant_id AND run.run_id=budget.run_id
+      JOIN public.nw_external_invocations invocation ON invocation.tenant_id::text=budget.tenant_id
+        AND invocation.attempt_id=budget.attempt_id AND invocation.operation_type='model.chat'
+      LEFT JOIN LATERAL(SELECT report.model,report.prompt_tokens,report.completion_tokens,report.cached_input_tokens,report.cache_write_input_tokens,
+          report.reasoning_output_tokens,report.usage_source,report.call_point,report.ingested_at FROM public.observation_effective_model_usage report
+        WHERE report.tenant_id::text=budget.tenant_id AND report.attempt_id=budget.attempt_id
+          AND report.run_id=run.run_id AND report.session_id=run.session_id
+          AND report.root_input_id IS NOT DISTINCT FROM run.root_input_id
+          AND invocation.root_input_id IS NOT DISTINCT FROM run.root_input_id
+        ORDER BY report.id DESC LIMIT 1) usage ON true
+     WHERE budget.tenant_id=#{tenant} AND budget.category='AUXILIARY_MODEL'
+       AND budget.run_id IN <foreach collection="runs" item="run" open="(" separator="," close=")">#{run}</foreach>
+       AND NOT EXISTS(SELECT 1 FROM public.agent_runtime_execution_attempts core
+         WHERE core.tenant_id=budget.tenant_id AND core.attempt_id=budget.attempt_id)
+     ORDER BY invocation.started_at,invocation.id
+  </select>
+  <select id="modelMaterials" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$ModelMaterialFact">
+    SELECT material.reference,material.schema_id,material.canonical_json
+      FROM public.agent_runtime_execution_materials material
+     WHERE material.tenant_id=#{tenant} AND material.reference IN
+       <foreach collection="references" item="reference" open="(" separator="," close=")">#{reference}</foreach>
+       AND EXISTS(SELECT 1 FROM public.agent_runtime_execution_attempts attempt
+         WHERE attempt.tenant_id=#{tenant} AND attempt.run_id=#{run} AND attempt.request_ref=#{request})
+  </select>
+  <select id="material" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$MaterialFact">
+    SELECT schema_id,canonical_json FROM public.agent_runtime_execution_materials WHERE tenant_id=#{tenant} AND reference=#{reference}
+  </select>
+  <select id="citationEvent" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$CitationEvent">
+    SELECT run.run_id,run.agent_id,run.input_id,run.root_input_id,run.trace_id,run.span_id,run.caused_by_event_id,event.canonical_json
+      FROM public.agent_runtime_execution_events event
+      JOIN public.agent_runtime_execution_runs run ON run.tenant_id=event.tenant_id AND run.run_id=event.run_id
+       AND run.session_id=event.session_id
+     WHERE event.tenant_id=#{tenant} AND event.session_id=#{session} AND event.event_id=#{message}
+       AND event.type='execution.completed' AND event.schema_id='skillforge.runtime.execution.completed.v2'
+  </select>
+  <select id="citationAttempts" resultType="com.skillforge.core.chat.trajectory.TrajectoryRepository$CitationAttempt">
+    SELECT attempt.request_ref,attempt.result_ref,action.action_ordinal FROM public.agent_runtime_execution_attempts attempt
+      JOIN public.agent_runtime_execution_actions action ON action.tenant_id=attempt.tenant_id
+       AND action.run_id=attempt.run_id AND action.action_id=attempt.action_id
+     WHERE attempt.tenant_id=#{tenant} AND attempt.run_id=#{run} AND attempt.result_ref=#{result}
+       AND attempt.adopted=true AND attempt.result_kind='SUCCEEDED' AND action.kind='KNOWLEDGE'
+       AND action.status='SUCCEEDED' AND action.selected_attempt=attempt.attempt_id AND action.request_ref=attempt.request_ref
+     LIMIT 2
+  </select>
+  <select id="readAt" resultType="java.time.Instant">SELECT transaction_timestamp()</select>
+</mapper>

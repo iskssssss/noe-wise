@@ -1,0 +1,40 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "userId": 7,
+    "sources": [
+      {
+        "id": "s1",
+        "text": "线下签到给我二维码，远程培训则发邮件链接。",
+        "occurredAt": "2026-10-23T02:00:00Z"
+      }
+    ],
+    "existingFacts": [
+      {
+        "id": "f-remote",
+        "type": "preference",
+        "scope": "user_agent",
+        "subject": "user:7",
+        "predicate": "checkin_method",
+        "object": {
+          "value": {
+            "text": "远程培训发邮件链接"
+          },
+          "conditions": [
+            "远程培训"
+          ],
+          "temporal": {
+            "kind": "stable",
+            "from": null,
+            "to": null
+          }
+        },
+        "revision": 3,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "validTo": null
+      }
+    ]
+  },
+  "rawOutput": "{\"schemaVersion\":2,\"candidates\":[{\"type\":\"preference\",\"subject\":\"user:7\",\"predicate\":\"checkin_method\",\"object\":{\"conditions\":[\"线下签到\"],\"value\":{\"text\":\"二维码\"}},\"signal\":\"observed\",\"sensitive\":false,\"scope\":\"user_agent\",\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null},\"conditions\":[\"线下签到\"],\"evidence\":[{\"sourceId\":\"s1\",\"quote\":\"线下签到给我二维码\"}],\"relation\":\"new\",\"uncertainties\":[]},{\"type\":\"preference\",\"subject\":\"user:7\",\"predicate\":\"checkin_method\",\"object\":{\"conditions\":[\"远程培训\"],\"value\":{\"text\":\"发邮件链接\"}},\"signal\":\"observed\",\"sensitive\":false,\"scope\":\"user_agent\",\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null},\"conditions\":[\"远程培训\"],\"evidence\":[{\"sourceId\":\"s1\",\"quote\":\"远程培训则发邮件链接\"}],\"relation\":\"similar\",\"target\":\"f-remote\",\"uncertainties\":[]}]}",
+  "rawOutputSha256": "b121285f09ecda62f9e1372363b0ed4f3007bac24e90d9ca7887a5e58747c605"
+}

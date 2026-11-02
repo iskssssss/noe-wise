@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const require = createRequire(new URL('../../frontend-admin/package.json', import.meta.url));
+const { chromium } = require('@playwright/test');
+import { publicChatScenario, assertPublicVisibility, chatInputLimits } from './chat-public-browser-fixture.mjs';
+const origin = process.env.ADMIN_TEST_ORIGIN || 'http://127.0.0.1:3000';
+const screenshotRoot = new URL('../../.runtime-logs/chat-process-browser/', import.meta.url);
+await mkdir(screenshotRoot, { recursive: true });
+const ok = data => ({ code: 'OK', message: 'OK', data, trace_id: 'admin-browser-check' });
+const scenario = publicChatScenario({ restore: true });
+const browser = await chromium.launch({ headless: true });
+let diagnosticPage;
+try {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', colorScheme: 'light' });
+  const page = await context.newPage(); diagnosticPage = page; page.setDefaultTimeout(10_000);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    localStorage.setItem('skillforge.access_token', 'mock-token');
+    localStorage.setItem('skillforge.user', JSON.stringify({ sub: 'admin', tenant_id: '7', role: 'admin', username: 'admin' }));
+    localStorage.setItem('skillforge.chat.end_user_id', '101');
+    localStorage.setItem('skillforge.chat.session_id.101', 'session-1');
+  });
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request(), path = new URL(request.url()).pathname;
+    let body = { items: [], total: 0 };
+    if (path.endsWith('/auth/me')) body = { sub: 'admin', tenant_id: '7', role: 'admin', username: 'admin' };
+    else if (path.endsWith('/teams')) body = [];
+    else if (path.endsWith('/agents')) body = { items: [{ id: 'agent-1', name: '数据助手', status: 'published', delegation_config: { enabled: false, target_agent_ids: [] } }], total: 1 };
+    else if (path.endsWith('/chat/end-users')) body = [{ id: '101', display_name: '验收用户', status: 'active' }];
+    else if (path.endsWith('/chat/sessions')) body = [{ session_id: 'session-1', agent_id: 'agent-1', summary: '过程折叠验收', message_count: 2, updated_at: '2026-09-29T01:00:04Z' }];
+    else if (path.endsWith('/chat/history')) body = scenario.history();
+    else if (path.endsWith('/chat/limits')) body = chatInputLimits;
+    else if (path.endsWith('/chat/events')) { assert.equal(request.method(), 'GET'); await scenario.events(route); return; }
+    else if (path === '/api/v1/chat') body = scenario.submit(request.postDataJSON());
+    else if (path.endsWith('/chat/sessions/artifacts') || path.endsWith('/chat/sessions/deliverables') || path.endsWith('/chat/sessions/attachments')) body = [];
+    else if (path.endsWith('/chat/sessions/detail')) body = { session: { session_id: 'session-1' }, executions: [], tasks: [], callbacks: [] };
+    else if (path.endsWith('/chat/runs/collaboration')) body = { active: false, pending: false, selected_active: false, todos: [] };
+    else if (path.endsWith('/chat/runs/steering')) body = { run_id: 'run-1', accepting: false, items: [] };
+    else if (path.endsWith('/chat/work/history')) body = { items: [] };
+    else if (path.endsWith('/chat/work')) body = null;
+    else if (path.endsWith('/chat/goals')) body = { goal: null, continuation_enabled: false };
+    await route.fulfill({ json: ok(body) });
+  });
+  await page.goto(`${origin}/admin/chat`);
+  const group = page.locator('.process-group').first();
+  await group.locator('.process-item').nth(1).waitFor();
+  assert.equal(await group.locator('.process-item').count(), 2);
+  scenario.stages.second.resolve();
+  await group.locator('.process-item').nth(3).waitFor();
+  await page.getByText('总和 45，平均值 9.0。', { exact: true }).waitFor();
+  assert.equal(await group.locator('.process-group-toggle').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await group.locator('.process-item').evaluateAll(items => items.map(item => item.classList.contains('type-commentary') ? 'commentary' : 'tool')), ['commentary', 'tool', 'commentary', 'tool']);
+  await group.locator('.process-item-toggle').first().click();
+  assert.equal(await group.getByRole('cell', { name: 'ORD-101' }).count(), 1);
+  await assertPublicVisibility(page);
+  await page.screenshot({ path: fileURLToPath(new URL('admin-process-expanded.png', screenshotRoot)), fullPage: true });
+  scenario.stages.completion.resolve();
+  await group.locator('.process-group-toggle[aria-expanded="false"]').waitFor();
+  await group.locator('.process-group-toggle').click();
+  scenario.stages.replay.resolve();
+  await group.getByText('再次核验数据一致', { exact: true }).waitFor();
+  assert.equal(await group.locator('.process-group-toggle').getAttribute('aria-expanded'), 'true');
+  await assertPublicVisibility(page);
+  await group.getByRole('button', { name: '订单数据', exact: true }).click();
+  assert.match(await page.locator('[aria-label="已选择引用"]').innerText(), /订单数据/);
+  await page.getByLabel('消息', { exact: true }).fill('继续生成报表');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  const inputCard = page.locator('.tool-input-card').filter({ hasText: '补充报表名称' }).last();
+  await inputCard.getByLabel('报表名称', { exact: true }).fill('月度订单汇总');
+  await assertPublicVisibility(page);
+  await inputCard.getByRole('button', { name: '提交', exact: true }).click();
+  await page.getByText('报表名称已确认。', { exact: true }).waitFor();
+  assert.equal(scenario.posts.length, 2);
+  assert.equal(await page.locator('article.chart-entry.user').count(), 2);
+  await page.getByRole('button', { name: 'dark', exact: true }).click();
+  await page.locator('html.dark').waitFor({ state: 'attached' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok((await group.boundingBox()).width <= 390);
+  await assertPublicVisibility(page);
+  await page.screenshot({ path: fileURLToPath(new URL('admin-process-mobile-dark.png', screenshotRoot)), fullPage: true });
+  assert.deepEqual(errors, []);
+  console.log('admin: typed presentation/reference, snapshot cursor/live GET, two stages, final/version guard, collapse once/manual, exact ToolWait, narrow/dark/reduced-motion PASS');
+  await context.close();
+} catch (error) {
+  if (diagnosticPage && !diagnosticPage.isClosed()) {
+    console.error('browser diagnostic', diagnosticPage.url(), await diagnosticPage.locator('body').innerText());
+    console.error('process DOM', await diagnosticPage.locator('.process-group').evaluateAll(items => items.map(item => item.outerHTML)));
+    await diagnosticPage.screenshot({ path: fileURLToPath(new URL('admin-process-failed.png', screenshotRoot)), fullPage: true });
+  }
+  throw error;
+} finally { await browser.close(); }

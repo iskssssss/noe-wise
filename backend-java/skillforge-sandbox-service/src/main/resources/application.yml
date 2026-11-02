@@ -1,0 +1,57 @@
+server:
+  port: ${SANDBOX_SERVICE_PORT:8200}
+  shutdown: graceful
+
+spring:
+  application:
+    name: skillforge-sandbox-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  jackson:
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
+
+skillforge:
+  sandbox:
+    service-token: ${SANDBOX_SERVICE_TOKEN:}
+    data-root: ${SANDBOX_DATA_ROOT:/var/lib/skillforge-sandbox}
+    docker-binary: ${SANDBOX_DOCKER_BINARY:docker}
+    task-network: ${SANDBOX_TASK_NETWORK:skillforge-sandbox-task}
+    task-volume: ${SANDBOX_TASK_VOLUME:skillforge-sandbox-tasks}
+    ca-volume: ${SANDBOX_CA_VOLUME:skillforge-sandbox-ca}
+    proxy-url: ${SANDBOX_PROXY_URL:http://sandbox-egress-proxy:8080}
+    proxy-container: ${SANDBOX_PROXY_CONTAINER:skillforge-sandbox-egress-proxy}
+    python-image: ${SANDBOX_PYTHON_IMAGE:skillforge-sandbox-python:3.12}
+    node-image: ${SANDBOX_NODE_IMAGE:skillforge-sandbox-node:24}
+    python-index-url: ${SANDBOX_PYTHON_INDEX_URL:https://pypi.org/simple}
+    node-registry-url: ${SANDBOX_NODE_REGISTRY_URL:https://registry.npmjs.org}
+    docker-control-timeout: ${SANDBOX_DOCKER_CONTROL_TIMEOUT:15s}
+    workflow-python-environment-version: ${SANDBOX_WORKFLOW_PYTHON_ENVIRONMENT_VERSION:workflow-python-v1}
+    workflow-node-environment-version: ${SANDBOX_WORKFLOW_NODE_ENVIRONMENT_VERSION:workflow-node-v1}
+    workflow-python-image: ${SANDBOX_WORKFLOW_PYTHON_IMAGE:skillforge-sandbox-python:3.12}
+    workflow-node-image: ${SANDBOX_WORKFLOW_NODE_IMAGE:skillforge-sandbox-node:24}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  pattern:
+    dateformat: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX,Asia/Shanghai"
+
+# 工作区云端接入只属于可信服务；不下发给任务容器。
+skillforge.workspace-cloud:
+  project-root: ${SANDBOX_PROJECT_ROOT:/var/lib/skillforge-projects}
+  project-volume: ${SANDBOX_PROJECT_VOLUME:skillforge-sandbox-projects}
+  endpoint: ${SANDBOX_WORKSPACE_CLOUD_ENDPOINT:https://v0.api.upyun.com}
+  bucket: ${SANDBOX_WORKSPACE_CLOUD_BUCKET:}
+  operator: ${SANDBOX_WORKSPACE_CLOUD_OPERATOR:}
+  password: ${SANDBOX_WORKSPACE_CLOUD_PASSWORD:}
+  requests-per-second: ${SANDBOX_WORKSPACE_CLOUD_REQUESTS_PER_SECOND:1}

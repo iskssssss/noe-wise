@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.group.GroupHistoryMapper">
+    <sql id="sourceColumns">m.tenant_id,m.integration_id,m.group_binding_id,m.session_id,m.source_message_id,m.source_sequence,m.author_kind,m.author_json::text AS author_json,m.content_json::text AS content_json,m.created_at</sql>
+    <select id="source" resultType="com.skillforge.institution.group.GroupHistoryMapper$Source">
+        SELECT <include refid="sourceColumns"/> FROM nw_group_source_messages m
+        WHERE m.tenant_id=#{tenant} AND m.integration_id=#{integration} AND m.group_binding_id=#{group} AND m.source_message_id=#{id}
+    </select>
+    <select id="unpublishedSources" resultType="com.skillforge.institution.group.GroupHistoryMapper$Source" useCache="false" flushCache="true">
+        SELECT <include refid="sourceColumns"/> FROM nw_group_source_messages m
+        WHERE m.tenant_id=#{tenant} AND m.integration_id=#{integration} AND m.group_binding_id=#{group} AND m.author_kind='end_user'
+          AND NOT EXISTS(SELECT 1 FROM nw_chat_session_outbox o WHERE o.tenant_id=m.tenant_id AND o.session_id=m.session_id AND o.event_id='output:group-source:'||m.source_message_id)
+        ORDER BY m.source_sequence LIMIT #{limit}
+    </select>
+    <select id="messagePage" resultType="com.skillforge.institution.group.GroupHistoryMapper$Snapshot" useCache="false" flushCache="true">
+        WITH snapshots AS (
+            SELECT tenant_id,session_id,event_id,runtime_run_id,session_sequence,event_type,payload::text AS payload_json,created_at,
+                   min(session_sequence) OVER(PARTITION BY payload #&gt;&gt; '{data,message_id}') AS first_sequence,
+                   min(created_at) OVER(PARTITION BY payload #&gt;&gt; '{data,message_id}') AS first_created_at,
+                   row_number() OVER(PARTITION BY payload #&gt;&gt; '{data,message_id}' ORDER BY (payload #&gt;&gt; '{data,message_version}')::bigint DESC,session_sequence DESC) AS snapshot_rank
+            FROM nw_chat_session_outbox WHERE tenant_id=#{tenant} AND session_id=#{session} AND session_sequence &lt;=#{through}
+              AND event_type IN('message.delta','message.card','message.card.update') AND payload #&gt;&gt; '{data,message_id}' IS NOT NULL
+        )
+        SELECT tenant_id,session_id,event_id,runtime_run_id,session_sequence,event_type,payload_json,created_at,first_sequence,first_created_at
+        FROM snapshots WHERE snapshot_rank=1 AND first_sequence &lt; #{before} ORDER BY first_sequence DESC LIMIT #{limit}
+    </select>
+    <select id="exactMessage" resultType="com.skillforge.institution.group.GroupHistoryMapper$Snapshot" useCache="false" flushCache="true">
+        SELECT tenant_id,session_id,event_id,runtime_run_id,session_sequence,event_type,payload::text AS payload_json,created_at,
+               session_sequence AS first_sequence,created_at AS first_created_at
+        FROM nw_chat_session_outbox WHERE tenant_id=#{tenant} AND session_id=#{session} AND event_type='message.delta'
+          AND payload #&gt;&gt; '{data,message_id}'=#{message} AND (payload #&gt;&gt; '{data,message_version}')::bigint=#{version}
+        ORDER BY session_sequence DESC LIMIT 1
+    </select>
+</mapper>

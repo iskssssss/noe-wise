@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "title": "项目进展",
+  "output_name": "project-update.pptx",
+  "slides": [
+    { "type": "title", "title": "项目进展", "subtitle": "示例内容，按真实任务替换" },
+    { "type": "bullets", "title": "当前进展", "bullets": ["已完成需求确认", "实施进度待任务输入补充"] },
+    { "type": "summary", "title": "下一步", "bullets": ["确认验收安排", "跟进未决事项"] }
+  ]
+}

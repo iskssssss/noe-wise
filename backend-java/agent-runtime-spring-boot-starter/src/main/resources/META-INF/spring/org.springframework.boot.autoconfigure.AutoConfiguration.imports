@@ -1,0 +1,2 @@
+com.skillforge.runtime.starter.AgentRuntimeAutoConfiguration
+com.skillforge.runtime.starter.AgentRuntimeJdbcObservationConfiguration

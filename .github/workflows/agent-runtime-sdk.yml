@@ -1,0 +1,76 @@
+name: Agent Runtime SDK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "backend-java/agent-runtime-*/**"
+      - "backend-java/build.gradle.kts"
+      - "backend-java/settings.gradle.kts"
+      - "backend-java/gradle/**"
+      - "backend-java/gradle.properties"
+      - "tools/sdk-published-consumer/**"
+      - ".github/workflows/agent-runtime-sdk.yml"
+  pull_request:
+    paths:
+      - "backend-java/agent-runtime-*/**"
+      - "backend-java/build.gradle.kts"
+      - "backend-java/settings.gradle.kts"
+      - "backend-java/gradle/**"
+      - "backend-java/gradle.properties"
+      - "tools/sdk-published-consumer/**"
+      - ".github/workflows/agent-runtime-sdk.yml"
+
+jobs:
+  published-consumer:
+    runs-on: ubuntu-latest
+    services:
+      sdk_postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: sdk_review
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sdk_review"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend-java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # 只出版到工作区隔离目录，不使用远程仓库或共享 Maven local。
+      - name: Verify isolated SDK publication
+        run: ./gradlew --no-daemon -Dorg.gradle.workers.max=2 sdkReleaseGate -PsdkReleaseRepository="$PWD/build/sdk-ci-repository"
+      - name: Verify independent published consumer
+        env:
+          SDK_CONSUMER_JDBC_URL: jdbc:postgresql://127.0.0.1:${{ job.services.sdk_postgres.ports[5432] }}/sdk_review
+          SDK_CONSUMER_JDBC_USER: postgres
+          SDK_CONSUMER_JDBC_PASSWORD: fixture-only-password
+        run: |
+          sdk_version="$(python3 -c 'from pathlib import Path; print(next(line.split("=", 1)[1].strip() for line in Path("gradle.properties").read_text().splitlines() if line.startswith("agentRuntimeVersion=")))')"
+          python3 ../tools/sdk-published-consumer/verify.py \
+            --sdk-version "$sdk_version" --sdk-repository "$PWD/build/sdk-ci-repository" \
+            --work-dir "$RUNNER_TEMP/sdk-published-consumer" \
+            --reports-dir "$PWD/build/sdk-consumer-evidence" \
+            --gradle-executable "$PWD/gradlew" \
+            --gradle-user-home "$RUNNER_TEMP/sdk-consumer-gradle"
+      - name: Preserve SDK evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-runtime-sdk-evidence
+          if-no-files-found: warn
+          path: |
+            backend-java/build/reports/sdk-release/**
+            backend-java/agent-runtime-*/build/reports/**
+            backend-java/build/sdk-consumer-evidence/**

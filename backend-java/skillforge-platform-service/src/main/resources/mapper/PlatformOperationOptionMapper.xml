@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.platform.controller.PlatformOperationOptionMapper">
+  <resultMap id="option" type="com.skillforge.platform.operationoptions.PlatformOperationOption">
+    <constructor><idArg column="id" javaType="java.lang.String"/><arg column="label" javaType="java.lang.String"/><arg column="description" javaType="java.lang.String"/></constructor>
+  </resultMap>
+  <sql id="allowedFilter">
+    <choose><when test="!allowed.isEmpty()">t.id IN <foreach collection="allowed" item="target" open="(" separator="," close=")">#{target}</foreach></when><otherwise>FALSE</otherwise></choose>
+    <if test="id != null">AND t.id=#{id}</if>
+  </sql>
+  <sql id="tenantFilter">
+    <include refid="allowedFilter"/>
+    AND (#{query}='' OR strpos(lower(t.name),lower(#{query}))&gt;0 OR strpos(lower(t.slug),lower(#{query}))&gt;0)
+  </sql>
+  <select id="tenants" resultMap="option">
+    SELECT t.id::text AS id,t.name AS label,t.slug AS description FROM nw_tenants t WHERE <include refid="tenantFilter"/>
+    ORDER BY t.name,t.id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="tenantCount" resultType="long">SELECT count(*) FROM nw_tenants t WHERE <include refid="tenantFilter"/></select>
+  <sql id="definitionFilter">
+    <include refid="allowedFilter"/>
+    <if test="grant">AND t.owner_kind='platform' AND t.status='published' AND t.distribution_policy='AUTHORIZED_DEPLOY'</if>
+    AND (#{query}='' OR strpos(lower(t.name),lower(#{query}))&gt;0)
+  </sql>
+  <select id="definitions" resultMap="option">
+    SELECT t.id::text AS id,t.name AS label,t.version AS description FROM nw_agent_templates t WHERE <include refid="definitionFilter"/>
+    ORDER BY t.name,t.id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="definitionCount" resultType="long">SELECT count(*) FROM nw_agent_templates t WHERE <include refid="definitionFilter"/></select>
+  <sql id="integrationSource">
+    FROM nw_institution_integrations i LEFT JOIN nw_external_institution_mappings m ON m.tenant_id=i.tenant_id AND m.integration_id=i.integration_id
+    WHERE i.tenant_id=#{tenant}
+    <if test="id != null">AND i.integration_id=#{id}</if>
+    AND (#{query}='' OR strpos(lower(i.integration_id),lower(#{query}))&gt;0 OR strpos(lower(coalesce(m.namespace,'')),lower(#{query}))&gt;0 OR strpos(lower(coalesce(m.external_institution_ref,'')),lower(#{query}))&gt;0)
+  </sql>
+  <select id="integrations" resultMap="option">
+    SELECT i.integration_id AS id,coalesce(m.namespace || ' · ' || m.external_institution_ref,i.integration_id) AS label,i.integration_id AS description
+    <include refid="integrationSource"/> ORDER BY i.integration_id LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="integrationCount" resultType="long">SELECT count(*) <include refid="integrationSource"/></select>
+</mapper>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.chat.context.OpenPlatformContextMessageMapper">
+    <select id="lock" resultType="boolean">
+        SELECT true FROM (SELECT pg_advisory_xact_lock(hashtextextended(#{identity}, 0))) held
+    </select>
+</mapper>

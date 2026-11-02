@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.model.PlatformModelMapper">
+  <select id="listCurrent" resultType="string">SELECT v.config::text FROM nw_platform_models m JOIN nw_platform_model_versions v ON v.model_id=m.id AND v.revision=m.current_revision ORDER BY m.id</select>
+  <sql id="draftView">jsonb_build_object('config', draft, 'published_revision', current_revision, 'has_unpublished_changes', draft_changed)::text</sql>
+  <select id="listSummaries" resultType="com.skillforge.core.model.PlatformModelDirectorySummary">
+    SELECT id::text AS id, draft->>'name' AS name, draft->>'kind' AS kind,
+           draft->>'provider_id' AS provider_id, draft->>'model_id' AS model_id,
+           (draft->>'enabled')::boolean AS enabled, current_revision AS published_revision,
+           draft_changed AS has_unpublished_changes
+    FROM nw_platform_models ORDER BY id
+  </select>
+  <select id="pricingDrafts" resultType="com.skillforge.core.model.PlatformModelMapper$PricingDraft">
+    SELECT id::text AS model_id, <include refid="draftView"/> AS stored_draft, time_pricing_rule_id AS rule_id
+    FROM nw_platform_models
+    WHERE draft->>'provider_id' IS NOT DISTINCT FROM #{provider,jdbcType=VARCHAR}
+      AND draft->>'model_id' IS NOT DISTINCT FROM #{model,jdbcType=VARCHAR}
+      AND draft->>'kind' NOT IN ('IMAGE_GENERATION','VIDEO_GENERATION','SPEECH_RECOGNITION','SPEECH_SYNTHESIS')
+    ORDER BY id
+  </select>
+  <select id="listDrafts" resultType="string">SELECT <include refid="draftView"/> FROM nw_platform_models ORDER BY id</select>
+  <select id="draft" resultType="string">SELECT <include refid="draftView"/> FROM nw_platform_models WHERE id=CAST(#{id} AS bigint)</select>
+  <insert id="createDraft">INSERT INTO nw_platform_models(id,current_revision,draft_revision,draft,draft_changed,time_pricing_rule_id) VALUES(CAST(#{id} AS bigint),NULL,1,CAST(#{config} AS jsonb),TRUE,#{ruleId})</insert>
+  <update id="saveDraft">UPDATE nw_platform_models SET draft=CAST(#{config} AS jsonb),time_pricing_rule_id=#{ruleId},draft_revision=draft_revision+1,draft_changed=TRUE WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expected}</update>
+  <update id="saveCompatibilityReport">UPDATE nw_platform_models SET draft=jsonb_set(draft,'{compatibility_report}',CAST(#{report} AS jsonb),TRUE) WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expected}</update>
+  <update id="publishDraft">UPDATE nw_platform_models SET current_revision=#{revision},draft_changed=FALSE WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expected} AND draft_changed=TRUE AND (current_revision IS NULL OR current_revision=#{revision}-1)</update>
+  <select id="current" resultType="string">SELECT v.config::text FROM nw_platform_models m JOIN nw_platform_model_versions v ON v.model_id=m.id AND v.revision=m.current_revision WHERE m.id=CAST(#{id} AS bigint)</select>
+  <select id="revision" resultType="string">SELECT config::text FROM nw_platform_model_versions WHERE model_id=CAST(#{id} AS bigint) AND revision=#{revision}</select>
+  <select id="history" resultType="string">SELECT config::text FROM nw_platform_model_versions WHERE model_id=CAST(#{id} AS bigint) ORDER BY revision DESC</select>
+  <insert id="append">INSERT INTO nw_platform_model_versions(model_id,revision,config,actor_id,time_pricing_rule_id) VALUES(CAST(#{id} AS bigint),#{revision},CAST(#{config} AS jsonb),#{actor},#{ruleId})</insert>
+  <select id="draftRuleId" resultType="java.lang.Long">SELECT time_pricing_rule_id FROM nw_platform_models WHERE id=CAST(#{id} AS bigint)</select>
+  <select id="revisionRuleId" resultType="java.lang.Long">SELECT time_pricing_rule_id FROM nw_platform_model_versions WHERE model_id=CAST(#{id} AS bigint) AND revision=#{revision}</select>
+  <select id="draftRuleRefs" resultType="com.skillforge.core.model.PlatformModelMapper$ModelRuleRef">SELECT id::text AS model_id,draft_revision AS revision,time_pricing_rule_id AS rule_id FROM nw_platform_models WHERE time_pricing_rule_id IS NOT NULL ORDER BY id</select>
+  <select id="revisionRuleRefs" resultType="com.skillforge.core.model.PlatformModelMapper$ModelRuleRef">SELECT model_id::text,revision,time_pricing_rule_id AS rule_id FROM nw_platform_model_versions WHERE model_id=CAST(#{id} AS bigint) AND time_pricing_rule_id IS NOT NULL ORDER BY revision</select>
+  <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+  <resultMap id="selections" type="com.skillforge.core.model.ModelSelections">
+    <constructor><arg column="llm_model_config_id" javaType="java.lang.String"/><arg column="embedding_model_config_id" javaType="java.lang.String"/><arg column="rerank_model_config_id" javaType="java.lang.String"/></constructor>
+  </resultMap>
+  <select id="selections" resultMap="selections">SELECT llm_model_config_id::text,embedding_model_config_id::text,rerank_model_config_id::text FROM nw_tenant_model_selections WHERE tenant_id=CAST(#{tenant} AS bigint)</select>
+  <insert id="saveSelections">INSERT INTO nw_tenant_model_selections(tenant_id,llm_model_config_id,embedding_model_config_id,rerank_model_config_id) VALUES(CAST(#{tenant} AS bigint),CAST(#{s.llmModelConfigId} AS bigint),CAST(#{s.embeddingModelConfigId} AS bigint),CAST(#{s.rerankModelConfigId} AS bigint)) ON CONFLICT(tenant_id) DO UPDATE SET llm_model_config_id=EXCLUDED.llm_model_config_id,embedding_model_config_id=EXCLUDED.embedding_model_config_id,rerank_model_config_id=EXCLUDED.rerank_model_config_id</insert>
+  <select id="agentExists" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_agents WHERE tenant_id=CAST(#{tenant} AS bigint) AND id=CAST(#{agent} AS bigint))</select>
+  <select id="agentSelection" resultType="string">SELECT model_config_id::text FROM nw_agents WHERE tenant_id=CAST(#{tenant} AS bigint) AND id=CAST(#{agent} AS bigint)</select>
+</mapper>

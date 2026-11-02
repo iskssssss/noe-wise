@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.execution.ExecutionStoreMapper">
+    <sql id="runColumns">
+        tenant_id,run_id,session_id,target_kind,target_id,end_user_id,subject_kind,subject_id,agent_id,input_id,
+        trace_id,span_id,root_input_id,caused_by_event_id,identity_ref,actor_verification_ref,
+        requester_kind,requester_end_user_id,requester_system_principal_id,source_session_id,source_message_id,origin_ref,
+        configuration_ref,input_ref,initial_context_ref,admission_fingerprint,status,phase,revision,fence,cancelled,
+        decisions,tool_calls,knowledge_calls,context_ref,current_action_id,waiting_action_id,waiting_generation,
+        batch_source_attempt,batch_size,lease_worker_id,lease_claim_id,lease_until_second,lease_until_nano,
+        next_due_second,next_due_nano,created_second,created_nano,updated_second,updated_nano
+    </sql>
+    <sql id="planControlColumns">
+        tenant_id,run_id,source_action_id,source_attempt_id,request_ref,result_ref,adopted_revision
+    </sql>
+    <sql id="planChildColumns">
+        tenant_id,parent_run_id,child_run_id,work_session_id,root_input_id,task_id,admission_id,plan_revision,permit_fence
+    </sql>
+    <sql id="materialColumns">tenant_id,reference,schema_id,canonical_json</sql>
+    <sql id="childOriginColumns">
+        tenant_id,parent_run_id,parent_action_id,parent_attempt_id,child_run_id,origin_kind,delegation_id,
+        execution_id,node_id,node_visit,node_call,checkpoint_fingerprint,source_revision,source_fence
+    </sql>
+    <sql id="programChildColumns">tenant_id,parent_run_id,parent_action_id,parent_attempt_id,ordinal,child_run_id</sql>
+    <sql id="batchMemberColumns">
+        tenant_id,run_id,source_attempt,slot,size,action_id,first_attempt_id,reused,reused_result_ref,reused_feedback_ref
+    </sql>
+    <sql id="batchActionColumns">
+        a.tenant_id,a.action_id,a.run_id,a.action_ordinal,a.kind,a.target_handle,a.capability_ref,a.request_ref,
+        a.fingerprint,a.status,a.current_attempt,a.selected_attempt,a.batch_source_attempt,a.batch_size,a.batch_slot,
+        a.action_ordinal AS ordinal,a.target_handle AS target
+    </sql>
+    <sql id="attemptColumns">
+        tenant_id,attempt_id,action_id,run_id,fence,request_ref,fingerprint,continuation_generation,
+        result_kind,result_ref,uncertainty_ref,feedback_ref,external_operation,adopted,observation_sequence
+    </sql>
+    <sql id="batchAttemptColumns">
+        p.tenant_id,p.attempt_id,p.action_id,p.run_id,p.fence,p.request_ref,p.fingerprint,p.continuation_generation,
+        p.result_kind,p.result_ref,p.uncertainty_ref,p.feedback_ref,p.external_operation,p.adopted,p.observation_sequence
+    </sql>
+    <sql id="waitColumns">
+        tenant_id,run_id,action_id,generation,kind,source_attempt,input_id,response_ref,fingerprint,actor_ref,
+        accepted_revision,continuation_attempt,consumed_revision,declared_revision,business_wait_id,
+        execution_id,suspend_ref,action_key,execution_revision,plan_id,plan_revision
+    </sql>
+    <sql id="waitChildColumns">tenant_id,action_id,generation,ordinal,delegation_id,child_run_id</sql>
+    <sql id="waitRequestColumns">tenant_id,action_id,generation,input_key,method</sql>
+    <select id="bindTenant" resultType="string" useCache="false" flushCache="true">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="now" resultType="java.time.Instant" useCache="false" flushCache="true">SELECT clock_timestamp()</select>
+    <insert id="ensureSessionOwner">
+        INSERT INTO public.agent_runtime_session_owners(tenant_id,target_kind,target_id,session_id,end_user_id)
+        VALUES(#{tenantId},#{targetKind},#{targetId},#{sessionId},#{endUserId}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="lockSessionOwner" resultType="string" useCache="false" flushCache="true">
+        SELECT subject_kind || ':' || subject_id FROM public.agent_runtime_session_owners
+        WHERE tenant_id=#{tenantId} AND target_kind=#{targetKind} AND target_id=#{targetId} AND session_id=#{sessionId}
+        FOR KEY SHARE
+    </select>
+    <insert id="ensureSession">
+        INSERT INTO agent_runtime_execution_sessions(tenant_id,session_id,target_kind,target_id,end_user_id)
+        VALUES(#{tenantId},#{sessionId},#{targetKind},#{targetId},#{endUserId}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="sessionOwned" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM agent_runtime_execution_sessions
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND target_kind=#{targetKind}
+          AND target_id=#{targetId} AND subject_kind=#{subjectKind} AND subject_id=#{subjectId})
+    </select>
+    <insert id="insertRun">
+        INSERT INTO agent_runtime_execution_runs(tenant_id,run_id,session_id,target_kind,target_id,end_user_id,agent_id,input_id,
+            trace_id,span_id,root_input_id,caused_by_event_id,identity_ref,actor_verification_ref,
+            requester_kind,requester_end_user_id,requester_system_principal_id,source_session_id,source_message_id,origin_ref,
+            configuration_ref,input_ref,initial_context_ref,admission_fingerprint,
+            status,phase,revision,fence,cancelled,decisions,tool_calls,knowledge_calls,context_ref,next_due_second,next_due_nano,
+            created_second,created_nano,updated_second,updated_nano)
+        VALUES(#{tenantId},#{runId},#{sessionId},#{targetKind},#{targetId},#{endUserId},#{agentId},#{inputId},
+            #{traceId},#{spanId},#{rootInputId},#{causedByEventId},#{identityRef},#{actorVerificationRef},
+            #{requesterKind},#{requesterEndUserId},#{requesterSystemPrincipalId},#{sourceSessionId},#{sourceMessageId},#{originRef},
+            #{configurationRef},#{inputRef},#{initialContextRef},#{admissionFingerprint},
+            #{status},#{phase},#{revision},#{fence},#{cancelled},#{decisions},#{toolCalls},#{knowledgeCalls},#{contextRef},#{nextDueSecond},#{nextDueNano},
+            #{createdSecond},#{createdNano},#{updatedSecond},#{updatedNano}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="run" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionRunRow" useCache="false" flushCache="true">
+        SELECT <include refid="runColumns"/> FROM agent_runtime_execution_runs WHERE tenant_id=#{tenant} AND run_id=#{run}
+    </select>
+    <select id="lockRun" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionRunRow" useCache="false" flushCache="true">
+        SELECT <include refid="runColumns"/> FROM agent_runtime_execution_runs WHERE tenant_id=#{tenant} AND run_id=#{run} FOR UPDATE
+    </select>
+    <select id="inputRun" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionRunRow" useCache="false" flushCache="true">
+        SELECT <include refid="runColumns"/> FROM agent_runtime_execution_runs WHERE tenant_id=#{tenantId} AND session_id=#{sessionId}
+          AND target_kind=#{targetKind} AND target_id=#{targetId} AND input_id=#{inputId}
+    </select>
+    <sql id="runSet">
+        status=#{row.status},phase=#{row.phase},revision=#{row.revision},fence=#{row.fence},
+            cancelled=#{row.cancelled},decisions=#{row.decisions},tool_calls=#{row.toolCalls},knowledge_calls=#{row.knowledgeCalls},
+            context_ref=#{row.contextRef},current_action_id=#{row.currentActionId},actor_verification_ref=#{row.actorVerificationRef},
+            batch_source_attempt=#{row.batchSourceAttempt},batch_size=#{row.batchSize},
+            waiting_action_id=#{row.waitingActionId},waiting_generation=#{row.waitingGeneration},lease_worker_id=#{row.leaseWorkerId},
+            lease_claim_id=#{row.leaseClaimId},lease_until_second=#{row.leaseUntilSecond},lease_until_nano=#{row.leaseUntilNano},
+            next_due_second=#{row.nextDueSecond},next_due_nano=#{row.nextDueNano},updated_second=#{row.updatedSecond},updated_nano=#{row.updatedNano}
+    </sql>
+    <update id="updateRun">
+        UPDATE agent_runtime_execution_runs SET <include refid="runSet"/>
+        WHERE tenant_id=#{row.tenantId} AND run_id=#{row.runId} AND revision=#{expected}
+    </update>
+    <update id="updateDispatchRun">
+        UPDATE agent_runtime_execution_runs SET <include refid="runSet"/>
+        WHERE tenant_id=#{row.tenantId} AND run_id=#{row.runId} AND revision=#{expected}
+          AND phase='READY' AND NOT cancelled AND lease_claim_id=#{row.leaseClaimId}
+          AND lease_worker_id=#{row.leaseWorkerId} AND fence=#{row.fence}
+          AND (lease_until_second::numeric*1000000000+lease_until_nano)&gt;(extract(epoch FROM clock_timestamp())*1000000000)
+    </update>
+    <update id="updateLocalResponseRun">
+        UPDATE agent_runtime_execution_runs SET <include refid="runSet"/>
+        WHERE tenant_id=#{row.tenantId} AND run_id=#{row.runId} AND revision=#{expected}
+          AND phase='READY' AND NOT cancelled AND lease_claim_id=#{row.leaseClaimId}
+          AND lease_worker_id=#{row.leaseWorkerId} AND fence=#{row.fence}
+          AND (lease_until_second::numeric*1000000000+lease_until_nano)&gt;(extract(epoch FROM clock_timestamp())*1000000000)
+    </update>
+    <insert id="insertMaterial">
+        INSERT INTO agent_runtime_execution_materials(tenant_id,reference,schema_id,canonical_json)
+        VALUES(#{tenantId},#{reference},#{schemaId},#{canonicalJson}) ON CONFLICT DO NOTHING
+    </insert>
+    <update id="updatePlanRun">
+        UPDATE agent_runtime_execution_runs SET <include refid="runSet"/>
+        WHERE tenant_id=#{row.tenantId} AND run_id=#{row.runId} AND revision=#{expected}
+          AND phase='READY' AND NOT cancelled AND current_action_id IS NULL AND batch_source_attempt IS NULL AND waiting_action_id IS NULL
+          AND lease_claim_id=#{lease.claimId} AND lease_worker_id=#{lease.workerId} AND fence=#{lease.fencingToken}
+          AND (lease_until_second::numeric*1000000000+lease_until_nano)&gt;(extract(epoch FROM clock_timestamp())*1000000000)
+    </update>
+    <select id="latestActionOrdinal" resultType="long" useCache="false" flushCache="true">
+        SELECT COALESCE(MAX(action_ordinal),0) FROM agent_runtime_execution_actions WHERE tenant_id=#{tenant} AND run_id=#{run}
+    </select>
+    <select id="planControl" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionPlanRow" useCache="false" flushCache="true">
+        SELECT <include refid="planControlColumns"/> FROM agent_runtime_execution_plan_controls WHERE tenant_id=#{tenant} AND run_id=#{run} AND source_action_id=#{action}
+    </select>
+    <insert id="insertPlanControl">
+        INSERT INTO agent_runtime_execution_plan_controls(tenant_id,run_id,source_action_id,source_attempt_id,request_ref,result_ref,adopted_revision)
+        VALUES(#{tenantId},#{runId},#{sourceActionId},#{sourceAttemptId},#{requestRef},#{resultRef},#{adoptedRevision}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="planChild" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionPlanChildRow" useCache="false" flushCache="true">
+        SELECT <include refid="planChildColumns"/> FROM agent_runtime_execution_plan_child_runs WHERE tenant_id=#{tenant} AND child_run_id=#{child}
+    </select>
+    <insert id="insertPlanChild">
+        INSERT INTO agent_runtime_execution_plan_child_runs(tenant_id,parent_run_id,child_run_id,work_session_id,root_input_id,task_id,admission_id,plan_revision,permit_fence)
+        VALUES(#{tenantId},#{parentRunId},#{childRunId},#{workSessionId},#{rootInputId},#{taskId},#{admissionId},#{planRevision},#{permitFence}) ON CONFLICT DO NOTHING
+    </insert>
+    <insert id="insertMaterials">
+        INSERT INTO agent_runtime_execution_materials(tenant_id,reference,schema_id,canonical_json) VALUES
+        <foreach collection="rows" item="row" separator=",">(#{row.tenantId},#{row.reference},#{row.schemaId},#{row.canonicalJson})</foreach>
+        ON CONFLICT (tenant_id,reference) DO NOTHING
+    </insert>
+    <select id="materials" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionMaterialRow" useCache="false" flushCache="true">
+        SELECT tenant_id,reference,schema_id,canonical_json FROM agent_runtime_execution_materials
+        WHERE tenant_id=#{tenant} AND reference IN
+        <foreach collection="references" item="reference" open="(" separator="," close=")">#{reference}</foreach>
+    </select>
+    <select id="material" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionMaterialRow" useCache="false" flushCache="true">
+        SELECT <include refid="materialColumns"/> FROM agent_runtime_execution_materials WHERE tenant_id=#{tenant} AND reference=#{reference}
+    </select>
+    <sql id="actionColumns">tenant_id,action_id,run_id,action_ordinal AS ordinal,kind,target_handle AS target,capability_ref,request_ref,fingerprint,status,current_attempt,selected_attempt,batch_source_attempt,batch_size,batch_slot</sql>
+    <insert id="insertAction">
+        INSERT INTO agent_runtime_execution_actions(tenant_id,action_id,run_id,action_ordinal,kind,target_handle,capability_ref,request_ref,fingerprint,status,current_attempt,batch_source_attempt,batch_size,batch_slot)
+        VALUES(#{tenantId},#{actionId},#{runId},#{ordinal},#{kind},#{target},#{capabilityRef},#{requestRef},#{fingerprint},#{status},#{currentAttempt},#{batchSourceAttempt},#{batchSize},#{batchSlot})
+    </insert>
+    <select id="action" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionActionRow" useCache="false" flushCache="true">
+        SELECT <include refid="actionColumns"/> FROM agent_runtime_execution_actions WHERE tenant_id=#{tenant} AND action_id=#{action}
+    </select>
+    <select id="actions" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionActionRow" useCache="false" flushCache="true">
+        SELECT <include refid="actionColumns"/> FROM agent_runtime_execution_actions
+        WHERE tenant_id=#{tenant} AND run_id=#{run} AND action_ordinal&gt;#{after} ORDER BY action_ordinal LIMIT #{limit}
+    </select>
+    <select id="childOrigins" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionChildRow" useCache="false" flushCache="true">
+        SELECT <include refid="childOriginColumns"/> FROM agent_runtime_execution_child_runs WHERE tenant_id=#{tenant} AND child_run_id=#{child} ORDER BY parent_action_id
+    </select>
+    <insert id="insertChildOrigin">
+        INSERT INTO agent_runtime_execution_child_runs(tenant_id,parent_run_id,parent_action_id,parent_attempt_id,child_run_id,origin_kind,
+            delegation_id,execution_id,node_id,node_visit,node_call,checkpoint_fingerprint,source_revision,source_fence)
+        VALUES(#{tenantId},#{parentRunId},#{parentActionId},#{parentAttemptId},#{childRunId},#{originKind},#{delegationId},#{executionId},
+            #{nodeId},#{nodeVisit},#{nodeCall},#{checkpointFingerprint},#{sourceRevision},#{sourceFence}) ON CONFLICT DO NOTHING
+    </insert>
+    <select id="usage" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionTokenUsageRow" useCache="false" flushCache="true">
+        WITH facts AS (
+            SELECT p.attempt_id,p.result_kind,
+                MAX(b.reported) FILTER (WHERE b.dimension='INPUT_TOKENS') AS input_tokens,
+                MAX(b.reported) FILTER (WHERE b.dimension='OUTPUT_TOKENS') AS output_tokens,
+                MAX(b.reported) FILTER (WHERE b.dimension='TOTAL_TOKENS') AS total_tokens
+            FROM agent_runtime_execution_attempts p JOIN agent_runtime_execution_actions a
+              ON a.tenant_id=p.tenant_id AND a.action_id=p.action_id AND a.run_id=p.run_id
+            LEFT JOIN agent_runtime_budget_attempt_amounts b ON b.tenant_id=p.tenant_id AND b.attempt_id=p.attempt_id
+            WHERE p.tenant_id=#{tenant} AND p.run_id=#{run} AND a.kind='MODEL' GROUP BY p.attempt_id,p.result_kind
+        )
+        SELECT COALESCE(SUM(COALESCE(total_tokens,COALESCE(input_tokens,0)+COALESCE(output_tokens,0))),0)::bigint AS reported_tokens,
+            COALESCE(BOOL_AND(input_tokens IS NOT NULL AND output_tokens IS NOT NULL AND result_kind IS NOT NULL AND result_kind IN ('SUCCEEDED','FAILED')),true) AS complete
+        FROM facts
+    </select>
+    <select id="programChild" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionProgramChildRow" useCache="false" flushCache="true">
+        SELECT <include refid="programChildColumns"/> FROM agent_runtime_execution_program_child_runs WHERE tenant_id=#{tenantId} AND parent_run_id=#{parentRunId}
+          AND parent_action_id=#{parentActionId} AND parent_attempt_id=#{parentAttemptId} AND ordinal=#{ordinal}
+    </select>
+    <insert id="insertProgramChild">
+        INSERT INTO agent_runtime_execution_program_child_runs(tenant_id,parent_run_id,parent_action_id,parent_attempt_id,ordinal,child_run_id)
+        VALUES(#{tenantId},#{parentRunId},#{parentActionId},#{parentAttemptId},#{ordinal},#{childRunId})
+    </insert>
+    <select id="lockAction" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionActionRow" useCache="false" flushCache="true">
+        SELECT <include refid="actionColumns"/> FROM agent_runtime_execution_actions WHERE tenant_id=#{tenant} AND action_id=#{action} FOR UPDATE
+    </select>
+    <select id="batchMembers" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionBatchMemberRow" useCache="false" flushCache="true">
+        SELECT <include refid="batchMemberColumns"/> FROM agent_runtime_execution_batch_members WHERE tenant_id=#{tenant} AND run_id=#{run} AND source_attempt=#{source} ORDER BY slot
+    </select>
+    <insert id="insertBatchMember">
+        INSERT INTO agent_runtime_execution_batch_members(tenant_id,run_id,source_attempt,slot,size,action_id,first_attempt_id,reused,reused_result_ref,reused_feedback_ref)
+        VALUES(#{tenantId},#{runId},#{sourceAttempt},#{slot},#{size},#{actionId},#{firstAttemptId},#{reused},#{reusedResultRef},#{reusedFeedbackRef})
+    </insert>
+    <select id="batchPhysicalCalls" resultType="long" useCache="false" flushCache="true">
+        SELECT count(*) FROM agent_runtime_execution_batch_members m JOIN agent_runtime_execution_attempts p
+          ON p.tenant_id=m.tenant_id AND p.run_id=m.run_id AND p.action_id=m.action_id
+        WHERE m.tenant_id=#{tenant} AND m.run_id=#{run} AND m.source_attempt=#{source} AND NOT m.reused
+    </select>
+    <sql id="batchActionQuery">
+        SELECT <include refid="batchActionColumns"/> FROM agent_runtime_execution_batch_members m
+        JOIN agent_runtime_execution_actions a ON a.tenant_id=m.tenant_id AND a.run_id=m.run_id AND a.action_id=m.action_id
+        WHERE m.tenant_id=#{tenant} AND m.run_id=#{run} AND m.source_attempt=#{source} ORDER BY m.slot
+    </sql>
+    <select id="batchActions" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionActionRow" useCache="false" flushCache="true">
+        <include refid="batchActionQuery"/>
+    </select>
+    <select id="lockBatchActions" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionActionRow" useCache="false" flushCache="true">
+        <include refid="batchActionQuery"/> FOR UPDATE OF a
+    </select>
+    <sql id="batchAttemptQuery">
+        SELECT <include refid="batchAttemptColumns"/> FROM agent_runtime_execution_batch_members m JOIN agent_runtime_execution_actions a
+          ON a.tenant_id=m.tenant_id AND a.action_id=m.action_id AND a.run_id=m.run_id
+        JOIN agent_runtime_execution_attempts p ON p.tenant_id=a.tenant_id AND p.run_id=a.run_id AND p.action_id=a.action_id
+          AND p.attempt_id=CASE WHEN m.reused THEN m.first_attempt_id ELSE a.current_attempt END
+        WHERE m.tenant_id=#{tenant} AND m.run_id=#{run} AND m.source_attempt=#{source} ORDER BY m.slot
+    </sql>
+    <select id="batchAttempts" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionAttemptRow" useCache="false" flushCache="true">
+        <include refid="batchAttemptQuery"/>
+    </select>
+    <select id="lockBatchAttempts" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionAttemptRow" useCache="false" flushCache="true">
+        <include refid="batchAttemptQuery"/> FOR UPDATE OF p
+    </select>
+    <update id="updateAction">
+        UPDATE agent_runtime_execution_actions SET status=#{status},current_attempt=#{currentAttempt},selected_attempt=#{selectedAttempt}
+        WHERE tenant_id=#{tenantId} AND action_id=#{actionId} AND run_id=#{runId}
+    </update>
+    <insert id="insertAttempt">
+        INSERT INTO agent_runtime_execution_attempts(tenant_id,attempt_id,action_id,run_id,fence,request_ref,fingerprint,continuation_generation,adopted)
+        VALUES(#{tenantId},#{attemptId},#{actionId},#{runId},#{fence},#{requestRef},#{fingerprint},#{continuationGeneration},#{adopted})
+    </insert>
+    <select id="attempt" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionAttemptRow" useCache="false" flushCache="true">
+        SELECT <include refid="attemptColumns"/> FROM agent_runtime_execution_attempts WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt}
+    </select>
+    <select id="lockAttempt" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionAttemptRow" useCache="false" flushCache="true">
+        SELECT <include refid="attemptColumns"/> FROM agent_runtime_execution_attempts WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt} FOR UPDATE
+    </select>
+    <update id="updateAttempt">
+        UPDATE agent_runtime_execution_attempts SET result_kind=#{resultKind},result_ref=#{resultRef},uncertainty_ref=#{uncertaintyRef},feedback_ref=#{feedbackRef},
+            external_operation=#{externalOperation},adopted=#{adopted}
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND attempt_id=#{attemptId}
+    </update>
+    <insert id="insertWait">
+        INSERT INTO agent_runtime_execution_waits(tenant_id,run_id,action_id,generation,kind,source_attempt,declared_revision,business_wait_id,
+            execution_id,suspend_ref,action_key,execution_revision,plan_id,plan_revision)
+        VALUES(#{tenantId},#{runId},#{actionId},#{generation},#{kind},#{sourceAttempt},#{declaredRevision},#{businessWaitId},#{executionId},#{suspendRef},
+            #{actionKey},#{executionRevision},#{planId},#{planRevision})
+    </insert>
+    <insert id="insertWaitChild">
+        INSERT INTO agent_runtime_execution_wait_children(tenant_id,action_id,generation,ordinal,delegation_id,child_run_id)
+        VALUES(#{tenantId},#{actionId},#{generation},#{ordinal},#{delegationId},#{childRunId})
+    </insert>
+    <select id="waitChildren" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionWaitChildRow" useCache="false" flushCache="true">
+        SELECT <include refid="waitChildColumns"/> FROM agent_runtime_execution_wait_children WHERE tenant_id=#{tenant} AND action_id=#{action} AND generation=#{generation} ORDER BY ordinal
+    </select>
+    <insert id="insertWaitRequest">
+        INSERT INTO agent_runtime_execution_wait_requests(tenant_id,action_id,generation,input_key,method)
+        VALUES(#{tenantId},#{actionId},#{generation},#{inputKey},#{method})
+    </insert>
+    <select id="waiting" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionWaitRow" useCache="false" flushCache="true">
+        SELECT <include refid="waitColumns"/> FROM agent_runtime_execution_waits WHERE tenant_id=#{tenant} AND run_id=#{run} AND action_id=#{action} AND generation=#{generation}
+    </select>
+    <select id="response" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionWaitRow" useCache="false" flushCache="true">
+        SELECT <include refid="waitColumns"/> FROM agent_runtime_execution_waits WHERE tenant_id=#{tenant} AND run_id=#{run} AND input_id=#{input}
+    </select>
+    <select id="sourceWaiting" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionWaitRow" useCache="false" flushCache="true">
+        SELECT <include refid="waitColumns"/> FROM agent_runtime_execution_waits WHERE tenant_id=#{tenant} AND run_id=#{run} AND source_attempt=#{attempt}
+    </select>
+    <select id="waitRequests" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionWaitRequestRow" useCache="false" flushCache="true">
+        SELECT <include refid="waitRequestColumns"/> FROM agent_runtime_execution_wait_requests WHERE tenant_id=#{tenant} AND action_id=#{action} AND generation=#{generation} ORDER BY input_key
+    </select>
+    <select id="nextWaitGeneration" resultType="long" useCache="false" flushCache="true">
+        SELECT COALESCE(MAX(generation),0)+1 FROM agent_runtime_execution_waits WHERE tenant_id=#{tenant} AND action_id=#{action}
+    </select>
+    <update id="acceptWaitResponse">
+        UPDATE agent_runtime_execution_waits SET input_id=#{inputId},response_ref=#{responseRef},fingerprint=#{fingerprint},actor_ref=#{actorRef},accepted_revision=#{acceptedRevision}
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND action_id=#{actionId} AND generation=#{generation} AND input_id IS NULL
+    </update>
+    <update id="consumeWaitResponse">
+        UPDATE agent_runtime_execution_waits SET continuation_attempt=#{continuationAttempt}
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND action_id=#{actionId} AND generation=#{generation}
+          AND input_id IS NOT NULL AND continuation_attempt IS NULL
+          AND kind IN ('TOOL','WORKFLOW') AND consumed_revision IS NULL
+    </update>
+    <update id="consumeLocalWaitResponse">
+        UPDATE agent_runtime_execution_waits SET consumed_revision=#{consumedRevision}
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND action_id=#{actionId} AND generation=#{generation}
+          AND kind IN ('HUMAN','DELEGATION','PLAN') AND input_id IS NOT NULL AND consumed_revision IS NULL AND continuation_attempt IS NULL
+    </update>
+    <select id="nextSequence" resultType="long" affectData="true" useCache="false" flushCache="true">
+        UPDATE agent_runtime_execution_sessions SET last_event_sequence=last_event_sequence+1
+        WHERE tenant_id=#{tenant} AND session_id=#{session} RETURNING last_event_sequence
+    </select>
+    <insert id="insertEvent">
+        INSERT INTO agent_runtime_execution_events(tenant_id,session_id,run_id,event_sequence,revision,event_id,type,schema_id,canonical_json,occurred_second,occurred_nano)
+        VALUES(#{tenantId},#{sessionId},#{runId},#{sequence},#{revision},#{eventId},#{type},#{schemaId},#{canonicalJson},#{occurredSecond},#{occurredNano})
+    </insert>
+    <sql id="eventColumns">tenant_id,session_id,run_id,event_sequence AS sequence,revision,event_id,type,schema_id,canonical_json,occurred_second,occurred_nano</sql>
+    <select id="event" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionEventRow" useCache="false" flushCache="true">
+        SELECT <include refid="eventColumns"/> FROM agent_runtime_execution_events WHERE tenant_id=#{tenant} AND session_id=#{session} AND event_id=#{event}
+    </select>
+    <select id="events" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionEventRow" useCache="false" flushCache="true">
+        SELECT <include refid="eventColumns"/> FROM agent_runtime_execution_events WHERE tenant_id=#{tenant} AND session_id=#{session}
+          AND event_sequence&gt;#{after} ORDER BY event_sequence LIMIT #{limit}
+    </select>
+    <select id="eventsInRange" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionEventRow" useCache="false" flushCache="true">
+        SELECT <include refid="eventColumns"/> FROM agent_runtime_execution_events WHERE tenant_id=#{tenant} AND session_id=#{session}
+          AND event_sequence&gt;#{after} AND event_sequence&lt;=#{through} ORDER BY event_sequence LIMIT #{limit}
+    </select>
+    <select id="eventsAtRevision" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionEventRow" useCache="false" flushCache="true">
+        SELECT <include refid="eventColumns"/> FROM agent_runtime_execution_events
+        WHERE tenant_id=#{tenant} AND run_id=#{run} AND revision=#{revision} ORDER BY event_sequence
+    </select>
+    <select id="admissionEvents" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionEventRow" useCache="false" flushCache="true">
+        SELECT <include refid="eventColumns"/> FROM agent_runtime_execution_events WHERE tenant_id=#{tenant} AND run_id=#{run} AND revision=1 ORDER BY event_sequence
+    </select>
+    <select id="due" resultType="string" useCache="false" flushCache="true">
+        SELECT run_id FROM agent_runtime_execution_runs WHERE tenant_id=#{tenant} AND phase IN ('READY','AWAITING_RESULT')
+          AND NOT cancelled AND next_due_second IS NOT NULL AND (next_due_second,next_due_nano)&lt;=(#{second},#{nano})
+          AND (lease_claim_id IS NULL OR (lease_until_second,lease_until_nano)&lt;=(#{second},#{nano}))
+        ORDER BY next_due_second,next_due_nano,run_id LIMIT #{limit}
+    </select>
+    <select id="nextDueAt" resultType="com.skillforge.runtime.adapter.jdbc.execution.ExecutionDueRow" useCache="false" flushCache="true">
+        SELECT CASE WHEN lease_claim_id IS NOT NULL AND (lease_until_second,lease_until_nano)&gt;(next_due_second,next_due_nano)
+                    THEN lease_until_second ELSE next_due_second END AS second,
+               CASE WHEN lease_claim_id IS NOT NULL AND (lease_until_second,lease_until_nano)&gt;(next_due_second,next_due_nano)
+                    THEN lease_until_nano ELSE next_due_nano END AS nano
+        FROM agent_runtime_execution_runs WHERE tenant_id=#{tenant} AND phase IN ('READY','AWAITING_RESULT')
+          AND NOT cancelled AND next_due_second IS NOT NULL ORDER BY second,nano,run_id LIMIT 1
+    </select>
+</mapper>

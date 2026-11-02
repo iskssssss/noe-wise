@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.persistence.ServicePrincipalMapper">
+    <resultMap id="servicePrincipalMap" type="com.skillforge.core.foundation.persistence.ServicePrincipalDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="principal_id" property="principalId"/>
+        <result column="integration_id" property="integrationId"/>
+        <result column="api_key_hash" property="apiKeyHash"/>
+        <result column="api_key_prefix" property="apiKeyPrefix"/>
+        <result column="signing_secret_encrypted" property="signingSecretEncrypted"/>
+        <result column="scopes" property="scopes" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+        <result column="status" property="status"/>
+        <result column="credential_version" property="credentialVersion"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+    <select id="selectForAuthByApiKeyHash" resultMap="servicePrincipalMap">
+        SELECT id, tenant_id, principal_id, integration_id, api_key_hash, api_key_prefix, signing_secret_encrypted, scopes,
+               status, credential_version, created_at, updated_at FROM public.resolve_service_principal_by_api_key_hash(#{apiKeyHash})
+    </select>
+    <select id="lockIntegration" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(#{tenant} || ':' || #{integration}, 0))::text
+    </select>
+</mapper>

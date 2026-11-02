@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.group.GroupMemoryMapper">
+    <select id="lockEligibility" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM (
+          SELECT g.id FROM nw_group_bindings g
+          JOIN nw_group_memberships m ON (m.tenant_id,m.integration_id,m.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+          JOIN nw_group_service_agents a ON (a.tenant_id,a.integration_id,a.group_binding_id)=(g.tenant_id,g.integration_id,g.id)
+          JOIN nw_integration_business_scopes b ON (b.tenant_id,b.integration_id,b.scope_id)=(g.tenant_id,g.integration_id,g.business_scope_id)
+          JOIN nw_end_users e ON e.tenant_id=g.tenant_id AND e.external_integration_id=g.integration_id AND e.id=m.end_user_id
+          JOIN nw_service_principals p ON p.tenant_id=g.tenant_id AND p.integration_id=g.integration_id
+          JOIN nw_tenants n ON n.id=g.tenant_id
+          WHERE g.tenant_id=#{tenant} AND g.integration_id=#{integration} AND g.id=#{group}
+            AND g.status='active' AND m.end_user_id=#{user} AND m.status='active' AND a.agent_id=#{agent} AND a.status='active'
+            AND b.status='active' AND e.status='active' AND n.status IN('active','warning')
+            AND p.principal_id=#{principal} AND p.credential_version=#{credential} AND p.status='active'
+            AND p.scopes @&gt; '["groups.memory.write"]'::jsonb
+          FOR SHARE OF g,m,a,b,e,p,n) current_qualification)
+    </select>
+    <select id="facts" resultType="string" useCache="false" flushCache="true">
+        SELECT h.fact_id FROM agent_runtime_memory_fact_heads h
+        JOIN agent_runtime_memory_fact_revisions r ON r.tenant_id=h.tenant_id AND r.fact_id=h.fact_id AND r.revision=h.current_revision
+        WHERE h.tenant_id=#{tenant} AND h.group_binding_id=#{group}
+          AND (h.scope='GROUP' OR h.scope='GROUP_MEMBER' AND h.subject_end_user_id=#{subject})
+        <if test="scope != null">AND h.scope=#{scope}</if>
+        AND r.status=#{status}
+        ORDER BY r.created_epoch_second DESC,r.created_nano DESC,h.fact_id LIMIT #{limit}
+    </select>
+</mapper>

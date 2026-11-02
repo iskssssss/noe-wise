@@ -1,0 +1,6 @@
+{
+  "theme": {
+    "preset": "ocean-depths"
+  },
+  "html": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>统一主题示例</title><style>body{margin:0;padding:3rem}.panel{max-width:48rem;padding:2rem;border:1px solid var(--sf-border);border-radius:1rem}button{border:0;padding:.75rem 1rem;border-radius:.5rem;cursor:pointer}.page-title{color:var(--sf-accent-text)}button:focus-visible{outline:3px solid var(--sf-text);outline-offset:4px}</style></head><body><main class=\"panel sf-surface\"><h1 class=\"page-title\">统一主题示例</h1><p class=\"sf-muted\">示例交互，不包含业务数据。</p><button class=\"sf-accent\" type=\"button\" id=\"count\">计数 0</button><p id=\"result\" aria-live=\"polite\">尚未点击</p></main><script>let count=0;document.getElementById(\"count\").addEventListener(\"click\",()=>{count+=1;document.getElementById(\"count\").textContent=\"计数 \"+count;document.getElementById(\"result\").textContent=\"已点击 \"+count+\" 次\"})</script></body></html>"
+}

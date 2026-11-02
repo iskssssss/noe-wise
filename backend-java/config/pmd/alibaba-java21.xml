@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Alibaba Java 21 correctness" xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+    <description>黄山版正确性规约在 Java 21 上的可执行子集；人工审查与官方 P3C 覆盖差异见 README。</description>
+    <rule ref="category/java/errorprone.xml/AvoidDecimalLiteralsInBigDecimalConstructor"/>
+    <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+    <rule ref="category/java/errorprone.xml/ClassCastExceptionWithToArray"/>
+    <rule ref="category/java/errorprone.xml/CollectionTypeMismatch"/>
+    <rule ref="category/java/errorprone.xml/ComparisonWithNaN"/>
+    <rule ref="category/java/errorprone.xml/ConfusingArgumentToVarargsMethod"/>
+    <rule ref="category/java/errorprone.xml/DoNotCallGarbageCollectionExplicitly"/>
+    <rule ref="category/java/errorprone.xml/DoNotExtendJavaLangThrowable"/>
+    <rule ref="category/java/errorprone.xml/DontUseFloatTypeForLoopIndices"/>
+    <rule ref="category/java/errorprone.xml/EqualsNull"/>
+    <rule ref="category/java/errorprone.xml/IdempotentOperations"/>
+    <rule ref="category/java/errorprone.xml/IdenticalConditionalBranches"/>
+    <rule ref="category/java/errorprone.xml/ImplicitSwitchFallThrough"/>
+    <rule ref="category/java/errorprone.xml/InstantiationToGetClass"/>
+    <rule ref="category/java/errorprone.xml/JumbledIncrementer"/>
+    <rule ref="category/java/errorprone.xml/LongLiteralEndingWithLowercaseL"/>
+    <rule ref="category/java/errorprone.xml/MethodWithSameNameAsEnclosingClass"/>
+    <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+    <rule ref="category/java/errorprone.xml/MoreThanOneLogger"/>
+    <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+    <rule ref="category/java/errorprone.xml/ReturnFromFinallyBlock"/>
+    <rule ref="category/java/errorprone.xml/SimpleDateFormatNeedsLocale"/>
+    <rule ref="category/java/errorprone.xml/StringBufferInstantiationWithChar"/>
+    <rule ref="category/java/errorprone.xml/SuspiciousEqualsMethodName"/>
+    <rule ref="category/java/errorprone.xml/SuspiciousHashcodeMethodName"/>
+    <rule ref="category/java/errorprone.xml/SuspiciousOctalEscape"/>
+    <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+    <rule ref="category/java/errorprone.xml/UnnecessaryConversionTemporary"/>
+    <rule ref="category/java/errorprone.xml/UnsupportedJdkApiUsage"/>
+    <rule ref="category/java/errorprone.xml/UnusedNullCheckInEquals"/>
+    <rule ref="category/java/errorprone.xml/UseCorrectExceptionLogging"/>
+    <rule ref="category/java/errorprone.xml/UseEqualsToCompareStrings"/>
+    <rule ref="category/java/errorprone.xml/UseLocaleWithCaseConversions"/>
+    <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+    <rule ref="category/java/multithreading.xml/DontCallThreadRun"/>
+    <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+    <rule ref="category/java/multithreading.xml/UnsynchronizedStaticFormatter"/>
+    <rule ref="category/java/multithreading.xml/UseNotifyAllInsteadOfNotify"/>
+    <rule ref="category/java/bestpractices.xml/AvoidMessageDigestField"/>
+    <rule ref="category/java/bestpractices.xml/AvoidPrintStackTrace"/>
+    <rule ref="category/java/bestpractices.xml/AvoidReassigningCatchVariables"/>
+    <rule ref="category/java/bestpractices.xml/ConstantsInInterface"/>
+    <rule ref="category/java/bestpractices.xml/DoubleBraceInitialization"/>
+    <rule ref="category/java/bestpractices.xml/PrimitiveWrapperInstantiation"/>
+    <rule ref="category/java/bestpractices.xml/RelianceOnDefaultCharset"/>
+    <rule ref="category/java/bestpractices.xml/UseCollectionIsEmpty"/>
+    <rule ref="category/java/bestpractices.xml/UseStandardCharsets"/>
+    <rule ref="category/java/security.xml/InsecureCryptoIv"/>
+    <rule name="AlibabaExplicitThreadPool" language="java" class="net.sourceforge.pmd.lang.rule.xpath.XPathRule"
+          message="显式声明线程池大小、队列、线程名与拒绝策略，不使用隐藏资源策略的 Executors 工厂。">
+        <description>黄山版并发处理强制：线程池不得使用 Executors 创建。</description>
+        <priority>1</priority>
+        <properties><property name="xpath"><value><![CDATA[
+//MethodCall[
+pmd-java:matchesSig("java.util.concurrent.Executors#newFixedThreadPool(int)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newCachedThreadPool()") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newCachedThreadPool(java.util.concurrent.ThreadFactory)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newSingleThreadExecutor()") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newSingleThreadExecutor(java.util.concurrent.ThreadFactory)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newScheduledThreadPool(int)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newScheduledThreadPool(int,java.util.concurrent.ThreadFactory)") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newSingleThreadScheduledExecutor()") or
+pmd-java:matchesSig("java.util.concurrent.Executors#newSingleThreadScheduledExecutor(java.util.concurrent.ThreadFactory)")
+]
+        ]]></value></property></properties>
+    </rule>
+</ruleset>

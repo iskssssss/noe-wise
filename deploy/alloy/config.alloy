@@ -1,0 +1,57 @@
+// Grafana Alloy 配置 - 灵知 可观测性管道
+// 接收 OTLP 数据，转发至 Loki（日志）+ Prometheus（指标）
+
+logging {
+  level = "info"
+}
+
+// OTLP 接收器：同时支持 gRPC 和 HTTP 协议
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+  }
+}
+
+// 批量处理器：减少下游压力
+otelcol.processor.batch "default" {
+  output {
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    traces  = [otelcol.exporter.otlphttp.tempo.input]
+    metrics = [otelcol.exporter.prometheus.default.input]
+  }
+}
+
+// 日志导出至 Loki
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+  }
+}
+
+// 追踪导出（可选 Tempo/Jaeger）
+otelcol.exporter.otlphttp "tempo" {
+  client {
+    endpoint = "http://tempo:4318"
+  }
+}
+
+// Prometheus 指标导出
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}

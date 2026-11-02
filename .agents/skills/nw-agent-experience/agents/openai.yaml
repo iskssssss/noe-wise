@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 模型使用体验"
+  short_description: "改进模型实际可见的工具说明、参数、提示词与结果上下文"
+
+policy:
+  allow_implicit_invocation: true

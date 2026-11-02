@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.runtime.AgentRunBindingsMapper">
+  <sql id="columns">tenant_id,run_id,input_id,session_id,target_kind,target_id,end_user_id,requester_end_user_id,actor_agent_id,role,parent_run_id,scope_snapshot::text AS scope,frozen_member::text AS frozen_member</sql>
+  <select id="find" resultType="com.skillforge.institution.runtime.AgentRunBindingsMapper$Row">
+    SELECT <include refid="columns"/> FROM public.nw_runtime_agent_run_bindings WHERE tenant_id=#{tenant} AND run_id=#{runId}
+  </select>
+  <select id="findLatestPrimary" resultType="com.skillforge.institution.runtime.AgentRunBindingsMapper$Row">
+    SELECT <include refid="columns"/> FROM public.nw_runtime_agent_run_bindings
+    WHERE tenant_id=#{tenant} AND session_id=#{sessionId} AND target_kind=#{targetKind} AND target_id=#{targetId}
+      AND end_user_id=#{endUserId} AND role='PRIMARY' ORDER BY created_at DESC,run_id DESC LIMIT 1
+  </select>
+  <insert id="insert">
+    INSERT INTO public.nw_runtime_agent_run_bindings(tenant_id,run_id,input_id,session_id,target_kind,target_id,end_user_id,requester_end_user_id,actor_agent_id,role,parent_run_id,scope_snapshot,frozen_member)
+    VALUES(#{row.tenantId},#{row.runId},#{row.inputId},#{row.sessionId},#{row.targetKind},#{row.targetId},#{row.endUserId},#{row.requesterEndUserId},#{row.actorAgentId},#{row.role},#{row.parentRunId},#{row.scope}::jsonb,#{row.frozenMember}::jsonb)
+    ON CONFLICT(tenant_id,run_id) DO NOTHING
+  </insert>
+<select id="endUserAvailable" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_chat_sessions s JOIN nw_end_users u ON u.tenant_id=s.tenant_id AND u.id=s.end_user_id AND u.status='active' WHERE s.tenant_id=#{tenant} AND s.session_id=#{session} AND s.end_user_id=#{endUser})</select>
+<select id="channelTargetAvailable" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_channel_agent_bindings WHERE tenant_id=#{tenant} AND channel_id=#{channel} AND agent_id=#{agent})</select>
+<select id="serviceRequesterAvailable" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_service_principals WHERE tenant_id=#{tenant} AND principal_id=#{principal} AND integration_id=#{integration} AND credential_version=#{credentialVersion} AND status='active' AND scopes @&gt; '["sessions.write"]'::jsonb)</select>
+<select id="groupServiceRequesterAvailable" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_service_principals WHERE tenant_id=#{tenant} AND principal_id=#{principal} AND integration_id=#{integration} AND status='active' AND scopes @&gt; '["groups.triggers.write"]'::jsonb)</select>
+<sql id="groupActorAvailable">EXISTS(SELECT 1 FROM public.nw_group_bindings g
+ JOIN public.nw_tenants institution ON institution.id=g.tenant_id AND institution.status IN ('active','warning')
+ JOIN public.nw_integration_business_scopes scope ON scope.tenant_id=g.tenant_id AND scope.integration_id=g.integration_id AND scope.scope_id=g.business_scope_id AND scope.status='active'
+ WHERE g.tenant_id=#{tenant} AND g.id::text=#{group} AND g.integration_id=#{integration} AND g.status='active'
+ AND (#{agent,jdbcType=VARCHAR} IS NULL OR EXISTS(SELECT 1 FROM public.nw_group_service_agents service
+ JOIN public.nw_agents a ON a.tenant_id=service.tenant_id AND a.id=service.agent_id AND a.status='published'
+ WHERE service.tenant_id=g.tenant_id AND service.integration_id=g.integration_id AND service.group_binding_id=g.id AND service.agent_id::text=#{agent} AND service.status='active'
+ AND NOT EXISTS(SELECT 1 FROM public.nw_agent_deployments deployment WHERE deployment.tenant_id=a.tenant_id AND deployment.agent_id=a.id AND deployment.integration_id IS NOT NULL AND deployment.integration_id&lt;&gt;g.integration_id))))</sql>
+<select id="groupActorAvailable" resultType="boolean">SELECT <include refid="groupActorAvailable"/></select>
+<select id="groupRequesterAvailable" resultType="boolean">SELECT <include refid="groupActorAvailable"/> AND EXISTS(
+ SELECT 1 FROM public.nw_group_memberships member JOIN public.nw_end_users u ON u.tenant_id=member.tenant_id AND u.id=member.end_user_id AND u.status='active' AND u.external_integration_id=member.integration_id
+ WHERE member.tenant_id=#{tenant} AND member.integration_id=#{integration} AND member.group_binding_id::text=#{group} AND member.end_user_id=#{requester} AND member.status='active')</select>
+</mapper>

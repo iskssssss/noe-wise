@@ -1,0 +1,30 @@
+{
+  "ensure_key": "group-lifecycle-1:ensure",
+  "ensure": {
+    "namespace": "wecom",
+    "external_group_ref": "room-1",
+    "lifecycle_ref": "lifecycle-1",
+    "business_scope_id": "1001"
+  },
+  "members": [
+    {
+      "end_user_id": "2001",
+      "role": "manager",
+      "status": "active",
+      "expected_revision": 0,
+      "source_event_id": "membership:2001:1",
+      "source_revision": 1,
+      "idempotency_key": "group-lifecycle-1:member:2001:1"
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "3001",
+      "status": "active",
+      "expected_revision": 0,
+      "source_event_id": "service-agent:3001:1",
+      "source_revision": 1,
+      "idempotency_key": "group-lifecycle-1:agent:3001:1"
+    }
+  ]
+}

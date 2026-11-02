@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.runtime.identity.JdbcIdentityPolicyPort$Mapper">
+  <!-- 当前执行消费固定机构部署和原Run授权依据；无部署的独立Agent沿原Runtime授权。 -->
+  <sql id="directActorAvailable">
+    (NOT EXISTS(SELECT 1 FROM public.nw_agent_deployments deployment
+       WHERE deployment.tenant_id::text=${directTenant} AND deployment.agent_id::text=${directAgent})
+     OR EXISTS(SELECT 1 FROM public.nw_agent_deployments deployment
+       JOIN public.nw_tenants institution ON institution.id=deployment.tenant_id AND institution.status IN ('active','warning')
+       WHERE deployment.tenant_id::text=${directTenant} AND deployment.agent_id::text=${directAgent}
+         AND public.agent_grant_chain_available(deployment.grant_chain,deployment.tenant_id,deployment.definition_id,'execute')
+         AND (${directPrincipal} != 'SERVICE' OR ${directChannel}='chat'
+           OR deployment.integration_id=${directIntegration}
+           OR (${directTargetKind}='GROUP' AND deployment.integration_id IS NULL))))
+  </sql>
+  <!-- Session只承载稳定入口/范围；Run授权由boundRunActorAvailable校验精确冻结引用，不能把同Session旧Run混入。 -->
+  <sql id="directSessionAvailable">
+    NOT EXISTS (
+      SELECT 1 FROM public.nw_chat_sessions trusted_source
+      LEFT JOIN public.nw_tenants institution ON institution.id=trusted_source.tenant_id
+      LEFT JOIN public.nw_institution_integrations integration ON integration.tenant_id=trusted_source.tenant_id
+        AND integration.integration_id=trusted_source.integration_id
+      LEFT JOIN public.nw_integration_business_scopes business_scope ON business_scope.tenant_id=trusted_source.tenant_id
+        AND business_scope.integration_id=trusted_source.integration_id AND business_scope.scope_id=trusted_source.business_scope_id
+      WHERE trusted_source.tenant_id::text=${directTenant} AND trusted_source.session_id=${directSession}
+        AND (institution.status IS NULL OR institution.status NOT IN ('active','warning')
+          OR (trusted_source.integration_id IS NOT NULL AND integration.integration_id IS NULL)
+          OR (trusted_source.business_scope_id IS NOT NULL AND business_scope.status IS DISTINCT FROM 'active'))
+    )
+  </sql>
+  <sql id="directOwnerAvailable">
+    (${directPrincipal}='SYSTEM' OR <include refid="directSessionAvailable"/>)
+  </sql>
+  <!-- 群归属无EndUser；主Run和派生Run均指回同一原群生命周期。 -->
+  <sql id="groupOwnerAvailable">
+    EXISTS(SELECT 1 FROM public.nw_group_bindings g
+      JOIN public.nw_tenants institution ON institution.id=g.tenant_id AND institution.status IN ('active','warning')
+      JOIN public.nw_integration_business_scopes scope ON scope.tenant_id=g.tenant_id AND scope.integration_id=g.integration_id
+        AND scope.scope_id=g.business_scope_id AND scope.status='active'
+      WHERE g.tenant_id::text=${groupTenant} AND g.id::text=${groupId} AND g.status='active'
+        AND (${groupPrincipal}='SYSTEM' OR g.integration_id=${groupIntegration})
+        AND (g.session_id=${groupSession} OR EXISTS(SELECT 1 FROM public.nw_runtime_agent_run_bindings child
+          WHERE child.tenant_id=${groupTenant} AND child.session_id=${groupSession} AND child.target_kind='GROUP'
+            AND child.target_id=g.id::text AND child.role='DELEGATE'
+            AND child.scope_snapshot-&gt;'origin'-&gt;'session_ref'-&gt;&gt;'session_id'=g.session_id)))
+  </sql>
+  <select id="bindTenant" resultType="string" flushCache="true" useCache="false">
+    SELECT set_config('app.tenant_id', #{tenant}, true)
+  </select>
+  <select id="now" resultType="java.time.Instant" flushCache="true" useCache="false">
+    SELECT clock_timestamp()
+  </select>
+  <select id="resolveTenant" resultType="string">
+    SELECT public.resolve_runtime_authentication_tenant(#{reference})
+  </select>
+  <select id="authentication" resultType="com.skillforge.core.foundation.integration.runtime.identity.JdbcIdentityPolicyPort$Fact">
+    SELECT authentication_ref, tenant_id, principal_kind, principal_id, integration_id, credential_version, session_id,
+               end_user_id, channel, source, expires_at, active, target_kind, target_id FROM public.nw_runtime_authentication_facts WHERE authentication_ref = #{reference}
+  </select>
+  <select id="verification" resultType="com.skillforge.core.foundation.integration.runtime.identity.JdbcIdentityPolicyPort$Fact">
+    SELECT a.authentication_ref, a.tenant_id, a.principal_kind, a.principal_id, a.integration_id, a.credential_version,
+               a.session_id, a.end_user_id, a.channel, a.source, a.expires_at, a.active, a.target_kind, a.target_id, v.identity_snapshot FROM public.nw_runtime_identity_verifications v
+    JOIN public.nw_runtime_authentication_facts a
+      ON a.tenant_id = v.tenant_id AND a.authentication_ref = v.authentication_ref
+    WHERE v.verification_ref = #{reference}
+  </select>
+  <select id="authorizationCurrent" resultType="com.skillforge.core.foundation.integration.runtime.identity.JdbcIdentityPolicyPort$Fact" useCache="false" flushCache="true">
+    /* agent_runtime_authorization_current */
+    WITH runtime_tenant AS MATERIALIZED (
+      SELECT #{tenant}::text AS tenant_id
+      WHERE COALESCE(current_setting('app.tenant_id',true),'')=#{tenant}
+    )
+    SELECT authorization_current.authentication_ref, authorization_current.tenant_id,
+               authorization_current.principal_kind, authorization_current.principal_id,
+               authorization_current.integration_id, authorization_current.credential_version,
+               authorization_current.target_kind, authorization_current.target_id, authorization_current.session_id,
+               authorization_current.end_user_id, authorization_current.channel, authorization_current.source,
+               authorization_current.expires_at, authorization_current.active, authorization_current.identity_snapshot,
+               authorization_current.current_time, authorization_current.current_service_status,
+               authorization_current.current_service_integration_id,
+               authorization_current.current_service_credential_version, authorization_current.current_service_scopes,
+               authorization_current.owner_available, authorization_current.session_scope_allowed
+    FROM runtime_tenant
+    CROSS JOIN LATERAL (
+      SELECT a.authentication_ref, a.tenant_id, a.principal_kind, a.principal_id, a.integration_id, a.credential_version,
+               a.agent_id, a.session_id, a.end_user_id, a.channel, a.source, a.expires_at, a.active, a.recorded_at,
+               a.target_kind, a.target_id, v.identity_snapshot,
+        clock_timestamp() AS current_time,
+        sp.status AS current_service_status,
+        sp.integration_id AS current_service_integration_id,
+        sp.credential_version AS current_service_credential_version,
+        COALESCE((SELECT string_agg(
+          replace(encode(convert_to(value, 'UTF8'), 'base64'), E'\n', ''), '.' ORDER BY value)
+          FROM jsonb_array_elements_text(sp.scopes) AS service_scope(value)), '') AS current_service_scopes,
+        <choose>
+          <when test="targetKind == 'GROUP'">
+            (a.target_kind='GROUP' AND a.end_user_id IS NULL AND <include refid="groupOwnerAvailable">
+              <property name="groupTenant" value="a.tenant_id"/><property name="groupId" value="a.target_id"/>
+              <property name="groupPrincipal" value="a.principal_kind"/><property name="groupIntegration" value="a.integration_id"/>
+              <property name="groupSession" value="a.session_id"/>
+            </include>)
+          </when>
+          <otherwise>
+        (((((a.target_kind = 'AGENT' AND EXISTS(SELECT 1 FROM public.nw_agents
+            WHERE tenant_id::text = a.tenant_id AND id::text = a.target_id AND status = 'published'))
+          OR (a.target_kind = 'TEAM' AND EXISTS(SELECT 1 FROM public.nw_agent_teams t
+            JOIN public.nw_agent_team_versions v ON v.tenant_id = t.tenant_id
+              AND v.team_id = t.id AND v.revision = t.published_revision
+            WHERE t.tenant_id::text = a.tenant_id AND t.id = a.target_id
+              AND t.status = 'published')))
+          AND EXISTS(SELECT 1 FROM public.nw_end_users
+            WHERE tenant_id::text = a.tenant_id AND id::text = CAST(a.end_user_id AS text) AND status = 'active'))
+          OR EXISTS(SELECT 1 FROM public.nw_runtime_host_owners h
+            WHERE a.target_kind = 'AGENT' AND h.tenant_id=a.tenant_id
+              AND h.agent_id=a.target_id AND h.session_id=a.session_id
+              AND h.end_user_id=a.end_user_id
+              AND (a.principal_kind='SYSTEM' OR h.integration_id=a.integration_id)))
+          AND NOT EXISTS(SELECT 1 FROM public.agent_runtime_session_owners
+            WHERE tenant_id = a.tenant_id AND target_kind = a.target_kind
+              AND target_id = a.target_id AND session_id = a.session_id
+              AND end_user_id IS DISTINCT FROM a.end_user_id)
+          AND <include refid="directOwnerAvailable">
+            <property name="directTenant" value="a.tenant_id"/><property name="directTargetKind" value="a.target_kind"/>
+            <property name="directTargetId" value="a.target_id"/><property name="directPrincipal" value="a.principal_kind"/>
+            <property name="directChannel" value="a.channel"/><property name="directIntegration" value="a.integration_id"/>
+            <property name="directSession" value="a.session_id"/>
+          </include>)
+          </otherwise>
+        </choose> AS owner_available,
+        NOT EXISTS(SELECT 1 FROM public.agent_runtime_sessions
+          WHERE tenant_id = a.tenant_id AND target_kind = a.target_kind
+            AND target_id = a.target_id AND session_id = a.session_id
+            AND (end_user_id IS DISTINCT FROM a.end_user_id
+              OR (a.principal_kind = 'SERVICE' AND scope_key != 'open-platform:' || a.integration_id)))
+          AS session_scope_allowed
+      FROM public.nw_runtime_identity_verifications v
+      JOIN public.nw_runtime_authentication_facts a
+        ON a.tenant_id = v.tenant_id AND a.authentication_ref = v.authentication_ref
+      LEFT JOIN public.nw_service_principals sp
+        ON a.principal_kind = 'SERVICE'
+        AND sp.tenant_id::text = a.tenant_id AND sp.principal_id = a.principal_id
+      WHERE v.tenant_id = runtime_tenant.tenant_id
+        AND v.verification_ref = #{reference}
+        AND a.target_kind = #{targetKind}
+      OFFSET 0
+    ) authorization_current
+  </select>
+  <select id="serviceCurrent" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM public.nw_service_principals
+      WHERE tenant_id::text = #{tenantId} AND principal_id = #{principalId}
+        AND integration_id = #{integrationId} AND credential_version = #{credentialVersion} AND status = 'active')
+  </select>
+  <select id="serviceScopes" resultType="string">
+    SELECT jsonb_array_elements_text(scopes) FROM public.nw_service_principals
+      WHERE tenant_id::text = #{tenantId} AND principal_id = #{principalId}
+        AND integration_id = #{integrationId} AND credential_version = #{credentialVersion} AND status = 'active'
+  </select>
+  <select id="ownerAvailable" resultType="boolean">
+    SELECT <choose>
+      <when test="targetKind == 'GROUP'">
+        (#{endUserId,jdbcType=BIGINT} IS NULL AND <include refid="groupOwnerAvailable">
+          <property name="groupTenant" value="#{tenantId}"/><property name="groupId" value="#{targetId}"/>
+          <property name="groupPrincipal" value="#{principalKind}"/><property name="groupIntegration" value="#{integrationId}"/>
+          <property name="groupSession" value="#{sessionId}"/>
+        </include>)
+      </when>
+      <otherwise>
+    (((((#{targetKind} = 'AGENT') AND EXISTS(SELECT 1 FROM public.nw_agents
+        WHERE tenant_id::text = #{tenantId} AND id::text = #{targetId} AND status = 'published'))
+      OR ((#{targetKind} = 'TEAM') AND EXISTS(SELECT 1 FROM public.nw_agent_teams t
+        JOIN public.nw_agent_team_versions v ON v.tenant_id = t.tenant_id
+          AND v.team_id = t.id AND v.revision = t.published_revision
+        WHERE t.tenant_id::text = #{tenantId} AND t.id = #{targetId} AND t.status = 'published')))
+      AND EXISTS(SELECT 1 FROM public.nw_end_users
+        WHERE tenant_id::text = #{tenantId} AND id::text = CAST(#{endUserId} AS text) AND status = 'active'))
+      OR EXISTS(SELECT 1 FROM public.nw_runtime_host_owners h
+        WHERE #{targetKind} = 'AGENT' AND h.tenant_id=#{tenantId}
+          AND h.agent_id=#{targetId} AND h.session_id=#{sessionId}
+          AND h.end_user_id=#{endUserId}
+          AND (#{principalKind}='SYSTEM' OR h.integration_id=#{integrationId})))
+      AND NOT EXISTS(SELECT 1 FROM public.agent_runtime_session_owners
+        WHERE tenant_id = #{tenantId} AND target_kind = #{targetKind}
+          AND target_id = #{targetId} AND session_id = #{sessionId}
+          AND end_user_id IS DISTINCT FROM #{endUserId})
+      AND <include refid="directOwnerAvailable">
+        <property name="directTenant" value="#{tenantId}"/><property name="directTargetKind" value="#{targetKind}"/>
+        <property name="directTargetId" value="#{targetId}"/><property name="directPrincipal" value="#{principalKind}"/>
+        <property name="directChannel" value="#{channel}"/><property name="directIntegration" value="#{integrationId}"/>
+        <property name="directSession" value="#{sessionId}"/>
+      </include>
+      </otherwise>
+    </choose>
+  </select>
+  <!-- 检查实际冻结 Run 的 actor，不使用 Team 的新发布成员集合改变旧 Run 范围。
+       非宿主 Run 没有宿主绑定，继续由原 Runtime 权限契约裁定。 -->
+  <select id="boundRunActorAvailable" resultType="boolean">
+    SELECT ((#{fact.targetKind}&lt;&gt;'GROUP' AND NOT EXISTS (SELECT 1 FROM public.nw_runtime_agent_run_bindings
+      WHERE tenant_id=#{fact.tenantId} AND run_id=#{runId})
+      AND NOT EXISTS(SELECT 1 FROM public.nw_agent_deployments deployment
+        WHERE deployment.tenant_id::text=#{fact.tenantId} AND deployment.agent_id::text=#{agentId}))
+    OR EXISTS (SELECT 1 FROM public.nw_runtime_agent_run_bindings binding
+      WHERE binding.tenant_id=#{fact.tenantId} AND binding.run_id=#{runId}
+        AND binding.session_id=#{fact.sessionId} AND binding.target_kind=#{fact.targetKind}
+        AND binding.target_id=#{fact.targetId} AND binding.end_user_id IS NOT DISTINCT FROM #{fact.endUserId,jdbcType=BIGINT}
+        AND binding.actor_agent_id=#{agentId}
+        <if test="fact.targetKind == 'GROUP'">
+        AND EXISTS(
+          SELECT 1 FROM public.nw_group_bindings g
+          JOIN public.nw_group_service_agents service ON service.tenant_id=g.tenant_id AND service.integration_id=g.integration_id AND service.group_binding_id=g.id AND service.agent_id::text=#{agentId} AND service.status='active'
+          JOIN public.nw_agents actual ON actual.tenant_id=service.tenant_id AND actual.id=service.agent_id AND actual.status='published'
+          JOIN public.nw_group_memberships original_requester ON original_requester.tenant_id=g.tenant_id AND original_requester.integration_id=g.integration_id
+            AND original_requester.group_binding_id=g.id AND original_requester.end_user_id=binding.requester_end_user_id AND original_requester.status='active'
+          JOIN public.nw_end_users requester_user ON requester_user.tenant_id=original_requester.tenant_id AND requester_user.id=original_requester.end_user_id
+            AND requester_user.external_integration_id=g.integration_id AND requester_user.status='active'
+          JOIN public.nw_group_front_slots slot ON slot.tenant_id=g.tenant_id AND slot.integration_id=g.integration_id AND slot.group_binding_id=g.id
+          WHERE g.tenant_id::text=binding.tenant_id AND g.id::text=binding.target_id AND g.status='active'
+            AND (#{fact.principalKind}='SYSTEM' OR g.integration_id=#{fact.integrationId})
+            <if test="requireActiveSlot">AND slot.active_run_id=binding.scope_snapshot-&gt;'primary_run'-&gt;&gt;'run_id'</if>
+            AND NOT EXISTS(SELECT 1 FROM public.nw_agent_deployments fixed WHERE fixed.tenant_id=g.tenant_id AND fixed.agent_id=actual.id AND fixed.integration_id IS NOT NULL AND fixed.integration_id&lt;&gt;g.integration_id)
+            AND ((#{fact.source} NOT LIKE 'group-respond:%' AND #{fact.source} NOT LIKE 'group-control:%') OR EXISTS(
+              SELECT 1 FROM public.nw_group_memberships responder JOIN public.nw_end_users responder_user
+                ON responder_user.tenant_id=responder.tenant_id AND responder_user.id=responder.end_user_id AND responder_user.status='active' AND responder_user.external_integration_id=responder.integration_id
+              WHERE responder.tenant_id=g.tenant_id AND responder.integration_id=g.integration_id AND responder.group_binding_id=g.id AND responder.status='active'
+                AND responder.end_user_id::text=substring(#{fact.source} from 15)
+                AND (responder.role='manager' OR responder.end_user_id=binding.requester_end_user_id))))
+        </if>
+        AND NOT EXISTS(SELECT 1 FROM public.nw_integration_run_sources source
+          LEFT JOIN public.nw_tenants institution ON institution.id=source.tenant_id
+          LEFT JOIN public.nw_institution_integrations integration ON integration.tenant_id=source.tenant_id AND integration.integration_id=source.integration_id
+          LEFT JOIN public.nw_integration_business_scopes business_scope ON business_scope.tenant_id=source.tenant_id
+            AND business_scope.integration_id=source.integration_id AND business_scope.scope_id=source.business_scope_id
+          WHERE source.tenant_id::text=#{fact.tenantId} AND source.run_id=#{runId}
+            AND (institution.status IS NULL OR institution.status NOT IN ('active','warning')
+              OR (source.integration_id IS NOT NULL AND integration.integration_id IS NULL)
+              OR (source.business_scope_id IS NOT NULL AND business_scope.status IS DISTINCT FROM 'active')))
+        AND (
+          (NOT COALESCE(jsonb_exists(binding.scope_snapshot-&gt;'authorizations',#{agentId}),false)
+            AND NOT EXISTS(SELECT 1 FROM public.nw_agent_deployments deployment
+              WHERE deployment.tenant_id::text=#{fact.tenantId} AND deployment.agent_id::text=#{agentId})
+            AND NOT EXISTS(SELECT 1 FROM public.nw_integration_run_sources source
+              WHERE source.tenant_id::text=#{fact.tenantId} AND source.run_id=#{runId} AND source.grant_id IS NOT NULL))
+          OR (COALESCE(jsonb_exists(binding.scope_snapshot-&gt;'authorizations',#{agentId}),false)
+            AND COALESCE(public.agent_grant_chain_available(
+              binding.scope_snapshot-&gt;'authorizations'-&gt;#{agentId}-&gt;'grant_chain',
+              binding.tenant_id::bigint,
+              (binding.scope_snapshot-&gt;'authorizations'-&gt;#{agentId}-&gt;'grant_chain'-&gt;&gt;'definition_id')::bigint,
+              'execute'),false)))))
+      AND <include refid="directSessionAvailable">
+        <property name="directTenant" value="#{fact.tenantId}"/>
+        <property name="directSession" value="#{fact.sessionId}"/>
+      </include>
+  </select>
+  <!-- 只有已持久采纳的准确回复输入可以读取原回执，不据此获得新的执行资格。 -->
+  <select id="acceptedResponseExists" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS(SELECT 1 FROM public.agent_runtime_execution_waits
+      WHERE tenant_id=#{tenant} AND run_id=#{runId} AND input_id=#{input})
+  </select>
+  <!-- 显式取消只要求当前操作者治理资格；原请求者退出或Agent撤权不能阻止已授权收尾。 -->
+  <select id="groupControllerAvailable" resultType="boolean" useCache="false" flushCache="true">
+    SELECT EXISTS(SELECT 1 FROM (
+      SELECT g.id FROM public.nw_runtime_agent_run_bindings binding
+      JOIN public.nw_group_bindings g ON g.tenant_id::text=binding.tenant_id AND g.id::text=binding.target_id
+      JOIN public.nw_group_memberships member ON member.tenant_id=g.tenant_id AND member.integration_id=g.integration_id AND member.group_binding_id=g.id
+      JOIN public.nw_end_users usr ON usr.tenant_id=member.tenant_id AND usr.id=member.end_user_id AND usr.external_integration_id=member.integration_id
+      WHERE binding.tenant_id=#{fact.tenantId} AND binding.run_id=#{runId} AND binding.target_kind='GROUP'
+        AND binding.target_id=#{fact.targetId} AND binding.session_id=#{fact.sessionId} AND binding.end_user_id IS NULL
+        AND g.integration_id=#{fact.integrationId} AND g.status='active' AND member.status='active' AND usr.status='active'
+        AND member.end_user_id::text=substring(#{fact.source} from 15)
+        AND (member.role='manager' OR member.end_user_id=binding.requester_end_user_id)
+      FOR SHARE OF g,member,usr) current_operator)
+  </select>
+  <sql id="actorMembership">
+    (EXISTS(SELECT 1 FROM public.nw_agents a
+      WHERE a.tenant_id::text = #{fact.tenantId} AND a.id::text = #{agentId}
+        AND a.status = 'published'
+        AND ((#{fact.targetKind} = 'AGENT' AND #{fact.targetId} = #{agentId})
+          OR (#{fact.targetKind} = 'TEAM' AND EXISTS(
+            SELECT 1 FROM public.nw_agent_teams t
+            JOIN public.nw_agent_team_versions v ON v.tenant_id = t.tenant_id
+              AND v.team_id = t.id AND v.revision = t.published_revision
+            CROSS JOIN LATERAL jsonb_array_elements(v.definition->'team'->'members') member
+            WHERE t.tenant_id::text = #{fact.tenantId} AND t.id = #{fact.targetId}
+              AND t.status = 'published' AND member->>'agent_id' = #{agentId}))))
+      <if test="fact.targetKind == 'GROUP'">
+      OR (#{fact.targetKind}='GROUP' AND EXISTS(SELECT 1 FROM public.nw_group_service_agents service
+        JOIN public.nw_group_bindings g ON g.tenant_id=service.tenant_id AND g.integration_id=service.integration_id AND g.id=service.group_binding_id
+        JOIN public.nw_agents actual ON actual.tenant_id=service.tenant_id AND actual.id=service.agent_id AND actual.status='published'
+        WHERE service.tenant_id::text=#{fact.tenantId} AND service.group_binding_id::text=#{fact.targetId}
+          AND service.agent_id::text=#{agentId} AND service.status='active' AND g.status='active'
+          AND (#{fact.principalKind}='SYSTEM' OR service.integration_id=#{fact.integrationId})))
+      </if>
+      OR EXISTS(SELECT 1 FROM public.nw_runtime_host_owners h
+        WHERE #{fact.targetKind} = 'AGENT' AND #{fact.targetId} = #{agentId}
+          AND h.tenant_id = #{fact.tenantId} AND h.agent_id = #{agentId}
+          AND h.session_id = #{fact.sessionId} AND h.end_user_id = #{fact.endUserId}
+          AND (#{fact.principalKind} = 'SYSTEM'
+            OR (#{fact.principalKind} = 'SERVICE' AND h.integration_id = #{fact.integrationId}))))
+  </sql>
+  <!-- 读取/治理只检当前主体和精确actor归属；新受理另核当前部署链。 -->
+  <select id="agentAllowed" resultType="boolean">
+    SELECT <include refid="actorMembership"/>
+  </select>
+  <select id="agentAdmissionAllowed" resultType="boolean">
+    SELECT <include refid="actorMembership"/>
+      AND <include refid="directActorAvailable">
+        <property name="directTenant" value="#{fact.tenantId}"/><property name="directAgent" value="#{agentId}"/>
+        <property name="directTargetKind" value="#{fact.targetKind}"/><property name="directPrincipal" value="#{fact.principalKind}"/><property name="directChannel" value="#{fact.channel}"/>
+        <property name="directIntegration" value="#{fact.integrationId}"/>
+      </include>
+  </select>
+  <select id="sessionScopeAllowed" resultType="boolean">
+    SELECT NOT EXISTS(SELECT 1 FROM public.agent_runtime_sessions
+      WHERE tenant_id = #{tenantId} AND target_kind = #{targetKind}
+        AND target_id = #{targetId} AND session_id = #{sessionId}
+        AND (end_user_id IS DISTINCT FROM #{endUserId}
+          OR (#{principalKind} = 'SERVICE' AND scope_key != 'open-platform:' || #{integrationId})))
+  </select>
+  <insert id="insertAuthentication">
+    INSERT INTO public.nw_runtime_authentication_facts
+      (authentication_ref, tenant_id, principal_kind, principal_id, integration_id, credential_version,
+       target_kind, target_id, session_id, end_user_id, channel, source, expires_at, active)
+    VALUES (#{authenticationRef}, #{tenantId}, #{principalKind}, #{principalId}, #{integrationId}, #{credentialVersion},
+       #{targetKind}, #{targetId}, #{sessionId}, #{endUserId}, #{channel}, #{source}, #{expiresAt}, true)
+  </insert>
+  <update id="revoke">
+    UPDATE public.nw_runtime_authentication_facts SET active = false
+      WHERE authentication_ref = #{reference} AND active
+  </update>
+  <insert id="insertVerification">
+    INSERT INTO public.nw_runtime_identity_verifications
+      (verification_ref, authentication_ref, tenant_id, scopes_snapshot, identity_snapshot)
+    VALUES (#{reference}, #{authentication}, #{tenant}, #{scopes}, #{snapshot})
+  </insert>
+  <insert id="audit">
+    INSERT INTO public.nw_runtime_security_audits
+      (audit_ref, verified_tenant_id, operation, result, policy_revision, subject_digest, trace_digest)
+    VALUES (#{reference}, #{tenant}, #{operation}, #{result}, #{revision}, #{subjectDigest}, #{traceDigest})
+  </insert>
+</mapper>
+

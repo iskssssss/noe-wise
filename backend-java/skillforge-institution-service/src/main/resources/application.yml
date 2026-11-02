@@ -1,0 +1,125 @@
+server:
+  port: ${INSTITUTION_SERVICE_PORT:8000}
+
+spring:
+  application:
+    name: skillforge-institution-service
+  jackson:
+    time-zone: Asia/Shanghai
+    property-naming-strategy: SNAKE_CASE
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/skillforge}
+    username: ${SPRING_DATASOURCE_USERNAME:skillforge}
+    password: ${SPRING_DATASOURCE_PASSWORD:skillforge_dev}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # 50 个会话驱动包含独立 IAM/Runtime 短事务，保留额外连接避免嵌套领取互相等待。
+      maximum-pool-size: ${INSTITUTION_DB_POOL_SIZE:64}
+      minimum-idle: ${INSTITUTION_DB_POOL_MIN_IDLE:10}
+      connection-init-sql: "SET TIME ZONE 'Asia/Shanghai'"
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:52428800B}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:214958080B}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:false}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+      config:
+        enabled: ${NACOS_CONFIG_ENABLED:false}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+mybatis-plus:
+  # JsonbTypeHandler 不参与全局扫描：实体字段均显式 @TableField(typeHandler)，
+  # 全局注册会把 JSONB 处理器误用于 resultType=map 的文本列
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    local-cache-scope: STATEMENT
+  global-config:
+    banner: false
+
+sa-token:
+  token-name: Authorization
+  token-prefix: Bearer
+  timeout: -1
+  is-concurrent: true
+  jwt-secret-key: ${SECRET_KEY}
+
+agent-runtime:
+  jdbc-observation-enabled: ${AGENT_RUNTIME_JDBC_OBSERVATION_ENABLED:false}
+  worker-lease-duration: ${AGENT_RUNTIME_WORKER_LEASE_DURATION:30s}
+  workers:
+    auto-startup: true
+
+skillforge:
+  http:
+    # 认证前非 multipart 原始正文硬限，默认 8MiB；独立于文件上传预算。
+    max-cached-body-size: ${HTTP_MAX_CACHED_BODY_SIZE:8MB}
+    max-cached-binary-body-size: 50MB
+  code-execution:
+    endpoint: ${SANDBOX_ENDPOINT:}
+    service-token: ${SANDBOX_SERVICE_TOKEN:}
+    workflow-python-environment-version: ${SANDBOX_WORKFLOW_PYTHON_ENVIRONMENT_VERSION:workflow-python-v1}
+    workflow-node-environment-version: ${SANDBOX_WORKFLOW_NODE_ENVIRONMENT_VERSION:workflow-node-v1}
+    artifact-root: ${ARTIFACT_ROOT:./data/artifacts}
+    ticket-key: ${ARTIFACT_TICKET_KEY:}
+    platform-origin: ${PLATFORM_ORIGIN:}
+    download-origin: ${ARTIFACT_DOWNLOAD_ORIGIN:}
+    preview-frame-origins: ${ARTIFACT_PREVIEW_FRAME_ORIGINS:}
+    preview-origin: ${ARTIFACT_PREVIEW_ORIGIN:}
+    preview-port: ${ARTIFACT_PREVIEW_PORT:0}
+  agent-runtime:
+    callback-payload-schema-ids:
+      - application/json
+      - skillforge.host.callback.result.v1
+      - callback.v1
+      - skillforge.runtime.workflow-async-response.v1
+  secret-key: ${SECRET_KEY}
+  secret-key-decryption-keys: ${SECRET_KEY_DECRYPTION_KEYS:}
+  jwt-issuer: skillforge
+  jwt-audience: skillforge-api
+  management-jwt-issuer: skillforge-platform
+  management-jwt-audience: skillforge-platform-api
+  management-jwt-secret-key: ${PLATFORM_SECRET_KEY}
+  access-token-expire-minutes: ${ACCESS_TOKEN_EXPIRE_MINUTES:60}
+  refresh-token-expire-days: ${REFRESH_TOKEN_EXPIRE_DAYS:14}
+  debug: ${SKILLFORGE_DEBUG:true}
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  structured:
+    format:
+      console: logstash
+      file: logstash
+  level:
+    org.springframework.jdbc: INFO
+    org.springframework.jdbc.core.JdbcTemplate: INFO

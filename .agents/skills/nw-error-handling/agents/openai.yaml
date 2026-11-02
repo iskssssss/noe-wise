@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 错误处理与恢复"
+  short_description: "明确失败后的状态、副作用和恢复责任，约束降级与安全重试"
+
+policy:
+  allow_implicit_invocation: true

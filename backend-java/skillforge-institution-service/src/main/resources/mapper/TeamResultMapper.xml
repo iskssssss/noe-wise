@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.team.TeamResultMapper">
+<select id="lock" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended(#{key},0))</select>
+<select id="workStatus" resultType="string">SELECT w.status FROM agent_runtime_dag_works w
+                  JOIN agent_runtime_dag_admissions a
+                    ON a.tenant_id=w.tenant_id AND a.session_id=w.session_id
+                   AND a.root_input_id=w.root_input_id
+                 WHERE w.tenant_id=#{tenant} AND w.session_id=#{session} AND w.root_input_id=#{root}
+                   AND a.task_id=#{task} AND a.run_id=#{run} AND a.agent_id=#{agent}
+                 FOR UPDATE OF w</select>
+<insert id="insert">INSERT INTO agent_runtime_team_task_results
+                    (tenant_id,session_id,root_input_id,task_id,run_id,output_name,result_id,schema_id,
+                     kind,status,payload,payload_sha256,command_sha256,source_event_ref,invocation_id,attempt_id,
+                     authorization_summary)
+                    VALUES(#{tenant},#{session},#{root},#{task},#{run},#{output},#{result},#{schema},#{kind},#{status},#{payload}::jsonb,#{payloadSha},#{commandSha},#{source},#{invocation},#{attempt},#{authorization}::jsonb)</insert>
+<select id="result" resultType="com.skillforge.institution.team.TeamResultMapper$Row">SELECT result_id,task_id,run_id,output_name,payload::text,payload_sha256,command_sha256,
+                       invocation_id,attempt_id,created_at
+                  FROM agent_runtime_team_task_results
+                 WHERE tenant_id=#{tenant} AND session_id=#{session} AND root_input_id=#{root} AND result_id=#{result}</select>
+<select id="invocation" resultType="com.skillforge.institution.team.TeamResultMapper$Row">SELECT result_id,task_id,run_id,output_name,payload::text,payload_sha256,command_sha256,
+                       invocation_id,attempt_id,created_at
+                  FROM agent_runtime_team_task_results
+                 WHERE tenant_id=#{tenant} AND invocation_id=#{invocation} ORDER BY output_name,result_id</select>
+<select id="rows" resultType="com.skillforge.institution.team.TeamResultMapper$Row">SELECT payload::text AS payload,payload_sha256,command_sha256,run_id,attempt_id,created_at FROM agent_runtime_team_task_results WHERE tenant_id=#{tenant} AND session_id=#{session} AND root_input_id=#{root}<if test="task != null"> AND task_id=#{task}</if><if test="run != null"> AND run_id=#{run}</if> ORDER BY created_at,result_id</select>
+</mapper>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.workflow.mapper.WorkflowInstallationMapper">
+  <select id="target" resultType="com.skillforge.core.workflow.mapper.WorkflowInstallationMapper$PublishedTarget">
+    SELECT v.id AS definition_id,p.definition_id AS capability_id,p.id AS capability_version_id,
+      (p.descriptor->>'timeout_ms')::bigint AS timeout_ms
+    FROM nw_workflow_installation_revisions r
+    JOIN nw_workflow_instances i ON i.tenant_id=r.tenant_id AND i.id=r.instance_id
+    JOIN nw_workflow_definition_versions anchor ON anchor.tenant_id=r.tenant_id AND anchor.id=r.definition_version_id
+    JOIN nw_workflow_definition_versions v ON v.tenant_id=r.tenant_id AND v.container_id=anchor.container_id AND v.id=#{definition}
+    JOIN nw_capability_versions p ON p.tenant_id=v.tenant_id AND p.id=v.capability_version_id
+    WHERE r.tenant_id=#{tenant} AND r.instance_id=#{instance} AND r.installation_revision=#{revision}
+      AND i.status='published' AND p.status='PUBLISHED' AND p.capability_type='WORKFLOW'
+  </select>
+  <select id="currentTarget" resultType="com.skillforge.core.workflow.mapper.WorkflowInstallationMapper$CurrentTarget">
+    SELECT v.id AS definition_id,p.definition_id AS capability_id,p.id AS capability_version_id,
+      (p.descriptor->>'timeout_ms')::bigint AS timeout_ms,r.installation_revision,c.workflow_id
+    FROM nw_workflow_instances i
+    JOIN nw_workflow_installation_revisions r ON r.tenant_id=i.tenant_id AND r.instance_id=i.id AND r.installation_revision=i.installation_revision
+    JOIN nw_workflow_definition_versions anchor ON anchor.tenant_id=r.tenant_id AND anchor.id=r.definition_version_id
+    JOIN nw_workflow_containers c ON c.tenant_id=anchor.tenant_id AND c.id=anchor.container_id
+    JOIN nw_workflow_definition_versions v ON v.tenant_id=c.tenant_id AND v.container_id=c.id AND v.id=c.active_definition_version_id
+    JOIN nw_capability_versions p ON p.tenant_id=v.tenant_id AND p.id=v.capability_version_id
+    WHERE i.tenant_id=#{tenant} AND i.id=#{instance} AND i.status='published' AND c.status IN ('draft','published')
+      AND p.status='PUBLISHED' AND p.capability_type='WORKFLOW'
+  </select>
+  <resultMap id="revision" type="com.skillforge.core.workflow.model.WorkflowInstallationDO">
+    <result property="config" column="config" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    <result property="bindings" column="bindings" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+  </resultMap>
+  <select id="lock" resultType="string">
+    SELECT pg_advisory_xact_lock(hashtextextended('workflow-install:' || #{tenant}::text || ':' || #{workflow},0))::text
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_workflow_installation_revisions(tenant_id,instance_id,installation_revision,definition_version_id,config,custom_prompt,bindings,created_at)
+    VALUES(#{tenantId},#{instanceId},#{installationRevision},#{definitionVersionId},
+      #{config,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},#{customPrompt},
+      #{bindings,typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},#{createdAt})
+  </insert>
+  <select id="find" resultMap="revision">
+    SELECT tenant_id, instance_id, installation_revision, definition_version_id, config, custom_prompt, bindings, created_at FROM nw_workflow_installation_revisions WHERE tenant_id=#{tenant} AND instance_id=#{instance} AND installation_revision=#{revision}
+  </select>
+  <resultMap id="builderRead" type="com.skillforge.core.workflow.mapper.WorkflowInstallationMapper$BuilderRead">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+      <arg column="instance_id" javaType="java.lang.Long"/>
+      <arg column="installation_revision" javaType="java.lang.Long"/>
+      <arg column="definition_version_id" javaType="java.lang.Long"/>
+      <arg column="config" javaType="java.util.Map" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+      <arg column="custom_prompt" javaType="java.lang.String"/>
+      <arg column="bound_definition_version_id" javaType="java.lang.Long"/>
+      <arg column="capability_version_id" javaType="java.lang.Long"/>
+      <arg column="definition_present" javaType="_boolean"/>
+      <arg column="container_id" javaType="java.lang.Long"/>
+      <arg column="workflow_id" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+  <select id="findBuilderReads" resultMap="builderRead">
+    SELECT r.tenant_id,r.instance_id,r.installation_revision,r.definition_version_id,r.config,r.custom_prompt,
+      v.id AS bound_definition_version_id,v.capability_version_id,
+      (v.definition IS NOT NULL AND jsonb_typeof(v.definition) != 'null') AS definition_present,
+      c.id AS container_id,c.workflow_id
+    FROM nw_workflow_installation_revisions r
+    LEFT JOIN nw_workflow_definition_versions anchor ON anchor.tenant_id=r.tenant_id AND anchor.id=r.definition_version_id
+    LEFT JOIN nw_workflow_containers c ON c.tenant_id=anchor.tenant_id AND c.id=anchor.container_id
+    LEFT JOIN nw_workflow_definition_versions v ON v.tenant_id=c.tenant_id AND v.container_id=c.id AND v.id=c.active_definition_version_id
+    WHERE r.tenant_id=#{tenant}
+    <choose>
+      <when test="identities != null and !identities.isEmpty()">
+        AND <foreach collection="identities" item="identity" open="(" close=")" separator=" OR ">
+          (r.instance_id=#{identity.instanceId} AND r.installation_revision=#{identity.revision})
+        </foreach>
+      </when>
+      <otherwise>AND FALSE</otherwise>
+    </choose>
+  </select>
+  <update id="activate">
+    UPDATE nw_workflow_instances SET installation_revision=#{revision},definition_version_id=#{definition},status='published',updated_at=now()
+    WHERE tenant_id=#{tenant} AND id=#{instance} AND installation_revision=#{expected}
+  </update>
+  <select id="publishedTarget" resultType="boolean">
+    SELECT EXISTS(
+      SELECT 1 FROM nw_workflow_installation_revisions r
+      JOIN nw_workflow_instances i ON i.tenant_id=r.tenant_id AND i.id=r.instance_id
+      JOIN nw_workflow_definition_versions v ON v.tenant_id=r.tenant_id AND v.id=r.definition_version_id
+      JOIN nw_workflow_containers c ON c.tenant_id=v.tenant_id AND c.id=v.container_id
+      JOIN nw_capability_versions p ON p.tenant_id=v.tenant_id AND p.id=v.capability_version_id
+      WHERE r.tenant_id=#{tenant} AND r.instance_id=#{instance} AND r.installation_revision=#{revision}
+        AND c.workflow_id=#{workflow} AND i.status='published' AND p.status='PUBLISHED'
+        AND p.capability_type='WORKFLOW'
+    )
+  </select>
+</mapper>

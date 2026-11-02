@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/anthropics/skills",
+    "commit": "683bc88e56f3e09ba94f7055977f3d3aa499f202",
+    "path": "skills/theme-factory/themes",
+    "license": "Apache-2.0"
+  },
+  "adaptation": "灵知: palette roles adapted for contrast; installed Noto Sans CJK SC replaces upstream Latin-only fonts. Not an unchanged upstream file.",
+  "presets": {
+    "ocean-depths": {
+      "name": "海洋深处",
+      "background": "1A2332",
+      "text": "F1FAEE",
+      "accent": "2D8B8B",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "1A2332",
+        "2D8B8B",
+        "A8DADC",
+        "F1FAEE"
+      ]
+    },
+    "sunset-boulevard": {
+      "name": "日落大道",
+      "background": "E9C46A",
+      "text": "264653",
+      "accent": "E76F51",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "E76F51",
+        "F4A261",
+        "E9C46A",
+        "264653"
+      ]
+    },
+    "forest-canopy": {
+      "name": "森林树冠",
+      "background": "FAF9F6",
+      "text": "2D4A2B",
+      "accent": "2D4A2B",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "2D4A2B",
+        "7D8471",
+        "A4AC86",
+        "FAF9F6"
+      ]
+    },
+    "modern-minimalist": {
+      "name": "现代极简",
+      "background": "FFFFFF",
+      "text": "36454F",
+      "accent": "708090",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "36454F",
+        "708090",
+        "D3D3D3",
+        "FFFFFF"
+      ]
+    },
+    "golden-hour": {
+      "name": "金色时刻",
+      "background": "D4B896",
+      "text": "4A403A",
+      "accent": "F4A900",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "F4A900",
+        "C1666B",
+        "D4B896",
+        "4A403A"
+      ]
+    },
+    "arctic-frost": {
+      "name": "极地霜冻",
+      "background": "FAFAFA",
+      "text": "4A6FA5",
+      "accent": "4A6FA5",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "D4E4F7",
+        "4A6FA5",
+        "C0C0C0",
+        "FAFAFA"
+      ]
+    },
+    "desert-rose": {
+      "name": "沙漠玫瑰",
+      "background": "E8D5C4",
+      "text": "5D2E46",
+      "accent": "B87D6D",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "D4A5A5",
+        "B87D6D",
+        "E8D5C4",
+        "5D2E46"
+      ]
+    },
+    "tech-innovation": {
+      "name": "科技创新",
+      "background": "1E1E1E",
+      "text": "FFFFFF",
+      "accent": "0066FF",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "0066FF",
+        "00FFFF",
+        "1E1E1E",
+        "FFFFFF"
+      ]
+    },
+    "botanical-garden": {
+      "name": "植物花园",
+      "background": "F5F3ED",
+      "text": "31543D",
+      "accent": "4A7C59",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "4A7C59",
+        "F9A620",
+        "B7472A",
+        "F5F3ED"
+      ]
+    },
+    "midnight-galaxy": {
+      "name": "午夜星河",
+      "background": "2B1E3E",
+      "text": "E6E6FA",
+      "accent": "A490C2",
+      "font_face": "Noto Sans CJK SC",
+      "palette": [
+        "2B1E3E",
+        "4A4E8F",
+        "A490C2",
+        "E6E6FA"
+      ]
+    }
+  }
+}

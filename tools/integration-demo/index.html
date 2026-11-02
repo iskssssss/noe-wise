@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>多机构业务 · 业务联调 Demo</title>
+<link rel="stylesheet" href="/group-console.css">
+<style>
+body{margin:0;background:#f3f5f9;color:#17233d;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif}main{max-width:1240px;margin:auto;padding:32px 24px}h1{font-size:29px;margin:0 0 8px}h2{font-size:20px;margin:0 0 18px}.muted{color:#69768a}.badge{background:#e8f2ff;color:#235ab5;border-radius:20px;padding:6px 12px;display:inline-block}.top{display:flex;justify-content:space-between;align-items:center;gap:20px}section{background:white;border:1px solid #e0e6ef;border-radius:14px;padding:22px;margin:22px 0}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:14px}.card{background:#f8faff;border:1px solid #e4eaf4;padding:18px;border-radius:12px}.card h3{margin:0 0 4px;font-size:17px}.amount{font-size:27px;font-weight:650;margin:10px 0}button{border:0;background:#285bdd;color:white;padding:9px 16px;border-radius:8px;cursor:pointer;font:inherit}button.secondary{background:#eaf0fe;color:#285bdd}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid #e7ebf2;vertical-align:top}th{color:#66748b;font-weight:550}.content{white-space:pre-wrap;overflow-wrap:anywhere;max-width:760px}.empty{padding:20px;text-align:center;color:#69768a}code{font-size:12px;overflow-wrap:anywhere}.row{display:flex;align-items:center;gap:12px;margin:8px 0}.error{color:#b22b35}details{margin:12px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f8faff;padding:14px;border-radius:8px;font-size:12px}@media(max-width:650px){main{padding:24px 14px}.top{align-items:flex-start;flex-direction:column}section{padding:16px}}
+.top button{flex-shrink:0;white-space:nowrap}.scroll table{min-width:1100px}.scroll th,.scroll td{white-space:nowrap}.identifier{display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settlement-state{display:inline-block;border-radius:6px;background:#edf2fa;padding:3px 8px;white-space:nowrap}.settlement-state.warning{background:#fff2d7;color:#805500}.settlement-state.error{background:#fce9eb;color:#a22631}.settlement-state.success{background:#e7f4ed;color:#246341}button:disabled{cursor:not-allowed;opacity:.6}button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #285bdd;outline-offset:3px}.management-form{max-width:740px}.management-form label{display:block;font-weight:600;margin:16px 0 5px}.management-form input,.management-form textarea{box-sizing:border-box;width:100%;border:1px solid #8390a4;border-radius:7px;padding:10px;margin-bottom:8px;font:inherit;background:white;color:#17233d}.management-form textarea{resize:vertical;min-height:92px}.management-form .row{flex-wrap:wrap}.management-form .identifier{max-width:none;white-space:normal;overflow-wrap:anywhere}.management-status{white-space:pre-wrap;overflow-wrap:anywhere;margin:14px 0}.field-help{font-size:13px;color:#59667b}.settlement-detail{white-space:normal;min-width:260px;max-width:540px}.settlement-detail summary{cursor:pointer}.settlement-detail dl{display:grid;grid-template-columns:130px minmax(0,1fr);gap:7px 12px}.settlement-detail dt{color:#59667b}.settlement-detail dd{margin:0;overflow-wrap:anywhere}@media(max-width:650px){.settlement-detail dl{grid-template-columns:1fr}.management-form .row button{width:100%}}
+@media(prefers-color-scheme:dark){body{background:#131a27;color:#e1e7f0}section{background:#1e2838;border-color:#40516a}.card,pre{background:#253247;border-color:#40516a}.muted,.field-help,th,.settlement-detail dt{color:#b7c5d8}th,td{border-color:#40516a}.badge,button.secondary{background:#2b416c;color:#cfddff}.error{color:#ffb5bb}.management-form input,.management-form textarea{background:#182234;color:#e1e7f0;border-color:#8196b0}.settlement-state{background:#33445e;color:#e1e7f0}.settlement-state.warning{background:#4b3a15;color:#ffdc87}.settlement-state.error{background:#512c35;color:#ffc3c9}.settlement-state.success{background:#214734;color:#adf0c8}button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline-color:#9dc0ff}}
+</style>
+<main>
+<div class="top"><div><h1>多机构业务 · 业务联调 Demo</h1><div class="muted">来自真实 灵知 用量与运行结果，钱包、消息收件箱和媒体服务在本地模拟。</div></div><button id="refresh">刷新证据</button></div>
+<p><span class="badge">外部业务服务：模拟</span> <span id="time" class="muted"></span></p>
+<div id="error" role="alert" class="error"></div>
+<section id="group-console" aria-labelledby="group-console-title">
+<h2 id="group-console-title">共享群管理与执行证据</h2>
+<p class="muted">使用服务端预先绑定的机构、操作者和 Agent。成员、记忆、公开历史与执行控制沿用正式接口；这里不提供原生群聊。</p>
+<form id="group-context-form" class="group-toolbar">
+<label>业务群<select id="group-context" aria-label="业务群"><option value="">正在读取配置…</option></select></label>
+<label>查看 Run<input id="group-run-id" placeholder="Run ID（可选）" autocomplete="off"></label>
+<button type="submit" id="group-refresh">读取最新状态</button>
+</form>
+<p id="group-status" role="status" aria-live="polite"></p>
+<div id="group-panels"></div>
+<div id="group-editor" class="group-editor" hidden></div>
+<details id="group-result" hidden><summary>本次操作回执</summary><pre id="group-result-body"></pre></details>
+</section>
+<section><h2>机构钱包</h2><p class="muted">独立钱包保存实际余额，客户应收由消费适配器计价。<span id="price">—</span>；未知用量与未付差额分别保留。</p><div id="wallets" class="cards"></div></section>
+<section><h2>客户计价与已确认结算</h2><p class="muted">同一实际调用冻结客户价格；应收、已确认净扣款和未付差额分别展示。</p><div id="charges" class="scroll"></div></section>
+<section><h2>钱包结算指令</h2><p class="muted">指令按原调用顺序恢复；结果待核实期间不会提前处理后笔或补造退款。</p><div id="instructions" class="scroll"></div></section>
+<section id="reconciliation-section" hidden><h2>获准重新结算</h2><p class="muted">仅对最新指令已明确拒绝、仍有未结差额的对象开放。请在上方客户计价列表选择对象；提交将按当前累计目标创建关联原拒绝的后继指令。</p><p id="reconciliation-empty" class="muted">当前没有需要人工重新结算的对象。</p><form id="reconciliation-form" class="management-form" hidden>
+<div class="field-help">当前对象</div><code id="reconciliation-object" class="identifier"></code><div id="reconciliation-current" class="field-help"></div>
+<label for="reconciliation-reason">重新结算原因</label><textarea id="reconciliation-reason" required aria-describedby="reconciliation-reason-help"></textarea><div id="reconciliation-reason-help" class="field-help">说明核验依据，最多 256 字符。失败和刷新均保留原因；结果未知时沿原请求核对。</div>
+<label for="reconciliation-token">独立结算管理凭证</label><input id="reconciliation-token" type="password" required autocomplete="off" aria-describedby="reconciliation-token-help"><div id="reconciliation-token-help" class="field-help">使用当前获准的管理凭证。只用于本次请求，提交后清空，不保存到浏览器存储或展示快照。钱包机器凭证由服务端持有。</div>
+<div id="reconciliation-status" class="management-status" role="status" aria-live="polite"></div><div class="row"><button id="reconciliation-submit" type="submit">提交重新结算</button><button id="reconciliation-latest" type="button" class="secondary" hidden>按最新状态重新核对</button><button id="reconciliation-close" type="button" class="secondary">返回对象列表</button></div></form></section>
+<section><h2>消息收件箱</h2><p class="muted">仅投递已完成 Run 的 final 消息。人工暂停期间保留待投递，恢复后同 delivery_id 只接收一次。</p><div id="pauses"></div><div id="inbox"></div></section>
+<section><h2>媒体工具回执</h2><p class="muted">语音转写、语音合成与视频分析使用模拟供应商。回执展示实际工具请求；真实 Session、Run 与工具执行证据由 灵知 提供。</p><div id="media"></div></section>
+<section><h2>用量原始事实</h2><p class="muted">最近 100 条已消费导出事件，金额为供应商成本，单位精确分。</p><div id="usage" class="scroll"></div></section>
+</main>
+<script>
+// 展示组件只写入文本，不执行来自用量、消息和媒体回执的 HTML。
+const element=id=>document.getElementById(id);
+let refreshController,refreshGeneration=0;
+const pendingRoutes=new Set();
+let settlementSnapshot, reconciliationDraft, reconciliationComposing=false;
+const acceptedReconciliations=new Map();
+// 创建允许字段的文本节点，确保无可信来源的内容不进入 HTML 插值。
+function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
+// 首次尚无验收事实时显示明确的等待状态。
+function empty(target,text){target.replaceChildren(node('div',text,'empty'));}
+// 表格仅接收已投影的展示字段，精确金额和身份保留原字符串。
+function table(target,headers,rows){if(!rows.length){empty(target,'等待真实场景证据');return;}const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.forEach(values=>{const r=node('tr');values.forEach(v=>{const cell=node('td');if(v instanceof Node){cell.append(v);}else{const text=String(v??'未知');if(text.length>64){cell.title=text;cell.append(node('span',text,'identifier'));}else{cell.textContent=text;}}r.append(cell);});body.append(r);});t.append(body);target.replaceChildren(t);}
+// 业务写请求只发送一次；失败由页面保留提示并刷新服务端事实。
+async function post(path,data){console.debug('业务Demo操作进入');try{const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(!response.ok)throw Error('业务操作失败：HTTP '+response.status);return await response.json();}finally{console.debug('业务Demo操作退出');}}
+// 余额来自独立钱包HTTP回执，应收来自适配器；页面不自行计算或混合币种。
+function walletCards(wallets){if(!wallets.length){empty(element('wallets'),'等待已配置的机构钱包');return;}element('wallets').replaceChildren(...wallets.map(w=>{const c=node('div',undefined,'card');c.append(node('h3',w.name),node('code','机构 '+w.tenant_id+' · '+w.wallet_account_id),node('div',w.balance_cents+' '+w.currency+' 分','amount'),node('div','客户应收 '+(w.receivable_cents??'未知')+' · 允许透支 '+w.overdraft_limit_cents,'muted'));return c;}));}
+// 固定状态文案只映射展示；金额、顺序、回执均取服务端原事实。
+const settlementLabels={pending:'待结算',sending:'已发出，待确认',unknown:'UNKNOWN · 结果待核实',applied:'已入账',rejected:'明确拒绝',waiting_predecessor:'等待前序终结',known:'已报告',partial:'部分已报告',unpriced:'缺少售价'};
+function instructionState(i){return !['applied','rejected'].includes(i.status)&&i.receipt?.outcome==='waiting_predecessor'?'waiting_predecessor':i.status;}
+function statusBadge(status){return node('span',settlementLabels[status]??status,'settlement-state '+(status==='rejected'?'error':status==='applied'?'success':['unknown','sending','waiting_predecessor'].includes(status)?'warning':''));}
+function latestInstruction(objectId){return settlementSnapshot?.settlement.instructions.filter(i=>i.object_id===objectId).reduce((last,i)=>!last||i.sequence>last.sequence?i:last,undefined);}
+function canReconcile(o){const last=latestInstruction(o.object_id),accepted=acceptedReconciliations.get(o.object_id);if(accepted&&!settlementSnapshot?.settlement.instructions.some(i=>i.instruction_id===accepted))return false;return last?.status==='rejected'&&o.target_amount!=null&&o.settlement_gap!=null&&!/^-?0(?:\.0+)?$/.test(String(o.settlement_gap));}
+function rejectionReason(i){return i.receipt?.reason??i.receipt?.rejection_reason??i.receipt?.code??'钱包未提供更多原因';}
+// 权限能力只控制入口；服务端在每次写入时重新校验当前独立管理身份。
+function settlementView(s){const expanded=new Map([...element('instructions').querySelectorAll('details')].map(d=>[d.dataset.receiptIdentity,d.open]));const active=document.activeElement,focused=element('instructions').contains(active)&&active?.matches('summary')?active.parentElement.dataset.receiptIdentity:undefined;settlementSnapshot=s;if(reconciliationDraft?.state==='conflict')reconciliationDraft.conflictRefreshed=true;const p=s.billing.pricing;element('price').textContent='价格 '+p.revision+' · '+p.currency+' 分：输入 '+p.input_cents_per_thousand_tokens+'/千 Token，输出 '+p.output_cents_per_thousand_tokens+'/千 Token，工具 '+p.tool_cents_per_call+'/次';walletCards(s.wallets);const enabled=s.capabilities?.settlement_reconciliation===true;table(element('charges'),['机构 / 币种','实际调用','价格版本','计量 / 售价状态','累计应收 / 分','已确认净扣款 / 分','未结差额 / 分','处理'],s.settlement.objects.map(o=>{let action='—';if(enabled&&canReconcile(o)){action=node('button','获准重新结算','secondary');action.type='button';action.disabled=reconciliationDraft?.state==='submitting';action.onclick=()=>beginReconciliation(o);}return [o.execution_tenant_id+' / '+o.currency,o.metering_object_ref,o.pricing_revision,(o.measurement_status==='unknown'?'用量未报告':settlementLabels[o.measurement_status]??o.measurement_status)+(o.pricing_status==='unpriced'?' · 缺少售价':''),o.target_amount,o.confirmed_net_amount,o.settlement_gap,action];}));table(element('instructions'),['结算对象','结算指令','序号 / 前序指令','状态','累计目标 / 分','本次扣款或冲正 / 分','原钱包回执 / 原因'],s.settlement.instructions.map(i=>{const info=node('details',undefined,'settlement-detail'),summary=node('summary',i.receipt?.receipt_id??'尚无终结回执');info.dataset.receiptIdentity=i.instruction_id;info.open=expanded.get(i.instruction_id)??false;info.append(summary);const fields=node('dl');for(const [label,value] of [['指令身份',i.instruction_id],['前序指令',i.previous_instruction_id??i.payload?.previous_instruction_id??'首笔，无前序'],['状态',settlementLabels[instructionState(i)]??i.status],['原因',i.status==='rejected'?rejectionReason(i):instructionState(i)==='waiting_predecessor'?'原前序尚未终结，等待沿原身份恢复':'—']])fields.append(node('dt',label),node('dd',value));info.append(fields);return [i.object_id,i.instruction_id,String(i.sequence)+' / '+(i.previous_instruction_id??i.payload?.previous_instruction_id??'首笔'),statusBadge(instructionState(i)),i.target_amount,i.receipt?.delta,info];}));if(focused)[...element('instructions').querySelectorAll('details')].find(d=>d.dataset.receiptIdentity===focused)?.querySelector('summary')?.focus({preventScroll:true});element('reconciliation-section').hidden=!enabled;element('reconciliation-empty').hidden=!!reconciliationDraft||s.settlement.objects.some(canReconcile);refreshReconciliation();}
+// 表单固定原对象与版本；刷新只更新旁边的当前事实，不覆盖草稿或未知请求身份。
+function beginReconciliation(o){if(reconciliationDraft?.state==='submitting')return;if(!canReconcile(o))return;if(reconciliationDraft?.state==='unknown'){element('reconciliation-status').textContent='请先核对原请求结果；UNKNOWN 期间保留同一请求身份，不切换对象另发请求。';element('reconciliation-token').focus();return;}if(reconciliationDraft&&reconciliationDraft.state!=='accepted'&&element('reconciliation-reason').value.trim()&&!confirm('切换对象会放弃当前页面的草稿或原请求核对信息，是否继续？'))return;const last=latestInstruction(o.object_id);reconciliationDraft={objectId:o.object_id,rejectionId:last.instruction_id,expectedRevision:o.revision,state:'editing'};element('reconciliation-reason').value='';element('reconciliation-token').value='';element('reconciliation-status').textContent='请核对当前累计应收和未结差额，再填写原因并提交。';refreshReconciliation();element('reconciliation-reason').focus();}
+function refreshReconciliation(){const d=reconciliationDraft,form=element('reconciliation-form');form.hidden=!d;if(!d)return;const object=settlementSnapshot?.settlement.objects.find(o=>o.object_id===d.objectId),last=latestInstruction(d.objectId),enabled=settlementSnapshot?.capabilities?.settlement_reconciliation===true;element('reconciliation-object').textContent=d.objectId;element('reconciliation-current').textContent=object?'本次核验版本 '+d.expectedRevision+' · 当前版本 '+object.revision+' · 累计应收 '+(object.target_amount??'未知')+' '+object.currency+' 分 · 已确认 '+object.confirmed_net_amount+' · 未结差额 '+(object.settlement_gap??'未知')+' · 最新指令 '+(settlementLabels[instructionState(last??{})]??'未知'):'该对象已不在当前快照中，请刷新核对。';element('reconciliation-reason').readOnly=['submitting','unknown','accepted'].includes(d.state);element('reconciliation-token').disabled=d.state==='submitting'||!enabled;element('reconciliation-submit').disabled=!enabled||['submitting','accepted','conflict'].includes(d.state);element('reconciliation-submit').textContent=d.state==='submitting'?'正在提交…':d.state==='unknown'?'核对原请求':'提交重新结算';element('reconciliation-latest').hidden=d.state!=='conflict';element('reconciliation-latest').disabled=!d.conflictRefreshed;element('reconciliation-close').disabled=['submitting','unknown'].includes(d.state);if(d.state==='accepted'&&d.instructionId){const receipt=settlementSnapshot?.settlement.instructions.find(i=>i.instruction_id===d.instructionId&&i.object_id===d.objectId);element('reconciliation-status').textContent='已受理后继指令 '+d.instructionId+'。'+(receipt?'该指令钱包状态：'+(settlementLabels[instructionState(receipt)]??receipt.status)+'；请以该指令回执和已确认净额为准。':'尚未读取到该指令的钱包回执，请刷新查看。管理请求已受理，可返回对象列表。');}if(!enabled){element('reconciliation-token').value='';element('reconciliation-status').textContent=d.instructionId?'管理请求已受理，请按原指令回执核对；当前服务已停用管理入口。':'当前服务未开放结算管理操作；草稿已保留，未提交请求。';}}
+function newRequestKey(){return 'demo-reconciliation:'+crypto.randomUUID();}
+async function submitReconciliation(event){
+    event?.preventDefault();
+    if(reconciliationComposing)return;
+    const d=reconciliationDraft;
+    if(!d||['submitting','accepted','conflict'].includes(d.state)||!settlementSnapshot?.capabilities?.settlement_reconciliation)return;
+    const reason=element('reconciliation-reason').value.trim(),token=element('reconciliation-token').value;
+    if([...reason].length>256){element('reconciliation-status').textContent='重新结算原因最多 256 字符，请缩短后提交。';return;}
+    if(!reason||!token){element('reconciliation-status').textContent='请填写重新结算原因和当前独立管理凭证。';return;}
+    if(!d.body){d.body={object_id:d.objectId,expected_revision:d.expectedRevision,rejected_instruction_id:d.rejectionId,reason};d.key=newRequestKey();}
+    d.state='submitting';
+    element('reconciliation-token').value='';
+    element('reconciliation-status').textContent='正在提交原请求，请等待当前结果。';
+    refreshReconciliation();
+    // 明确未获准/无效请求允许修正草稿；此前 UNKNOWN 的原请求仍保留身份和只读原因。
+    function refused(message){
+        d.state=d.uncertain?'unknown':'failed';
+        if(!d.uncertain){d.body=undefined;d.key=undefined;}
+        element('reconciliation-status').textContent=message+(d.uncertain?' 原请求结果仍待核对，继续保留原请求身份。':'');
+    }
+    try{
+        const response=await fetch('/api/v1/settlement-reconciliations',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'Idempotency-Key':d.key},body:JSON.stringify(d.body)});
+        if(response.status===409){
+            d.state='conflict';d.conflictRefreshed=false;
+            element('reconciliation-status').textContent='当前版本或请求内容发生冲突，未自动重试。正在重读最新结算事实；原因已保留，请重新核对后再决定。';
+            await load();
+        }else if(response.status===401||response.status===403){
+            refused('当前管理凭证无权重新结算。原因和对象已保留，请使用当前获准凭证。');
+        }else if(response.status>=500){
+            d.state='unknown';d.uncertain=true;
+            element('reconciliation-status').textContent='请求结果 UNKNOWN，可能已受理。保留原请求身份，请刷新查看回执，或显式核对原请求；不会创建新请求盲重试。';
+            await load();
+        }else if(!response.ok){
+            refused('请求未完成（HTTP '+response.status+'）。对象和原因已保留，请核对输入。');
+        }else{
+            const result=await response.json();
+            if(typeof result.instruction_id!=='string'||!result.instruction_id.trim())throw Error('UNCONFIRMED_RECEIPT');
+            // 管理受理只由原指令身份确认；dispatch汇总可能包含其他对象，不代表本指令终态。
+            d.state='accepted';d.uncertain=false;d.instructionId=result.instruction_id;
+            acceptedReconciliations.set(d.objectId,result.instruction_id);
+            settlementView(settlementSnapshot);
+            await load();
+        }
+    }catch(error){
+        if(d.instructionId){d.state='accepted';d.uncertain=false;}else{
+            d.state='unknown';d.uncertain=true;
+            element('reconciliation-status').textContent='请求结果 UNKNOWN，未确认成功。对象、原因及原请求身份已保留；请刷新查看事实，或显式核对原请求。';
+        }
+    }finally{refreshReconciliation();}
+}
+function reconcileLatest(){const d=reconciliationDraft;if(!d||d.state!=='conflict'||!d.conflictRefreshed)return;const object=settlementSnapshot?.settlement.objects.find(o=>o.object_id===d.objectId);if(!object||!canReconcile(object)){element('reconciliation-status').textContent='最新状态不满足重新结算条件：仅最新指令已明确拒绝且仍有未结差额时可提交。原因已保留。';return;}const last=latestInstruction(object.object_id);d.expectedRevision=object.revision;d.rejectionId=last.instruction_id;d.body=undefined;d.key=undefined;d.uncertain=false;d.state='editing';element('reconciliation-status').textContent='已按最新状态重新核对；原因保留。再次提交将使用新的请求身份和当前版本。';refreshReconciliation();}
+// 同一路由提交期间跨刷新禁用按钮，避免连续点击重复发起写请求。
+function routeButtons(pauses,inbox){const routes=new Map(pauses.map(p=>[p.route,p.paused]));inbox.forEach(m=>{const key=m.tenant_ref+':'+m.room_ref;if(!routes.has(key))routes.set(key,false);});element('pauses').replaceChildren(...[...routes].map(([route,paused])=>{const r=node('div',undefined,'row');r.append(node('code',route),node('span',paused?'已人工暂停':'允许投递',paused?'error':'muted'));const b=node('button',paused?'恢复投递':'人工暂停','secondary');b.disabled=pendingRoutes.has(route);b.onclick=async()=>{if(pendingRoutes.has(route))return;pendingRoutes.add(route);b.disabled=true;let failure;try{const i=route.lastIndexOf(':');await post('/delivery/pause',{tenant_ref:route.slice(0,i),room_ref:route.slice(i+1),paused:!paused});}catch(e){failure=e.message;}finally{pendingRoutes.delete(route);await load();if(failure)element('error').textContent=failure;}};r.append(b);return r;}));}
+// 刷新按稳定回执身份恢复展开状态和当前摘要焦点，不依赖列表顺序或展示文本。
+function receiptDetails(target,items,identity,render,emptyText){
+    const expanded=new Map([...target.querySelectorAll('details')].map(d=>[d.dataset.receiptIdentity,d.open]));
+    const active=document.activeElement;
+    const focused=target.contains(active)&&active?.matches('summary')?active.parentElement.dataset.receiptIdentity:undefined;
+    if(!items.length){empty(target,emptyText);return;}
+    let focusedSummary;
+    const details=items.map(item=>{
+        const key=identity(item),d=node('details');
+        d.dataset.receiptIdentity=key;
+        d.open=expanded.get(key)??false;
+        render(d,item);
+        if(key===focused)focusedSummary=d.querySelector('summary');
+        return d;
+    });
+    target.replaceChildren(...details);
+    focusedSummary?.focus({preventScroll:true});
+}
+// 收件箱按 delivery_id 保持用户展开状态，只展示业务服务已接收的最终消息。
+function messages(inbox){receiptDetails(element('inbox'),inbox,m=>m.delivery_id,(d,m)=>{d.append(node('summary',m.tenant_ref+' / '+m.room_ref+' · '+m.session_id),node('p',typeof m.content==='string'?m.content:JSON.stringify(m.content,null,2),'content'),node('code','delivery_id: '+m.delivery_id));},'等待真实 Run 的最终消息');}
+// 工具名和 request_id 共同标识媒体回执，刷新后仍保持同一工具执行的展开状态。
+function mediaReceipts(receipts){receiptDetails(element('media'),receipts,r=>JSON.stringify([r.name,r.request_id]),(d,r)=>{d.append(node('summary',r.name+' · '+r.request_id+' · 模拟供应商'),node('pre',JSON.stringify({arguments:r.arguments,result:r.result},null,2)));},'等待真实 Runtime 调用媒体 Connector');}
+// 刷新同时取消旧请求并校验代次；迟到成功或失败都不能覆盖最新账本状态。
+async function load(){const generation=++refreshGeneration;refreshController?.abort();const controller=new AbortController();refreshController=controller;console.debug('业务Demo刷新进入');try{const response=await fetch('/api/snapshot',{signal:controller.signal});if(!response.ok)throw Error('读取证据失败：HTTP '+response.status);const s=await response.json();if(generation!==refreshGeneration)return;element('error').textContent='';settlementView(s);routeButtons(s.pauses,s.inbox);messages(s.inbox);mediaReceipts(s.media_receipts);table(element('usage'),['事件身份','机构','种类','事件','token','供应商成本 / 分'],s.usage_events.map(e=>[e.event_id,e.tenant_id,e.kind,e.event_type,e.tokens,e.amount_cents]));element('time').textContent='最近刷新 '+new Date().toLocaleTimeString();}catch(e){if(generation===refreshGeneration&&e.name!=='AbortError')element('error').textContent=e.message;}finally{console.debug('业务Demo刷新退出');}}
+element('reconciliation-form').onsubmit=submitReconciliation;
+element('reconciliation-form').addEventListener('compositionstart',()=>{reconciliationComposing=true;});
+element('reconciliation-form').addEventListener('compositionend',()=>{reconciliationComposing=false;});
+element('reconciliation-latest').onclick=reconcileLatest;
+element('reconciliation-close').onclick=()=>{if(!reconciliationDraft||['submitting','unknown'].includes(reconciliationDraft.state))return;if(reconciliationDraft.state!=='accepted'&&element('reconciliation-reason').value.trim()&&!confirm('放弃当前原因草稿并返回对象列表？'))return;reconciliationDraft=undefined;element('reconciliation-token').value='';element('reconciliation-reason').value='';if(settlementSnapshot)settlementView(settlementSnapshot);};
+element('refresh').onclick=load;load();const refreshTimer=setInterval(load,5000);
+window.addEventListener('beforeunload',event=>{if(reconciliationDraft&&reconciliationDraft.state!=='accepted'&&(element('reconciliation-reason').value.trim()||['submitting','unknown'].includes(reconciliationDraft.state))){event.preventDefault();event.returnValue='';}});
+window.addEventListener('pagehide',()=>{clearInterval(refreshTimer);++refreshGeneration;refreshController?.abort();element('reconciliation-token').value='';reconciliationDraft=undefined;});
+</script>
+<script src="/group-console.js" defer></script>
+</html>

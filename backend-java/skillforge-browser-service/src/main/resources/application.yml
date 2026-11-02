@@ -1,0 +1,22 @@
+server:
+  port: ${BROWSER_SERVICE_PORT:8300}
+  shutdown: graceful
+spring:
+  application:
+    name: skillforge-browser-service
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
+skillforge:
+  browser:
+    service-token: ${BROWSER_SERVICE_TOKEN:}
+    data-root: ${BROWSER_DATA_ROOT:/var/lib/bsk}
+    binary: ${BROWSER_BINARY:/opt/bsk/bsk}
+    public-base-url: ${BROWSER_PUBLIC_BASE_URL:}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

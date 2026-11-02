@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.model.media.realtime.ModelRealtimeMapper">
+  <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+  <select id="operation" resultType="com.skillforge.core.model.media.realtime.ModelRealtimeMapper$Row">
+    SELECT * FROM nw_model_realtime_sessions WHERE owner_id=#{owner} AND operation_id=#{operation}
+  </select>
+  <select id="find" resultType="com.skillforge.core.model.media.realtime.ModelRealtimeMapper$Row">
+    SELECT * FROM nw_model_realtime_sessions WHERE owner_id=#{owner} AND id=CAST(#{id} AS bigint)
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_model_realtime_sessions(id,owner_id,tenant_id,operation_id,command_sha256,kind,
+      model_config_id,model_revision,provider_id,service_id,model_id,endpoint,credential_encrypted,
+      provider_task_id,timeout_seconds,sample_rate_hz,language,input_text,voice,status,partial_text,
+      final_text,reason_code,finishing,next_audio_sequence,created_at,updated_at,deadline)
+    VALUES(CAST(#{id} AS bigint),#{ownerId},CAST(#{tenantId} AS bigint),#{operationId},#{commandSha256},#{kind},
+      CAST(#{modelConfigId} AS bigint),#{modelRevision},#{providerId},#{serviceId},#{modelId},#{endpoint},#{credentialEncrypted},
+      #{providerTaskId},#{timeoutSeconds},#{sampleRateHz},#{language},#{inputText},#{voice},#{status},#{partialText},
+      #{finalText},#{reasonCode},FALSE,0,#{createdAt},#{updatedAt},#{deadline})
+    ON CONFLICT(owner_id,operation_id) DO NOTHING
+  </insert>
+  <update id="started">UPDATE nw_model_realtime_sessions SET status='RUNNING',updated_at=#{at} WHERE id=CAST(#{id} AS bigint) AND status='PENDING'</update>
+  <update id="partial">UPDATE nw_model_realtime_sessions SET partial_text=#{text},updated_at=#{at} WHERE id=CAST(#{id} AS bigint) AND status IN ('PENDING','RUNNING')</update>
+  <update id="claimAudio">
+    UPDATE nw_model_realtime_sessions SET next_audio_sequence=next_audio_sequence+1,updated_at=#{at}
+    WHERE id=CAST(#{id} AS bigint) AND owner_id=#{owner} AND next_audio_sequence=#{sequence}
+      AND status='RUNNING' AND NOT finishing AND deadline&gt;#{at}
+  </update>
+  <update id="finish">UPDATE nw_model_realtime_sessions SET finishing=TRUE,updated_at=#{at}
+    WHERE id=CAST(#{id} AS bigint) AND owner_id=#{owner} AND status IN ('PENDING','RUNNING') AND NOT finishing</update>
+  <update id="complete">
+    UPDATE nw_model_realtime_sessions SET status=#{status},final_text=#{finalText},reason_code=#{reasonCode},
+      provider_task_id=#{providerTaskId},
+      input_tokens=#{inputTokens},output_tokens=#{outputTokens},characters=#{characters},duration_seconds=#{durationSeconds},
+      asset_source_encrypted=#{assetSourceEncrypted},asset_id=CAST(#{assetId} AS bigint),updated_at=#{updatedAt}
+    WHERE id=CAST(#{id} AS bigint) AND status IN ('PENDING','RUNNING','UNKNOWN')
+  </update>
+  <update id="asset">
+    UPDATE nw_model_realtime_sessions SET asset_available=TRUE,asset_media_type=#{assetMediaType},asset_name=#{assetName},
+      asset_size_bytes=#{assetSizeBytes},asset_sha256=#{assetSha256},updated_at=#{updatedAt}
+    WHERE id=CAST(#{id} AS bigint) AND asset_id=CAST(#{assetId} AS bigint) AND NOT asset_available
+  </update>
+  <update id="assetUnavailable">UPDATE nw_model_realtime_sessions SET reason_code='model_realtime_asset_unavailable',updated_at=#{at}
+    WHERE id=CAST(#{id} AS bigint) AND status='SUCCEEDED' AND NOT asset_available</update>
+</mapper>

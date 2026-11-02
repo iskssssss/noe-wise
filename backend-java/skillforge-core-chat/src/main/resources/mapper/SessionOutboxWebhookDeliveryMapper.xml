@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.SessionOutboxWebhookDeliveryMapper">
+    <insert id="insertDeliveries">
+        INSERT INTO nw_chat_session_outbox_webhook_deliveries
+            (id,tenant_id,subscription_id,outbox_event_id,event_id,session_id,session_sequence,status,attempts,available_at,created_at,updated_at)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.id},#{row.tenantId},#{row.subscriptionId},#{row.outboxEventId},#{row.eventId},#{row.sessionId},#{row.sessionSequence},
+             #{row.status},#{row.attempts},#{row.availableAt},#{row.createdAt},#{row.updatedAt})
+        </foreach>
+        ON CONFLICT (subscription_id,outbox_event_id) DO NOTHING
+    </insert>
+    <select id="claimNext" resultType="com.skillforge.core.chat.session.SessionWebhookDeliveryLedger$Claim"
+            affectData="true" flushCache="true" useCache="false">
+        WITH first_pending AS MATERIALIZED (
+            SELECT id, attempts
+            FROM nw_chat_session_outbox_webhook_deliveries
+            WHERE tenant_id=#{tenantId} AND subscription_id=#{subscriptionId} AND session_id=#{sessionId}
+              AND status IN ('queued', 'publishing')
+            ORDER BY session_sequence, id
+            LIMIT 1
+        )
+        UPDATE nw_chat_session_outbox_webhook_deliveries AS delivery
+        SET status='publishing', attempts=delivery.attempts + 1, claimed_at=#{now},
+            error_code=NULL, updated_at=#{now}
+        FROM first_pending
+        WHERE delivery.tenant_id=#{tenantId} AND delivery.id=first_pending.id
+          AND delivery.attempts=first_pending.attempts
+          AND ((delivery.status='queued' AND (delivery.available_at IS NULL OR delivery.available_at &lt;= #{now}))
+            OR (delivery.status='publishing' AND (delivery.claimed_at IS NULL OR delivery.claimed_at &lt;= #{expiredBefore})))
+        RETURNING delivery.id AS "deliveryId", delivery.outbox_event_id AS "outboxEventId", delivery.attempts
+    </select>
+    <sql id="ownedClaim">
+        tenant_id=#{tenantId} AND id=#{claim.deliveryId} AND status='publishing' AND attempts=#{claim.attempts}
+    </sql>
+    <update id="markDelivered">
+        UPDATE nw_chat_session_outbox_webhook_deliveries
+        SET status='delivered', delivered_at=#{now}, updated_at=#{now}
+        WHERE <include refid="ownedClaim"/>
+    </update>
+    <update id="retry">
+        UPDATE nw_chat_session_outbox_webhook_deliveries
+        SET status='queued', available_at=#{availableAt}, claimed_at=NULL, error_code=#{errorCode}, updated_at=#{now}
+        WHERE <include refid="ownedClaim"/>
+    </update>
+    <update id="markUnresolved">
+        UPDATE nw_chat_session_outbox_webhook_deliveries
+        SET status='unresolved', claimed_at=NULL, error_code=#{errorCode}, updated_at=#{now}
+        WHERE <include refid="ownedClaim"/>
+    </update>
+</mapper>

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeBaseRevisionMapper">
+
+    <select id="activePublishedForCapabilityVersions" resultType="com.skillforge.core.knowledge.model.KnowledgeBaseRevisionDO">
+        SELECT r.id,r.tenant_id,r.kb_id,r.status,r.capability_version_id
+        FROM nw_knowledge_base_revisions r
+        JOIN nw_knowledge_bases b
+          ON b.tenant_id=r.tenant_id AND b.id=r.kb_id AND b.active_revision_id=r.id
+        WHERE r.tenant_id=#{tenantId} AND b.status='active' AND r.status='published'
+          AND b.id>0 AND r.id>0
+          AND r.capability_version_id IN
+          <foreach collection="capabilityVersionIds" item="versionId" open="(" separator="," close=")">#{versionId}</foreach>
+    </select>
+
+    <update id="markReady">
+        UPDATE nw_knowledge_base_revisions
+        SET status = 'ready',
+            source_versions = #{sourceVersions, typeHandler=com.skillforge.core.shared.config.JsonbTypeHandler},
+            ready_at = now()
+        WHERE tenant_id = #{tenantId}
+          AND kb_id = #{kbId}
+          AND revision = #{revision}
+          AND status = 'draft'
+    </update>
+
+    <select id="lockBase" resultType="com.skillforge.core.knowledge.model.KnowledgeBaseDO">
+        <!-- 完整实体投影用于发布锁定；显式列避免表扩展隐式改变读取契约。 -->
+        SELECT id, tenant_id, name, description, status, active_revision_id,
+               rebuild_job_id, control_revision, embedding_model_config_id,
+               embedding_model_revision, embedding_dimensions, chunk_size, chunk_overlap,
+               indexing_mode, retrieval_mode, top_k, score_threshold_enabled,
+               score_threshold, vector_weight, rerank_enabled, created_at, updated_at
+        FROM nw_knowledge_bases
+        WHERE tenant_id = #{tenantId}
+          AND id = #{kbId}
+        FOR UPDATE
+    </select>
+
+    <update id="archivePublished">
+        UPDATE nw_knowledge_base_revisions
+        SET status = 'archived'
+        WHERE tenant_id = #{tenantId}
+          AND kb_id = #{kbId}
+          AND status = 'published'
+          AND id &lt;&gt; (
+              SELECT id FROM nw_knowledge_base_revisions
+              WHERE tenant_id = #{tenantId}
+                AND kb_id = #{kbId}
+                AND revision = #{revision}
+          )
+    </update>
+
+    <update id="publishReady">
+        UPDATE nw_knowledge_base_revisions
+        SET status = 'published',
+            published_at = now()
+        WHERE tenant_id = #{tenantId}
+          AND kb_id = #{kbId}
+          AND revision = #{revision}
+          AND status = 'ready'
+    </update>
+
+    <update id="activateBase">
+        UPDATE nw_knowledge_bases
+        SET active_revision_id = #{revisionId},
+            updated_at = now()
+        WHERE tenant_id = #{tenantId}
+          AND id = #{kbId}
+    </update>
+</mapper>

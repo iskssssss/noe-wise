@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.agent.mapper.AgentDeploymentMapper">
+  <select id="databaseContext" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$DatabaseContext" flushCache="true" useCache="false">
+    SELECT COALESCE(current_setting('app.tenant_id',true),'') AS tenant,COALESCE(current_setting('app.platform_admin',true),'false') AS platform_admin
+  </select>
+  <select id="restoreDatabaseContext" resultType="string" flushCache="true" useCache="false">
+    SELECT set_config('app.tenant_id',#{tenant},true) || set_config('app.platform_admin',#{platformAdmin},true)
+  </select>
+  <select id="lockExternal" resultType="string" flushCache="true" useCache="false">
+    SELECT pg_advisory_xact_lock(hashtextextended('agent-deployment:'||#{tenantId}::text||':'||COALESCE(#{integrationId}::text,'native')||':'||#{externalAgentRef},0))::text
+  </select>
+  <sql id="columns">deployment_id,integration_id,tenant_id,agent_id,definition_id,grant_id,grant_revision,external_agent_ref,fingerprint,bindings::text AS bindings,revision,created_at,grant_chain::text AS grant_chain</sql>
+  <select id="findExternal" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments
+    WHERE tenant_id=#{tenantId} AND integration_id IS NOT DISTINCT FROM #{integrationId} AND external_agent_ref=#{externalAgentRef}
+  </select>
+  <select id="findAgent" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND agent_id=#{agentId}
+  </select>
+  <select id="findDeployment" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND deployment_id=#{deploymentId}
+  </select>
+  <select id="list" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId}
+    <if test="integrationId != null">AND integration_id=#{integrationId}</if> ORDER BY created_at DESC,agent_id
+  </select>
+  <select id="impact" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$ImpactRow" useCache="false" flushCache="true">
+    SELECT deployment_id,tenant_id,agent_id,revision,
+      CASE WHEN jsonb_typeof(bindings-&gt;'resource_bindings')='array'
+             AND jsonb_typeof(bindings-&gt;'delegation_bindings')='array'
+             AND jsonb_typeof(bindings-&gt;'parameters')='object'
+      THEN jsonb_build_object(
+        'resources',COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'slot_key',entry-&gt;'slot_key','capability_type',entry-&gt;'mount'-&gt;'capability_type') ORDER BY ordinal)
+          FROM jsonb_array_elements(bindings-&gt;'resource_bindings') WITH ORDINALITY AS resource(entry,ordinal)),'[]'::jsonb),
+        'delegations',COALESCE((SELECT jsonb_agg(entry-&gt;'slot_key' ORDER BY ordinal)
+          FROM jsonb_array_elements(bindings-&gt;'delegation_bindings') WITH ORDINALITY AS delegation(entry,ordinal)),'[]'::jsonb),
+        'parameter_keys',COALESCE((SELECT jsonb_agg(key ORDER BY key)
+          FROM jsonb_object_keys(bindings-&gt;'parameters') AS parameter(key)),'[]'::jsonb))
+      ELSE NULL END::text AS binding_shape
+    FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND definition_id=#{definitionId}
+    ORDER BY deployment_id
+  </select>
+  <insert id="insert">
+    INSERT INTO nw_agent_deployments(deployment_id,tenant_id,integration_id,agent_id,definition_id,grant_id,grant_revision,external_agent_ref,fingerprint,bindings,revision,created_at,grant_chain)
+    VALUES(#{deploymentId},#{tenantId},#{integrationId},#{agentId},#{definitionId},#{grantId},#{grantRevision},#{externalAgentRef},#{fingerprint},CAST(#{bindings} AS jsonb),#{revision},#{createdAt},CAST(#{grantChain} AS jsonb))
+  </insert>
+  <insert id="appendBindingRevision">
+    INSERT INTO nw_agent_deployment_revisions(deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,actor_ref,command_ref,fingerprint)
+    SELECT deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,#{actorRef},#{commandRef},#{fingerprint}
+    FROM nw_agent_deployments WHERE deployment_id=#{deploymentId}
+  </insert>
+  <select id="findRevisionRequest" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Revision" useCache="false">
+    SELECT r.revision,r.grant_id,r.grant_revision,r.bindings::text AS bindings,r.fingerprint,r.grant_chain::text AS grant_chain,c.response::text AS response FROM nw_agent_deployment_revisions r LEFT JOIN nw_agent_deployment_receipts c USING(deployment_id,revision)
+    WHERE r.deployment_id=#{deploymentId} AND r.actor_ref=#{actorRef} AND r.command_ref=#{commandRef}
+  </select>
+  <select id="findCreateResponse" resultType="string" useCache="false">
+    SELECT c.response::text FROM nw_agent_deployment_revisions r JOIN nw_agent_deployment_receipts c USING(deployment_id,revision)
+    WHERE r.deployment_id=#{deploymentId} AND r.tenant_id=#{tenantId} AND r.revision=1
+      AND ((r.actor_ref=#{actorRef} AND r.command_ref=#{commandRef}) OR EXISTS (
+        SELECT 1 FROM nw_agent_deployment_create_requests q WHERE q.deployment_id=r.deployment_id AND q.tenant_id=r.tenant_id
+          AND q.actor_ref=#{actorRef} AND q.command_ref=#{commandRef}))
+  </select>
+  <insert id="recordCreateRequest">
+    INSERT INTO nw_agent_deployment_create_requests(deployment_id,tenant_id,actor_ref,command_ref)
+    VALUES(#{deploymentId},#{tenantId},#{actorRef},#{commandRef}) ON CONFLICT DO NOTHING
+  </insert>
+  <update id="updateBindings">
+    UPDATE nw_agent_deployments SET bindings=CAST(#{bindings} AS jsonb),revision=revision+1,updated_at=now()
+    WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} AND revision=#{expectedRevision}
+  </update>
+  <insert id="appendRevision">
+    INSERT INTO nw_agent_deployment_revisions(deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,actor_ref,command_ref)
+    SELECT deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,#{actorRef},#{commandRef}
+    FROM nw_agent_deployments WHERE deployment_id=#{deploymentId}
+  </insert>
+  <sql id="grantColumns">grant_id,definition_id,target_tenant_id,actions,expires_at,status,revision,actor_ref,request_key,fingerprint,revoke_key,revoke_fingerprint,created_at,owner_kind,owner_tenant_id,grantor_kind,grantor_tenant_id,parent_grant_id,parent_grant_revision,relation_ref,relation_revision,allow_regrant,remaining_depth</sql>
+  <select id="lockGrant" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" flushCache="true" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE grant_id=#{grantId} FOR SHARE
+  </select>
+  <select id="findGrant" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE grant_id=#{grantId}
+  </select>
+  <select id="findManagedGrant" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE grant_id=#{grantId}
+    <choose><when test="issuer != null">AND grantor_kind='tenant' AND grantor_tenant_id=#{issuer}</when>
+      <otherwise>AND grantor_kind='platform' AND <choose><when test="targets != null and !targets.isEmpty()">target_tenant_id IN <foreach collection="targets" item="id" open="(" close=")" separator=",">#{id}</foreach></when><otherwise>FALSE</otherwise></choose></otherwise>
+    </choose>
+  </select>
+  <select id="findGrantRequest" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE actor_ref=#{actorRef} AND request_key=#{requestKey}
+  </select>
+  <insert id="insertGrant">
+    INSERT INTO nw_agent_definition_grants(grant_id,definition_id,target_tenant_id,actions,expires_at,status,revision,actor_ref,request_key,fingerprint,created_at,owner_kind,owner_tenant_id,grantor_kind,grantor_tenant_id,parent_grant_id,parent_grant_revision,relation_ref,relation_revision,allow_regrant,remaining_depth)
+    VALUES(#{grantId},#{definitionId},#{targetTenantId},#{actions},#{expiresAt},#{status},#{revision},#{actorRef},#{requestKey},#{fingerprint},#{createdAt},#{ownerKind},#{ownerTenantId},#{grantorKind},#{grantorTenantId},#{parentGrantId},#{parentGrantRevision},#{relationRef},#{relationRevision},#{allowRegrant},#{remainingDepth})
+  </insert>
+  <update id="revokeGrant">
+    UPDATE nw_agent_definition_grants SET status='revoked',revision=revision+1,revoke_key=#{requestKey},revoke_fingerprint=#{fingerprint},revoked_by=#{actorRef},revoked_at=now()
+    WHERE grant_id=#{grantId} AND revision=#{expectedRevision} AND status='active'
+  </update>
+  <select id="grants" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE target_tenant_id=#{tenantId} ORDER BY created_at DESC,grant_id
+  </select>
+  <select id="lockDeployment" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row" useCache="false" flushCache="true">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND deployment_id=#{deploymentId} FOR UPDATE
+  </select>
+  <select id="lockAgent" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row" useCache="false" flushCache="true">
+    SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND agent_id=#{agentId} FOR UPDATE
+  </select>
+  <update id="switchAuthorization">
+    UPDATE nw_agent_deployments SET grant_id=#{grantId},grant_revision=#{grantRevision},grant_chain=CAST(#{grantChain} AS jsonb),revision=revision+1,updated_at=now()
+    WHERE tenant_id=#{tenantId} AND deployment_id=#{deploymentId} AND revision=#{expectedRevision}
+  </update>
+  <insert id="appendAuthorizationRevision">
+    INSERT INTO nw_agent_deployment_revisions(deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,actor_ref,command_ref,fingerprint)
+    SELECT deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,#{actorRef},#{commandRef},#{fingerprint}
+    FROM nw_agent_deployments WHERE deployment_id=#{deploymentId}
+  </insert>
+  <select id="findRevisionResponse" resultType="string" useCache="false">
+    SELECT response::text FROM nw_agent_deployment_receipts WHERE deployment_id=#{deploymentId} AND revision=#{revision}
+  </select>
+  <insert id="saveRevisionResponse">
+    INSERT INTO nw_agent_deployment_receipts(deployment_id,revision,tenant_id,response)
+    SELECT deployment_id,revision,tenant_id,CAST(#{response} AS jsonb) FROM nw_agent_deployment_revisions WHERE deployment_id=#{deploymentId} AND revision=#{revision}
+  </insert>
+  <select id="grantRevision" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grant_revisions WHERE grant_id=#{grantId} AND revision=#{revision}
+  </select>
+  <update id="narrowGrant">
+    UPDATE nw_agent_definition_grants SET actions=#{actions},expires_at=#{expiresAt},allow_regrant=#{allowRegrant},remaining_depth=#{remainingDepth},revision=revision+1
+    WHERE grant_id=#{grantId} AND revision=#{expectedRevision} AND status='active'
+  </update>
+  <insert id="appendGrantRevision">
+    INSERT INTO nw_agent_definition_grant_revisions(grant_id,definition_id,target_tenant_id,actions,expires_at,status,revision,actor_ref,request_key,fingerprint,revoke_key,revoke_fingerprint,created_at,
+      owner_kind,owner_tenant_id,grantor_kind,grantor_tenant_id,parent_grant_id,parent_grant_revision,relation_ref,relation_revision,allow_regrant,remaining_depth,changed_by,operation,command_ref)
+    SELECT <include refid="grantColumns"/>,#{actorRef},#{operation},#{key} FROM nw_agent_definition_grants WHERE grant_id=#{grantId}
+  </insert>
+  <select id="grantReceipt" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantReceipt" useCache="false" flushCache="true">
+    SELECT fingerprint,response::text AS response FROM nw_agent_definition_grant_requests WHERE actor_ref=#{actor} AND command_ref=#{key}
+  </select>
+  <insert id="saveGrantReceipt">
+    INSERT INTO nw_agent_definition_grant_requests(actor_ref,command_ref,fingerprint,grant_id,response) VALUES(#{actor},#{key},#{fingerprint},#{grantId},CAST(#{response} AS jsonb))
+  </insert>
+  <select id="grantTenant" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$TenantRow" useCache="false" flushCache="true">
+    SELECT id AS tenant_id,parent_tenant_id,status,relation_revision FROM nw_tenants WHERE id=#{tenantId}
+  </select>
+  <select id="lockGrantTenant" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$TenantRow" useCache="false" flushCache="true">
+    SELECT id AS tenant_id,parent_tenant_id,status,relation_revision FROM nw_tenants WHERE id=#{tenantId} FOR SHARE
+  </select>
+  <select id="grantRelation" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$RelationRow" useCache="false">
+    SELECT r.id AS relation_ref,r.revision FROM nw_institution_relation_revisions r JOIN nw_tenants t ON t.id=r.child_tenant_id AND t.relation_revision=r.revision
+    WHERE r.child_tenant_id=#{child} AND r.parent_tenant_id=#{parent} AND t.parent_tenant_id=#{parent}
+  </select>
+  <select id="chainAvailable" resultType="boolean" useCache="false" flushCache="true">
+    SELECT public.agent_grant_chain_available(CAST(#{chain} AS jsonb),#{tenantId},#{definitionId},#{action})
+  </select>
+  <select id="issuedGrants" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$GrantRow" useCache="false">
+    SELECT <include refid="grantColumns"/> FROM nw_agent_definition_grants WHERE grantor_kind='tenant' AND grantor_tenant_id=#{tenantId} ORDER BY created_at DESC,grant_id
+  </select>
+</mapper>

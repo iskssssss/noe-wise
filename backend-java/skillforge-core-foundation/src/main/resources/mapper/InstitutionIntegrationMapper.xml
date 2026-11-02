@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.InstitutionIntegrationMapper">
+    <select id="lockKey" resultType="java.lang.Object">SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 19))</select>
+    <select id="lockInstitutionTree" resultType="long" useCache="false" flushCache="true">SELECT revision FROM nw_institution_tree_revision WHERE singleton FOR UPDATE</select>
+    <sql id="mappingColumns">m.id,m.tenant_id,m.namespace,m.external_institution_ref,m.integration_id,
+        m.provision_fingerprint,m.revision,m.created_at,m.created_by,t.name AS tenant_name</sql>
+    <select id="externalMapping" resultType="com.skillforge.core.foundation.integration.InstitutionMappingRow">
+        SELECT <include refid="mappingColumns"/> FROM nw_external_institution_mappings m JOIN nw_tenants t ON t.id=m.tenant_id
+        WHERE m.namespace=#{namespace} AND m.external_institution_ref=#{externalRef}
+    </select>
+    <select id="mapping" resultType="com.skillforge.core.foundation.integration.InstitutionMappingRow">
+        SELECT <include refid="mappingColumns"/> FROM nw_external_institution_mappings m JOIN nw_tenants t ON t.id=m.tenant_id WHERE m.id=#{id}
+    </select>
+    <insert id="insertMapping">
+        INSERT INTO nw_external_institution_mappings(id,namespace,external_institution_ref,tenant_id,integration_id,
+            provision_fingerprint,revision,created_by)
+        VALUES(#{id},#{namespace},#{externalInstitutionRef},#{tenantId},#{integrationId},#{provisionFingerprint},1,#{createdBy})
+    </insert>
+    <sql id="mappingFilter">
+        <where>
+            <if test="allowed != null">
+                <choose><when test="!allowed.isEmpty()">m.tenant_id IN
+                    <foreach collection="allowed" item="tenant" open="(" close=")" separator=",">#{tenant}</foreach>
+                </when><otherwise>FALSE</otherwise></choose>
+            </if>
+            <if test="namespace != null">AND m.namespace=#{namespace}</if>
+            <if test="tenantId != null">AND m.tenant_id=#{tenantId}</if>
+        </where>
+    </sql>
+    <select id="mappings" resultType="com.skillforge.core.foundation.integration.InstitutionMappingRow">
+        SELECT <include refid="mappingColumns"/> FROM nw_external_institution_mappings m JOIN nw_tenants t ON t.id=m.tenant_id
+        <include refid="mappingFilter"/> ORDER BY m.created_at DESC,m.id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="mappingCount" resultType="long">SELECT count(*) FROM nw_external_institution_mappings m <include refid="mappingFilter"/></select>
+    <select id="activePlanId" resultType="long">SELECT id FROM nw_billing_plans WHERE plan_code=#{code} AND is_active=true</select>
+    <select id="tenantStatus" resultType="string">SELECT status FROM nw_tenants WHERE id=#{tenantId}</select>
+    <select id="integrationExists" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM nw_institution_integrations WHERE tenant_id=#{tenantId} AND integration_id=#{integrationId})
+    </select>
+    <insert id="registerIntegration">
+        INSERT INTO nw_institution_integrations(tenant_id,integration_id) VALUES(#{tenantId},#{integrationId}) ON CONFLICT DO NOTHING
+    </insert>
+    <resultMap id="operationResult" type="com.skillforge.core.foundation.integration.InstitutionOperationRow">
+        <result column="scopes" property="scopes" typeHandler="com.skillforge.core.foundation.integration.ExecutionScopesTypeHandler"/>
+    </resultMap>
+    <select id="operation" resultMap="operationResult">
+        SELECT actor_ref,operation_kind,idempotency_key,fingerprint,tenant_id,result_ref,result_revision,
+            result_status,integration_id,principal_ref,api_key_prefix,scopes,principal_created_at
+        FROM nw_institution_provision_requests WHERE actor_ref=#{actor} AND operation_kind=#{kind} AND idempotency_key=#{key}
+    </select>
+    <insert id="insertOperation">
+        INSERT INTO nw_institution_provision_requests(actor_ref,operation_kind,idempotency_key,fingerprint,tenant_id,result_ref,result_revision,
+            result_status,integration_id,principal_ref,api_key_prefix,scopes,principal_created_at)
+        VALUES(#{actorRef},#{operationKind},#{idempotencyKey},#{fingerprint},#{tenantId},#{resultRef},#{resultRevision},
+            #{resultStatus},#{integrationId},#{principalRef},#{apiKeyPrefix},#{scopes,typeHandler=com.skillforge.core.foundation.integration.ExecutionScopesTypeHandler},#{principalCreatedAt})
+    </insert>
+    <select id="scopeOperation" resultType="com.skillforge.core.foundation.integration.InstitutionOperationRow">
+        SELECT actor_ref,operation_kind,idempotency_key,fingerprint,tenant_id,integration_id,result_ref,result_revision,result_status
+        FROM nw_institution_business_scope_requests WHERE tenant_id=#{tenantId} AND integration_id=#{integrationId}
+        AND actor_ref=#{actor} AND operation_kind=#{kind} AND idempotency_key=#{key}
+    </select>
+    <insert id="insertScopeOperation">
+        INSERT INTO nw_institution_business_scope_requests(tenant_id,integration_id,actor_ref,operation_kind,idempotency_key,
+            fingerprint,result_ref,result_revision,result_status)
+        VALUES(#{tenantId},#{integrationId},#{actorRef},#{operationKind},#{idempotencyKey},#{fingerprint},#{resultRef},#{resultRevision},#{resultStatus})
+    </insert>
+    <resultMap id="principal" type="com.skillforge.core.foundation.persistence.ServicePrincipalDO">
+        <id column="id" property="id"/>
+        <result column="scopes" property="scopes" typeHandler="com.skillforge.core.shared.config.JsonbTypeHandler"/>
+    </resultMap>
+    <sql id="principalColumns">id,tenant_id,principal_id,integration_id,api_key_prefix,scopes,status,credential_version,created_at</sql>
+    <select id="lockPrincipal" resultMap="principal">
+        SELECT <include refid="principalColumns"/> FROM nw_service_principals
+        WHERE tenant_id=#{tenantId} AND integration_id=#{integrationId} AND id=#{id} FOR UPDATE
+    </select>
+    <select id="credentials" resultMap="principal">
+        SELECT <include refid="principalColumns"/> FROM nw_service_principals
+        WHERE tenant_id=#{tenantId} AND integration_id=#{integrationId} ORDER BY created_at DESC,id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="credentialCount" resultType="long">SELECT count(*) FROM nw_service_principals WHERE tenant_id=#{tenantId} AND integration_id=#{integrationId}</select>
+    <sql id="scopeColumns">scope_id,tenant_id,integration_id,scope_type,external_ref,display_name,status,revision,actor_ref</sql>
+    <select id="businessScope" resultType="com.skillforge.core.foundation.integration.IntegrationBusinessScopeRow">
+        SELECT <include refid="scopeColumns"/> FROM nw_integration_business_scopes WHERE tenant_id=#{tenantId}
+        AND integration_id=#{integrationId} AND scope_type=#{scopeType} AND external_ref=#{externalRef}
+    </select>
+    <select id="businessScopeById" resultType="com.skillforge.core.foundation.integration.IntegrationBusinessScopeRow">
+        SELECT <include refid="scopeColumns"/> FROM nw_integration_business_scopes WHERE tenant_id=#{tenantId}
+        AND integration_id=#{integrationId} AND scope_id=#{scopeId}
+    </select>
+    <insert id="insertBusinessScope">
+        INSERT INTO nw_integration_business_scopes(scope_id,tenant_id,integration_id,scope_type,external_ref,display_name,status,revision,actor_ref)
+        VALUES(#{scopeId},#{tenantId},#{integrationId},#{scopeType},#{externalRef},#{displayName},#{status},#{revision},#{actorRef})
+    </insert>
+    <update id="updateBusinessScope">
+        UPDATE nw_integration_business_scopes SET status=#{row.status},revision=#{row.revision},actor_ref=#{row.actorRef},updated_at=clock_timestamp()
+        WHERE tenant_id=#{row.tenantId} AND integration_id=#{row.integrationId} AND scope_id=#{row.scopeId} AND revision=#{expected}
+    </update>
+    <resultMap id="provisionPlan" type="com.skillforge.core.foundation.integration.ProvisioningPlanOption">
+        <constructor><idArg column="id" javaType="java.lang.String"/><arg column="label" javaType="java.lang.String"/><arg column="description" javaType="java.lang.String"/></constructor>
+    </resultMap>
+    <sql id="activePlanFilter">p.is_active=true
+        <if test="code != null">AND p.plan_code=#{code}</if>
+        AND (#{query}='' OR strpos(lower(p.plan_code),lower(#{query}))&gt;0 OR strpos(lower(p.display_name),lower(#{query}))&gt;0)
+    </sql>
+    <select id="activePlans" resultMap="provisionPlan">SELECT p.plan_code AS id,p.display_name AS label,p.plan_code AS description FROM nw_billing_plans p WHERE <include refid="activePlanFilter"/> ORDER BY p.plan_code LIMIT #{limit} OFFSET #{offset}</select>
+    <select id="activePlanCount" resultType="long">SELECT count(*) FROM nw_billing_plans p WHERE <include refid="activePlanFilter"/></select>
+</mapper>

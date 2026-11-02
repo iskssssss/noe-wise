@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 简化与清理"
+  short_description: "基于消费者证据减少灵知 实现和维护负担"
+
+policy:
+  allow_implicit_invocation: true

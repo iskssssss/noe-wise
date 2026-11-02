@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.sqlite.SqliteIdentities$Mapper">
+    <insert id="insert">INSERT INTO agent_runtime_desktop_verified_identities(tenant_id,reference,session_id,target_kind,target_id,end_user_id,policy_revision) VALUES(#{tenantId},#{reference},#{sessionId},#{targetKind},#{targetId},#{endUserId},#{policyRevision}) ON CONFLICT DO NOTHING</insert>
+    <select id="find" resultType="com.skillforge.runtime.adapter.sqlite.SqliteIdentities$Row">SELECT tenant_id,reference,session_id,target_kind,target_id,end_user_id,policy_revision FROM agent_runtime_desktop_verified_identities WHERE tenant_id=#{tenant} AND reference=#{reference}</select>
+    <insert id="insertScope">INSERT INTO agent_runtime_desktop_identity_scopes(tenant_id,reference,scope) VALUES(#{tenant},#{reference},#{scope})</insert>
+    <select id="scopes" resultType="string">SELECT scope FROM agent_runtime_desktop_identity_scopes WHERE tenant_id=#{tenant} AND reference=#{reference} ORDER BY scope</select>
+</mapper>

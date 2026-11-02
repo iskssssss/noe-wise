@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.capability.persistence.OpenPlatformResourceRevisionMapper">
+  <select id="listLatestSummaries" resultType="com.skillforge.core.capability.persistence.OpenPlatformResourceRevisionDO">
+    SELECT DISTINCT ON (resource_type,resource_id)
+           resource_type,resource_id,revision,status,content_hash,etag,created_at,updated_at,published_at
+      FROM nw_open_platform_resource_revisions
+     WHERE tenant_id=#{tenant}
+       <if test="type != null">AND resource_type=#{type}</if>
+       <if test="status != null">AND status=#{status}</if>
+     ORDER BY resource_type,resource_id,revision DESC
+     LIMIT #{limit}
+  </select>
+</mapper>

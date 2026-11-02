@@ -1,0 +1,383 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.execution.ExecutionLedgerMapper">
+
+    <resultMap id="storageTimeRow"
+               type="com.skillforge.runtime.adapter.jdbc.execution.ExecutionStorageTimeRow"/>
+    <resultMap id="executionRow"
+               type="com.skillforge.runtime.adapter.jdbc.execution.ExecutionLedgerRow"/>
+    <resultMap id="mutationRow"
+               type="com.skillforge.runtime.adapter.jdbc.execution.ExecutionMutationRow"/>
+    <resultMap id="publicationRow"
+               type="com.skillforge.runtime.adapter.jdbc.execution.ExecutionPublicationRow"/>
+    <resultMap id="publicationMutationRow"
+               type="com.skillforge.runtime.adapter.jdbc.execution.ExecutionPublicationMutationRow"/>
+
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenantId}, true)
+    </select>
+
+    <select id="storageNow" resultMap="storageTimeRow">
+        SELECT floor(extract(epoch FROM sampled_at))::bigint AS epoch_second,
+               floor((extract(epoch FROM sampled_at)
+                   - floor(extract(epoch FROM sampled_at)))
+                   * 1000000000)::integer AS nano
+          FROM (SELECT clock_timestamp() AS sampled_at) sampled
+    </select>
+
+    <select id="nextFence" resultType="long">
+        SELECT nextval('public.agent_runtime_execution_fencing_seq')
+    </select>
+
+    <select id="lockKey" resultType="string">
+        SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))::text
+    </select>
+
+    <sql id="executionColumns">
+        tenant_id, execution_id, session_id, target_kind, target_id, agent_id,
+        end_user_id, run_id,
+        causation_input_id, execution_unit_id, definition_version,
+        execution_mode, causative_action_id, delegation_id, state,
+        execution_revision, checkpoint_schema_id, checkpoint_canonical_json,
+        waiting_suspend_ref, waiting_action_key, result_ref, reason_code,
+        lease_claim_id, lease_worker_id, lease_fencing_token,
+        lease_execution_revision, lease_until_epoch_second, lease_until_nano,
+        last_requested_epoch_second, last_requested_nano,
+        cancel_request_id, cancel_requested_epoch_second,
+        cancel_requested_nano, record_data, created_epoch_second, created_nano,
+        updated_epoch_second, updated_nano
+    </sql>
+
+    <select id="findExternalWait" resultMap="executionRow">
+        SELECT tenant_id, execution_id, session_id, agent_id, end_user_id, run_id, causation_input_id, execution_unit_id,
+               definition_version, execution_mode, causative_action_id, delegation_id, state, execution_revision,
+               checkpoint_schema_id, checkpoint_canonical_json, waiting_suspend_ref, waiting_action_key, result_ref,
+               reason_code, lease_claim_id, lease_worker_id, lease_fencing_token, lease_execution_revision,
+               lease_until_epoch_second, lease_until_nano, last_requested_epoch_second, last_requested_nano,
+               cancel_request_id, cancel_requested_epoch_second, cancel_requested_nano, record_data, created_epoch_second,
+               created_nano, updated_epoch_second, updated_nano, target_kind, target_id FROM public.agent_runtime_executions
+        WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND waiting_suspend_ref=#{suspendRef}
+          AND state='WAITING_EXTERNAL' AND cancel_request_id IS NULL
+        LIMIT 2
+    </select>
+
+    <select id="findExecution" resultMap="executionRow">
+        SELECT <include refid="executionColumns"/>
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId} AND execution_id = #{executionId}
+    </select>
+
+    <select id="lockExecution" resultMap="executionRow">
+        SELECT <include refid="executionColumns"/>
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId} AND execution_id = #{executionId}
+         FOR UPDATE
+    </select>
+
+    <insert id="insertExecution">
+        INSERT INTO public.agent_runtime_executions (
+            <include refid="executionColumns"/>)
+        VALUES (
+            #{tenantId}, #{executionId}, #{sessionId}, #{targetKind}, #{targetId},
+            #{agentId}, #{endUserId},
+            #{runId}, #{causationInputId}, #{executionUnitId},
+            #{definitionVersion}, #{executionMode}, #{causativeActionId},
+            #{delegationId}, #{state}, #{executionRevision},
+            #{checkpointSchemaId}, #{checkpointCanonicalJson},
+            #{waitingSuspendRef}, #{waitingActionKey}, #{resultRef},
+            #{reasonCode}, #{leaseClaimId}, #{leaseWorkerId},
+            #{leaseFencingToken}, #{leaseExecutionRevision},
+            #{leaseUntilEpochSecond}, #{leaseUntilNano},
+            #{lastRequestedEpochSecond}, #{lastRequestedNano},
+            #{cancelRequestId}, #{cancelRequestedEpochSecond},
+            #{cancelRequestedNano}, #{recordData}, #{createdEpochSecond},
+            #{createdNano}, #{updatedEpochSecond}, #{updatedNano})
+    </insert>
+
+    <update id="updateExecution">
+        UPDATE public.agent_runtime_executions
+           SET state = #{row.state},
+               execution_revision = #{row.executionRevision},
+               checkpoint_schema_id = #{row.checkpointSchemaId},
+               checkpoint_canonical_json = #{row.checkpointCanonicalJson},
+               waiting_suspend_ref = #{row.waitingSuspendRef},
+               waiting_action_key = #{row.waitingActionKey},
+               result_ref = #{row.resultRef}, reason_code = #{row.reasonCode},
+               lease_claim_id = #{row.leaseClaimId},
+               lease_worker_id = #{row.leaseWorkerId},
+               lease_fencing_token = #{row.leaseFencingToken},
+               lease_execution_revision = #{row.leaseExecutionRevision},
+               lease_until_epoch_second = #{row.leaseUntilEpochSecond},
+               lease_until_nano = #{row.leaseUntilNano},
+               last_requested_epoch_second = #{row.lastRequestedEpochSecond},
+               last_requested_nano = #{row.lastRequestedNano},
+               cancel_request_id = #{row.cancelRequestId},
+               cancel_requested_epoch_second = #{row.cancelRequestedEpochSecond},
+               cancel_requested_nano = #{row.cancelRequestedNano},
+               record_data = #{row.recordData},
+               updated_epoch_second = #{row.updatedEpochSecond},
+               updated_nano = #{row.updatedNano}
+         WHERE tenant_id = #{row.tenantId}
+           AND execution_id = #{row.executionId}
+           AND execution_revision = #{expectedRevision}
+    </update>
+
+    <select id="scanRecoverable" resultMap="executionRow">
+        SELECT <include refid="executionColumns"/>
+          FROM public.agent_runtime_executions
+         WHERE tenant_id = #{tenantId}
+           AND state IN ('QUEUED', 'RUNNING', 'WAITING_HITL', 'WAITING_EXTERNAL', 'RESUMING')
+        <if test="afterExecutionId != null">
+           AND execution_id &gt; #{afterExecutionId}
+        </if>
+         ORDER BY execution_id
+         LIMIT #{limit}
+    </select>
+
+
+    <sql id="mutationColumns">
+        tenant_id, execution_id, session_id, target_kind, target_id, agent_id,
+        end_user_id, run_id,
+        mutation_key, mutation_kind, expected_revision, expected_state,
+        command_fingerprint, command_data, output_revision, output_state,
+        output_fingerprint, output_data, intermediate_revision,
+        intermediate_state, intermediate_fingerprint, intermediate_data
+    </sql>
+
+    <select id="findMutation" resultMap="mutationRow">
+        SELECT <include refid="mutationColumns"/>
+          FROM public.agent_runtime_execution_mutations
+         WHERE tenant_id = #{tenantId} AND execution_id = #{executionId}
+           AND mutation_key = #{mutationKey}
+    </select>
+
+    <insert id="insertMutation">
+        INSERT INTO public.agent_runtime_execution_mutations (
+            <include refid="mutationColumns"/>)
+        VALUES (
+            #{tenantId}, #{executionId}, #{sessionId}, #{targetKind}, #{targetId},
+            #{agentId}, #{endUserId},
+            #{runId}, #{mutationKey}, #{mutationKind}, #{expectedRevision},
+            #{expectedState}, #{commandFingerprint}, #{commandData},
+            #{outputRevision}, #{outputState}, #{outputFingerprint},
+            #{outputData}, #{intermediateRevision}, #{intermediateState},
+            #{intermediateFingerprint}, #{intermediateData})
+    </insert>
+
+    <sql id="publicationColumns">
+        tenant_id, source_kind, source_id, event_id, source_revision,
+        publication_revision, available_epoch_second, available_nano,
+        status, attempts, lease_claim_id, lease_worker_id,
+        lease_fencing_token, lease_until_epoch_second, lease_until_nano,
+        projection_ref, failure_data, publication_data,
+        created_epoch_second, created_nano, updated_epoch_second, updated_nano
+    </sql>
+
+    <sql id="publicationSelectColumns">
+        p.tenant_id AS tenant_id, p.source_kind AS source_kind,
+        p.source_id AS source_id, p.event_id AS event_id,
+        p.source_revision AS source_revision,
+        p.publication_revision AS publication_revision,
+        p.available_epoch_second AS available_epoch_second,
+        p.available_nano AS available_nano, p.status AS status,
+        p.attempts AS attempts, p.lease_claim_id AS lease_claim_id,
+        p.lease_worker_id AS lease_worker_id,
+        p.lease_fencing_token AS lease_fencing_token,
+        p.lease_until_epoch_second AS lease_until_epoch_second,
+        p.lease_until_nano AS lease_until_nano,
+        p.projection_ref AS projection_ref, p.failure_data AS failure_data,
+        p.publication_data AS publication_data,
+        p.created_epoch_second AS created_epoch_second,
+        p.created_nano AS created_nano,
+        p.updated_epoch_second AS updated_epoch_second,
+        p.updated_nano AS updated_nano,
+        e.record_data AS source_record_data,
+        source_mutation.match_count AS source_mutation_match_count,
+        source_mutation.tenant_id AS source_mutation_tenant_id,
+        source_mutation.execution_id AS source_mutation_execution_id,
+        source_mutation.session_id AS source_mutation_session_id,
+        source_mutation.target_kind AS source_mutation_target_kind,
+        source_mutation.target_id AS source_mutation_target_id,
+        source_mutation.agent_id AS source_mutation_agent_id,
+        source_mutation.end_user_id AS source_mutation_end_user_id,
+        source_mutation.run_id AS source_mutation_run_id,
+        source_mutation.mutation_key AS source_mutation_mutation_key,
+        source_mutation.mutation_kind AS source_mutation_mutation_kind,
+        source_mutation.expected_revision AS source_mutation_expected_revision,
+        source_mutation.expected_state AS source_mutation_expected_state,
+        source_mutation.command_fingerprint AS source_mutation_command_fingerprint,
+        source_mutation.command_data AS source_mutation_command_data,
+        source_mutation.output_revision AS source_mutation_output_revision,
+        source_mutation.output_state AS source_mutation_output_state,
+        source_mutation.output_fingerprint AS source_mutation_output_fingerprint,
+        source_mutation.output_data AS source_mutation_output_data,
+        source_mutation.intermediate_revision
+            AS source_mutation_intermediate_revision,
+        source_mutation.intermediate_state AS source_mutation_intermediate_state,
+        source_mutation.intermediate_fingerprint
+            AS source_mutation_intermediate_fingerprint,
+        source_mutation.intermediate_data AS source_mutation_intermediate_data
+    </sql>
+
+    <sql id="publicationSourceMutationJoin">
+        CROSS JOIN LATERAL (
+            SELECT count(*) AS match_count,
+                   min(m.tenant_id) AS tenant_id,
+                   min(m.execution_id) AS execution_id,
+                   min(m.session_id) AS session_id,
+                   min(m.target_kind) AS target_kind,
+                   min(m.target_id) AS target_id,
+                   min(m.agent_id) AS agent_id,
+                   min(m.end_user_id) AS end_user_id,
+                   min(m.run_id) AS run_id,
+                   min(m.mutation_key) AS mutation_key,
+                   min(m.mutation_kind) AS mutation_kind,
+                   min(m.expected_revision) AS expected_revision,
+                   min(m.expected_state) AS expected_state,
+                   min(m.command_fingerprint) AS command_fingerprint,
+                   min(m.command_data) AS command_data,
+                   min(m.output_revision) AS output_revision,
+                   min(m.output_state) AS output_state,
+                   min(m.output_fingerprint) AS output_fingerprint,
+                   min(m.output_data) AS output_data,
+                   min(m.intermediate_revision) AS intermediate_revision,
+                   min(m.intermediate_state) AS intermediate_state,
+                   min(m.intermediate_fingerprint) AS intermediate_fingerprint,
+                   min(m.intermediate_data) AS intermediate_data
+              FROM public.agent_runtime_execution_mutations m
+             WHERE m.tenant_id = p.tenant_id
+               AND m.execution_id = p.source_id
+               AND m.mutation_kind &lt;> 'RELEASE'
+               AND (m.output_revision = p.source_revision
+                    OR (m.mutation_kind = 'RESUME'
+                        AND m.intermediate_revision = p.source_revision))
+        ) source_mutation
+    </sql>
+
+    <select id="findPublication" resultMap="publicationRow">
+        SELECT <include refid="publicationSelectColumns"/>
+          FROM public.agent_runtime_execution_state_publications p
+          JOIN public.agent_runtime_executions e
+            ON e.tenant_id = p.tenant_id AND e.execution_id = p.source_id
+          <include refid="publicationSourceMutationJoin"/>
+         WHERE p.tenant_id = #{tenantId} AND p.source_kind = 'execution'
+           AND p.source_id = #{sourceId} AND p.event_id = #{eventId}
+    </select>
+
+    <select id="findPublicationByRevision" resultMap="publicationRow">
+        SELECT <include refid="publicationSelectColumns"/>
+          FROM public.agent_runtime_execution_state_publications p
+          JOIN public.agent_runtime_executions e
+            ON e.tenant_id = p.tenant_id AND e.execution_id = p.source_id
+          <include refid="publicationSourceMutationJoin"/>
+         WHERE p.tenant_id = #{tenantId} AND p.source_kind = 'execution'
+           AND p.source_id = #{sourceId}
+           AND p.source_revision = #{sourceRevision}
+    </select>
+
+    <select id="lockPublication" resultMap="publicationRow">
+        SELECT <include refid="publicationSelectColumns"/>
+          FROM public.agent_runtime_execution_state_publications p
+          JOIN public.agent_runtime_executions e
+            ON e.tenant_id = p.tenant_id AND e.execution_id = p.source_id
+          <include refid="publicationSourceMutationJoin"/>
+         WHERE p.tenant_id = #{tenantId} AND p.source_kind = 'execution'
+           AND p.source_id = #{sourceId} AND p.event_id = #{eventId}
+         FOR UPDATE OF p
+    </select>
+
+    <select id="lockEligiblePublications" resultMap="publicationRow">
+        SELECT <include refid="publicationSelectColumns"/>
+          FROM public.agent_runtime_execution_state_publications p
+          JOIN public.agent_runtime_executions e
+            ON e.tenant_id = p.tenant_id AND e.execution_id = p.source_id
+          <include refid="publicationSourceMutationJoin"/>
+          CROSS JOIN LATERAL (
+              SELECT floor(extract(epoch FROM sampled_at))::bigint AS epoch_second,
+                     floor((extract(epoch FROM sampled_at)
+                         - floor(extract(epoch FROM sampled_at)))
+                         * 1000000000)::integer AS nano
+                FROM (SELECT clock_timestamp() AS sampled_at) sampled
+          ) storage_clock
+         WHERE p.tenant_id = #{tenantId} AND p.source_kind = 'execution'
+           AND ((p.status = 'PENDING'
+                 AND (p.available_epoch_second, p.available_nano)
+                     &lt;= (storage_clock.epoch_second, storage_clock.nano))
+             OR (p.status = 'CLAIMED'
+                 AND (p.lease_until_epoch_second, p.lease_until_nano)
+                     &lt;= (storage_clock.epoch_second, storage_clock.nano)))
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM public.agent_runtime_execution_state_publications head
+                WHERE head.tenant_id = p.tenant_id
+                  AND head.source_id = p.source_id
+                  AND head.source_revision &lt; p.source_revision
+                  AND head.status &lt;> 'ACKNOWLEDGED')
+         ORDER BY CASE WHEN p.status = 'CLAIMED' THEN p.lease_until_epoch_second
+                       ELSE p.available_epoch_second END,
+                  CASE WHEN p.status = 'CLAIMED' THEN p.lease_until_nano
+                       ELSE p.available_nano END,
+                  p.source_id, p.source_revision, p.event_id
+         LIMIT #{limit}
+         FOR UPDATE OF p SKIP LOCKED
+    </select>
+
+    <insert id="insertPublication">
+        INSERT INTO public.agent_runtime_execution_state_publications (
+            <include refid="publicationColumns"/>)
+        VALUES (
+            #{tenantId}, #{sourceKind}, #{sourceId}, #{eventId},
+            #{sourceRevision}, #{publicationRevision}, #{availableEpochSecond},
+            #{availableNano}, #{status}, #{attempts}, #{leaseClaimId},
+            #{leaseWorkerId}, #{leaseFencingToken}, #{leaseUntilEpochSecond},
+            #{leaseUntilNano}, #{projectionRef}, #{failureData},
+            #{publicationData}, #{createdEpochSecond}, #{createdNano},
+            #{updatedEpochSecond}, #{updatedNano})
+    </insert>
+
+    <update id="updatePublication">
+        UPDATE public.agent_runtime_execution_state_publications
+           SET publication_revision = #{row.publicationRevision},
+               available_epoch_second = #{row.availableEpochSecond},
+               available_nano = #{row.availableNano},
+               status = #{row.status}, attempts = #{row.attempts},
+               lease_claim_id = #{row.leaseClaimId},
+               lease_worker_id = #{row.leaseWorkerId},
+               lease_fencing_token = #{row.leaseFencingToken},
+               lease_until_epoch_second = #{row.leaseUntilEpochSecond},
+               lease_until_nano = #{row.leaseUntilNano},
+               projection_ref = #{row.projectionRef},
+               failure_data = #{row.failureData},
+               publication_data = #{row.publicationData},
+               updated_epoch_second = #{row.updatedEpochSecond},
+               updated_nano = #{row.updatedNano}
+         WHERE tenant_id = #{row.tenantId} AND source_kind = 'execution'
+           AND source_id = #{row.sourceId} AND event_id = #{row.eventId}
+           AND publication_revision = #{expectedRevision}
+    </update>
+
+    <sql id="publicationMutationColumns">
+        tenant_id, source_id, event_id, mutation_key, mutation_kind,
+        command_fingerprint, command_data, output_revision, output_status,
+        output_fingerprint, output_data
+    </sql>
+
+    <select id="findPublicationMutation" resultMap="publicationMutationRow">
+        SELECT <include refid="publicationMutationColumns"/>
+          FROM public.agent_runtime_execution_publication_mutations
+         WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+           AND event_id = #{eventId} AND mutation_key = #{mutationKey}
+    </select>
+
+    <insert id="insertPublicationMutation">
+        INSERT INTO public.agent_runtime_execution_publication_mutations (
+            <include refid="publicationMutationColumns"/>)
+        VALUES (
+            #{tenantId}, #{sourceId}, #{eventId}, #{mutationKey},
+            #{mutationKind}, #{commandFingerprint}, #{commandData},
+            #{outputRevision}, #{outputStatus}, #{outputFingerprint},
+            #{outputData})
+    </insert>
+</mapper>

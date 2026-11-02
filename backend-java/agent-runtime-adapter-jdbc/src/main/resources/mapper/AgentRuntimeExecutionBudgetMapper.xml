@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.budget.ExecutionBudgetMapper">
+    <!-- 预算批次沿调用方已持有的根锁提交；零值维度也必须存在。 -->
+    <resultMap id="balanceRow" type="com.skillforge.runtime.adapter.jdbc.budget.BudgetBalanceRow"><result property="scopeKind" column="scope_kind"/><result property="dimension" column="dimension"/><result property="maximum" column="maximum"/><result property="consumed" column="consumed"/><result property="reserved" column="reserved"/></resultMap>
+    <resultMap id="activityRow" type="com.skillforge.runtime.adapter.jdbc.budget.BudgetActivityRow"><result property="startedAt" column="started_at"/><result property="confirmedThrough" column="confirmed_through"/></resultMap>
+    <select id="registrationBalances" resultMap="balanceRow" useCache="false" flushCache="true">
+        SELECT scope_kind,dimension,maximum,consumed,reserved FROM agent_runtime_budget_balances
+        WHERE tenant_id=#{tenant}
+          AND ((scope_kind='ROOT' AND scope_id=#{root})
+            OR (scope_kind IN ('RUN','STAGE_BASE') AND scope_id=#{run}))
+    </select>
+    <select id="readReportedAmounts" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetAmountRow" useCache="false" flushCache="true">
+        SELECT dimension,reported FROM agent_runtime_budget_attempt_amounts
+        WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND dimension IN
+        <foreach collection="amounts" item="a" open="(" close=")" separator=",">#{a.dimension}</foreach>
+    </select>
+    <update id="fillReportedAmounts">
+        UPDATE agent_runtime_budget_attempt_amounts b SET reported=a.reported
+        FROM (VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{a.dimension}::text,#{a.reported}::bigint)
+        </foreach>) AS a(dimension,reported)
+        WHERE b.tenant_id=#{tenant} AND b.attempt_id=#{attempt}
+          AND b.dimension=a.dimension AND b.reported IS NULL
+    </update>
+    <update id="reserveBalances">
+        UPDATE agent_runtime_budget_balances b
+        SET reserved=b.reserved+a.reserved,
+            maximum=CASE WHEN b.scope_kind='STAGE' THEN a.maximum ELSE b.maximum END
+        FROM (VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{a.dimension}::text,#{a.reserved}::bigint,#{a.maximum}::bigint)
+        </foreach>) AS a(dimension,reserved,maximum)
+        WHERE b.tenant_id=#{tenant} AND b.dimension=a.dimension
+          AND ((b.scope_kind='ROOT' AND b.scope_id=#{root})
+            OR (b.scope_kind IN ('RUN','STAGE') AND b.scope_id=#{run}))
+    </update>
+    <insert id="insertAmounts">
+        INSERT INTO agent_runtime_budget_attempt_amounts(tenant_id,attempt_id,dimension,reserved) VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{tenant},#{attempt},#{a.dimension},#{a.reserved})
+        </foreach>
+    </insert>
+    <update id="settleBalances">
+        UPDATE agent_runtime_budget_balances b SET consumed=b.consumed+a.reported,reserved=b.reserved-a.reserved
+        FROM (VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{a.dimension}::text,#{a.reserved}::bigint,#{a.reported}::bigint)
+        </foreach>) AS a(dimension,reserved,reported)
+        WHERE b.tenant_id=#{tenant} AND b.dimension=a.dimension
+          AND ((b.scope_kind='ROOT' AND b.scope_id=#{root})
+            OR (b.scope_kind IN ('RUN','STAGE') AND b.scope_id=#{run}))
+    </update>
+    <update id="settleAmounts">
+        UPDATE agent_runtime_budget_attempt_amounts SET settled=true
+        WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND NOT settled
+          AND dimension IN
+        <foreach collection="amounts" item="a" open="(" close=")" separator=",">#{a.dimension}</foreach>
+    </update>
+    <select id="recordActivity" resultMap="activityRow" affectData="true" flushCache="true" useCache="false">
+        INSERT INTO agent_runtime_budget_activity(tenant_id,run_id,interval_id,started_at,confirmed_through)
+        VALUES (#{tenant},#{run},#{id},#{start},#{through})
+        ON CONFLICT (tenant_id,run_id,interval_id) DO UPDATE
+        SET confirmed_through=GREATEST(agent_runtime_budget_activity.confirmed_through,EXCLUDED.confirmed_through)
+        WHERE agent_runtime_budget_activity.started_at=EXCLUDED.started_at
+        RETURNING started_at,confirmed_through
+    </select>
+
+    <insert id="insertRoot">INSERT INTO agent_runtime_budget_roots(tenant_id,root_id,scenario,source_version,active_limit_seconds) VALUES (#{tenant},#{root},#{scenario},#{version},#{seconds}) ON CONFLICT DO NOTHING</insert>
+    <insert id="insertRun">INSERT INTO agent_runtime_budget_runs(tenant_id,run_id,root_id,role,source_version,active_limit_seconds) VALUES (#{tenant},#{run},#{root},#{role},#{version},#{seconds})</insert>
+    <insert id="insertAttempt">INSERT INTO agent_runtime_budget_attempts(tenant_id,attempt_id,run_id,fingerprint,category,closing,state) VALUES (#{tenant},#{attempt},#{run},#{fingerprint},#{category},#{closing},'RESERVED')</insert>
+    <update id="markSent">UPDATE agent_runtime_budget_attempts SET state='SENT' WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt} AND state='RESERVED'</update>
+    <update id="reportSentCounts">UPDATE agent_runtime_budget_attempt_amounts SET reported=reserved WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND dimension IN ('BUSINESS_MODELS','AUXILIARY_MODELS','TOOLS','KNOWLEDGE')</update>
+    <insert id="insertReceipt">INSERT INTO agent_runtime_budget_result_receipts(tenant_id,attempt_id,result_reference) VALUES (#{tenant},#{attempt},#{reference}) ON CONFLICT DO NOTHING</insert>
+    <update id="saveResult">UPDATE agent_runtime_budget_attempts SET state='RESULT_SAVED',result_reference=#{reference} WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt} AND state IN ('SENT','RESULT_SAVED','SETTLED')</update>
+    <update id="saveUnsentResult">UPDATE agent_runtime_budget_attempts SET state='RESULT_SAVED',result_reference=#{reference} WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt} AND state='RESERVED'</update>
+    <update id="reportUnsentAmounts">UPDATE agent_runtime_budget_attempt_amounts SET reported=0 WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND reported IS NULL</update>
+    <update id="markSettled">UPDATE agent_runtime_budget_attempts SET state='SETTLED' WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND state='RESULT_SAVED' AND NOT EXISTS (SELECT 1 FROM agent_runtime_budget_attempt_amounts WHERE tenant_id=#{pendingTenant} AND attempt_id=#{pendingAttempt} AND NOT settled)</update>
+    <update id="clearClosingRun">UPDATE agent_runtime_budget_balances b SET maximum=0 FROM agent_runtime_budget_runs r WHERE b.tenant_id=r.tenant_id AND b.scope_id=r.run_id AND b.scope_kind='CLOSING_RUN' AND r.tenant_id=#{tenant} AND r.root_id=#{root}</update>
+    <update id="updateClosingBalances">
+        UPDATE agent_runtime_budget_balances b SET maximum=a.maximum
+        FROM (VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{a.dimension}::text,#{a.maximum}::bigint)
+        </foreach>) AS a(dimension,maximum)
+        WHERE b.tenant_id=#{tenant} AND b.dimension=a.dimension
+          AND ((b.scope_kind='CLOSING' AND b.scope_id=#{root})
+            OR (b.scope_kind='CLOSING_RUN' AND b.scope_id=#{run}))
+    </update>
+    <update id="configureClosing">UPDATE agent_runtime_budget_roots SET closing_active_seconds=#{seconds},closing_run_id=#{run} WHERE tenant_id=#{tenant} AND root_id=#{root}</update>
+    <update id="enterClosing">UPDATE agent_runtime_budget_roots SET phase='CLOSING' WHERE tenant_id=#{tenant} AND root_id=#{root}</update>
+    <insert id="allowClosingTarget">INSERT INTO agent_runtime_budget_closing_targets(tenant_id,run_id,target_handle) VALUES (#{tenant},#{run},#{handle}) ON CONFLICT DO NOTHING</insert>
+    <insert id="insertBalances">
+        INSERT INTO agent_runtime_budget_balances(tenant_id,scope_kind,scope_id,dimension,maximum) VALUES
+        <foreach collection="amounts" item="a" separator=",">
+            (#{tenant},#{kind},#{scope},#{a.dimension},#{a.maximum})
+        </foreach>
+        ON CONFLICT DO NOTHING
+    </insert>
+    <select id="bindTenant" resultType="string" useCache="false" flushCache="true">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+    <select id="attempt" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetAttemptRow" useCache="false" flushCache="true">SELECT run_id AS "runId",fingerprint,category,closing,state FROM agent_runtime_budget_attempts WHERE tenant_id=#{tenant} AND attempt_id=#{attempt}</select>
+    <select id="attemptClosing" resultType="boolean" useCache="false" flushCache="true">SELECT closing FROM agent_runtime_budget_attempts WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt}</select>
+    <select id="attemptState" resultType="string" useCache="false" flushCache="true">SELECT state FROM agent_runtime_budget_attempts WHERE tenant_id=#{tenant} AND run_id=#{run} AND attempt_id=#{attempt}</select>
+    <select id="pendingAmounts" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetAmountRow" useCache="false" flushCache="true">SELECT dimension,reserved,reported FROM agent_runtime_budget_attempt_amounts WHERE tenant_id=#{tenant} AND attempt_id=#{attempt} AND reported IS NOT NULL AND NOT settled</select>
+    <select id="recoverableAttempts" resultType="string" useCache="false" flushCache="true">SELECT attempt_id FROM agent_runtime_budget_attempts WHERE tenant_id=#{tenant} AND run_id=#{run} AND state='RESULT_SAVED'</select>
+    <select id="closingTarget" resultType="int" useCache="false" flushCache="true">SELECT 1 FROM agent_runtime_budget_closing_targets WHERE tenant_id=#{tenant} AND run_id=#{run} AND target_handle=#{handle}</select>
+    <select id="closingSeconds" resultType="long" useCache="false" flushCache="true">SELECT closing_active_seconds FROM agent_runtime_budget_roots WHERE tenant_id=#{tenant} AND root_id=#{root}</select>
+    <select id="activitySpans" resultMap="activityRow" useCache="false" flushCache="true">SELECT a.started_at,a.confirmed_through FROM agent_runtime_budget_activity a JOIN agent_runtime_budget_runs r ON r.tenant_id=a.tenant_id AND r.run_id=a.run_id WHERE a.tenant_id=#{tenant} AND <choose><when test="own">a.run_id=#{scope}</when><otherwise>r.root_id=#{scope}</otherwise></choose> ORDER BY a.started_at</select>
+    <select id="closingModelSpans" resultMap="activityRow" useCache="false" flushCache="true">SELECT started_at,confirmed_through FROM agent_runtime_budget_activity WHERE tenant_id=#{tenant} AND run_id=#{run} AND interval_id LIKE 'output-closing-model:%' ORDER BY started_at</select>
+    <select id="registration" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetRegistrationRow" useCache="false" flushCache="true">SELECT r.root_id AS "rootId",r.role,r.source_version AS "sourceVersion",r.active_limit_seconds AS "runActiveSeconds",b.scenario,b.active_limit_seconds AS "rootActiveSeconds" FROM agent_runtime_budget_runs r JOIN agent_runtime_budget_roots b ON b.tenant_id=r.tenant_id AND b.root_id=r.root_id WHERE r.tenant_id=#{tenant} AND r.run_id=#{run}</select>
+    <select id="phase" resultType="string" useCache="false" flushCache="true">SELECT phase FROM agent_runtime_budget_roots WHERE tenant_id=#{tenant} AND root_id=#{root}</select>
+    <select id="lockRoot" resultType="string" useCache="false" flushCache="true">SELECT root_id FROM agent_runtime_budget_roots WHERE tenant_id=#{tenant} AND root_id=#{root} FOR UPDATE</select>
+    <select id="balances" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetBalanceRow" useCache="false" flushCache="true">SELECT dimension,maximum,consumed,reserved FROM agent_runtime_budget_balances WHERE tenant_id=#{tenant} AND scope_kind=#{kind} AND scope_id=#{scope}</select>
+    <select id="amounts" resultType="com.skillforge.runtime.adapter.jdbc.budget.BudgetAmountRow" useCache="false" flushCache="true">SELECT dimension,reserved FROM agent_runtime_budget_attempt_amounts WHERE tenant_id=#{tenant} AND attempt_id=#{attempt}</select>
+</mapper>

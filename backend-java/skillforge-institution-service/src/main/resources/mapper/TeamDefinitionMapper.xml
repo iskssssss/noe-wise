@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.team.TeamDefinitionMapper">
+  <select id="definitions" resultType="string">SELECT definition::text FROM nw_agent_teams WHERE tenant_id=#{tenant} ORDER BY id</select>
+  <update id="disable">UPDATE nw_agent_teams SET revision=#{revision},status='disabled',definition=#{definition}::jsonb WHERE tenant_id=#{tenant} AND id=#{id}</update>
+  <insert id="insertDraft">INSERT INTO nw_agent_teams(tenant_id,id,revision,status,definition) VALUES(#{tenant},#{id},#{revision},#{status},#{definition}::jsonb)</insert>
+  <update id="updateDraft">UPDATE nw_agent_teams SET revision=#{revision},status=#{status},definition=#{definition}::jsonb WHERE tenant_id=#{tenant} AND id=#{id}</update>
+  <insert id="insertVersion">INSERT INTO nw_agent_team_versions(tenant_id,team_id,revision,definition) VALUES(#{tenant},#{id},#{revision},#{definition}::jsonb)</insert>
+  <update id="publish">UPDATE nw_agent_teams SET revision=#{revision},published_revision=#{publishedRevision},status='published',definition=#{definition}::jsonb WHERE tenant_id=#{tenant} AND id=#{id}</update>
+  <select id="published" resultType="string">SELECT v.definition::text FROM nw_agent_teams t JOIN nw_agent_team_versions v
+                  ON v.tenant_id=t.tenant_id AND v.team_id=t.id AND v.revision=t.published_revision
+                WHERE t.tenant_id=#{tenant} AND t.id=#{id} AND t.status='published'</select>
+  <select id="version" resultType="string">SELECT definition::text FROM nw_agent_team_versions WHERE tenant_id=#{tenant} AND team_id=#{id} AND revision=#{revision}</select>
+  <select id="versions" resultType="string">SELECT definition::text FROM nw_agent_team_versions WHERE tenant_id=#{tenant} AND team_id=#{id} ORDER BY revision DESC</select>
+  <select id="revokedChannelMember" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_chat_user_teams t WHERE t.tenant_id=#{tenant} AND t.team_id=#{team}
+                  AND NOT EXISTS(SELECT 1 FROM nw_channel_agent_bindings b
+                    JOIN nw_channels c ON c.tenant_id=b.tenant_id AND c.id=b.channel_id AND c.status='active'
+                    JOIN nw_chat_client_profiles p ON p.tenant_id=t.tenant_id AND p.channel_id=t.channel_id AND p.client_ref=t.client_ref
+                    JOIN nw_end_users u ON u.tenant_id=p.tenant_id AND u.id=p.end_user_id AND u.status='active'
+                    WHERE b.tenant_id=t.tenant_id AND b.channel_id=t.channel_id AND b.agent_id::text=#{agent}))</select>
+  <select id="definition" resultType="string">SELECT definition::text FROM nw_agent_teams WHERE tenant_id=#{tenant} AND id=#{id}<if test="lock"> FOR UPDATE</if></select>
+</mapper>

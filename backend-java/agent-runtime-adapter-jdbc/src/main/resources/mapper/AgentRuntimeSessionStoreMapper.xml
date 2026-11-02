@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.SessionStoreMapper">
+
+    <resultMap id="sessionOwnerRow"
+            type="com.skillforge.runtime.adapter.jdbc.session.SessionOwnerRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="logStreamOwnerConsistent"
+                column="log_stream_owner_consistent"/>
+        <result property="executionOwnerConsistent"
+                column="execution_owner_consistent"/>
+    </resultMap>
+
+    <resultMap id="storageTimeRow"
+            type="com.skillforge.runtime.adapter.jdbc.session.SessionStorageTimeRow">
+        <result property="epochSecond" column="epoch_second"/>
+        <result property="nano" column="nano"/>
+    </resultMap>
+
+    <resultMap id="sessionStoreRow"
+            type="com.skillforge.runtime.adapter.jdbc.session.SessionStoreRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="channel" column="channel"/>
+        <result property="scopeKey" column="scope_key"/>
+        <result property="personaVersion" column="persona_version"/>
+        <result property="createFingerprint" column="create_fingerprint"/>
+        <result property="createCommandData" column="create_command_data"/>
+        <result property="status" column="status"/>
+        <result property="sessionRevision" column="session_revision"/>
+        <result property="createdEpochSecond" column="created_epoch_second"/>
+        <result property="createdNano" column="created_nano"/>
+        <result property="updatedEpochSecond" column="updated_epoch_second"/>
+        <result property="updatedNano" column="updated_nano"/>
+        <result property="rootEndUserId" column="root_end_user_id"/>
+        <result property="streamEndUserId" column="stream_end_user_id"/>
+        <result property="streamNextSequence" column="stream_next_sequence"/>
+        <result property="executionOwnerConsistent"
+                column="execution_owner_consistent"/>
+    </resultMap>
+
+    <resultMap id="sessionMutationRow"
+            type="com.skillforge.runtime.adapter.jdbc.session.SessionStoreMutationRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="expectedStatus" column="expected_status"/>
+        <result property="targetStatus" column="target_status"/>
+        <result property="expectedRevision" column="expected_revision"/>
+        <result property="causationInputId" column="causation_input_id"/>
+        <result property="commandFingerprint" column="command_fingerprint"/>
+        <result property="commandData" column="command_data"/>
+        <result property="outputStatus" column="output_status"/>
+        <result property="outputRevision" column="output_revision"/>
+        <result property="outputUpdatedEpochSecond" column="output_updated_epoch_second"/>
+        <result property="outputUpdatedNano" column="output_updated_nano"/>
+    </resultMap>
+
+    <sql id="sessionColumns">
+        s.tenant_id, s.session_id, s.target_kind, s.target_id, s.end_user_id,
+        s.channel, s.scope_key, s.persona_version,
+        s.create_fingerprint, s.create_command_data,
+        s.status, s.session_revision,
+        s.created_epoch_second, s.created_nano,
+        s.updated_epoch_second, s.updated_nano,
+        owner_root.end_user_id AS root_end_user_id,
+        stream.end_user_id AS stream_end_user_id,
+        stream.next_sequence AS stream_next_sequence,
+        NOT EXISTS (
+            SELECT 1 FROM public.agent_runtime_execution_runs execution
+            WHERE execution.tenant_id = s.tenant_id AND execution.target_kind = s.target_kind
+              AND execution.target_id = s.target_id AND execution.session_id = s.session_id
+              AND execution.end_user_id != s.end_user_id
+        ) AS execution_owner_consistent
+    </sql>
+
+    <sql id="sessionFrom">
+        FROM public.agent_runtime_sessions s
+        LEFT JOIN public.agent_runtime_session_owners owner_root
+          ON owner_root.tenant_id = s.tenant_id
+         AND owner_root.target_kind = s.target_kind
+         AND owner_root.target_id = s.target_id
+         AND owner_root.session_id = s.session_id
+        LEFT JOIN public.agent_runtime_session_streams stream
+          ON stream.tenant_id = s.tenant_id
+         AND stream.target_kind = s.target_kind
+         AND stream.target_id = s.target_id
+         AND stream.session_id = s.session_id
+    </sql>
+
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenantId}, true)
+    </select>
+
+    <select id="storageNow" resultMap="storageTimeRow">
+        WITH storage_clock AS (SELECT clock_timestamp() AS sampled_at)
+        SELECT floor(extract(epoch FROM sampled_at))::bigint AS epoch_second,
+               floor((extract(epoch FROM sampled_at)
+                   - floor(extract(epoch FROM sampled_at))) * 1000000000)::integer AS nano
+          FROM storage_clock
+    </select>
+
+    <insert id="ensureOwner">
+        INSERT INTO public.agent_runtime_session_owners
+            (tenant_id, session_id, target_kind, target_id, end_user_id)
+        VALUES (#{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{endUserId})
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <select id="lockOwner" resultMap="sessionOwnerRow">
+        SELECT owner_root.tenant_id, owner_root.session_id,
+               owner_root.target_kind, owner_root.target_id, owner_root.end_user_id,
+               NOT EXISTS (
+                   SELECT 1
+                     FROM public.agent_runtime_session_streams stream
+                    WHERE stream.tenant_id = owner_root.tenant_id
+                      AND stream.target_kind = owner_root.target_kind
+                      AND stream.target_id = owner_root.target_id
+                      AND stream.session_id = owner_root.session_id
+                      AND stream.end_user_id != owner_root.end_user_id
+               ) AS log_stream_owner_consistent,
+               NOT EXISTS (
+                   SELECT 1 FROM public.agent_runtime_execution_runs execution
+                   WHERE execution.tenant_id = owner_root.tenant_id AND execution.target_kind = owner_root.target_kind
+                     AND execution.target_id = owner_root.target_id AND execution.session_id = owner_root.session_id
+                     AND execution.end_user_id != owner_root.end_user_id
+               ) AS execution_owner_consistent
+          FROM public.agent_runtime_session_owners owner_root
+         WHERE owner_root.tenant_id = #{tenantId}
+           AND owner_root.target_kind = #{targetKind}
+           AND owner_root.target_id = #{targetId}
+           AND owner_root.session_id = #{sessionId}
+         FOR UPDATE OF owner_root
+    </select>
+
+    <select id="lockSession" resultMap="sessionStoreRow">
+        SELECT <include refid="sessionColumns"/>
+        <include refid="sessionFrom"/>
+         WHERE s.tenant_id = #{tenantId} AND s.target_kind = #{targetKind}
+           AND s.target_id = #{targetId}
+           AND s.session_id = #{sessionId}
+         FOR UPDATE OF s
+    </select>
+
+    <select id="findSession" resultMap="sessionStoreRow">
+        SELECT <include refid="sessionColumns"/>
+        <include refid="sessionFrom"/>
+         WHERE s.tenant_id = #{tenantId} AND s.target_kind = #{targetKind}
+           AND s.target_id = #{targetId}
+           AND s.session_id = #{sessionId}
+    </select>
+
+    <select id="findActiveRunIds" resultType="string">
+        SELECT run_id
+          FROM public.agent_runtime_execution_runs
+         WHERE tenant_id = #{tenantId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND session_id = #{sessionId}
+           AND end_user_id = #{endUserId}
+           AND status IN ('QUEUED', 'RUNNING', 'SUSPENDED', 'RESUMING')
+         ORDER BY run_id
+    </select>
+
+    <insert id="insertSession">
+        INSERT INTO public.agent_runtime_sessions (
+            tenant_id, session_id, target_kind, target_id, end_user_id,
+            channel, scope_key, persona_version,
+            create_fingerprint, create_command_data,
+            status, session_revision,
+            created_epoch_second, created_nano,
+            updated_epoch_second, updated_nano)
+        VALUES (
+            #{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{endUserId},
+            #{channel}, #{scopeKey}, #{personaVersion},
+            #{createFingerprint}, #{createCommandData},
+            #{status}, #{sessionRevision},
+            #{createdEpochSecond}, #{createdNano},
+            #{updatedEpochSecond}, #{updatedNano})
+    </insert>
+
+    <update id="updateSession">
+        UPDATE public.agent_runtime_sessions
+           SET status = #{targetStatus},
+               session_revision = #{outputRevision},
+               updated_epoch_second = #{updatedEpochSecond},
+               updated_nano = #{updatedNano}
+         WHERE tenant_id = #{tenantId} AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND session_id = #{sessionId} AND end_user_id = #{endUserId}
+           AND status = #{expectedStatus}
+           AND session_revision = #{expectedRevision}
+    </update>
+
+    <select id="findMutation" resultMap="sessionMutationRow">
+        SELECT tenant_id, session_id, target_kind, target_id, end_user_id,
+               expected_status, target_status, expected_revision,
+               causation_input_id, command_fingerprint, command_data,
+               output_status, output_revision,
+               output_updated_epoch_second, output_updated_nano
+          FROM public.agent_runtime_session_mutations
+         WHERE tenant_id = #{tenantId} AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND session_id = #{sessionId} AND end_user_id = #{endUserId}
+           AND expected_status = #{expectedStatus}
+           AND target_status = #{targetStatus}
+           AND expected_revision = #{expectedRevision}
+           AND causation_input_id = #{causationInputId}
+    </select>
+
+    <insert id="insertMutation">
+        INSERT INTO public.agent_runtime_session_mutations (
+            tenant_id, session_id, target_kind, target_id, end_user_id,
+            expected_status, target_status, expected_revision,
+            causation_input_id, command_fingerprint, command_data,
+            output_status, output_revision,
+            output_updated_epoch_second, output_updated_nano)
+        VALUES (
+            #{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{endUserId},
+            #{expectedStatus}, #{targetStatus}, #{expectedRevision},
+            #{causationInputId}, #{commandFingerprint}, #{commandData},
+            #{outputStatus}, #{outputRevision},
+            #{outputUpdatedEpochSecond}, #{outputUpdatedNano})
+    </insert>
+
+    <insert id="insertConflictAudit">
+        INSERT INTO public.agent_runtime_session_conflict_audits (
+            tenant_id, audit_ref, resource_id_hash, conflict_kind,
+            current_revision, stored_fingerprint, requested_fingerprint)
+        VALUES (
+            #{tenantId}, #{auditRef}, #{resourceIdHash}, #{conflictKind},
+            #{currentRevision}, #{storedFingerprint}, #{requestedFingerprint})
+        ON CONFLICT (tenant_id, audit_ref) DO NOTHING
+    </insert>
+</mapper>

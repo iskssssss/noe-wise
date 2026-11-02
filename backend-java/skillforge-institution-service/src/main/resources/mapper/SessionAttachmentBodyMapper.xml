@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.attachment.SessionAttachmentBodyMapper">
+  <select id="lockTenant" resultType="string">
+    SELECT id::text FROM public.nw_tenants WHERE id=CAST(#{tenant} AS bigint) FOR UPDATE
+  </select>
+  <select id="tenantPage" resultType="string">
+    SELECT id::text FROM public.nw_tenants WHERE id&gt;CAST(#{after} AS bigint) ORDER BY id LIMIT #{limit}
+  </select>
+  <select id="find" resultType="com.skillforge.institution.attachment.SessionAttachmentBodyMapper$StoredBody">
+    SELECT content FROM public.nw_chat_attachment_bodies
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND sha256=#{sha256} AND size=#{size} AND format='bytea.v1'
+  </select>
+  <insert id="insert">
+    INSERT INTO public.nw_chat_attachment_bodies(tenant_id,sha256,size,format,content)
+    VALUES(CAST(#{tenant} AS bigint),#{sha256},#{size},'bytea.v1',#{bytes})
+  </insert>
+  <select id="capacity" resultType="com.skillforge.institution.attachment.SessionAttachmentBodyMapper$Capacity">
+    SELECT COALESCE((SELECT sum(size) FROM (
+        SELECT DISTINCT sha256,size,body_format FROM public.nw_chat_session_attachments
+        WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session} AND body_format IS NOT NULL
+      ) owned),0)::bigint AS session_bytes,
+      COALESCE((SELECT sum(size) FROM public.nw_chat_attachment_bodies WHERE tenant_id=CAST(#{tenant} AS bigint)),0)::bigint AS tenant_bytes,
+      EXISTS(SELECT 1 FROM public.nw_chat_session_attachments WHERE tenant_id=CAST(#{tenant} AS bigint)
+        AND session_id=#{session} AND sha256=#{sha256} AND size=#{size} AND body_format='bytea.v1') AS in_session
+  </select>
+  <select id="sessionBytes" resultType="long">
+    SELECT COALESCE(sum(size),0)::bigint FROM (
+      SELECT DISTINCT sha256,size,body_format FROM public.nw_chat_session_attachments
+      WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{session} AND body_format IS NOT NULL
+    ) owned
+  </select>
+  <select id="tenantBytes" resultType="long">
+    SELECT COALESCE(sum(size),0)::bigint FROM public.nw_chat_attachment_bodies WHERE tenant_id=CAST(#{tenant} AS bigint)
+  </select>
+  <delete id="reclaimUnreferenced">
+    WITH unreferenced AS (
+      SELECT b.tenant_id,b.sha256,b.size,b.format FROM public.nw_chat_attachment_bodies b
+      WHERE b.tenant_id=CAST(#{tenant} AS bigint)
+        AND NOT EXISTS(SELECT 1 FROM public.nw_chat_session_attachments a
+          WHERE a.tenant_id=b.tenant_id AND a.sha256=b.sha256 AND a.size=b.size AND a.body_format=b.format)
+      ORDER BY b.created_at,b.sha256,b.size LIMIT #{limit} FOR UPDATE OF b SKIP LOCKED
+    ) DELETE FROM public.nw_chat_attachment_bodies b USING unreferenced u
+      WHERE (b.tenant_id,b.sha256,b.size,b.format)=(u.tenant_id,u.sha256,u.size,u.format)
+  </delete>
+  <select id="backlog" resultType="com.skillforge.institution.attachment.SessionAttachmentBodyMapper$Backlog">
+    SELECT count(*)::bigint AS sampled_rows,COALESCE(sum(size),0)::bigint AS sampled_bytes,
+      min(expires_at) AS oldest_expiry,count(*)&gt;=#{limit} AS saturated FROM (
+        SELECT size,expires_at FROM public.nw_chat_session_attachments
+        WHERE tenant_id=CAST(#{tenant} AS bigint) AND expires_at&lt;=clock_timestamp() AND body_format IS NOT NULL
+        ORDER BY expires_at,id LIMIT #{limit}
+      ) expired
+  </select>
+</mapper>

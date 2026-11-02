@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.artifact.StudioArtifactProjectionMapper">
+    <resultMap id="row" type="com.skillforge.institution.artifact.StudioArtifactProjectionMapper$Row">
+        <result property="childSessionId" column="child_session_id"/>
+        <result property="childRunId" column="child_run_id"/>
+        <result property="parentRunId" column="parent_run_id"/>
+        <result property="productSessionId" column="product_session_id"/>
+        <result property="originTargetKind" column="origin_target_kind"/>
+        <result property="originTargetId" column="origin_target_id"/>
+        <result property="sourceAgentId" column="source_agent_id"/>
+        <result property="endUserId" column="end_user_id"/>
+    </resultMap>
+    <sql id="columns">
+        child.session_id AS child_session_id,
+        child.run_id AS child_run_id,
+        child.parent_run_id AS parent_run_id,
+        parent.session_id AS product_session_id,
+        parent.target_kind AS origin_target_kind,
+        parent.target_id AS origin_target_id,
+        child.actor_agent_id AS source_agent_id,
+        child.end_user_id AS end_user_id
+    </sql>
+
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenant}, true)
+    </select>
+
+    <select id="children" resultMap="row">
+        SELECT <include refid="columns"/>
+          FROM public.nw_runtime_agent_run_bindings child
+          JOIN public.nw_runtime_agent_run_bindings parent
+            ON parent.tenant_id = child.tenant_id
+           AND parent.run_id = child.parent_run_id
+           AND parent.role = 'PRIMARY'
+         WHERE child.tenant_id = #{tenant}
+           AND child.role = 'DELEGATE'
+           AND parent.session_id = #{productSession}
+           AND child.end_user_id = parent.end_user_id
+         ORDER BY child.created_at, child.run_id
+    </select>
+
+    <select id="find" resultMap="row">
+        SELECT <include refid="columns"/>
+          FROM public.nw_runtime_agent_run_bindings child
+          JOIN public.nw_runtime_agent_run_bindings parent
+            ON parent.tenant_id = child.tenant_id
+           AND parent.run_id = child.parent_run_id
+           AND parent.role = 'PRIMARY'
+         WHERE child.tenant_id = #{tenant}
+           AND child.session_id = #{childSession}
+           AND child.run_id = #{childRun}
+           AND child.role = 'DELEGATE'
+           AND child.end_user_id = parent.end_user_id
+    </select>
+</mapper>

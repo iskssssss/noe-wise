@@ -1,0 +1,6 @@
+service:
+  name: delivery-api
+  port: 8080
+  environment: development
+features:
+  artifacts: true

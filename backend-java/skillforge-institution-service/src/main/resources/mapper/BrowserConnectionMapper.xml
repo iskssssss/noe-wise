@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.browser.BrowserConnectionMapper">
+  <insert id="insert">
+    INSERT INTO nw_browser_connection_requests(request_id,tenant_id,end_user_id,session_id,run_id,invocation_id,
+      reason,status,device_id,browser_id,make_default,pair_dispatched,error,wait_snapshot,revision,created_at,updated_at)
+    VALUES(#{row.requestId},#{row.tenantId},#{row.endUserId},#{row.sessionId},#{row.runId},#{row.invocationId},
+      #{row.reason},#{row.status},#{row.deviceId},#{row.browserId},#{row.makeDefault},#{row.pairDispatched},#{row.error},CAST(#{row.waitSnapshot} AS jsonb),1,now(),now())
+    ON CONFLICT(tenant_id,request_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.browser.BrowserConnectionRequest">
+    SELECT tenant_id,request_id,end_user_id,session_id,run_id,invocation_id,reason,status,
+      device_id,browser_id,make_default,pair_dispatched,error,wait_snapshot,revision,created_at,updated_at
+    FROM nw_browser_connection_requests WHERE tenant_id=#{tenant} AND request_id=#{id}
+  </select>
+  <select id="pending" resultType="com.skillforge.institution.browser.BrowserConnectionRequest">
+    SELECT tenant_id,request_id,end_user_id,session_id,run_id,invocation_id,reason,status,
+      device_id,browser_id,make_default,pair_dispatched,error,wait_snapshot,revision,created_at,updated_at
+    FROM nw_browser_connection_requests WHERE tenant_id=#{tenant}
+      AND status IN ('WAITING','READY','RESUMING','CANCELLING') AND request_id &gt; #{after}
+    ORDER BY request_id LIMIT #{limit}
+  </select>
+  <update id="update">
+    UPDATE nw_browser_connection_requests SET status=#{row.status},device_id=#{row.deviceId},browser_id=#{row.browserId},
+      make_default=#{row.makeDefault},pair_dispatched=#{row.pairDispatched},error=#{row.error},wait_snapshot=CAST(#{row.waitSnapshot} AS jsonb),
+      revision=revision+1,updated_at=now()
+    WHERE tenant_id=#{row.tenantId} AND request_id=#{row.requestId} AND revision=#{expected}
+  </update>
+</mapper>

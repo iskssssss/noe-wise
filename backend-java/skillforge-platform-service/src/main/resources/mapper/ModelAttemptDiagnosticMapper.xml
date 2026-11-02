@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.platform.sessionmodelattempt.ModelAttemptDiagnosticMapper">
+  <sql id="actualAttemptColumns">
+    run.tenant_id,run.session_id,run.root_input_id,run.run_id,action.action_id,action.kind,action.action_ordinal AS ordinal,
+           (SELECT count(*) FROM agent_runtime_execution_actions m WHERE m.tenant_id=run.tenant_id AND m.run_id=run.run_id AND m.kind='MODEL' AND m.action_ordinal&lt;=action.action_ordinal) AS model_ordinal,
+           attempt.attempt_id,attempt.adopted,action.selected_attempt,invocation.invocation_id,invocation.provider,
+           COALESCE(NULLIF(invocation.metadata->>'model',''),NULLIF(invocation.service,'')) AS model,
+           COALESCE(NULLIF(invocation.metadata->>'call_point',''),NULLIF(invocation.metadata->>'callPoint',''),'model.chat') AS call_point,
+           COALESCE(attempt.result_kind,'UNRESOLVED') AS status,
+           invocation.started_at,invocation.ended_at,event.event_id AS trace_node_id,
+           attempt.request_ref,request.schema_id AS request_schema,request.canonical_json AS request_json,
+           attempt.result_ref,result.schema_id AS result_schema,result.canonical_json AS result_json,
+           CASE WHEN usage.prompt_tokens IS NOT NULL OR usage.completion_tokens IS NOT NULL OR input.reported IS NOT NULL OR output.reported IS NOT NULL THEN 'PROVIDER_REPORTED' ELSE 'UNKNOWN' END AS usage_source,
+           COALESCE(usage.prompt_tokens,input.reported) AS prompt_tokens,COALESCE(usage.completion_tokens,output.reported) AS completion_tokens,
+           usage.cached_input_tokens,usage.cache_write_input_tokens,usage.reasoning_output_tokens,usage.ingested_at
+  </sql>
+  <sql id="actualAttemptJoins">
+    JOIN public.agent_runtime_execution_actions action ON action.tenant_id=run.tenant_id AND action.run_id=run.run_id AND action.kind='MODEL'
+    JOIN public.agent_runtime_execution_attempts attempt ON attempt.tenant_id=action.tenant_id AND attempt.run_id=action.run_id AND attempt.action_id=action.action_id
+    JOIN public.agent_runtime_execution_materials request ON request.tenant_id=attempt.tenant_id AND request.reference=attempt.request_ref
+    LEFT JOIN public.agent_runtime_execution_materials result ON result.tenant_id=attempt.tenant_id AND result.reference=attempt.result_ref
+    LEFT JOIN LATERAL(SELECT invocation.provider,invocation.metadata,invocation.service,invocation.invocation_id,invocation.started_at,invocation.ended_at FROM public.nw_external_invocations invocation
+      WHERE invocation.tenant_id::text=attempt.tenant_id AND invocation.attempt_id=attempt.attempt_id
+        AND invocation.operation_type='model.chat' ORDER BY invocation.id LIMIT 1) invocation ON true
+    LEFT JOIN public.agent_runtime_budget_attempt_amounts input ON input.tenant_id=attempt.tenant_id AND input.attempt_id=attempt.attempt_id AND input.dimension='INPUT_TOKENS'
+    LEFT JOIN public.agent_runtime_budget_attempt_amounts output ON output.tenant_id=attempt.tenant_id AND output.attempt_id=attempt.attempt_id AND output.dimension='OUTPUT_TOKENS'
+    LEFT JOIN public.observation_effective_model_usage usage ON usage.tenant_id::text=attempt.tenant_id AND usage.attempt_id=attempt.attempt_id AND usage.session_id=run.session_id AND usage.run_id=run.run_id AND usage.root_input_id=run.root_input_id
+    LEFT JOIN LATERAL(SELECT event.event_id FROM public.agent_runtime_execution_events event
+      WHERE event.tenant_id=attempt.tenant_id AND event.run_id=attempt.run_id
+        AND event.canonical_json::jsonb->>'actionId'=action.action_id
+        AND (event.canonical_json::jsonb->>'attemptId'=attempt.attempt_id OR action.selected_attempt=attempt.attempt_id)
+      ORDER BY event.event_sequence LIMIT 1) event ON true
+  </sql>
+  <select id="attempt" resultType="map">
+    SELECT <include refid="actualAttemptColumns"/>
+    FROM public.nw_chat_sessions session
+    JOIN public.agent_runtime_execution_runs run ON run.tenant_id=session.tenant_id::text AND run.session_id=session.session_id
+    <include refid="actualAttemptJoins"/>
+    WHERE session.tenant_id=#{tenant} AND session.session_id=#{session} AND attempt.attempt_id=#{attempt}
+      AND (#{root,jdbcType=VARCHAR} IS NULL OR run.root_input_id=#{root,jdbcType=VARCHAR}) LIMIT 2
+  </select>
+  <!-- 仅应用边界已核父产品轨迹后调用；verifiedRun来自共用真实后代闭包，不接受客户端声明。 -->
+  <select id="descendantAttempt" resultType="map">
+    SELECT <include refid="actualAttemptColumns"/>
+    FROM public.agent_runtime_execution_runs run
+    <include refid="actualAttemptJoins"/>
+    WHERE run.tenant_id=CAST(#{tenant} AS text) AND run.session_id=#{session}
+      AND run.root_input_id=#{root} AND run.run_id=#{verifiedRun} AND attempt.attempt_id=#{attempt}
+    LIMIT 2
+  </select>
+  <!-- immutable manifest精确拥有mixed槽位；无manifest时用同Run不可变Action ordinal与下一MODEL界限。 -->
+  <select id="capabilityFacts" resultType="map">
+    WITH members AS (
+      SELECT b.action_id,CASE WHEN b.reused THEN b.first_attempt_id ELSE a.current_attempt END AS attempt_id,b.slot
+      FROM public.agent_runtime_execution_batch_members b JOIN public.agent_runtime_execution_actions a ON a.tenant_id=b.tenant_id AND a.run_id=b.run_id AND a.action_id=b.action_id
+      WHERE b.tenant_id=#{tenant} AND b.run_id=#{run} AND b.source_attempt=#{attempt}
+      UNION ALL
+      SELECT a.action_id,a.current_attempt,row_number() OVER(ORDER BY a.action_ordinal)::integer AS slot
+      FROM public.agent_runtime_execution_actions a
+      WHERE a.tenant_id=#{tenant} AND a.run_id=#{run} AND a.kind&lt;&gt;'MODEL' AND a.action_ordinal&gt;#{ordinal}
+        AND a.action_ordinal&lt;COALESCE((SELECT min(m.action_ordinal) FROM public.agent_runtime_execution_actions m WHERE m.tenant_id=#{tenant} AND m.run_id=#{run} AND m.kind='MODEL' AND m.action_ordinal&gt;#{ordinal}),9223372036854775807)
+        AND NOT EXISTS(SELECT 1 FROM public.agent_runtime_execution_batch_members b WHERE b.tenant_id=#{tenant} AND b.run_id=#{run} AND b.source_attempt=#{attempt})
+    )
+    SELECT a.tenant_id,a.run_id,a.action_id,a.kind,p.attempt_id,COALESCE(p.result_kind,'UNRESOLVED') AS status,
+           p.request_ref,request.schema_id AS request_schema,request.canonical_json AS request_json,
+           p.result_ref,result.schema_id AS result_schema,result.canonical_json AS result_json
+    FROM members m JOIN public.agent_runtime_execution_actions a ON a.tenant_id=#{tenant} AND a.run_id=#{run} AND a.action_id=m.action_id
+    JOIN public.agent_runtime_execution_attempts p ON p.tenant_id=a.tenant_id AND p.run_id=a.run_id AND p.action_id=a.action_id AND p.attempt_id=m.attempt_id
+    JOIN public.agent_runtime_execution_materials request ON request.tenant_id=p.tenant_id AND request.reference=p.request_ref
+    LEFT JOIN public.agent_runtime_execution_materials result ON result.tenant_id=p.tenant_id AND result.reference=p.result_ref
+    ORDER BY m.slot LIMIT 65
+  </select>
+  <select id="materials" resultType="map">
+    SELECT reference,schema_id,canonical_json
+    FROM public.agent_runtime_execution_materials
+    WHERE tenant_id=#{tenant} AND reference IN
+    <foreach collection="references" item="reference" open="(" separator="," close=")">#{reference}</foreach>
+  </select>
+</mapper>

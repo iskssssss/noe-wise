@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'frontend-admin/**'
+      - 'frontend-platform/**'
+      - 'frontend-chat/**'
+      - 'frontend-shared/**'
+      - 'frontend-vendor/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tools/frontend/**'
+      - 'deploy/ci/frontend-sbom.sh'
+      - 'deploy/helm/**'
+      - 'deploy/ci/helm-gate.sh'
+      - '!**/*.md'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'frontend-admin/**'
+      - 'frontend-platform/**'
+      - 'frontend-chat/**'
+      - 'frontend-shared/**'
+      - 'frontend-vendor/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tools/frontend/**'
+      - 'deploy/ci/frontend-sbom.sh'
+      - 'deploy/helm/**'
+      - 'deploy/ci/helm-gate.sh'
+      - '!**/*.md'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend workspace
+        run: pnpm install --frozen-lockfile
+      - name: Frontend SBOM and high-severity audit
+        run: bash deploy/ci/frontend-sbom.sh
+      - name: Enforce UI migration rules
+        run: pnpm --filter frontend-admin check:ui
+      - name: Test admin frontend
+        run: pnpm --filter frontend-admin test
+      - name: Test platform frontend
+        run: pnpm --filter frontend-platform test
+      - name: Test chat frontend
+        run: pnpm --filter frontend-chat test
+      - name: Test shared frontend
+        run: pnpm --filter @skillforge/shared test
+      - name: Build admin frontend
+        run: pnpm --filter frontend-admin build
+      - name: Build platform frontend
+        run: pnpm --filter frontend-platform build
+      - name: Build chat frontend
+        run: pnpm --filter frontend-chat build
+      - name: Enforce entry gzip budgets
+        run: node tools/frontend/check-entry-gzip.mjs frontend-admin frontend-platform
+      - name: Install Playwright browsers
+        run: pnpm --filter frontend-admin exec playwright install --with-deps chromium
+      - name: Run admin desktop business mock E2E
+        run: pnpm --filter frontend-admin test:e2e:mock
+      - name: Run platform desktop business mock E2E
+        run: pnpm --filter frontend-platform test:e2e:mock
+      - name: Upload mock E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-mock-e2e
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            frontend-admin/test-results/mock-e2e
+            frontend-platform/test-results/mock-e2e
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Helm lint and render
+        run: bash deploy/ci/helm-gate.sh

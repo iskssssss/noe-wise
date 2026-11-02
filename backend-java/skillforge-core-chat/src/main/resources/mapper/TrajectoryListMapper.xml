@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.trajectory.TrajectoryListMapper">
+  <resultMap id="candidate" type="com.skillforge.core.chat.trajectory.TrajectoryListMapper$Candidate">
+    <constructor>
+      <arg column="tenant_id" javaType="_long"/>
+      <arg column="session_id" javaType="java.lang.String"/>
+      <arg column="root_input_id" javaType="java.lang.String"/>
+      <arg column="started_second" javaType="_long"/>
+      <arg column="started_nano" javaType="_int"/>
+    </constructor>
+  </resultMap>
+  <select id="readAt" resultType="java.time.Instant" useCache="false" flushCache="true">
+    SELECT clock_timestamp()
+  </select>
+  <select id="candidates" resultMap="candidate">
+WITH roots AS (
+    SELECT DISTINCT ON (run.tenant_id,run.session_id,run.root_input_id)
+           run.tenant_id,run.session_id,run.root_input_id,
+           run.created_second AS started_second,run.created_nano AS started_nano
+      FROM public.agent_runtime_execution_runs run
+      JOIN public.nw_chat_sessions session
+        ON session.tenant_id::text=run.tenant_id AND session.session_id=run.session_id
+     WHERE TRUE
+       <if test="scopeTenantId != null">AND run.tenant_id=CAST(#{scopeTenantId} AS text)</if>
+       <if test="tenantId != null">AND run.tenant_id=CAST(#{tenantId} AS text)</if>
+       <if test="sessionId != null">AND run.session_id=#{sessionId}</if>
+       <if test="agentId != null">
+         AND EXISTS (SELECT 1 FROM public.agent_runtime_execution_runs member
+                      WHERE member.tenant_id=run.tenant_id AND member.session_id=run.session_id
+                        AND member.root_input_id=run.root_input_id
+                        AND member.agent_id=CAST(#{agentId} AS text))
+       </if>
+       <if test="visibleSessionIds != null">
+         <choose>
+           <when test="visibleSessionIds.isEmpty()">AND FALSE</when>
+           <otherwise>AND run.session_id IN
+             <foreach collection="visibleSessionIds" item="session" open="(" separator="," close=")">#{session}</foreach>
+           </otherwise>
+         </choose>
+       </if>
+     ORDER BY run.tenant_id,run.session_id,run.root_input_id,run.created_second,run.created_nano,run.run_id
+)
+SELECT tenant_id::bigint AS tenant_id,session_id,root_input_id,started_second,started_nano
+  FROM roots
+ WHERE (started_second,started_nano)&gt;=(#{fromSecond},#{fromNano})
+   AND (started_second,started_nano)&lt;(#{toSecond},#{toNano})
+ ORDER BY started_second DESC,started_nano DESC,tenant_id,session_id,root_input_id
+ LIMIT #{limit} OFFSET #{offset}
+  </select>
+</mapper>

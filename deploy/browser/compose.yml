@@ -1,0 +1,17 @@
+# 根目录执行；先构建浏览器服务bootJar，再构建镜像。此文件不自动启用机构工具挂载。
+services:
+  browser-service:
+    build:
+      context: ../..
+      dockerfile: deploy/browser/Dockerfile
+    environment:
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?BROWSER_SERVICE_TOKEN is required}
+      BROWSER_PUBLIC_BASE_URL: ${BROWSER_PUBLIC_BASE_URL:?BROWSER_PUBLIC_BASE_URL is required}
+      BROWSER_DATA_ROOT: /var/lib/bsk
+    volumes:
+      - browser-data:/var/lib/bsk
+    ports:
+      - "127.0.0.1:${BROWSER_HOST_PORT:-18300}:8300"
+    restart: unless-stopped
+volumes:
+  browser-data:

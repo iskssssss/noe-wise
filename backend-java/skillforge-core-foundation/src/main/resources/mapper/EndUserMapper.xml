@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.persistence.EndUserMapper">
+    <insert id="insertExternal">
+        INSERT INTO nw_end_users (id, tenant_id, external_integration_id, external_user_ref,
+                              display_name, status, first_seen_at, last_active_at, created_at)
+        VALUES (#{user.id}, #{user.tenantId}, #{user.externalIntegrationId}, #{user.externalUserRef},
+                #{user.displayName}, #{user.status}, #{user.firstSeenAt}, #{user.lastActiveAt}, #{user.createdAt})
+        ON CONFLICT (tenant_id, external_integration_id, external_user_ref)
+        WHERE external_integration_id IS NOT NULL AND external_user_ref IS NOT NULL DO NOTHING
+    </insert>
+</mapper>

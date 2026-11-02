@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeStorageMapper">
+    <insert id="ensureBudget">INSERT INTO nw_knowledge_storage_budgets(tenant_id) VALUES(#{tenantId}) ON CONFLICT DO NOTHING</insert>
+    <select id="lockBudget" resultType="long">SELECT tenant_id FROM nw_knowledge_storage_budgets WHERE tenant_id=#{tenantId} FOR UPDATE</select>
+    <select id="capacity" resultType="com.skillforge.core.knowledge.model.KnowledgeStorageCapacity">
+        WITH bodies AS (
+          SELECT coalesce(sum(octet_length(content)),0)::bigint AS bytes,
+                 coalesce(sum(pg_column_size(content)),0)::bigint AS physical, 0::bigint AS chunks
+          FROM nw_knowledge_document_contents WHERE tenant_id=#{tenantId}
+          UNION ALL
+          SELECT coalesce(sum(octet_length(content)),0)::bigint,
+                 coalesce(sum(pg_column_size(content)),0)::bigint, count(*)::bigint
+          FROM nw_knowledge_chunk_contents WHERE tenant_id=#{tenantId}
+        ), vectors AS (
+          SELECT coalesce(sum(dimensions::bigint*4),0)::bigint AS bytes,
+                 coalesce(sum(pg_column_size(embedding)),0)::bigint AS physical, count(*)::bigint AS total
+          FROM nw_knowledge_chunk_embeddings WHERE tenant_id=#{tenantId}
+        )
+        SELECT (SELECT sum(bytes)::bigint FROM bodies) AS content_bytes, v.bytes AS embedding_bytes,
+               (SELECT sum(chunks)::bigint FROM bodies) AS chunk_bodies, v.total AS embeddings,
+               (v.physical+(SELECT sum(physical) FROM bodies))::bigint AS physical_bytes,
+               b.max_content_bytes, b.max_chunk_bodies,
+               (SELECT count(*) FROM nw_knowledge_document_versions WHERE tenant_id=#{tenantId}) AS source_versions,
+               (SELECT count(*) FROM nw_knowledge_chunks WHERE tenant_id=#{tenantId}) AS chunk_references,
+               (SELECT count(*) FROM nw_runtime_knowledge_chunks WHERE tenant_id=#{tenantId}::text) AS frozen_references,
+               (SELECT count(*) FROM nw_knowledge_rebuild_batch_embeddings WHERE tenant_id=#{tenantId}) AS rebuild_references,
+               (SELECT count(*) FROM nw_knowledge_index_projection_holds WHERE tenant_id=#{tenantId}) AS index_projection_holds,
+               (SELECT count(*) FROM nw_knowledge_index_cleanup_intents WHERE tenant_id=#{tenantId}) AS index_cleanup_intents
+        FROM vectors v LEFT JOIN nw_knowledge_storage_budgets b ON b.tenant_id=#{tenantId}
+    </select>
+    <update id="configureBudget">UPDATE nw_knowledge_storage_budgets SET max_content_bytes=#{bytes,jdbcType=BIGINT},max_chunk_bodies=#{chunks,jdbcType=BIGINT} WHERE tenant_id=#{tenantId}</update>
+    <select id="findDocumentContent" resultType="long">SELECT id FROM nw_knowledge_document_contents WHERE tenant_id=#{tenantId} AND document_id=#{documentId} AND digest=#{digest} AND content=#{content} ORDER BY id LIMIT 1</select>
+    <insert id="insertDocumentContent">INSERT INTO nw_knowledge_document_contents(tenant_id,document_id,id,digest,content,format) VALUES(#{tenantId},#{documentId},#{id},#{digest},#{content},'text/plain; charset=utf-8')</insert>
+    <select id="documentContent" resultType="string">SELECT content FROM nw_knowledge_document_contents WHERE tenant_id=#{tenantId} AND document_id=#{documentId} AND id=#{id}</select>
+    <select id="findChunkContent" resultType="long">SELECT id FROM nw_knowledge_chunk_contents WHERE tenant_id=#{tenantId} AND document_id=#{documentId} AND digest=#{digest} AND content=#{content} ORDER BY id LIMIT 1</select>
+    <insert id="insertChunkContent">INSERT INTO nw_knowledge_chunk_contents(tenant_id,document_id,id,digest,content,format) VALUES(#{tenantId},#{documentId},#{id},#{digest},#{content},'text/plain; charset=utf-8')</insert>
+    <select id="findEmbedding" resultType="long">SELECT id FROM nw_knowledge_chunk_embeddings WHERE tenant_id=#{tenantId} AND content_id=#{contentId} AND model_id=#{modelId} AND model_revision=#{revision} AND dimensions=#{dimensions} AND digest=encode(sha256(convert_to(CAST(#{vector} AS vector)::text,'UTF8')),'hex') AND embedding=CAST(#{vector} AS vector) ORDER BY id LIMIT 1</select>
+    <insert id="insertEmbedding">INSERT INTO nw_knowledge_chunk_embeddings(tenant_id,id,content_id,model_id,model_revision,dimensions,digest,embedding) VALUES(#{tenantId},#{id},#{contentId},#{modelId},#{revision},#{dimensions},encode(sha256(convert_to(CAST(#{vector} AS vector)::text,'UTF8')),'hex'),CAST(#{vector} AS vector))</insert>
+    <insert id="insertSet">INSERT INTO nw_knowledge_chunk_sets(tenant_id,kb_id,document_id,id) VALUES(#{tenantId},#{kbId},#{documentId},#{id})</insert>
+    <insert id="insertChunk">INSERT INTO nw_knowledge_chunks(id,tenant_id,kb_id,document_id,chunk_set_id,content_id,embedding_id,chunk_index,created_at) VALUES(#{chunk.id},#{chunk.tenantId},#{chunk.kbId},#{chunk.documentId},#{chunk.chunkSetId},#{chunk.contentId},#{chunk.embeddingId,jdbcType=BIGINT},#{chunk.chunkIndex},#{chunk.createdAt})</insert>
+    <insert id="insertBatchEmbedding">INSERT INTO nw_knowledge_rebuild_batch_embeddings(tenant_id,batch_id,position,embedding_id) VALUES(#{tenantId},#{batchId},#{position},#{embeddingId})</insert>
+    <select id="batchEmbeddings" resultType="long">SELECT embedding_id FROM nw_knowledge_rebuild_batch_embeddings WHERE tenant_id=#{tenantId} AND batch_id=#{batchId} ORDER BY position</select>
+    <delete id="releasePublishedStaging">DELETE FROM nw_knowledge_rebuild_batch_embeddings e USING nw_knowledge_rebuild_batches b,nw_knowledge_rebuild_jobs j WHERE e.tenant_id=#{tenantId} AND e.tenant_id=b.tenant_id AND e.batch_id=b.id AND b.job_id=j.id AND j.tenant_id=e.tenant_id AND j.id=#{jobId} AND j.status='PUBLISHED'</delete>
+    <!-- 归档版本仍是历史解析的权威；未授权删除这些历史指针时不回收其来源。 -->
+    <sql id="unreferencedVersion">
+       NOT EXISTS(SELECT 1 FROM nw_knowledge_documents d WHERE d.tenant_id=v.tenant_id AND d.id=v.document_id AND d.current_source_version=v.source_version)
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_base_revisions r WHERE r.tenant_id=v.tenant_id AND r.kb_id=v.kb_id AND jsonb_exists(r.source_versions,v.source_version))
+       AND NOT EXISTS(SELECT 1 FROM nw_runtime_knowledge_sources s WHERE s.tenant_id=v.tenant_id::text AND s.source_id=v.kb_id::text AND s.source_version=v.source_version)
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_rebuild_items i WHERE i.tenant_id=v.tenant_id AND i.document_id=v.document_id AND (i.source_version=v.source_version OR i.target_source_version=v.source_version))
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_index_projection_holds h WHERE h.tenant_id=v.tenant_id AND h.kb_id=v.kb_id AND h.source_version=v.source_version)
+    </sql>
+    <select id="recyclableVersions" resultType="long">
+      SELECT v.id FROM nw_knowledge_document_versions v WHERE v.tenant_id=#{tenantId} AND v.kb_id=#{kbId}
+      AND v.created_at&lt;#{before} AND <include refid="unreferencedVersion"/>
+      ORDER BY v.created_at,v.id LIMIT #{limit} FOR UPDATE OF v SKIP LOCKED
+    </select>
+    <delete id="deleteVersion">DELETE FROM nw_knowledge_document_versions v WHERE v.tenant_id=#{tenantId} AND v.id=#{id} AND <include refid="unreferencedVersion"/></delete>
+    <delete id="deleteOrphanSets">
+      DELETE FROM nw_knowledge_chunk_sets s WHERE s.tenant_id=#{tenantId} AND s.id IN
+      (SELECT x.id FROM nw_knowledge_chunk_sets x WHERE x.tenant_id=#{tenantId} AND x.kb_id=#{kbId}
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_document_versions v WHERE v.tenant_id=x.tenant_id AND v.chunk_set_id=x.id)
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_chunks c JOIN nw_runtime_knowledge_chunks r ON r.source_tenant_id=c.tenant_id AND r.chunk_id=c.id::text WHERE c.tenant_id=x.tenant_id AND c.chunk_set_id=x.id)
+       ORDER BY x.id LIMIT #{limit} FOR UPDATE OF x SKIP LOCKED)
+    </delete>
+    <delete id="deleteOrphanEmbeddings">
+      DELETE FROM nw_knowledge_chunk_embeddings e WHERE e.tenant_id=#{tenantId} AND e.id IN
+      (SELECT x.id FROM nw_knowledge_chunk_embeddings x WHERE x.tenant_id=#{tenantId}
+       AND EXISTS(SELECT 1 FROM nw_knowledge_chunk_contents b JOIN nw_knowledge_documents d ON d.tenant_id=b.tenant_id AND d.id=b.document_id WHERE b.tenant_id=x.tenant_id AND b.id=x.content_id AND d.kb_id=#{kbId})
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_chunks c WHERE c.tenant_id=x.tenant_id AND c.embedding_id=x.id)
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_rebuild_batch_embeddings b WHERE b.tenant_id=x.tenant_id AND b.embedding_id=x.id)
+       ORDER BY x.id LIMIT #{limit} FOR UPDATE OF x SKIP LOCKED)
+    </delete>
+    <delete id="deleteOrphanChunkContents">
+      DELETE FROM nw_knowledge_chunk_contents c WHERE c.tenant_id=#{tenantId} AND c.id IN
+      (SELECT x.id FROM nw_knowledge_chunk_contents x WHERE x.tenant_id=#{tenantId}
+       AND EXISTS(SELECT 1 FROM nw_knowledge_documents d WHERE d.tenant_id=x.tenant_id AND d.id=x.document_id AND d.kb_id=#{kbId})
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_chunks r WHERE r.tenant_id=x.tenant_id AND r.content_id=x.id)
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_chunk_embeddings e WHERE e.tenant_id=x.tenant_id AND e.content_id=x.id)
+       ORDER BY x.id LIMIT #{limit} FOR UPDATE OF x SKIP LOCKED)
+    </delete>
+    <delete id="deleteOrphanDocumentContents">
+      DELETE FROM nw_knowledge_document_contents c WHERE c.tenant_id=#{tenantId} AND c.id IN
+      (SELECT x.id FROM nw_knowledge_document_contents x WHERE x.tenant_id=#{tenantId}
+       AND EXISTS(SELECT 1 FROM nw_knowledge_documents d WHERE d.tenant_id=x.tenant_id AND d.id=x.document_id AND d.kb_id=#{kbId})
+       AND NOT EXISTS(SELECT 1 FROM nw_knowledge_document_versions v WHERE v.tenant_id=x.tenant_id AND v.content_id=x.id)
+       ORDER BY x.id LIMIT #{limit} FOR UPDATE OF x SKIP LOCKED)
+    </delete>
+</mapper>
+

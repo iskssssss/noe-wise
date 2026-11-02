@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.media.SessionMediaMapper">
+  <insert id="insert">
+    INSERT INTO nw_chat_session_attachments
+      (id, tenant_id, session_id, name, input_path, size, sha256, body_format, created_at,
+       expires_at, mime_type, pixel_width, pixel_height, source_media_id, media_transform, runtime_session_id, media_run_id)
+    VALUES (CAST(#{id} AS uuid), CAST(#{tenantId} AS bigint), #{productSessionId}, #{name},
+      'attachments/' || #{id} || '/input.' || substring(#{mimeType} from 7),
+      #{size}, #{sha256}, 'bytea.v1', #{createdAt}, NULL, #{mimeType}, #{width}, #{height},
+      CAST(#{sourceId} AS uuid), #{transform}, #{sessionId}, #{runId})
+    ON CONFLICT (id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.media.SessionMediaRow">
+    SELECT id::text AS id, tenant_id::text AS tenant_id, runtime_session_id AS session_id, session_id AS product_session_id, media_run_id AS run_id, name, size, sha256,
+      mime_type, pixel_width AS width, pixel_height AS height, NULL::bytea AS content,
+      source_media_id::text AS source_id, media_transform AS transform, created_at
+    FROM nw_chat_session_attachments
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND runtime_session_id=#{session}
+      AND id=CAST(#{id} AS uuid) AND mime_type IS NOT NULL AND body_format IS NOT NULL
+  </select>
+  <select id="findProduct" resultType="com.skillforge.institution.media.SessionMediaRow">
+    SELECT id::text AS id, tenant_id::text AS tenant_id, runtime_session_id AS session_id, session_id AS product_session_id, media_run_id AS run_id, name, size, sha256,
+      mime_type, pixel_width AS width, pixel_height AS height, NULL::bytea AS content,
+      source_media_id::text AS source_id, media_transform AS transform, created_at
+    FROM nw_chat_session_attachments
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND session_id=#{productSession}
+      AND id=CAST(#{id} AS uuid) AND mime_type IS NOT NULL AND body_format IS NOT NULL
+  </select>
+  <select id="readBytes" resultType="com.skillforge.institution.media.SessionMediaMapper$StoredBytes">
+    SELECT b.content FROM nw_chat_session_attachments a JOIN nw_chat_attachment_bodies b
+      ON b.tenant_id=a.tenant_id AND b.sha256=a.sha256 AND b.size=a.size AND b.format=a.body_format
+    WHERE a.tenant_id=CAST(#{tenant} AS bigint) AND a.runtime_session_id=#{session}
+      AND a.id=CAST(#{id} AS uuid) AND a.mime_type IS NOT NULL
+  </select>
+  <update id="pin">
+    UPDATE nw_chat_session_attachments SET referenced_at=clock_timestamp()
+    WHERE tenant_id=CAST(#{tenant} AS bigint) AND runtime_session_id=#{session}
+      AND id=CAST(#{id} AS uuid) AND mime_type IS NOT NULL
+      AND body_format IS NOT NULL AND referenced_at IS NULL
+  </update>
+  <select id="unusedUploadPage" resultType="com.skillforge.institution.media.SessionMediaMapper$UnusedUpload">
+    SELECT id::text AS id,session_id AS product_session_id,runtime_session_id
+      FROM public.nw_chat_session_attachments
+     WHERE tenant_id=CAST(#{tenant} AS bigint) AND mime_type IS NOT NULL AND body_format IS NOT NULL
+       AND source_media_id IS NULL AND media_transform='source-v1' AND media_run_id IS NULL AND referenced_at IS NULL
+       AND created_at&lt;=clock_timestamp()-interval '30 days'
+       <if test="after != null">AND id&gt;CAST(#{after} AS uuid)</if>
+     ORDER BY id LIMIT #{limit}
+  </select>
+  <select id="unusedMediaOwnerGate" resultType="boolean">
+    SELECT public.agent_runtime_chat_unused_media_owner_gate(#{tenant},#{productSession},#{runtimeSession},CAST(#{rootId} AS uuid))
+  </select>
+  <select id="lockUnusedUploadClosure" resultType="com.skillforge.institution.media.SessionMediaMapper$UnusedMediaRow">
+    WITH RECURSIVE family AS (
+      SELECT id FROM public.nw_chat_session_attachments WHERE tenant_id=CAST(#{tenant} AS bigint)
+        AND runtime_session_id=#{runtimeSession} AND id=CAST(#{rootId} AS uuid) AND mime_type IS NOT NULL
+      UNION
+      SELECT child.id FROM public.nw_chat_session_attachments child JOIN family parent ON child.source_media_id=parent.id
+       WHERE child.tenant_id=CAST(#{tenant} AS bigint) AND child.runtime_session_id=#{runtimeSession}
+    ) SELECT media.id::text AS id,media.session_id AS product_session_id,media.runtime_session_id,media.media_run_id AS run_id,
+       media.source_media_id::text AS source_id,media.media_transform AS transform,media.body_format,media.referenced_at
+      FROM public.nw_chat_session_attachments media JOIN family ON family.id=media.id
+     ORDER BY media.id LIMIT #{limit} FOR UPDATE OF media
+  </select>
+  <update id="releaseUnusedUploadClosure">
+    UPDATE public.nw_chat_session_attachments media SET body_format=NULL,reclaimed_at=clock_timestamp(),name=NULL
+     WHERE media.tenant_id=CAST(#{tenant} AS bigint) AND media.session_id=#{productSession}
+       AND media.runtime_session_id=#{runtimeSession} AND media.body_format='bytea.v1'
+       AND media.referenced_at IS NULL AND media.media_run_id IS NULL
+       AND media.id IN <foreach collection="ids" item="id" open="(" separator="," close=")">CAST(#{id} AS uuid)</foreach>
+       AND EXISTS(SELECT 1 FROM public.nw_chat_session_attachments root WHERE root.tenant_id=media.tenant_id
+         AND root.runtime_session_id=#{runtimeSession} AND root.id=CAST(#{rootId} AS uuid)
+         AND root.session_id=#{productSession} AND root.source_media_id IS NULL AND root.media_transform='source-v1'
+         AND root.created_at&lt;=clock_timestamp()-interval '30 days')
+       AND NOT EXISTS(SELECT 1 FROM public.nw_chat_session_attachments retained
+         WHERE retained.tenant_id=media.tenant_id AND retained.runtime_session_id=media.runtime_session_id
+           AND retained.source_media_id=media.id AND retained.body_format IS NOT NULL
+           AND retained.id NOT IN <foreach collection="ids" item="id" open="(" separator="," close=")">CAST(#{id} AS uuid)</foreach>)
+  </update>
+</mapper>

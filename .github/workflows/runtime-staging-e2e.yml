@@ -1,0 +1,80 @@
+name: 运行时 staging 验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: 受保护机构双 Provider 验收
+    runs-on: ubuntu-latest
+    environment: staging-runtime
+    defaults:
+      run:
+        working-directory: backend-java
+    env:
+      STAGING_RUNTIME_BASE_URL: ${{ secrets.STAGING_RUNTIME_BASE_URL }}
+      STAGING_PROVIDER_A_TENANT_SLUG: ${{ secrets.STAGING_PROVIDER_A_TENANT_SLUG }}
+      STAGING_PROVIDER_A_USERNAME: ${{ secrets.STAGING_PROVIDER_A_USERNAME }}
+      STAGING_PROVIDER_A_PASSWORD: ${{ secrets.STAGING_PROVIDER_A_PASSWORD }}
+      STAGING_PROVIDER_B_TENANT_SLUG: ${{ secrets.STAGING_PROVIDER_B_TENANT_SLUG }}
+      STAGING_PROVIDER_B_USERNAME: ${{ secrets.STAGING_PROVIDER_B_USERNAME }}
+      STAGING_PROVIDER_B_PASSWORD: ${{ secrets.STAGING_PROVIDER_B_PASSWORD }}
+      STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+      STAGING_DB_USERNAME: ${{ secrets.STAGING_DB_USERNAME }}
+      STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 设置 Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: 生成受保护 Provider profile 清单
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          profile_file = Path(os.environ["RUNNER_TEMP"]) / "skillforge-provider-profiles.json"
+          manifest = {
+              "profiles": [
+                  {
+                      "alias": "provider-a",
+                      "tenant_slug": os.environ["STAGING_PROVIDER_A_TENANT_SLUG"],
+                      "username_env": "STAGING_PROVIDER_A_USERNAME",
+                      "password_env": "STAGING_PROVIDER_A_PASSWORD",
+                  },
+                  {
+                      "alias": "provider-b",
+                      "tenant_slug": os.environ["STAGING_PROVIDER_B_TENANT_SLUG"],
+                      "username_env": "STAGING_PROVIDER_B_USERNAME",
+                      "password_env": "STAGING_PROVIDER_B_PASSWORD",
+                  },
+              ]
+          }
+          profile_file.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+          profile_file.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as github_env:
+              github_env.write(f"STAGING_PROVIDER_PROFILES_FILE={profile_file}\n")
+          PY
+      - name: 运行受保护 staging 冒烟测试
+        run: ./gradlew --no-daemon -Dorg.gradle.workers.max=1 :skillforge-institution-service:stagingRuntimeE2E
+      - name: 保存脱敏 staging 证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 运行时-staging-验收证据
+          if-no-files-found: warn
+          path: |
+            backend-java/skillforge-institution-service/build/test-results/stagingRuntimeE2E/**
+            backend-java/skillforge-institution-service/build/reports/tests/stagingRuntimeE2E/**
+            backend-java/skillforge-institution-service/build/runtime-e2e/**

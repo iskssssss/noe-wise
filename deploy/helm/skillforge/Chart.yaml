@@ -1,0 +1,12 @@
+apiVersion: v2
+name: skillforge
+description: Deploys the NoeWise backend and Vue 3 frontend with external PostgreSQL, Redis, and Elasticsearch.
+type: application
+version: 0.1.0
+appVersion: "0.2.0"
+keywords:
+  - ai
+  - skillforge
+  - java
+maintainers:
+  - name: 灵知

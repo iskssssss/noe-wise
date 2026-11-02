@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.runtimeconfig.RunSettingsMapper">
+  <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id',#{tenant},true)</select>
+  <select id="find" resultType="string">SELECT snapshot::text FROM nw_host_run_settings WHERE tenant_id=#{tenant} AND run_id=#{run}</select>
+  <insert id="insert">INSERT INTO nw_host_run_settings(tenant_id,run_id,snapshot) VALUES(#{tenant},#{run},CAST(#{snapshot} AS jsonb)) ON CONFLICT(tenant_id,run_id) DO NOTHING</insert>
+  <select id="findOperation" resultType="string">SELECT snapshot::text FROM nw_host_operation_settings WHERE tenant_id=#{tenant} AND run_id=#{run} AND operation_key=#{operation}</select>
+  <insert id="insertOperation">INSERT INTO nw_host_operation_settings(tenant_id,run_id,operation_key,snapshot) VALUES(#{tenant},#{run},#{operation},CAST(#{snapshot} AS jsonb)) ON CONFLICT(tenant_id,run_id,operation_key) DO NOTHING</insert>
+</mapper>

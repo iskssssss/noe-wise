@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.model.TimePricingMapper">
+  <sql id="ids"><foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></sql>
+  <insert id="insertRule">INSERT INTO nw_model_time_pricing_rules(id,time_zone,valid_from,valid_through,peak_multiplier,off_peak_multiplier,source_url,source_version,calendar_source_url) VALUES(#{id},#{p.timeZone},#{p.validFrom},#{p.validThrough},#{p.peakMultiplier},#{p.offPeakMultiplier},#{p.sourceUrl},#{p.sourceVersion},#{p.calendarSourceUrl})</insert>
+  <insert id="insertWeekday">INSERT INTO nw_model_time_pricing_weekdays(rule_id,ordinal,weekday) VALUES(#{id},#{ordinal},#{day})</insert>
+  <insert id="insertPeriod">INSERT INTO nw_model_time_pricing_periods(rule_id,ordinal,start_nanos,end_nanos) VALUES(#{id},#{ordinal},#{startNanos},#{endNanos})</insert>
+  <insert id="insertDate">INSERT INTO nw_model_time_pricing_dates(rule_id,band,ordinal,starts_on,ends_on) VALUES(#{id},#{band},#{ordinal},#{d.from},#{d.through})</insert>
+  <insert id="insertScope">INSERT INTO nw_model_time_pricing_scopes(rule_id,ordinal,provider_id,service_id,profile_version,model_id) VALUES(#{id},#{ordinal},#{s.providerId},#{s.serviceId},#{s.profileVersion},#{s.modelId})</insert>
+  <select id="rules" resultType="com.skillforge.core.model.TimePricingMapper$RuleRow">SELECT id,time_zone,valid_from,valid_through,peak_multiplier,off_peak_multiplier,source_url,source_version,calendar_source_url FROM nw_model_time_pricing_rules WHERE id IN <include refid="ids"/> ORDER BY id</select>
+  <select id="weekdays" resultType="com.skillforge.core.model.TimePricingMapper$WeekdayRow">SELECT rule_id,weekday FROM nw_model_time_pricing_weekdays WHERE rule_id IN <include refid="ids"/> ORDER BY rule_id,ordinal</select>
+  <select id="periods" resultType="com.skillforge.core.model.TimePricingMapper$PeriodRow">SELECT rule_id,start_nanos,end_nanos FROM nw_model_time_pricing_periods WHERE rule_id IN <include refid="ids"/> ORDER BY rule_id,ordinal</select>
+  <select id="dates" resultType="com.skillforge.core.model.TimePricingMapper$DateRow">SELECT rule_id,band,starts_on AS "from",ends_on AS through FROM nw_model_time_pricing_dates WHERE rule_id IN <include refid="ids"/> ORDER BY rule_id,band,ordinal</select>
+  <select id="scopes" resultType="com.skillforge.core.model.TimePricingMapper$ScopeRow">SELECT rule_id,provider_id,service_id,profile_version,model_id FROM nw_model_time_pricing_scopes WHERE rule_id IN <include refid="ids"/> ORDER BY rule_id,ordinal</select>
+  <sql id="presetColumns">id::text,name,draft_revision AS revision,published_revision,draft_changed AS has_unpublished_changes,draft_rule_id AS rule_id</sql>
+  <select id="listPresets" resultType="com.skillforge.core.model.TimePricingMapper$PresetRow">SELECT <include refid="presetColumns"/> FROM nw_model_time_pricing_presets ORDER BY id</select>
+  <select id="preset" resultType="com.skillforge.core.model.TimePricingMapper$PresetRow">SELECT <include refid="presetColumns"/> FROM nw_model_time_pricing_presets WHERE id=CAST(#{id} AS bigint)</select>
+  <select id="history" resultType="com.skillforge.core.model.TimePricingMapper$PresetRow">SELECT preset_id::text AS id,name,revision,revision AS published_revision,FALSE AS has_unpublished_changes,rule_id FROM nw_model_time_pricing_preset_versions WHERE preset_id=CAST(#{id} AS bigint) ORDER BY revision DESC</select>
+  <insert id="createPreset">INSERT INTO nw_model_time_pricing_presets(id,name,draft_rule_id,created_by,updated_by) VALUES(CAST(#{id} AS bigint),#{name},#{rule},#{actor},#{actor})</insert>
+  <update id="updatePreset">UPDATE nw_model_time_pricing_presets SET name=#{name},draft_rule_id=#{rule},draft_revision=draft_revision+1,draft_changed=TRUE,updated_at=clock_timestamp(),updated_by=#{actor} WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expected}</update>
+  <update id="advancePreset">UPDATE nw_model_time_pricing_presets SET published_revision=#{revision},draft_changed=FALSE,updated_at=clock_timestamp(),updated_by=#{actor} WHERE id=CAST(#{id} AS bigint) AND draft_revision=#{expected} AND draft_changed=TRUE AND (published_revision IS NULL OR published_revision=#{revision}-1)</update>
+  <insert id="appendPreset">INSERT INTO nw_model_time_pricing_preset_versions(preset_id,revision,name,rule_id,published_by) VALUES(CAST(#{id} AS bigint),#{revision},#{name},#{rule},#{actor})</insert>
+</mapper>

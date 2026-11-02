@@ -1,0 +1,5 @@
+{
+  "http_tool_handle": "tool:替换为当前已显示的真实http_request句柄",
+  "queries": ["Docling official PDF Office layout tables OCR", "Microsoft MarkItDown official document conversion OCR"],
+  "urls": ["https://github.com/docling-project/docling", "https://github.com/microsoft/markitdown"]
+}

@@ -1,0 +1,66 @@
+[versions]
+java = "21"
+pmd = "7.28.0"
+tika = "2.9.2"
+springBoot = "3.5.16"
+springCloud = "2025.0.3"
+springCloudAlibaba = "2025.0.0.0"
+mybatisPlus = "3.5.17"
+saToken = "1.45.0"
+springdoc = "2.8.9"
+testcontainers = "1.20.6"
+dependencyManagement = "1.1.7"
+# 独立 SDK 的冻结依赖基线；Spring 宿主仍使用 Boot BOM 的解析版本。
+runtimeJackson = "2.18.9"
+runtimeOpenai = "4.94.0"
+runtimeFlyway = "11.7.2"
+runtimePostgresql = "42.7.11"
+runtimeSqlite = "3.53.4.0"
+runtimeJUnit = "5.11.4"
+runtimeMybatis = "3.5.19"
+runtimeCommonmark = "0.31.0"
+runtimeLucene = "9.12.3"
+runtimeHikari = "6.3.3"
+jtokkit = "1.1.0"
+jsoup = "1.18.3"
+webpImageio = "3.12.0"
+metadataExtractor = "2.19.0"
+
+[libraries]
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux" }
+spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
+spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-cloud-starter-gateway = { module = "org.springframework.cloud:spring-cloud-starter-gateway" }
+spring-cloud-starter-openfeign = { module = "org.springframework.cloud:spring-cloud-starter-openfeign" }
+spring-cloud-starter-loadbalancer = { module = "org.springframework.cloud:spring-cloud-starter-loadbalancer" }
+nacos-discovery = { module = "com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery" }
+nacos-config = { module = "com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-config" }
+sentinel = { module = "com.alibaba.cloud:spring-cloud-starter-alibaba-sentinel" }
+mybatis-plus = { module = "com.baomidou:mybatis-plus-spring-boot3-starter", version.ref = "mybatisPlus" }
+sa-token = { module = "cn.dev33:sa-token-spring-boot3-starter", version.ref = "saToken" }
+sa-token-jwt = { module = "cn.dev33:sa-token-jwt", version.ref = "saToken" }
+spring-security-crypto = { module = "org.springframework.security:spring-security-crypto" }
+lombok = { module = "org.projectlombok:lombok" }
+springdoc = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+swagger-annotations = { module = "io.swagger.core.v3:swagger-annotations-jakarta", version = "2.2.28" }
+tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+tika-parsers-standard = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
+yitter-idgenerator = { module = "com.github.yitter:yitter-idgenerator", version = "1.0.6" }
+flyway-core = { module = "org.flywaydb:flyway-core" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
+postgresql = { module = "org.postgresql:postgresql" }
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "runtimeLucene" }
+lucene-analysis-common = { module = "org.apache.lucene:lucene-analysis-common", version.ref = "runtimeLucene" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+dependency-management = { id = "io.spring.dependency-management", version.ref = "dependencyManagement" }

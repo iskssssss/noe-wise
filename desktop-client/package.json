@@ -1,0 +1,93 @@
+{
+  "name": "@noewise/desktop-client",
+  "version": "0.1.5",
+  "private": true,
+  "description": "灵知 本地 Agent 桌面原型",
+  "author": "NoeWise",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "node --test tests/*.test.cjs",
+    "test:electron": "node tests/electron-smoke.mjs",
+    "test:rendering": "node tests/electron-rendering.mjs",
+    "test:ui": "node tests/electron-ui-ux.mjs",
+    "test:interactions": "node tests/renderer-interactions.mjs",
+    "test:model-settings": "node tests/electron-model-settings.mjs",
+    "test:combination": "node tests/electron-java-smoke.mjs",
+    "stage": "node scripts/stage-runtime.mjs",
+    "package:win": "corepack pnpm build && corepack pnpm stage x64 && electron-builder --win nsis --x64",
+    "package:mac:arm64": "corepack pnpm build && corepack pnpm stage arm64 && electron-builder --mac dmg --arm64",
+    "package:mac:x64": "corepack pnpm build && corepack pnpm stage x64 && electron-builder --mac dmg --x64",
+    "package:dir": "corepack pnpm build && corepack pnpm stage && electron-builder --dir"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.9",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "catalog:",
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "playwright": "1.62.1",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vue-tsc": "catalog:"
+  },
+  "build": {
+    "appId": "ai.noewise.desktop.prototype",
+    "productName": "NoeWise Desktop",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "staging/host",
+        "to": "host"
+      },
+      {
+        "from": "staging/jre",
+        "to": "jre"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    },
+    "artifactName": "NoeWise-Desktop-${version}-${os}-${arch}.${ext}"
+  }
+}

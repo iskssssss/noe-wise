@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.runtime.callback.SigningKeyMapper">
+  <select id="bindTenant" resultType="string">SELECT set_config('app.tenant_id', #{tenant}, true)</select>
+  <select id="find" resultType="string">
+    SELECT signing_secret_encrypted FROM public.nw_service_principals
+      WHERE tenant_id::text = #{tenant} AND principal_id = #{principal}
+        AND credential_version = #{version} AND status = 'active'
+  </select>
+</mapper>
+

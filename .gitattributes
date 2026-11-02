@@ -1,0 +1,12 @@
+# 普通文本统一使用 LF；Windows 批处理文件按 CRLF 检出。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 真实评估套件按原始字节冻结，跨平台检出保持同一 SHA-256。
+/tools/memory_evaluation/semantic-c/dev.json text eol=lf
+/tools/memory_evaluation/semantic-c/heldout.json text eol=lf
+/tools/knowledge_evaluation/suite.json text eol=lf
+
+# Linux 沙箱入口保留 LF，避免 Windows 检出后 shebang 包含回车。
+/deploy/sandbox/runtimes/*-entrypoint.sh text eol=lf

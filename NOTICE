@@ -1,0 +1,14 @@
+NoeWise
+Copyright 2026 NoeWise contributors
+
+Original project contributions are licensed under the Apache License, Version 2.0.
+Third-party components and bundled resources remain subject to their own licenses.
+
+Bundled Skill resources include material from Anthropic Skills (Apache-2.0),
+Docling (MIT), and Tavily Skills (MIT). Applicable copyright and license texts
+are retained in official-skills/*/licenses/ and in the LICENSE.txt files under
+official-skills/*/references/upstream/. The adopted files, versions and licenses
+are recorded in tools/skills/upstream-lock.json.
+
+Dependencies distributed separately through package managers or runtime images
+retain their respective licenses. This notice does not replace their license terms.

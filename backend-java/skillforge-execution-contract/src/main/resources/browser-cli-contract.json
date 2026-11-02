@@ -1,0 +1,1898 @@
+{
+  "upstream_commit": "3f10983c09fcd443c7420830ab984c9d409954bf",
+  "operations": {
+    "navigate": {
+      "command": [
+        "navigate"
+      ],
+      "fields": [
+        {
+          "name": "url",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Destination URL."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "wait_until",
+          "flag": "--wait-until",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle",
+            "commit"
+          ],
+          "description": "Lifecycle phase to wait for. Defaults to `load`."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Hard timeout (default 30s). Accepts `30s`, `1m`, `1500ms`."
+        }
+      ],
+      "session": true
+    },
+    "navigate-back": {
+      "command": [
+        "navigate-back"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "wait_until",
+          "flag": "--wait-until",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle",
+            "commit"
+          ],
+          "description": ""
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "navigate-forward": {
+      "command": [
+        "navigate-forward"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "wait_until",
+          "flag": "--wait-until",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle",
+            "commit"
+          ],
+          "description": ""
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "reload": {
+      "command": [
+        "reload"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "wait_until",
+          "flag": "--wait-until",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle",
+            "commit"
+          ],
+          "description": ""
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "hard",
+          "flag": "--hard",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Bypass the HTTP cache when reloading (CDP `Page.reload(ignoreCache=true)`)."
+        }
+      ],
+      "session": true
+    },
+    "screenshot": {
+      "command": [
+        "screenshot"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional `@eN` ref from the latest `bsk observe` or `bsk snapshot`. Crops the capture to the referenced DOM element or Canvas region."
+        },
+        {
+          "name": "full_page",
+          "flag": "--full-page",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Scroll an ordinary web page from top to bottom and stitch a full-page PNG."
+        },
+        {
+          "name": "scope",
+          "flag": "--scope",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "follow",
+            "current"
+          ],
+          "description": "Full-page range: follow appended content, or capture the initial document height."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Full-page capture/encoding timeout (e.g. 30s, 5m). Defaults to 2m."
+        }
+      ],
+      "session": true
+    },
+    "snapshot": {
+      "command": [
+        "snapshot"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "max_depth",
+          "flag": "--max-depth",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Cap on aria-tree depth before truncating."
+        },
+        {
+          "name": "max_tokens",
+          "flag": "--max-tokens",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Soft cap on rendered tokens (~4 chars/token)."
+        }
+      ],
+      "session": true
+    },
+    "observe": {
+      "command": [
+        "observe"
+      ],
+      "fields": [
+        {
+          "name": "cursor",
+          "flag": "--cursor",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Continue the same observation. Use current refs before continuing."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "max_depth",
+          "flag": "--max-depth",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Cap on VOM tree depth before truncating."
+        },
+        {
+          "name": "max_tokens",
+          "flag": "--max-tokens",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Soft cap on rendered tokens (~4 chars/token)."
+        },
+        {
+          "name": "debug_surfaces",
+          "flag": "--debug-surfaces",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Include conditional surface probe diagnostics in JSON output."
+        },
+        {
+          "name": "probe_hover",
+          "flag": "--probe-hover",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Actively hover page controls to reveal hover-only menus and tooltips. Costs seconds of wall clock and touches the live page, so it is off unless a static observation looks like it is missing hover content."
+        }
+      ],
+      "session": true
+    },
+    "console": {
+      "command": [
+        "console"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "since",
+          "flag": "--since",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Return entries with sequence greater than this cursor."
+        },
+        {
+          "name": "limit",
+          "flag": "--limit",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum number of entries to return. Defaults to 50; extension caps at 200."
+        },
+        {
+          "name": "max_text_chars",
+          "flag": "--max-text-chars",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum characters per entry text. Defaults to 1000; extension caps at 4096."
+        },
+        {
+          "name": "include_stack",
+          "flag": "--include-stack",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Include structured stack frames in JSON/human output."
+        }
+      ],
+      "session": true
+    },
+    "network": {
+      "command": [
+        "network"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "since",
+          "flag": "--since",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Return entries with sequence greater than this cursor."
+        },
+        {
+          "name": "limit",
+          "flag": "--limit",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum number of entries to return. Defaults to 50; extension caps at 200."
+        },
+        {
+          "name": "max_text_chars",
+          "flag": "--max-text-chars",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum characters per URL / error text. Defaults to 1000; extension caps at 4096."
+        }
+      ],
+      "session": true
+    },
+    "debug": {
+      "command": [
+        "debug"
+      ],
+      "fields": [
+        {
+          "name": "action",
+          "flag": "",
+          "type": "string",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [
+            "performance",
+            "aggregate",
+            "duplicates",
+            "start",
+            "stop",
+            "status",
+            "requests",
+            "request",
+            "operations",
+            "operation",
+            "console",
+            "pages",
+            "export",
+            "rules",
+            "rule_add",
+            "rule_enable",
+            "rule_disable",
+            "rule_remove",
+            "replay",
+            "capabilities",
+            "activity",
+            "wait",
+            "pin",
+            "unpin"
+          ],
+          "description": "Capture/inspect evidence, manage request rules, or replay a recorded request."
+        },
+        {
+          "name": "id",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Request, operation or rule ID returned by an earlier debug action."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "run_id",
+          "flag": "--run-id",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "name",
+          "flag": "--name",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "A short task name shown in the extension."
+        },
+        {
+          "name": "since",
+          "flag": "--since",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Incremental cursor; records may reappear when their evidence changes."
+        },
+        {
+          "name": "limit",
+          "flag": "--limit",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "List size: 1..100, default 30. Follow next_since or next_offset."
+        },
+        {
+          "name": "part",
+          "flag": "--part",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "metadata",
+            "request",
+            "response",
+            "headers",
+            "timing"
+          ],
+          "description": ""
+        },
+        {
+          "name": "offset",
+          "flag": "--offset",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Body character or pages/console/performance/analysis entry offset: 0..65536."
+        },
+        {
+          "name": "max_chars",
+          "flag": "--max-chars",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Body slice: 1..16384 characters, default 4096."
+        },
+        {
+          "name": "pointer",
+          "flag": "--pointer",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "RFC 6901 JSON pointer applied to the selected complete, redacted body."
+        },
+        {
+          "name": "rule",
+          "flag": "--rule",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Rule definition as JSON. Rules default to one match in the current capture."
+        },
+        {
+          "name": "replay",
+          "flag": "--replay",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Replay JSON with a unique key; reusing the key never sends twice."
+        },
+        {
+          "name": "budget",
+          "flag": "--budget",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Output budget: 4096..262144 UTF-8 JSON bytes, default 65536. Export is exempt."
+        },
+        {
+          "name": "slow_ms",
+          "flag": "--slow-ms",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Aggregate only: slow-request threshold in ms, 0..60000; default 1000."
+        },
+        {
+          "name": "window_ms",
+          "flag": "--window-ms",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Duplicates only: fixed burst window in ms, 100..10000; default 1000."
+        },
+        {
+          "name": "include_controlled",
+          "flag": "--include-controlled",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Analysis only: include requests affected by rules or agent replay."
+        },
+        {
+          "name": "url",
+          "flag": "--url",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Requests/analysis: URL substring (case-sensitive)."
+        },
+        {
+          "name": "method",
+          "flag": "--method",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "resource_type",
+          "flag": "--resource-type",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "status",
+          "flag": "--status",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "state",
+          "flag": "--state",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "pending",
+            "complete",
+            "failed",
+            "redirected",
+            "interrupted"
+          ],
+          "description": ""
+        },
+        {
+          "name": "kind",
+          "flag": "--kind",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "all",
+            "business",
+            "resource",
+            "extension"
+          ],
+          "description": ""
+        },
+        {
+          "name": "fields",
+          "flag": "--fields",
+          "type": "array",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Comma-separated optional request fields. Identity and body availability remain."
+        },
+        {
+          "name": "wait_ms",
+          "flag": "--wait-ms",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Wait for the running command: 0..60000 ms, default 10000; does not resend it."
+        },
+        {
+          "name": "command_id",
+          "flag": "--command-id",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Wait until this command is no longer running; otherwise wait until the session is idle."
+        }
+      ],
+      "session": true
+    },
+    "get-html": {
+      "command": [
+        "get-html"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional `@eN` ref from the last `bsk snapshot`. Scopes the dump to the matching subtree."
+        },
+        {
+          "name": "max_bytes",
+          "flag": "--max-bytes",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum HTML bytes to return before truncation."
+        }
+      ],
+      "session": true
+    },
+    "evaluate": {
+      "command": [
+        "evaluate"
+      ],
+      "fields": [
+        {
+          "name": "expression",
+          "flag": "",
+          "type": "string",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "JavaScript expression to evaluate. Wrap with quotes; statements that need an explicit return should `return` from an IIFE or place the value last (CDP returns the expression's value, not a statement's)."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "await_promise",
+          "flag": "--await-promise",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": true,
+          "enum": [],
+          "description": "Await the expression's resolved value when it returns a Promise (CDP `awaitPromise`). Defaults to true."
+        },
+        {
+          "name": "return_by_value",
+          "flag": "--return-by-value",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": true,
+          "enum": [],
+          "description": "Ask CDP to serialise the result by value. Defaults to true so the CLI receives a plain JSON value instead of a RemoteObject id."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Hard timeout (default 30s). Accepts `30s`, `1m`, `1500ms`."
+        }
+      ],
+      "session": true
+    },
+    "emulate": {
+      "command": [
+        "emulate"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "device",
+          "flag": "--device",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Built-in device preset (iphone-14, iphone-14-pro-max, iphone-se, pixel-7, galaxy-s23, ipad-mini, galaxy-tab-s8). Manual flags override individual preset fields."
+        },
+        {
+          "name": "width",
+          "flag": "--width",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Viewport width in CSS pixels (requires --height unless --device supplies it)."
+        },
+        {
+          "name": "height",
+          "flag": "--height",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Viewport height in CSS pixels (requires --width unless --device supplies it)."
+        },
+        {
+          "name": "dpr",
+          "flag": "--dpr",
+          "type": "number",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Device pixel ratio (requires --width/--height without --device)."
+        },
+        {
+          "name": "mobile",
+          "flag": "--mobile",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Emulate a mobile viewport (requires --width/--height without --device)."
+        },
+        {
+          "name": "no_mobile",
+          "flag": "--no-mobile",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Turn a preset's mobile viewport flag back off."
+        },
+        {
+          "name": "ua",
+          "flag": "--ua",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "User-Agent override string."
+        },
+        {
+          "name": "accept_language",
+          "flag": "--accept-language",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Accept-Language header override (requires --ua or --device)."
+        },
+        {
+          "name": "touch",
+          "flag": "--touch",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Enable touch emulation (combines with --device or manual flags)."
+        },
+        {
+          "name": "no_touch",
+          "flag": "--no-touch",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Turn a preset's touch emulation back off."
+        },
+        {
+          "name": "max_touch_points",
+          "flag": "--max-touch-points",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Touch points reported while touch emulation is enabled (implies --touch)."
+        },
+        {
+          "name": "off",
+          "flag": "--off",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Clear all emulation overrides and restore the tab's real environment. Mutually exclusive with every other option."
+        }
+      ],
+      "session": true
+    },
+    "wheel": {
+      "command": [
+        "wheel"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional snapshot ref (`@e3`, `e3`) or CSS selector used as the wheel hit-test point."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "delta_x",
+          "flag": "--delta-x",
+          "type": "number",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Horizontal wheel input in CSS pixels (positive is right)."
+        },
+        {
+          "name": "delta_y",
+          "flag": "--delta-y",
+          "type": "number",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Vertical wheel input in CSS pixels (positive is down)."
+        },
+        {
+          "name": "modifiers",
+          "flag": "--modifiers",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Comma-separated modifiers (`alt,ctrl,shift,meta`)."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "scroll-to": {
+      "command": [
+        "scroll-to"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "wait-for-navigation": {
+      "command": [
+        "wait-for-navigation"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "wait_until",
+          "flag": "--wait-until",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle",
+            "commit"
+          ],
+          "description": "Lifecycle phase to wait on. Defaults to `load`."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Hard timeout (default 30s). Accepts `30s`, `1m`, `1500ms`."
+        }
+      ],
+      "session": true
+    },
+    "wait-ms": {
+      "command": [
+        "wait-ms"
+      ],
+      "fields": [
+        {
+          "name": "duration",
+          "flag": "",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Duration to wait. Accepts `30s`, `1m`, `1500ms`, or a bare integer (interpreted as milliseconds)."
+        }
+      ],
+      "session": false
+    },
+    "request-help": {
+      "command": [
+        "request-help"
+      ],
+      "fields": [
+        {
+          "name": "prompt",
+          "flag": "--prompt",
+          "type": "string",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Message shown to the user explaining what they need to do."
+        },
+        {
+          "name": "title",
+          "flag": "--title",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional custom title for the overlay panel."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Target tab. Defaults to the Agent Window's active tab. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "target",
+          "flag": "--target",
+          "type": "array",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Component to highlight. Repeatable. Accepts a snapshot ref (`@e3`) or a CSS selector (`#login`). A value starting with `@` or matching `eN` is treated as a ref; everything else is a selector."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Hard timeout (default 5m). Accepts `5m`, `300s`, `300000ms`."
+        },
+        {
+          "name": "completion_criteria",
+          "flag": "--completion-criteria",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "JSON success detector, e.g. '{\"any\":[{\"url_contains\":\"/dashboard\"}],\"stable_for_ms\":1000}'."
+        }
+      ],
+      "session": true
+    },
+    "click": {
+      "command": [
+        "click"
+      ],
+      "fields": [
+        {
+          "name": "capture_id",
+          "flag": "--capture",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Bind a Canvas point click to the image returned by screenshot --ref."
+        },
+        {
+          "name": "image_x",
+          "flag": "--image-x",
+          "type": "number",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "X coordinate in the original screenshot PNG, not viewport CSS pixels."
+        },
+        {
+          "name": "image_y",
+          "flag": "--image-y",
+          "type": "number",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Y coordinate in the original screenshot PNG."
+        },
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Force-treat the value as a snapshot ref (overrides positional detection)."
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Force-treat the value as a CSS selector."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "button",
+          "flag": "--button",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "click_count",
+          "flag": "--click-count",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Number of consecutive presses (double-click = 2)."
+        },
+        {
+          "name": "modifiers",
+          "flag": "--modifiers",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Comma-separated modifiers (`alt,ctrl,shift,meta`)."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "hover": {
+      "command": [
+        "hover"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Force-treat the value as a snapshot ref (overrides positional detection)."
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Force-treat the value as a CSS selector."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "modifiers",
+          "flag": "--modifiers",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Comma-separated modifiers (`alt,ctrl,shift,meta`)."
+        },
+        {
+          "name": "settle",
+          "flag": "--settle",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Wait after moving the mouse so hover-triggered UI can settle."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "focus": {
+      "command": [
+        "focus"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "blur": {
+      "command": [
+        "blur"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "fill": {
+      "command": [
+        "fill"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "value",
+          "flag": "--value",
+          "type": "string",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Text to type into the element."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "no_clear",
+          "flag": "--no-clear",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Skip the default \"wipe the field first\" pass."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "press": {
+      "command": [
+        "press"
+      ],
+      "fields": [
+        {
+          "name": "key",
+          "flag": "",
+          "type": "string",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Key spec (`Enter`, `Ctrl+A`, `ArrowLeft`, `a`)."
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "modifiers",
+          "flag": "--modifiers",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Comma-separated modifiers in addition to anything baked into `<key>`."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional snapshot ref to focus before dispatching the key."
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional CSS selector to focus before dispatching the key."
+        },
+        {
+          "name": "hold_ms",
+          "flag": "--hold-ms",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Hold the key down for N milliseconds between keyDown and keyUp."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "select": {
+      "command": [
+        "select"
+      ],
+      "fields": [
+        {
+          "name": "target",
+          "flag": "",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used."
+        },
+        {
+          "name": "values",
+          "flag": "--value",
+          "type": "array",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Option `value` to select. Repeat for multi-select (`--value a --value b`)."
+        },
+        {
+          "name": "ref",
+          "flag": "--ref",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "selector",
+          "flag": "--selector",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "session": true
+    },
+    "tab-list": {
+      "command": [
+        "tab",
+        "list"
+      ],
+      "fields": [
+        {
+          "name": "scope",
+          "flag": "--scope",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [
+            "user",
+            "agent",
+            "all"
+          ],
+          "description": "View scope (defaults to `all`)."
+        }
+      ],
+      "session": true
+    },
+    "tab-create": {
+      "command": [
+        "tab",
+        "create"
+      ],
+      "fields": [
+        {
+          "name": "url",
+          "flag": "--url",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Destination URL (default `chrome://newtab/`)."
+        },
+        {
+          "name": "no_active",
+          "flag": "--no-active",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Open as a *background* tab (default focuses the new tab)."
+        },
+        {
+          "name": "index",
+          "flag": "--index",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Insertion index within the Agent Window's tab strip."
+        }
+      ],
+      "session": true
+    },
+    "tab-close": {
+      "command": [
+        "tab",
+        "close"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Tab id to close (must be in the session's Agent Window). Use the actual Chrome tab ID returned by tab-list, not a tab ordinal."
+        }
+      ],
+      "session": true
+    },
+    "tab-select": {
+      "command": [
+        "tab",
+        "select"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Tab id to activate. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal."
+        }
+      ],
+      "session": true
+    },
+    "tab-borrow": {
+      "command": [
+        "tab",
+        "borrow"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "User-window tab id to borrow into the session's Agent Window. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal."
+        },
+        {
+          "name": "timeout",
+          "flag": "--timeout",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Maximum time to wait for user confirmation (default 60s)."
+        }
+      ],
+      "session": true
+    },
+    "tab-return": {
+      "command": [
+        "tab",
+        "return"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Borrowed tab id to return to its origin window. Use the actual Chrome tab ID returned by tab-list, not a tab ordinal."
+        }
+      ],
+      "session": true
+    },
+    "window-resize": {
+      "command": [
+        "window",
+        "resize"
+      ],
+      "fields": [
+        {
+          "name": "width",
+          "flag": "--width",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "New Agent Window outer width in CSS pixels (100..=7680)."
+        },
+        {
+          "name": "height",
+          "flag": "--height",
+          "type": "integer",
+          "required": true,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "New Agent Window outer height in CSS pixels (100..=7680)."
+        }
+      ],
+      "session": true
+    },
+    "record-start": {
+      "command": [
+        "record",
+        "start"
+      ],
+      "fields": [
+        {
+          "name": "tab_id",
+          "flag": "--tab-id",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Use the actual Chrome tab ID returned by tab-list, not a tab ordinal. Omit to use the current Agent Window active tab."
+        },
+        {
+          "name": "url",
+          "flag": "--url",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Navigate to this http(s) URL before recording. When omitted, defaults to `https://example.com/`. If that page does not load, pass `--url` with a site you can open in this browser."
+        },
+        {
+          "name": "purpose",
+          "flag": "--purpose",
+          "type": "string",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Optional goal text stored on the exported trace for LLM context."
+        },
+        {
+          "name": "max_page_tokens",
+          "flag": "--max-page-tokens",
+          "type": "integer",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Max VOM tokens per page observation file (default 3000)."
+        },
+        {
+          "name": "redact_values",
+          "flag": "--redact-values",
+          "type": "boolean",
+          "required": false,
+          "valueBoolean": false,
+          "enum": [],
+          "description": "Redact all form values in page observations (`[filled]` only)."
+        }
+      ],
+      "session": false
+    },
+    "record-stop": {
+      "command": [
+        "record",
+        "stop"
+      ],
+      "fields": [],
+      "session": false
+    }
+  }
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.platform.billing.BillingScanMapper">
+    <!-- 唯一约束等待同键事务完成；失败回滚后才允许后续请求重新领取。 -->
+    <insert id="claim">
+        INSERT INTO nw_platform_billing_scans(actor_id, operation_id) VALUES(#{actor}, #{operation})
+        ON CONFLICT(actor_id, operation_id) DO NOTHING
+    </insert>
+    <select id="find" resultType="com.skillforge.platform.billing.BillingScanReceipt">
+        SELECT operation_id, scanned, warning, active, completed_at
+        FROM nw_platform_billing_scans WHERE actor_id = #{actor} AND operation_id = #{operation} AND completed_at IS NOT NULL
+    </select>
+    <update id="complete">
+        UPDATE nw_platform_billing_scans SET scanned=#{scanned}, warning=#{warning}, active=#{active}, completed_at=clock_timestamp()
+        WHERE actor_id=#{actor} AND operation_id=#{operation} AND completed_at IS NULL
+    </update>
+</mapper>

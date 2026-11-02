@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.callback.CallbackMapper">
+    <!-- 借用新Store事务时显式读取callback numeric时间，不污染共享Instant type handler。 -->
+    <resultMap id="workflowRegistrationRow" type="com.skillforge.runtime.adapter.jdbc.callback.CallbackRegistrationRow" autoMapping="true">
+        <result property="createdAt" column="created_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+        <result property="updatedAt" column="updated_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+    </resultMap>
+    <resultMap id="workflowDeliveryRow" type="com.skillforge.runtime.adapter.jdbc.callback.CallbackDeliveryRow" autoMapping="true">
+        <result property="leaseUntil" column="lease_until" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+        <result property="availableAt" column="available_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+        <result property="recordedAt" column="recorded_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+        <result property="updatedAt" column="updated_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+    </resultMap>
+    <resultMap id="workflowProofRow" type="com.skillforge.runtime.adapter.jdbc.callback.CallbackWorkflowProofRow" autoMapping="true">
+        <result property="verifiedAt" column="verified_at" typeHandler="com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler"/>
+    </resultMap>
+    <select id="workflowTenant" resultType="string">SELECT current_setting('app.tenant_id',true)</select>
+    <select id="workflowNow" resultType="java.math.BigDecimal">SELECT extract(epoch FROM clock_timestamp())</select>
+    <select id="workflowRegistration" resultMap="workflowRegistrationRow" useCache="false" flushCache="true">
+        SELECT tenant_id,callback_id,idempotency_key,command_data,status,revision,created_at,updated_at
+        FROM public.agent_runtime_callback_registrations
+        WHERE tenant_id=#{ref.tenantId.value} AND callback_id=#{ref.callbackId} FOR UPDATE
+    </select>
+    <select id="workflowDelivery" resultMap="workflowDeliveryRow" useCache="false" flushCache="true">
+        SELECT tenant_id,delivery_id,callback_id,command_digest,input_id,envelope_data,status,revision,attempt,
+               reason_code,audit_ref,lease_claim,lease_worker,lease_token,lease_until,available_at,recorded_at,updated_at
+        FROM public.agent_runtime_callback_deliveries
+        WHERE tenant_id=#{ref.tenantId.value} AND delivery_id=#{ref.deliveryId} FOR UPDATE
+    </select>
+    <select id="workflowProof" resultMap="workflowProofRow" useCache="false" flushCache="true">
+        SELECT tenant_id,callback_id,delivery_id,fingerprint,authentication_ref,command_digest,registration_revision,verified_at
+        FROM public.agent_runtime_callback_ingress_proofs
+        WHERE tenant_id=#{ref.tenantId.value} AND delivery_id=#{ref.deliveryId}
+    </select>
+    <update id="confirmWorkflowDelivery">
+        UPDATE public.agent_runtime_callback_deliveries SET status='DELIVERED',revision=#{row.revision},attempt=#{row.attempt},
+            lease_claim=NULL,lease_worker=NULL,lease_token=NULL,lease_until=NULL,
+            updated_at=#{row.updatedAt,typeHandler=com.skillforge.runtime.adapter.jdbc.callback.CallbackInstantTypeHandler}
+        WHERE tenant_id=#{row.tenantId} AND delivery_id=#{row.deliveryId} AND revision=#{before}
+          AND status IN ('READY','PROCESSING') AND command_digest=#{row.commandDigest}
+    </update>
+    <insert id="bindWorkflowDelivery">
+        INSERT INTO agent_runtime_execution_workflow_callback_deliveries(tenant_id,delivery_id,run_id,action_id,generation,input_id)
+        SELECT w.tenant_id,#{ref.deliveryId},w.run_id,w.action_id,w.generation,#{envelope.inputId.value}
+        FROM agent_runtime_execution_waits w JOIN agent_runtime_execution_runs r ON r.tenant_id=w.tenant_id AND r.run_id=w.run_id
+          AND r.waiting_action_id=w.action_id AND r.waiting_generation=w.generation
+        WHERE w.tenant_id=#{ref.tenantId.value} AND w.run_id=#{target.owningRunRef.runId} AND w.kind='WORKFLOW'
+          AND w.execution_id=#{target.executionRef.executionId} AND w.action_key=#{target.actionKey} AND w.execution_revision=#{target.expectedExecutionRevision}
+          AND w.input_id IS NULL AND r.phase='WAITING' AND NOT r.cancelled AND r.session_id=#{envelope.sessionRef.sessionId}
+          AND r.target_kind=#{envelope.sessionTarget.kind} AND r.target_id=#{envelope.sessionTarget.id}
+          AND r.agent_id=#{envelope.agentId.value} AND r.subject_kind='USER'
+          AND r.subject_id=CAST(#{envelope.subject.endUserId.value} AS text)
+          AND r.end_user_id=#{envelope.subject.endUserId.value}
+        ON CONFLICT DO NOTHING
+    </insert>
+    <select id="workflowBinding" resultType="boolean" useCache="false" flushCache="true">
+        SELECT EXISTS(SELECT 1 FROM agent_runtime_execution_workflow_callback_deliveries b
+          JOIN agent_runtime_execution_waits w ON w.tenant_id=b.tenant_id AND w.run_id=b.run_id AND w.action_id=b.action_id AND w.generation=b.generation
+          WHERE b.tenant_id=#{ref.tenantId.value} AND b.delivery_id=#{ref.deliveryId} AND b.input_id=#{envelope.inputId.value}
+            AND b.run_id=#{target.owningRunRef.runId} AND w.kind='WORKFLOW' AND w.input_id=b.input_id AND w.response_ref IS NOT NULL
+            AND w.execution_id=#{target.executionRef.executionId} AND w.action_key=#{target.actionKey} AND w.execution_revision=#{target.expectedExecutionRevision})
+    </select>
+    <sql id="tenant">tenant_id = COALESCE(current_setting('app.tenant_id', true), '')</sql>
+    <select id="bindTenant" resultType="string" flushCache="true" useCache="false">
+        SELECT set_config('app.tenant_id', #{tenant}, true)
+    </select>
+    <select id="lockTenant" resultType="string" flushCache="true" useCache="false">
+        SELECT pg_advisory_xact_lock(hashtextextended('callback-registry:' || #{tenant}, 0))::text
+    </select>
+    <select id="now" resultType="java.time.Instant" flushCache="true" useCache="false">
+        SELECT extract(epoch FROM clock_timestamp())
+    </select>
+    <select id="nextFence" resultType="long" flushCache="true" useCache="false">
+        SELECT nextval('public.agent_runtime_callback_fence_seq')
+    </select>
+    <select id="registration" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackRegistrationRow" flushCache="true" useCache="false">
+        SELECT tenant_id, callback_id, idempotency_key, command_data, status, revision, created_at, updated_at FROM public.agent_runtime_callback_registrations
+        WHERE tenant_id = #{ref.tenantId.value} AND callback_id = #{ref.callbackId}
+        <if test="lock">FOR UPDATE</if>
+    </select>
+    <select id="registrationKey" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackRegistrationRow">
+        SELECT tenant_id, callback_id, idempotency_key, command_data, status, revision, created_at, updated_at FROM public.agent_runtime_callback_registrations
+        WHERE tenant_id = #{tenant} AND idempotency_key = #{key}
+    </select>
+    <insert id="insertRegistration">
+        INSERT INTO public.agent_runtime_callback_registrations
+            (tenant_id, callback_id, idempotency_key, command_data, status, revision, created_at, updated_at)
+        VALUES (#{tenantId}, #{callbackId}, #{idempotencyKey}, #{commandData}, #{status}, #{revision}, #{createdAt}, #{updatedAt})
+    </insert>
+    <update id="updateRegistration">
+        UPDATE public.agent_runtime_callback_registrations
+        SET status = #{row.status}, revision = #{row.revision}, updated_at = #{row.updatedAt}
+        WHERE tenant_id = #{row.tenantId} AND callback_id = #{row.callbackId} AND revision = #{before}
+    </update>
+    <select id="registrationOperation" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackOperationRow">
+        SELECT command_data, output_revision FROM public.agent_runtime_callback_registration_operations
+        WHERE <include refid="tenant"/> AND callback_id = #{id} AND operation_id = #{operation}
+    </select>
+    <insert id="insertRegistrationOperation">
+        INSERT INTO public.agent_runtime_callback_registration_operations
+            (tenant_id, callback_id, operation_id, command_data, output_revision)
+        VALUES (current_setting('app.tenant_id'), #{id}, #{operation}, #{command}, #{revision})
+    </insert>
+
+    <select id="delivery" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackDeliveryRow" flushCache="true" useCache="false">
+        SELECT tenant_id, delivery_id, callback_id, command_digest, input_id, envelope_data, status, revision, attempt,
+               reason_code, audit_ref, lease_claim, lease_worker, lease_token, lease_until, available_at, recorded_at,
+               updated_at FROM public.agent_runtime_callback_deliveries
+        WHERE tenant_id = #{ref.tenantId.value} AND delivery_id = #{ref.deliveryId}
+        <if test="lock">FOR UPDATE</if>
+    </select>
+    <select id="ready" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackDeliveryRow" flushCache="true" useCache="false">
+        SELECT tenant_id, delivery_id, callback_id, command_digest, input_id, envelope_data, status, revision, attempt,
+               reason_code, audit_ref, lease_claim, lease_worker, lease_token, lease_until, available_at, recorded_at,
+               updated_at FROM public.agent_runtime_callback_deliveries
+        WHERE <include refid="tenant"/> AND (
+            (status = 'READY' AND available_at &lt;= #{now})
+            OR (status = 'PROCESSING' AND lease_until &lt;= #{now}))
+        ORDER BY available_at, recorded_at, delivery_id LIMIT #{limit}
+        <if test="lock">FOR UPDATE SKIP LOCKED</if>
+    </select>
+    <select id="readyAfter" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackDeliveryRow" flushCache="true" useCache="false">
+        SELECT tenant_id,delivery_id,callback_id,command_digest,input_id,envelope_data,status,revision,attempt,
+               reason_code,audit_ref,lease_claim,lease_worker,lease_token,lease_until,available_at,recorded_at,updated_at
+        FROM public.agent_runtime_callback_deliveries WHERE <include refid="tenant"/> AND delivery_id&gt;#{after}
+          AND ((status='READY' AND available_at&lt;=#{now}) OR (status='PROCESSING' AND lease_until&lt;=#{now}))
+        ORDER BY delivery_id LIMIT #{limit}
+    </select>
+    <insert id="insertDelivery">
+        INSERT INTO public.agent_runtime_callback_deliveries
+            (tenant_id, delivery_id, callback_id, command_digest, input_id, envelope_data, status, revision, attempt,
+             reason_code, audit_ref, lease_claim, lease_worker, lease_token, lease_until, available_at, recorded_at, updated_at)
+        VALUES (#{tenantId}, #{deliveryId}, #{callbackId}, #{commandDigest}, #{inputId}, #{envelopeData}, #{status}, #{revision}, #{attempt},
+                #{reasonCode}, #{auditRef}, #{leaseClaim}, #{leaseWorker}, #{leaseToken}, #{leaseUntil}, #{availableAt}, #{recordedAt}, #{updatedAt})
+    </insert>
+    <update id="updateDelivery">
+        UPDATE public.agent_runtime_callback_deliveries
+        SET status = #{row.status}, revision = #{row.revision}, attempt = #{row.attempt},
+            reason_code = #{row.reasonCode}, audit_ref = #{row.auditRef},
+            lease_claim = #{row.leaseClaim}, lease_worker = #{row.leaseWorker},
+            lease_token = #{row.leaseToken}, lease_until = #{row.leaseUntil},
+            available_at = #{row.availableAt}, updated_at = #{row.updatedAt}
+        WHERE tenant_id = #{row.tenantId} AND delivery_id = #{row.deliveryId} AND revision = #{before}
+    </update>
+    <select id="deliveryOperation" resultType="com.skillforge.runtime.adapter.jdbc.callback.CallbackOperationRow">
+        SELECT command_data, output_revision FROM public.agent_runtime_callback_delivery_operations
+        WHERE <include refid="tenant"/> AND delivery_id = #{id} AND operation_id = #{operation}
+    </select>
+    <insert id="insertDeliveryOperation">
+        INSERT INTO public.agent_runtime_callback_delivery_operations
+            (tenant_id, delivery_id, operation_id, command_data, output_revision)
+        VALUES (current_setting('app.tenant_id'), #{id}, #{operation}, #{command}, #{revision})
+    </insert>
+    <select id="audit" resultType="string" affectData="true" flushCache="true" useCache="false">
+        INSERT INTO public.agent_runtime_callback_audits
+            (tenant_id, resource_kind, resource_id, command_digest, audit_ref, reason_code)
+        VALUES (current_setting('app.tenant_id'), #{kind}, #{id}, #{digest}, #{audit}, #{reason})
+        ON CONFLICT (tenant_id, resource_kind, resource_id, command_digest)
+        DO UPDATE SET audit_ref = agent_runtime_callback_audits.audit_ref
+        RETURNING audit_ref
+    </select>
+</mapper>

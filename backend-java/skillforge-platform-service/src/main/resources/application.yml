@@ -1,0 +1,102 @@
+server:
+  port: ${PLATFORM_SERVICE_PORT:8100}
+
+spring:
+  application:
+    name: skillforge-platform-service
+  jackson:
+    time-zone: Asia/Shanghai
+    property-naming-strategy: SNAKE_CASE
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/skillforge}
+    username: ${PLATFORM_DATASOURCE_USERNAME:skillforge_platform}
+    password: ${PLATFORM_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-init-sql: "SET TIME ZONE 'Asia/Shanghai'"
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:false}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+      config:
+        enabled: ${NACOS_CONFIG_ENABLED:false}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+mybatis-plus:
+  # JsonbTypeHandler 不参与全局扫描：实体字段均显式 @TableField(typeHandler)，
+  # 全局注册会把 JSONB 处理器误用于 resultType=map 的文本列
+  configuration:
+    map-underscore-to-camel-case: true
+    local-cache-scope: STATEMENT
+  global-config:
+    banner: false
+
+sa-token:
+  token-name: X-Platform-Token
+  token-prefix: Bearer
+  timeout: -1
+  is-concurrent: true
+  jwt-secret-key: ${PLATFORM_SECRET_KEY}
+
+agent-runtime:
+  # 系统 Agent Worker 的租约期限，与任务运行预算分别配置。
+  worker-lease-duration: ${AGENT_RUNTIME_WORKER_LEASE_DURATION:30s}
+  worker-id: platform-system-agents
+  workers:
+    auto-startup: true
+
+skillforge:
+  http:
+    max-cached-binary-body-size: 50MB
+  agent-runtime:
+    system-grants:
+      - tenant-id: "900000000000000001"
+        principal-id: platform-system-agents
+        actions: [sessions.read, sessions.write]
+  # 平台配置的模型凭据由机构消费，业务加密主密钥必须与机构服务相同。
+  secret-key: ${SECRET_KEY}
+  secret-key-decryption-keys: ${SECRET_KEY_DECRYPTION_KEYS:}
+  jwt-issuer: skillforge-platform
+  jwt-audience: skillforge-platform-api
+  access-token-expire-minutes: ${ACCESS_TOKEN_EXPIRE_MINUTES:60}
+  refresh-token-expire-days: ${REFRESH_TOKEN_EXPIRE_DAYS:14}
+  debug: ${SKILLFORGE_DEBUG:true}
+  platform-admin-username: ${PLATFORM_ADMIN_USERNAME:}
+  platform-admin-password: ${PLATFORM_ADMIN_PASSWORD:}
+  platform-admin-email: ${PLATFORM_ADMIN_EMAIL:}
+
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  structured:
+    format:
+      console: logstash
+      file: logstash

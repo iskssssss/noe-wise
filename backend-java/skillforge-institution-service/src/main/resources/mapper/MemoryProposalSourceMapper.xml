@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.memory.MemoryProposalSourceMapper">
+    <select id="sources" resultType="com.skillforge.institution.memory.MemoryProposalSourceMapper$Source">
+        select agent_id,end_user_id,session_id,execution_id from agent_runtime_session_events
+        where tenant_id=#{tenant} and event_id=#{event}
+    </select>
+</mapper>

@@ -1,0 +1,5 @@
+.state/
+config.local.json
+billing.local.json
+__pycache__/
+*.sqlite3*

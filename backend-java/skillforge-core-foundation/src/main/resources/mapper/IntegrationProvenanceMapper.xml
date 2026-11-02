@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.integration.IntegrationProvenanceMapper">
+ <select id="session" resultType="com.skillforge.core.foundation.integration.IntegrationProvenanceService$Source">
+  SELECT origin_kind,actor_ref,responsibility_ref,integration_id,business_scope_id,agent_id,session_id,
+   NULL::text AS root_input_id,NULL::bigint AS deployment_id,NULL::bigint AS deployment_revision,
+   NULL::bigint AS grant_id,NULL::bigint AS grant_revision
+  FROM nw_chat_sessions WHERE tenant_id=CAST(#{tenantId} AS bigint) AND session_id=#{sessionId}
+ </select>
+ <select id="run" resultType="com.skillforge.core.foundation.integration.IntegrationProvenanceService$Source">
+  SELECT origin_kind,actor_ref,responsibility_ref,integration_id,business_scope_id,agent_id,session_id,
+   root_input_id,deployment_id,deployment_revision,grant_id,grant_revision
+  FROM nw_integration_run_sources WHERE tenant_id=CAST(#{tenantId} AS bigint) AND run_id=#{runId}
+  UNION ALL
+  SELECT 'system' AS origin_kind,'system:'||r.requester_system_principal_id AS actor_ref,
+   'system-agent:'||r.agent_id AS responsibility_ref,NULL::text AS integration_id,NULL::text AS business_scope_id,
+   r.agent_id::bigint AS agent_id,r.session_id,r.root_input_id,
+   NULL::bigint AS deployment_id,NULL::bigint AS deployment_revision,NULL::bigint AS grant_id,NULL::bigint AS grant_revision
+  FROM public.agent_runtime_execution_runs r
+  JOIN public.nw_system_agent_runtime_capability_sources s ON s.tenant_id=r.tenant_id AND s.session_id=r.session_id
+   AND s.agent_id=r.agent_id AND s.end_user_id=r.end_user_id AND s.input_id=r.input_id
+  JOIN public.nw_runtime_host_owners h ON h.tenant_id=s.tenant_id AND h.session_id=s.session_id
+   AND h.agent_id=s.agent_id AND h.end_user_id=s.end_user_id AND h.target_kind=r.target_kind AND h.target_id=r.target_id
+  WHERE r.tenant_id=#{tenantId} AND r.run_id=#{runId} AND r.target_kind='AGENT' AND r.target_id=r.agent_id
+   AND r.requester_kind='SYSTEM' AND r.origin_ref=s.source_data -&gt;&gt; 'run_id'
+   AND NULLIF(s.source_data -&gt;&gt; 'prompt_source_ref','') IS NOT NULL
+  <!-- 不设 LIMIT；同 Run 双来源必须由 selectOne 冲突拒绝，不能任取一个来源。 -->
+ </select>
+ <select id="controlOperation" resultType="com.skillforge.core.foundation.integration.IntegrationProvenanceService$Source">
+  SELECT origin_kind,actor_ref,responsibility_ref,integration_id,NULL::text AS business_scope_id,
+   NULL::bigint AS agent_id,NULL::text AS session_id,NULL::text AS root_input_id,
+   NULL::bigint AS deployment_id,NULL::bigint AS deployment_revision,NULL::bigint AS grant_id,NULL::bigint AS grant_revision
+  FROM nw_control_operations WHERE tenant_id=CAST(#{tenantId} AS bigint) AND operation_id=#{operationId}
+ </select>
+ <insert id="insert">
+  INSERT INTO nw_integration_run_sources(tenant_id,run_id,parent_run_id,origin_kind,actor_ref,responsibility_ref,
+   integration_id,business_scope_id,agent_id,session_id,root_input_id,deployment_id,deployment_revision,grant_id,grant_revision)
+  VALUES(CAST(#{tenantId} AS bigint),#{runId},#{parentRunId},#{source.originKind},#{source.actorRef},#{source.responsibilityRef},
+   #{source.integrationId},#{source.businessScopeId},#{source.agentId},#{source.sessionId},#{source.rootInputId},
+   #{source.deploymentId},#{source.deploymentRevision},#{source.grantId},#{source.grantRevision})
+  ON CONFLICT(tenant_id,run_id) DO NOTHING
+ </insert>
+</mapper>

@@ -1,0 +1,22 @@
+{
+  "skillforge_origin": "http://127.0.0.1:8080",
+  "sink_origin": "http://127.0.0.1:8097",
+  "group_binding_id": "replace-with-formal-group-id",
+  "endpoint_id": "clinic-sender",
+  "generation": 1,
+  "expected_generation": 0,
+  "sender_credential": {
+    "api_key_env": "GI04_SENDER_API_KEY",
+    "signing_secret_env": "GI04_SENDER_SIGNING_SECRET"
+  },
+  "operators": [
+    {
+      "actor_id": "clinic-control-operator",
+      "token_env": "GI04_LOCAL_CONTROL_TOKEN",
+      "credential": {
+        "api_key_env": "GI04_OPERATOR_API_KEY",
+        "signing_secret_env": "GI04_OPERATOR_SIGNING_SECRET"
+      }
+    }
+  ]
+}

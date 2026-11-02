@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.ConversationTaskMapper">
+    <sql id="identity">
+        tenant_id = #{owner.sessionRef.tenantId.value} AND agent_id = #{agentId.value}
+        AND end_user_id = #{owner.requireUser.value}
+    </sql>
+    <insert id="ensureRoot">
+        INSERT INTO public.agent_runtime_conversation_task_roots (tenant_id, agent_id, end_user_id, task_id)
+        VALUES (#{owner.sessionRef.tenantId.value}, #{agentId.value}, #{owner.requireUser.value}, #{taskId})
+        ON CONFLICT DO NOTHING
+    </insert>
+    <select id="lockRoot" resultType="com.skillforge.runtime.adapter.jdbc.session.ConversationTaskRoot">
+        SELECT run_id, fence, until_second, until_nano FROM public.agent_runtime_conversation_task_roots
+        WHERE <include refid="identity"/> AND task_id = #{taskId} FOR UPDATE
+    </select>
+    <select id="find" resultType="com.skillforge.runtime.adapter.jdbc.session.ConversationTaskRow">
+        SELECT task_id, revision, schema_id, snapshot FROM public.agent_runtime_conversation_tasks
+        WHERE <include refid="identity"/> AND task_id = #{taskId}
+    </select>
+    <select id="search" resultType="com.skillforge.runtime.adapter.jdbc.session.ConversationTaskRow">
+        SELECT task_id, revision, schema_id, snapshot FROM public.agent_runtime_conversation_tasks
+        WHERE <include refid="identity"/>
+        <if test="!includeClosed">AND status IN ('OPEN', 'WAITING_USER')</if>
+        AND (#{query} = '' OR strpos(lower(title || ' ' || summary), lower(#{query})) &gt; 0)
+        ORDER BY updated_second DESC, updated_nano DESC, task_id
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="current" resultType="string">
+        SELECT task_id FROM public.agent_runtime_conversation_task_bindings
+        WHERE <include refid="identity"/> AND target_kind = #{owner.target.kind}
+          AND target_id = #{owner.target.id} AND session_id = #{owner.sessionRef.sessionId}
+    </select>
+    <select id="databaseNow" resultType="java.time.Instant">SELECT clock_timestamp()</select>
+    <select id="operation" resultType="com.skillforge.runtime.adapter.jdbc.session.ConversationTaskOperation">
+        SELECT task_id, expected_revision, selected FROM public.agent_runtime_conversation_task_operations
+        WHERE <include refid="identity"/> AND target_kind = #{owner.target.kind}
+          AND target_id = #{owner.target.id} AND session_id = #{owner.sessionRef.sessionId} AND event_id = #{eventId}
+    </select>
+    <insert id="save">
+        INSERT INTO public.agent_runtime_conversation_tasks
+          (tenant_id, agent_id, end_user_id, task_id, revision, status, title, summary,
+           schema_id, snapshot, updated_second, updated_nano)
+        VALUES (#{owner.sessionRef.tenantId.value}, #{agentId.value}, #{owner.requireUser.value},
+          #{task.taskId}, #{task.revision}, #{task.status}, #{task.title}, #{task.summary},
+          #{payload.schemaId}, #{payload.canonicalJson}, #{task.updatedAt.epochSecond}, #{task.updatedAt.nano})
+        ON CONFLICT (tenant_id, task_id) DO UPDATE SET
+          revision = EXCLUDED.revision, status = EXCLUDED.status, title = EXCLUDED.title,
+          summary = EXCLUDED.summary, schema_id = EXCLUDED.schema_id, snapshot = EXCLUDED.snapshot,
+          updated_second = EXCLUDED.updated_second, updated_nano = EXCLUDED.updated_nano
+    </insert>
+    <insert id="record">
+        INSERT INTO public.agent_runtime_conversation_task_operations
+          (tenant_id, agent_id, end_user_id, target_kind, target_id, task_id, session_id,
+           event_id, expected_revision, selected)
+        VALUES (#{owner.sessionRef.tenantId.value}, #{agentId.value}, #{owner.requireUser.value},
+          #{owner.target.kind}, #{owner.target.id}, #{taskId}, #{owner.sessionRef.sessionId},
+          #{eventId}, #{expectedRevision}, #{selected})
+    </insert>
+    <insert id="select">
+        INSERT INTO public.agent_runtime_conversation_task_bindings
+          (tenant_id, agent_id, end_user_id, target_kind, target_id, session_id, task_id)
+        VALUES (#{owner.sessionRef.tenantId.value}, #{agentId.value}, #{owner.requireUser.value},
+          #{owner.target.kind}, #{owner.target.id}, #{owner.sessionRef.sessionId}, #{taskId})
+        ON CONFLICT (tenant_id, target_kind, target_id, session_id, agent_id) DO UPDATE SET task_id = EXCLUDED.task_id
+        WHERE agent_runtime_conversation_task_bindings.end_user_id = EXCLUDED.end_user_id
+    </insert>
+    <update id="lease">
+        UPDATE public.agent_runtime_conversation_task_roots
+        SET run_id = #{runId}, fence = #{fence}, until_second = #{untilSecond}, until_nano = #{untilNano}
+        WHERE <include refid="identity"/> AND task_id = #{taskId}
+    </update>
+    <update id="release">
+        UPDATE public.agent_runtime_conversation_task_roots SET run_id = NULL, until_second = NULL, until_nano = NULL
+        WHERE <include refid="identity"/> AND task_id = #{taskId} AND run_id = #{runId} AND fence = #{fence}
+    </update>
+</mapper>

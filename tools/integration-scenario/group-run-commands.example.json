@@ -1,0 +1,18 @@
+{
+  "group_binding_id": "replace-with-ensured-group-id",
+  "commands": [
+    {
+      "run_id": "replace-with-original-run-id",
+      "input_id": "group-lifecycle-1:steer-input:1",
+      "operator_end_user_id": "2001",
+      "action": "steer",
+      "text": "这是对原任务的明确补充信息。"
+    },
+    {
+      "run_id": "replace-with-original-run-id",
+      "input_id": "group-lifecycle-1:cancel-input:1",
+      "operator_end_user_id": "2001",
+      "action": "cancel_execution"
+    }
+  ]
+}

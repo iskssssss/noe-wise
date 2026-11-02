@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.foundation.assets.FoundationFileMapper">
+ <resultMap id="file" type="com.skillforge.core.foundation.assets.FoundationFileDO">
+  <id property="id" column="id"/><result property="tenantId" column="tenant_id"/><result property="createdBy" column="created_by"/>
+  <result property="name" column="name"/><result property="mimeType" column="mime_type"/><result property="sizeBytes" column="size_bytes"/>
+  <result property="sha256" column="sha256"/><result property="blobKey" column="blob_key"/><result property="state" column="state"/>
+  <result property="createdAt" column="created_at"/><result property="referenceCount" column="reference_count"/>
+  <result property="sourceKind" column="source_kind"/>
+ </resultMap>
+ <select id="bind" resultType="string">SELECT set_config('app.tenant_id',#{tenantId},true),set_config('app.platform_admin',#{platform}::text,true),set_config('app.foundation_maintenance','false',true)</select>
+ <select id="bindMaintenance" resultType="string">SELECT set_config('app.tenant_id','',true),set_config('app.platform_admin','false',true),set_config('app.foundation_maintenance','true',true)</select>
+ <!-- 平台应用账号具有 BYPASSRLS；普通请求仍必须显式限制可信平台/机构归属。 -->
+ <sql id="currentScope">CASE WHEN current_setting('app.platform_admin',true)='true' THEN 'platform' ELSE nullif(current_setting('app.tenant_id',true),'') END</sql>
+ <insert id="insert">INSERT INTO nw_foundation_files(id,tenant_id,created_by,name,mime_type,size_bytes,sha256,blob_key,state,source_kind) VALUES(#{id},#{tenantId},#{createdBy},#{name},#{mimeType},#{sizeBytes},#{sha256},#{blobKey},'ready',#{sourceKind})</insert>
+ <select id="lock" resultMap="file">SELECT f.*,(SELECT count(*) FROM nw_foundation_file_references r WHERE r.file_id=f.id) reference_count FROM nw_foundation_files f WHERE f.id=#{id} AND f.scope_key=<include refid="currentScope"/> FOR UPDATE OF f</select>
+ <select id="list" resultMap="file">SELECT f.*,(SELECT count(*) FROM nw_foundation_file_references r WHERE r.file_id=f.id) reference_count FROM nw_foundation_files f WHERE f.state='ready' AND source_kind='upload' AND f.scope_key=<include refid="currentScope"/> ORDER BY f.created_at DESC,f.id DESC OFFSET #{offset} LIMIT #{size}</select>
+ <select id="count" resultType="long">SELECT count(*) FROM nw_foundation_files WHERE state='ready' AND source_kind='upload' AND scope_key=<include refid="currentScope"/></select>
+ <insert id="attach">INSERT INTO nw_foundation_file_references(file_id,scope_key,owner_kind,owner_id) SELECT id,scope_key,#{kind},#{owner} FROM nw_foundation_files WHERE id=#{id} AND state='ready' AND scope_key=<include refid="currentScope"/> ON CONFLICT DO NOTHING</insert>
+ <delete id="detach">DELETE FROM nw_foundation_file_references WHERE file_id=#{id} AND owner_kind=#{kind} AND owner_id=#{owner} AND scope_key=<include refid="currentScope"/></delete>
+ <update id="markDeleting">UPDATE nw_foundation_files f SET state='deleting',updated_at=now() WHERE id=#{id} AND state='ready' AND f.scope_key=<include refid="currentScope"/> AND NOT EXISTS(SELECT 1 FROM nw_foundation_file_references r WHERE r.file_id=f.id)</update>
+ <update id="markDeleted">UPDATE nw_foundation_files SET state='deleted',updated_at=now() WHERE id=#{id} AND state='deleting' AND scope_key=<include refid="currentScope"/></update>
+ <select id="cleanupCandidates" resultMap="file">SELECT f.* FROM nw_foundation_files f WHERE current_setting('app.foundation_maintenance',true)='true' AND (state='deleting' OR (state='ready' AND created_at &lt; #{olderThan} AND NOT EXISTS(SELECT 1 FROM nw_foundation_file_references r WHERE r.file_id=f.id))) ORDER BY created_at,id LIMIT #{size}</select>
+ <select id="exists" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_foundation_files WHERE id=#{id} AND current_setting('app.foundation_maintenance',true)='true')</select>
+ <select id="references" resultType="com.skillforge.core.foundation.assets.FoundationFileContracts$Reference">SELECT owner_kind "ownerKind",owner_id "ownerId" FROM nw_foundation_file_references WHERE file_id=#{id} AND scope_key=<include refid="currentScope"/> ORDER BY owner_kind,owner_id</select>
+ <delete id="releaseJobReferences">DELETE FROM nw_foundation_file_references WHERE owner_kind='foundation.job' AND owner_id=#{jobId} AND scope_key=<include refid="currentScope"/></delete>
+</mapper>

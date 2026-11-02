@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">灵知</title>
+  <desc id="desc">灵敏、灵活的智能理解与认知，让对话形成清晰、可用的成果。</desc>
+  <defs>
+    <linearGradient id="surface" x1="8" y1="4" x2="54" y2="62" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#303B4B"/>
+      <stop offset="1" stop-color="#111820"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="28" y1="16" x2="48" y2="50" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F6FC"/>
+      <stop offset="1" stop-color="#A9BDDB"/>
+    </linearGradient>
+    <mask id="ordered-lines">
+      <path d="M32 16H43C47.971 16 52 20.029 52 25V36C52 40.971 47.971 45 43 45H36L26 52V22C26 18.686 28.686 16 32 16Z" fill="white"/>
+      <rect x="32" y="24" width="13" height="3.5" rx="1.75" fill="black"/>
+      <rect x="32" y="33" width="13" height="3.5" rx="1.75" fill="black"/>
+    </mask>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="17" fill="url(#surface)"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="16.5" stroke="#B8C9DE" stroke-opacity=".22"/>
+  <rect x="15" y="17" width="6" height="6" rx="2" fill="#D9E3F1"/>
+  <rect x="11" y="29" width="9" height="6" rx="2" fill="#A8BEDA"/>
+  <rect x="17" y="41" width="5" height="6" rx="1.75" fill="#829DBF"/>
+  <rect x="26" y="16" width="26" height="36" fill="url(#silver)" mask="url(#ordered-lines)"/>
+</svg>

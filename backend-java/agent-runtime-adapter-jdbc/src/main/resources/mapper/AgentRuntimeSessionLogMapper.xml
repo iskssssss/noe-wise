@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.runtime.adapter.jdbc.session.SessionLogMapper">
+
+    <resultMap id="sessionOwnerRow" type="com.skillforge.runtime.adapter.jdbc.session.SessionOwnerRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="endUserId" column="end_user_id"/>
+    </resultMap>
+
+    <resultMap id="sessionStreamRow" type="com.skillforge.runtime.adapter.jdbc.session.SessionStreamRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="nextSequence" column="next_sequence"/>
+    </resultMap>
+
+    <resultMap id="sessionEventRow" type="com.skillforge.runtime.adapter.jdbc.session.SessionEventRow">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetId" column="target_id"/>
+        <result property="agentId" column="agent_id"/>
+        <result property="endUserId" column="end_user_id"/>
+        <result property="sessionSequence" column="session_sequence"/>
+        <result property="inputId" column="input_id"/>
+        <result property="runId" column="run_id"/>
+        <result property="executionId" column="execution_id"/>
+        <result property="actionId" column="action_id"/>
+        <result property="delegationId" column="delegation_id"/>
+        <result property="eventId" column="event_id"/>
+        <result property="eventFingerprint" column="event_fingerprint"/>
+        <result property="eventType" column="event_type"/>
+        <result property="eventVersion" column="event_version"/>
+        <result property="traceId" column="trace_id"/>
+        <result property="spanId" column="span_id"/>
+        <result property="rootInputId" column="root_input_id"/>
+        <result property="causedByEventId" column="caused_by_event_id"/>
+        <result property="payloadSchemaId" column="payload_schema_id"/>
+        <result property="payloadCanonicalJson" column="payload_canonical_json"/>
+        <result property="occurredAtEpochSecond" column="occurred_at_epoch_second"/>
+        <result property="occurredAtNano" column="occurred_at_nano"/>
+    </resultMap>
+
+    <sql id="eventColumns">
+        tenant_id, session_id, target_kind, target_id, agent_id, end_user_id, session_sequence,
+        input_id, run_id, execution_id, action_id, delegation_id,
+        event_id, event_fingerprint, event_type, event_version,
+        trace_id, span_id, root_input_id, caused_by_event_id,
+        payload_schema_id,
+        public.agent_runtime_session_event_payload(tenant_id, session_id, target_kind, target_id,
+            end_user_id, run_id, event_id, event_type, payload_schema_id, payload_canonical_json) AS payload_canonical_json,
+        occurred_at_epoch_second, occurred_at_nano
+    </sql>
+
+    <select id="bindTenant" resultType="string">
+        SELECT set_config('app.tenant_id', #{tenantId}, true)
+    </select>
+
+    <select id="findHistoryRetention" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionHistoryRetentionRow">
+        SELECT source_session_revision, closed_epoch_second, closed_nano, retired_through_sequence,
+               retired_event_count, retired_reasoning_count, status
+          FROM public.agent_runtime_session_history_retirements
+         WHERE tenant_id=#{owner.sessionRef.tenantId.value} AND session_id=#{owner.sessionRef.sessionId}
+           AND target_kind=#{owner.target.kind} AND target_id=#{owner.target.id} AND end_user_id IS NOT DISTINCT FROM <choose><when test="owner.target.kind.name() == 'GROUP'">NULL</when><otherwise>#{owner.requireUser.value}</otherwise></choose>
+    </select>
+    <select id="findEventTombstones" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionEventTombstoneRow">
+        SELECT event_id, session_sequence, event_digest FROM public.agent_runtime_session_event_tombstones
+         WHERE tenant_id=#{owner.sessionRef.tenantId.value} AND session_id=#{owner.sessionRef.sessionId}
+           AND target_kind=#{owner.target.kind} AND target_id=#{owner.target.id} AND end_user_id IS NOT DISTINCT FROM <choose><when test="owner.target.kind.name() == 'GROUP'">NULL</when><otherwise>#{owner.requireUser.value}</otherwise></choose>
+           AND event_id IN <foreach collection="eventIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <insert id="ensureOwner">
+        INSERT INTO public.agent_runtime_session_owners
+            (tenant_id, session_id, target_kind, target_id, end_user_id)
+        VALUES (#{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{endUserId})
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <select id="lockOwner" resultMap="sessionOwnerRow">
+        SELECT tenant_id, session_id, target_kind, target_id, end_user_id
+         FROM public.agent_runtime_session_owners
+         WHERE tenant_id = #{tenantId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND session_id = #{sessionId}
+         FOR UPDATE
+    </select>
+
+    <insert id="ensureStream">
+        INSERT INTO public.agent_runtime_session_streams
+            (tenant_id, session_id, target_kind, target_id, end_user_id, next_sequence)
+        VALUES
+            (#{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{endUserId}, 1)
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <select id="lockStream" resultMap="sessionStreamRow">
+        SELECT tenant_id, session_id, target_kind, target_id, end_user_id, next_sequence
+         FROM public.agent_runtime_session_streams
+         WHERE tenant_id = #{tenantId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND session_id = #{sessionId}
+         FOR UPDATE
+    </select>
+
+    <select id="findEvent" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/>
+          FROM public.agent_runtime_session_events
+         WHERE tenant_id = #{tenantId}
+           AND session_id = #{sessionId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND event_id = #{eventId}
+    </select>
+
+    <select id="findUserSource" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/>
+          FROM public.agent_runtime_session_events e
+         WHERE e.tenant_id=#{tenantId} AND e.session_id=#{sessionId}
+           AND e.end_user_id=#{endUserId}
+           AND e.target_kind&lt;&gt;'GROUP' AND e.event_id=#{eventId}
+           AND EXISTS (SELECT 1 FROM public.agent_runtime_session_owners o
+                WHERE o.tenant_id=e.tenant_id AND o.session_id=e.session_id
+                  AND o.target_kind=e.target_kind AND o.target_id=e.target_id
+                  AND o.subject_kind='USER' AND o.end_user_id=e.end_user_id)
+         ORDER BY e.target_kind,e.target_id LIMIT 2
+    </select>
+
+    <insert id="insertEvent">
+        INSERT INTO public.agent_runtime_session_events (
+            tenant_id, session_id, target_kind, target_id, agent_id, end_user_id, session_sequence,
+            input_id, run_id, execution_id, action_id, delegation_id,
+            event_id, event_fingerprint, event_type, event_version,
+            trace_id, span_id, root_input_id, caused_by_event_id,
+            payload_schema_id, payload_canonical_json,
+            occurred_at_epoch_second, occurred_at_nano)
+        VALUES (
+            #{tenantId}, #{sessionId}, #{targetKind}, #{targetId}, #{agentId}, #{endUserId}, #{sessionSequence},
+            #{inputId}, #{runId}, #{executionId}, #{actionId}, #{delegationId},
+            #{eventId}, #{eventFingerprint}, #{eventType}, #{eventVersion},
+            #{traceId}, #{spanId}, #{rootInputId}, #{causedByEventId},
+            #{payloadSchemaId}, #{payloadCanonicalJson},
+            #{occurredAtEpochSecond}, #{occurredAtNano})
+    </insert>
+
+    <select id="findEventBodies" resultType="com.skillforge.runtime.adapter.jdbc.session.SessionEventBodyRow">
+        SELECT content_hash,canonical_content FROM public.agent_runtime_session_event_bodies
+         WHERE tenant_id=#{row.tenantId} AND target_kind=#{row.targetKind} AND target_id=#{row.targetId}
+           AND session_id=#{row.sessionId} AND end_user_id IS NOT DISTINCT FROM #{row.endUserId} AND content_hash IN
+           <foreach collection="digests" item="digest" open="(" separator="," close=")">#{digest}</foreach>
+         FOR KEY SHARE
+    </select>
+    <insert id="insertEventBody">
+        INSERT INTO public.agent_runtime_session_event_bodies
+            (tenant_id,target_kind,target_id,session_id,end_user_id,content_hash,canonical_content)
+        VALUES(#{row.tenantId},#{row.targetKind},#{row.targetId},#{row.sessionId},#{row.endUserId},#{digest},#{canonical})
+        ON CONFLICT (tenant_id,target_kind,target_id,session_id,content_hash) DO NOTHING
+    </insert>
+    <insert id="insertEventBodyReference">
+        INSERT INTO public.agent_runtime_session_event_body_refs
+            (tenant_id,target_kind,target_id,session_id,event_id,content_hash,original_payload_digest)
+        VALUES(#{row.tenantId},#{row.targetKind},#{row.targetId},#{row.sessionId},#{row.eventId},#{digest},#{originalDigest})
+    </insert>
+
+    <update id="advanceStream">
+        UPDATE public.agent_runtime_session_streams
+           SET next_sequence = next_sequence + 1
+         WHERE tenant_id = #{tenantId}
+           AND session_id = #{sessionId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND next_sequence = #{expectedNextSequence}
+    </update>
+
+    <select id="readAfter" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/>
+          FROM public.agent_runtime_session_events
+         WHERE tenant_id = #{tenantId}
+           AND session_id = #{sessionId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND session_sequence &gt; #{afterSequence}
+         ORDER BY session_sequence ASC
+         LIMIT #{limit}
+    </select>
+    <select id="findEvents" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/>
+          FROM public.agent_runtime_session_events
+         WHERE tenant_id = #{tenantId} AND session_id = #{sessionId}
+           AND target_kind = #{targetKind} AND target_id = #{targetId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND event_id IN
+           <foreach collection="eventIds" item="eventId" open="(" separator="," close=")">#{eventId}</foreach>
+    </select>
+
+    <select id="readFilteredAfter" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/>
+          FROM public.agent_runtime_session_events
+         WHERE tenant_id = #{tenantId}
+           AND session_id = #{sessionId}
+           AND target_kind = #{targetKind}
+           AND target_id = #{targetId}
+           AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+           AND session_sequence &gt; #{afterSequence}
+           AND event_type IN
+           <foreach collection="eventTypes" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
+         ORDER BY session_sequence ASC
+         LIMIT #{limit}
+    </select>
+    <select id="latest" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/> FROM public.agent_runtime_session_events
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND target_kind=#{targetKind}
+          AND target_id=#{targetId} AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+        ORDER BY session_sequence DESC LIMIT 1
+    </select>
+    <select id="readRunAfter" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/> FROM public.agent_runtime_session_events
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND target_kind=#{targetKind}
+          AND target_id=#{targetId} AND end_user_id IS NOT DISTINCT FROM #{endUserId} AND run_id=#{runId}
+          AND session_sequence &gt; #{afterSequence}
+        <if test="eventTypes != null and !eventTypes.isEmpty()">
+          AND event_type IN
+          <foreach collection="eventTypes" item="type" open="(" separator="," close=")">#{type}</foreach>
+        </if>
+        ORDER BY session_sequence ASC LIMIT #{limit}
+    </select>
+    <select id="findFirst" resultMap="sessionEventRow">
+        SELECT <include refid="eventColumns"/> FROM public.agent_runtime_session_events
+        WHERE tenant_id=#{tenantId} AND session_id=#{sessionId} AND target_kind=#{targetKind}
+          AND target_id=#{targetId} AND end_user_id IS NOT DISTINCT FROM #{endUserId}
+          AND input_id=#{inputId} AND run_id=#{runId}
+        ORDER BY session_sequence ASC LIMIT 1
+    </select>
+</mapper>

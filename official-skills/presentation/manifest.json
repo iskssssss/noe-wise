@@ -1,0 +1,113 @@
+{
+  "version": "2.1.7",
+  "input_schema_version": 2,
+  "entry": {
+    "language": "node",
+    "script_path": "scripts/generate_presentation.mjs"
+  },
+  "dependencies": [
+    {
+      "name": "@types/node",
+      "version": "18.19.130"
+    },
+    {
+      "name": "core-util-is",
+      "version": "1.0.3"
+    },
+    {
+      "name": "https",
+      "version": "1.0.0"
+    },
+    {
+      "name": "image-size",
+      "version": "1.2.1"
+    },
+    {
+      "name": "immediate",
+      "version": "3.0.6"
+    },
+    {
+      "name": "inherits",
+      "version": "2.0.4"
+    },
+    {
+      "name": "isarray",
+      "version": "1.0.0"
+    },
+    {
+      "name": "jszip",
+      "version": "3.10.2"
+    },
+    {
+      "name": "lie",
+      "version": "3.3.0"
+    },
+    {
+      "name": "pako",
+      "version": "1.0.11"
+    },
+    {
+      "name": "pptxgenjs",
+      "version": "3.12.0"
+    },
+    {
+      "name": "process-nextick-args",
+      "version": "2.0.1"
+    },
+    {
+      "name": "queue",
+      "version": "6.0.2"
+    },
+    {
+      "name": "readable-stream",
+      "version": "2.3.8"
+    },
+    {
+      "name": "safe-buffer",
+      "version": "5.1.2"
+    },
+    {
+      "name": "setimmediate",
+      "version": "1.0.5"
+    },
+    {
+      "name": "string_decoder",
+      "version": "1.1.1"
+    },
+    {
+      "name": "undici-types",
+      "version": "5.26.5"
+    },
+    {
+      "name": "util-deprecate",
+      "version": "1.0.2"
+    }
+  ],
+  "example_inputs": [
+    "examples/presentation.json",
+    "examples/presentation-long.json",
+    "examples/presentation-weekly-update.json",
+    "examples/presentation-named.json"
+  ],
+  "references": [
+    "references/input-schema.md",
+    "references/quality-checks.md",
+    "references/enterprise-writing.md",
+    "references/theme-presets.md"
+  ],
+  "expects_typed_results": true,
+  "outputs": {
+    "pptx": [
+      "presentation.pptx"
+    ],
+    "zip": [
+      "presentation.zip"
+    ]
+  },
+  "output_naming": {
+    "parameter": "output_name",
+    "meaning": "actual safe basename; title is display only",
+    "extensions": { "pptx": "pptx" },
+    "defaults": { "pptx": "presentation.pptx" }
+  }
+}

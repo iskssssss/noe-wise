@@ -1,0 +1,6 @@
+interface:
+  display_name: "灵知 代码评审"
+  short_description: "评审灵知 实际差量、契约与受影响的消费者"
+
+policy:
+  allow_implicit_invocation: true

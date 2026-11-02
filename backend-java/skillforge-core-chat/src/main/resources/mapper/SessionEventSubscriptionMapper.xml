@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.core.chat.persistence.SessionEventSubscriptionMapper">
+    <select id="activeForSession" resultType="com.skillforge.core.chat.persistence.SessionEventSubscriptionDO" useCache="false" flushCache="true">
+        SELECT id FROM nw_chat_session_event_subscriptions
+        WHERE tenant_id=#{tenantId} AND status='active'
+          AND (session_id IS NULL OR session_id=#{sessionId})
+        ORDER BY id
+    </select>
+</mapper>

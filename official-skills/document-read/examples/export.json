@@ -1,0 +1,10 @@
+{
+  "source_path": "/input/artifacts/source/report.pdf",
+  "action": "export",
+  "format": "markdown",
+  "pdf_pipeline": "structured",
+  "page_start": 1,
+  "page_end": 2,
+  "max_pages": 20,
+  "text_limit": 12000
+}
