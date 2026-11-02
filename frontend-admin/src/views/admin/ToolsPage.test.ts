@@ -100,6 +100,19 @@ it('只有一个连接器时自动选择并读取，多个连接器时等待用�
   expect(wrapper.findComponent(ToolOnboarding).props('connectorId')).toBe('')
   expect(calls.discover).not.toHaveBeenCalled()
 })
+it('唯一工具读取后可直接确认接入', async () => {
+  calls.routeConnector = ''
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  await button('接入工具').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('已预选唯一可接入工具“read_alpha”')
+  expect(calls.onboard).not.toHaveBeenCalled()
+  await button('确认接入并授权调用 1 项工具').trigger('click')
+  await flushPromises()
+  expect(calls.onboard).toHaveBeenCalledTimes(1)
+  expect(calls.onboard).toHaveBeenCalledWith(expect.any(String), 'server', ['read_alpha'], true)
+})
 it('选择其他连接器时自动读取其目录，未确认前不接入', async () => {
   calls.routeConnector = ''
   calls.connectors.mockResolvedValue({

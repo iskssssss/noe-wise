@@ -179,3 +179,42 @@ it('preserves selection across search filters and submits the complete original 
       .map((checkbox) => checkbox.element.checked)
   ).toEqual([true, true])
 })
+
+it('唯一可接入工具预选后仍需明确确认，并尊重取消选择', async () => {
+  page()
+  await flushPromises()
+  await wrapper!.setProps({
+    connectorId: 'other',
+    connectors: [{ instance_id: 'other', name: '其他' }],
+    tools: [],
+    hasCatalog: false
+  })
+  await wrapper!.setProps({ tools: [alpha], hasCatalog: true })
+  await flushPromises()
+  expect(wrapper!.text()).toContain('已预选唯一可接入工具“read_alpha”')
+  expect(
+    wrapper!.find<HTMLInputElement>('.el-table tbody input[type="checkbox"]').element.checked
+  ).toBe(true)
+  expect(wrapper!.emitted('confirm')).toBeUndefined()
+  await button('确认接入并授权调用 1 项工具').trigger('click')
+  expect(wrapper!.emitted('confirm')).toEqual([[['read_alpha']]])
+  await wrapper!.find<HTMLInputElement>('.el-table tbody input[type="checkbox"]').setValue(false)
+  await wrapper!.setProps({ tools: [{ ...alpha }] })
+  await flushPromises()
+  expect(button('确认接入并授权调用 0 项工具').props('disabled')).toBe(true)
+  expect(wrapper!.text()).not.toContain('已预选唯一可接入工具')
+})
+
+it('多工具和不支持的单个工具不会自动勾选', async () => {
+  page()
+  await flushPromises()
+  expect(button('确认接入并授权调用 0 项工具').props('disabled')).toBe(true)
+  await wrapper!.setProps({
+    connectorId: 'other',
+    connectors: [{ instance_id: 'other', name: '其他' }],
+    tools: [{ name: 'bad', unsupported_reason: '不支持' }]
+  })
+  await flushPromises()
+  expect(button('确认接入并授权调用 0 项工具').props('disabled')).toBe(true)
+  expect(wrapper!.text()).not.toContain('已预选唯一可接入工具')
+})

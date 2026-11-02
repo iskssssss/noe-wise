@@ -40,28 +40,64 @@ const selected = ref<{ name: string }[]>([])
 const table = ref<TableInstance>()
 const removedSelection = ref<string[]>([])
 let restoring = false
+let autoConsidered = false
+const autoSelected = ref('')
 const names = computed(() => selected.value.map((tool) => tool.name))
-watch([() => props.connectorId, () => props.tools], async ([connector, tools], [previous]) => {
-  const saved = connector === previous ? names.value : []
-  const retained = tools.filter((tool) => saved.includes(tool.name) && !tool.unsupported_reason)
-  removedSelection.value =
-    connector === previous
-      ? saved.filter((name) => !retained.some((tool) => tool.name === name))
-      : []
-  if (connector !== previous) {
-    search.value = ''
-    connectorSearch.value = ''
-  }
-  selected.value = retained
-  restoring = true
-  catalogRevision.value++
-  const revision = catalogRevision.value
-  await nextTick()
-  if (revision !== catalogRevision.value) return
-  retained.forEach((tool) => table.value?.toggleRowSelection(tool, true))
-  selected.value = retained
-  restoring = false
-})
+watch(
+  [() => props.connectorId, () => props.tools, () => props.hasCatalog, () => props.stale],
+  async ([connector, tools, hasCatalog, stale], previousValues) => {
+    const previous = previousValues?.[0]
+    if (
+      previous === undefined &&
+      (!connectorAvailable.value ||
+        !hasCatalog ||
+        stale ||
+        tools.length !== 1 ||
+        tools[0]!.unsupported_reason)
+    ) {
+      autoConsidered = !!connector && connectorAvailable.value && hasCatalog && !stale
+      return
+    }
+    if (connector !== previous) {
+      autoConsidered = false
+      autoSelected.value = ''
+    }
+    const saved = connector === previous ? names.value : []
+    const retained = tools.filter((tool) => saved.includes(tool.name) && !tool.unsupported_reason)
+    removedSelection.value =
+      connector === previous
+        ? saved.filter((name) => !retained.some((tool) => tool.name === name))
+        : []
+    if (connector !== previous) {
+      search.value = ''
+      connectorSearch.value = ''
+    }
+    if (!autoConsidered && connector && connectorAvailable.value && hasCatalog && !stale) {
+      autoConsidered = true
+      if (!retained.length && tools.length === 1 && !tools[0]!.unsupported_reason) {
+        retained.push(tools[0]!)
+        autoSelected.value = tools[0]!.name
+      }
+    }
+    if (!retained.some((tool) => tool.name === autoSelected.value)) autoSelected.value = ''
+    selected.value = retained
+    restoring = true
+    catalogRevision.value++
+    const revision = catalogRevision.value
+    await nextTick()
+    if (revision !== catalogRevision.value) return
+    retained.forEach((tool) => table.value?.toggleRowSelection(tool, true))
+    selected.value = retained
+    restoring = false
+  },
+  { immediate: true }
+)
+function selectTools(value: { name: string }[]) {
+  if (restoring) return
+  autoConsidered = true
+  autoSelected.value = ''
+  selected.value = value
+}
 </script>
 
 <template>
@@ -103,6 +139,9 @@ watch([() => props.connectorId, () => props.tools], async ([connector, tools], [
       </p>
     </ElForm>
     <h3>2. 勾选需要接入的工具</h3>
+    <p v-if="autoSelected" class="admin-field-help" role="status">
+      已预选唯一可接入工具“{{ autoSelected }}”，请确认后接入。
+    </p>
     <p v-if="stale && hasCatalog" class="admin-field-help" role="status">
       工具目录未刷新，当前显示的是上次读取结果。请重新读取工具后再确认接入。
     </p>
@@ -133,7 +172,7 @@ watch([() => props.connectorId, () => props.tools], async ([connector, tools], [
                 ? '工具读取失败，请重新读取'
                 : '选择连接器并读取工具后，在这里勾选需要接入的工具'
       "
-      @selection-change="!restoring && (selected = $event)"
+      @selection-change="selectTools"
     >
       <ElTableColumn
         type="selection"
