@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElFormItem, ElSelect, ElTabs } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
-import { reactive } from 'vue'
+import { nextTick, reactive } from 'vue'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -123,6 +123,7 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   document.body.innerHTML = ''
+  vi.useRealTimers()
 })
 async function open() {
   wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
@@ -144,6 +145,207 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('浏览器会话更换后手动刷新成功，重新恢复自动观察', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    mocks.session = 'new-session'
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(1)
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '刷新重建进展')!
+      .trigger('click')
+    await Promise.resolve()
+    await nextTick()
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(3)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('运行状态读取始终单飞，不因定时触发并发请求', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    let finish!: (value: unknown) => void
+    mocks.rebuild.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await vi.advanceTimersByTimeAsync(25000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    finish(job('RUNNING'))
+    await nextTick()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(3)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('页面隐藏停止自动读取，恢复可见后才重新调度', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    const visibility = vi.spyOn(window.document, 'visibilityState', 'get').mockReturnValue('hidden')
+    try {
+      window.document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(mocks.rebuild).toHaveBeenCalledTimes(1)
+      visibility.mockReturnValue('visible')
+      window.document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+  it('原发布结果未知时自动任务观察保持停止，不重复发布', async () => {
+    const owner = JSON.stringify(['1', '1', 'kb-1'])
+    sessionStorage.setItem(
+      `skillforge.knowledge-rebuild-publication.${owner}`,
+      JSON.stringify({
+        requestId: '11111111-1111-4111-8111-111111111111',
+        kbId: 'kb-1',
+        jobId: 'job-1',
+        jobRevision: 2,
+        baseRevision: 3,
+        policy: {
+          model_invocable: true,
+          user_invocable: true,
+          allowed_operators: ['VECTOR'],
+          freshness_policy: 'PINNED',
+          citation_required: true
+        }
+      })
+    )
+    mocks.rebuild.mockImplementation(async (path: string) =>
+      path.includes('publish-resolution') ? { status: 'UNKNOWN', snapshot: null } : job('RUNNING')
+    )
+    await open()
+    const before = mocks.rebuild.mock.calls.length
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(before)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('运行任务限频只读更新至就绪后停止，保留用户筛选输入', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    await wrapper.get('input[aria-label="查找文档标题"]').setValue('未提交的筛选')
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    mocks.rebuild.mockResolvedValueOnce({ ...job('READY'), revision: 3 })
+    await vi.advanceTimersByTimeAsync(5000)
+    await nextTick()
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '发布重建结果')).toBe(
+      true
+    )
+    expect(
+      (wrapper.get('input[aria-label="查找文档标题"]').element as HTMLInputElement).value
+    ).toBe('未提交的筛选')
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('后台读取失败后停止轮询，不执行任何写请求', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    mocks.rebuild.mockRejectedValueOnce(Error('读取失败'))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(wrapper.text()).toContain('自动读取重建进展已停止')
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it.each(['不同任务', '修订倒退'])('后台读取到%s时停止且不覆盖当前任务', async (kind) => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    mocks.rebuild.mockResolvedValueOnce(
+      kind === '不同任务'
+        ? { ...job('READY'), job_id: 'other', revision: 3 }
+        : { ...job('READY'), revision: 1 }
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(wrapper.text()).toContain('自动读取重建进展已停止')
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '发布重建结果')).toBe(
+      false
+    )
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+  it('用户取消时在途后台读取失效，不覆盖取消结果', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    let finish!: (value: unknown) => void
+    mocks.rebuild.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    mocks.post.mockResolvedValueOnce({ ...job('CANCELLED'), revision: 3 })
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '取消重建')!
+      .trigger('click')
+    await nextTick()
+    await Promise.resolve()
+    await nextTick()
+    finish({ ...job('READY'), revision: 4 })
+    await nextTick()
+    await Promise.resolve()
+    await nextTick()
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '继续重建')).toBe(
+      true
+    )
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '发布重建结果')).toBe(
+      false
+    )
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+  it('浏览器会话提前变化时丢弃在途状态，不再自动读取', async () => {
+    mocks.rebuild.mockResolvedValue(job('RUNNING'))
+    await open()
+    vi.useFakeTimers()
+    wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'rebuild')
+    await nextTick()
+    let finish!: (value: unknown) => void
+    mocks.rebuild.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+    mocks.session = 'another-session'
+    finish({ ...job('READY'), revision: 3 })
+    await nextTick()
+    await Promise.resolve()
+    await nextTick()
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '发布重建结果')).toBe(
+      false
+    )
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(mocks.rebuild).toHaveBeenCalledTimes(2)
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
   it('重建发布的大整数 ID 从读取到原请求和回执全程保持精确字符串', async () => {
     const kb = '9007199254740993'
     const jobId = '9223372036854775807'

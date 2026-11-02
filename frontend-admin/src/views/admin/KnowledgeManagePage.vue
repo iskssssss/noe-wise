@@ -599,6 +599,9 @@
           重建结果已发布，知识库与文档信息尚未刷新。重新读取只查询发布结果，不会再次发布或重建。
           <ElButton link :disabled="busy" @click="retryRebuildRefresh">重新读取发布信息</ElButton>
         </p>
+        <p v-if="rebuildObservationFailed" class="admin-field-help" role="status">
+          自动读取重建进展已停止，请手动刷新重建进展。
+        </p>
         <div class="actions">
           <ElButton :disabled="busy" @click="refreshRebuild">刷新重建进展</ElButton>
           <ElButton
@@ -1227,6 +1230,8 @@ const revisions = ref<KnowledgeBaseRevision[]>([]),
   rebuild = ref<KnowledgeRebuild>(),
   rebuildRefresh = ref(false),
   rebuildModeConflict = ref(false),
+  rebuildObservationFailed = ref(false),
+  rebuildObservationSession = ref<string | null>(null),
   rebuildApi = createKnowledgeRebuildApi({ get, post }),
   modelId = ref('')
 const currentRevision = computed(() =>
@@ -1260,6 +1265,7 @@ async function load() {
     if (!current()) return false
     base.value = b
     revisions.value = r.items
+    rebuildObservationSession.value = getSessionId()
     rebuild.value = j
     if (uploadRefresh.value) {
       await readUploadedDocuments()
@@ -1362,6 +1368,8 @@ watch(
     base.value = undefined
     revisions.value = []
     rebuild.value = undefined
+    rebuildObservationSession.value = null
+    rebuildObservationFailed.value = false
     page.value = 1
     rebuildModeConflict.value = false
     documentTitleQuery.value = ''
@@ -2372,6 +2380,8 @@ async function refreshRebuild() {
       needsMode ? guard(api.knowledge.getBase(target)) : Promise.resolve(undefined)
     ])
     if (!current() || (needsMode && !can('foundation.knowledge.read'))) return
+    rebuildObservationFailed.value = false
+    rebuildObservationSession.value = session
     rebuild.value = job
     if (freshBase) {
       base.value = freshBase
@@ -2589,6 +2599,115 @@ async function publishRebuild() {
     }
   })
 }
+
+const rebuildPageVisible = ref(window.document.visibilityState === 'visible')
+let rebuildObservationGeneration = 0
+let rebuildObservationTimer: ReturnType<typeof setTimeout> | undefined
+let rebuildObservationRequest: AbortController | undefined
+let rebuildObservationInFlight = false
+function stopRebuildObservation() {
+  rebuildObservationGeneration++
+  if (rebuildObservationTimer) clearTimeout(rebuildObservationTimer)
+  rebuildObservationTimer = undefined
+  rebuildObservationRequest?.abort()
+}
+function scheduleRebuildObservation() {
+  const job = rebuild.value
+  if (
+    disposed ||
+    rebuildObservationInFlight ||
+    rebuildObservationTimer ||
+    rebuildObservationFailed.value ||
+    activeTab.value !== 'rebuild' ||
+    !rebuildPageVisible.value ||
+    busy.value ||
+    publicationLocked.value ||
+    uploadBlocked.value ||
+    rebuildRefresh.value ||
+    !can('foundation.knowledge.read') ||
+    !initialOwner.value ||
+    !rebuildObservationSession.value ||
+    getSessionId() !== rebuildObservationSession.value ||
+    !job?.job_id ||
+    !Number.isSafeInteger(job.revision) ||
+    !['QUEUED', 'RUNNING'].includes(job.status)
+  )
+    return
+  const generation = rebuildObservationGeneration
+  const current = rebuildReadCurrent()
+  const currentJob = () =>
+    current() &&
+    generation === rebuildObservationGeneration &&
+    rebuild.value?.job_id === job.job_id &&
+    rebuild.value?.revision === job.revision &&
+    activeTab.value === 'rebuild' &&
+    rebuildPageVisible.value &&
+    !busy.value &&
+    !publicationLocked.value &&
+    !uploadBlocked.value &&
+    getSessionId() === rebuildObservationSession.value
+  rebuildObservationTimer = setTimeout(async () => {
+    rebuildObservationTimer = undefined
+    if (!currentJob()) return
+    rebuildObservationInFlight = true
+    const controller = new AbortController()
+    rebuildObservationRequest = controller
+    try {
+      const next = await rebuildApi.detail(id.value, { signal: controller.signal, silent: true })
+      if (!currentJob()) return
+      if (
+        next.kb_id !== id.value ||
+        next.job_id !== job.job_id ||
+        !Number.isSafeInteger(next.revision) ||
+        next.revision! < job.revision!
+      ) {
+        rebuildObservationFailed.value = true
+        return
+      }
+      rebuild.value = next
+      if (next.status === 'PUBLISHED') rebuildRefresh.value = true
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (currentJob() && !controller.signal.aborted) rebuildObservationFailed.value = true
+    } finally {
+      if (rebuildObservationRequest === controller) rebuildObservationRequest = undefined
+      rebuildObservationInFlight = false
+      scheduleRebuildObservation()
+    }
+  }, 5000)
+}
+function updateRebuildVisibility() {
+  rebuildPageVisible.value = window.document.visibilityState === 'visible'
+}
+window.document.addEventListener('visibilitychange', updateRebuildVisibility)
+watch(
+  [
+    activeTab,
+    busy,
+    publicationLocked,
+    uploadBlocked,
+    rebuildRefresh,
+    rebuildPageVisible,
+    id,
+    initialOwner,
+    () => auth.identityVersion,
+    () => auth.sessionIdentity,
+    () => can('foundation.knowledge.read'),
+    rebuildObservationSession,
+    () => rebuild.value?.job_id,
+    () => rebuild.value?.status,
+    () => rebuild.value?.revision
+  ],
+  () => {
+    stopRebuildObservation()
+    scheduleRebuildObservation()
+  },
+  { immediate: true, flush: 'sync' }
+)
+onScopeDispose(() => {
+  stopRebuildObservation()
+  window.document.removeEventListener('visibilitychange', updateRebuildVisibility)
+})
 
 const { requestClose: closeDrawer0 } = useDrawerClose({
   open: () => documentOpen.value,

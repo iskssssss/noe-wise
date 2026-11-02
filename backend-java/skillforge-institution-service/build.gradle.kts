@@ -133,6 +133,7 @@ tasks.named<Test>("test") {
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/LegacyKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/KnowledgeRebuild401BrowserE2ETest.class")
+    exclude("**/KnowledgeRebuildProgressBrowserE2ETest.class")
     exclude("**/KnowledgeRebuildFenceBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
@@ -388,6 +389,19 @@ tasks.register<Test>("knowledgeRebuild401BrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.KnowledgeRebuild401BrowserE2ETest.lostUnauthorizedPublicationResponseUsesSameRuntimeVersion")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeRebuildProgressBrowserE2E") {
+    description = "验证知识重建进展刷新及运行时检索"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.KnowledgeRebuildProgressBrowserE2ETest.readyRequiresManualRefreshBeforePublishedRuntime")
     }
     outputs.upToDateWhen { false }
 }
