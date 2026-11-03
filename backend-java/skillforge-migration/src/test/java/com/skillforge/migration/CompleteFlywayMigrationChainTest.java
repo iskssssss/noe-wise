@@ -84,6 +84,28 @@ class CompleteFlywayMigrationChainTest {
                     """));
             verifyConnectorDeploymentReferences(connection);
             verifyWorkflowCreateReceiptIsolation(connection);
+            verifyConnectorDeleteReceiptIsolation(connection);
+        }
+    }
+
+    private static void verifyConnectorDeleteReceiptIsolation(Connection connection) throws SQLException {
+        connection.setAutoCommit(false);
+        try (Statement statement = connection.createStatement()) {
+            assertEquals(0, scalar(statement, "SELECT count(*) FROM pg_constraint WHERE conrelid='public.nw_connector_delete_receipts'::regclass AND contype='f'"));
+            statement.execute("CREATE ROLE connector_delete_probe NOLOGIN");
+            statement.execute("GRANT SELECT, INSERT ON public.nw_connector_delete_receipts TO connector_delete_probe");
+            statement.execute("SET LOCAL ROLE connector_delete_probe");
+            statement.execute("SELECT set_config('app.tenant_id','7',true)");
+            statement.execute("INSERT INTO public.nw_connector_delete_receipts(request_id,tenant_id,actor_ref,instance_id) VALUES ('00000000-0000-4000-8000-000000000001',7,'70','deleted-instance')");
+            assertEquals(1, scalar(statement, "SELECT count(*) FROM public.nw_connector_delete_receipts"));
+            statement.execute("SELECT set_config('app.tenant_id','8',true)");
+            assertEquals(0, scalar(statement, "SELECT count(*) FROM public.nw_connector_delete_receipts"));
+            Savepoint before = connection.setSavepoint();
+            assertThrows(SQLException.class, () -> statement.execute("INSERT INTO public.nw_connector_delete_receipts(request_id,tenant_id,actor_ref,instance_id) VALUES ('00000000-0000-4000-8000-000000000002',7,'70','deleted-instance')"));
+            connection.rollback(before);
+        } finally {
+            connection.rollback();
+            connection.setAutoCommit(true);
         }
     }
 

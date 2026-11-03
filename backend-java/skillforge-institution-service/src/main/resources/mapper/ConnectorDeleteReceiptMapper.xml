@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.service.ConnectorDeleteReceiptMapper">
+  <insert id="claim">
+    INSERT INTO nw_connector_delete_receipts (tenant_id, request_id, actor_ref, instance_id)
+    VALUES (#{tenant}, CAST(#{request} AS uuid), #{actor}, #{instance})
+    ON CONFLICT (tenant_id, request_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.service.ConnectorDeleteReceiptMapper$Row">
+    SELECT actor_ref, instance_id FROM nw_connector_delete_receipts
+    WHERE tenant_id = #{tenant} AND request_id = CAST(#{request} AS uuid)
+  </select>
+</mapper>

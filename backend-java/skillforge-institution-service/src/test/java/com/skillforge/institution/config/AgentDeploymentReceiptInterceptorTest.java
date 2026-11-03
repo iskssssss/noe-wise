@@ -18,4 +18,12 @@ class AgentDeploymentReceiptInterceptorTest {
         assertTrue(interceptor.preHandle(request,new MockHttpServletResponse(),new Object()));
         verifyNoInteractions(redis);
     }
+    @Test void connectorDeleteReceiptUsesDomainIdempotency() throws Exception {
+        var redis = mock(StringRedisTemplate.class);
+        var interceptor = new IdempotencyInterceptor(redis);
+        var request = new MockHttpServletRequest("POST", "/api/v1/connectors/instances/delete-with-receipt");
+        request.addHeader("Idempotency-Key", "original-request");
+        assertTrue(interceptor.preHandle(request, new MockHttpServletResponse(), new Object()));
+        verifyNoInteractions(redis);
+    }
 }

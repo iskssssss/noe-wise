@@ -14,6 +14,8 @@ const calls = vi.hoisted(() => ({
   createInstanceWithReceipt: vi.fn(),
   creationResult: vi.fn(),
   removeInstance: vi.fn(),
+  deleteInstanceWithReceipt: vi.fn(),
+  deleteResult: vi.fn(),
   confirm: vi.fn(),
   success: vi.fn(),
   push: vi.fn(),
@@ -96,7 +98,10 @@ beforeEach(() => {
   }))
   calls.creationResult.mockResolvedValue(null)
   calls.confirm.mockResolvedValue(true)
-  calls.removeInstance.mockResolvedValue({ status: 'deleted' })
+  calls.deleteInstanceWithReceipt.mockImplementation(
+    async (request_id: string, instance_id: string) => ({ request_id, instance_id })
+  )
+  calls.deleteResult.mockResolvedValue(undefined)
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -540,7 +545,7 @@ it('切换身份后旧删除确认不能派发请求', async () => {
   calls.identityVersion++
   answer(true)
   await flushPromises()
-  expect(calls.removeInstance).not.toHaveBeenCalled()
+  expect(calls.deleteInstanceWithReceipt).not.toHaveBeenCalled()
 })
 
 it('确认期间删除权限被撤销时不派发请求', async () => {
@@ -556,12 +561,12 @@ it('确认期间删除权限被撤销时不派发请求', async () => {
   calls.permissions.splice(calls.permissions.indexOf('foundation.connectors.delete'), 1)
   answer(true)
   await flushPromises()
-  expect(calls.removeInstance).not.toHaveBeenCalled()
+  expect(calls.deleteInstanceWithReceipt).not.toHaveBeenCalled()
 })
 
 it('删除响应迟到且身份已变化时不向新身份反馈或刷新', async () => {
   let finish!: (value: unknown) => void
-  calls.removeInstance.mockReturnValueOnce(
+  calls.deleteInstanceWithReceipt.mockReturnValueOnce(
     new Promise((resolve) => {
       finish = resolve
     })
@@ -570,10 +575,69 @@ it('删除响应迟到且身份已变化时不向新身份反馈或刷新', asyn
   await flushPromises()
   await button('删除').trigger('click')
   await flushPromises()
-  expect(calls.removeInstance).toHaveBeenCalledOnce()
+  expect(calls.deleteInstanceWithReceipt).toHaveBeenCalledOnce()
   calls.identityVersion++
   finish({ status: 'deleted' })
   await flushPromises()
   expect(calls.instances).toHaveBeenCalledTimes(1)
   expect(calls.success).not.toHaveBeenCalledWith('连接器已删除')
+})
+
+it('删除结果未知后刷新只查询原回执，查无结果时保留原请求', async () => {
+  calls.deleteInstanceWithReceipt.mockRejectedValueOnce(Error('network'))
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  await flushPromises()
+  const [requestId] = calls.deleteInstanceWithReceipt.mock.calls[0]!
+  expect(sessionStorage.getItem('skillforge.connector-delete:1:member-1')).toContain(requestId)
+  wrapper!.unmount()
+  page()
+  await flushPromises()
+  expect(calls.deleteResult).toHaveBeenCalledWith(requestId)
+  expect(calls.deleteInstanceWithReceipt).toHaveBeenCalledTimes(1)
+  expect(wrapper!.text()).toContain('删除结果尚未确认')
+  calls.deleteResult.mockResolvedValueOnce({ request_id: requestId, instance_id: 'server' })
+  await button('核对删除结果').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem('skillforge.connector-delete:1:member-1')).toBeNull()
+  expect(calls.success).toHaveBeenCalledWith('连接器删除已确认')
+})
+
+it('没有读取权限时不发送删除请求', async () => {
+  calls.permissions = ['foundation.connectors.delete']
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  expect(calls.deleteInstanceWithReceipt).not.toHaveBeenCalled()
+})
+
+it('删除被明确拒绝后解除待核对状态', async () => {
+  calls.deleteInstanceWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 409,
+      code: 'CONNECTOR_DELETE_REJECTED',
+      userMessage: '连接器仍被引用',
+      traceId: 'test'
+    })
+  )
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem('skillforge.connector-delete:1:member-1')).toBeNull()
+  expect(button('删除').props('disabled')).toBe(false)
+})
+
+it('无法保存删除请求时不派发', async () => {
+  page()
+  await flushPromises()
+  const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw Error('storage')
+  })
+  await button('删除').trigger('click')
+  await flushPromises()
+  expect(calls.deleteInstanceWithReceipt).not.toHaveBeenCalled()
+  expect(wrapper!.text()).toContain('本次未发送')
+  spy.mockRestore()
 })

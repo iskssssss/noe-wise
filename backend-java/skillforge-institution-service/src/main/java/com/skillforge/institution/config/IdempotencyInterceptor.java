@@ -16,6 +16,7 @@ public class IdempotencyInterceptor extends HostIdempotencyInterceptor {
                 "/api/v1/capabilities/skill-drafts/save-and-publish",
                 "/api/v1/builder/workflows/save-and-publish",
                 "/api/v1/tools/onboard",
+                "/api/v1/connectors/instances/delete-with-receipt",
                 "/api/v1/agents/workflows/onboard",
                 "/api/v1/tenant/sub-institutions/provision",
                 "/api/v1/tenant/agent-definitions","/api/v1/tenant/agent-definitions/update",

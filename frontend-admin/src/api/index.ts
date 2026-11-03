@@ -1449,6 +1449,16 @@ export const api = {
         instance_id: instanceId,
         payload: data
       }),
+    deleteInstanceWithReceipt: (requestId: string, instanceId: string) =>
+      post<{ request_id: string; instance_id: string }>(
+        '/connectors/instances/delete-with-receipt',
+        { request_id: requestId, instance_id: instanceId },
+        { retryOnUnauthorized: false }
+      ),
+    deleteResult: (requestId: string) =>
+      get<{ request_id: string; instance_id: string } | undefined>(
+        `/connectors/instances/delete-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+      ),
     // 注:createInstance 不含 capabilities——MCP 类型后端按地址+凭证自动 tools/list 发现;或创建后在编辑弹窗「拉取清单→导入能力」
     removeInstance: (instanceId: string) =>
       del<{ status: string }>(

@@ -368,6 +368,18 @@ it('删除连接器遇到 401 不自动重发', async () => {
   expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/connectors/instances/delete')
 })
 
+it('带回执的连接器删除遇到 401 不自动重发', async () => {
+  localStorage.setItem('skillforge.access_token', 'expired-access-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi.fn().mockResolvedValue(apiResponse({}, 401))
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    api.connectors.deleteInstanceWithReceipt('request-1', 'connector-1')
+  ).rejects.toBeInstanceOf(HttpClientError)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/connectors/instances/delete-with-receipt')
+})
+
 it('团队已保存修订发布遇到 401 不自动重发', async () => {
   localStorage.setItem('skillforge.access_token', 'expired-access-token')
   localStorage.setItem('skillforge.refresh_token', 'refresh-token')
