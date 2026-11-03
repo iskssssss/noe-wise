@@ -139,6 +139,19 @@ class AgentManagementApplicationServiceTest {
     }
 
     @Test
+    void createWithoutKeyGeneratesDistinctServerIdentifiers() {
+        var request = new AgentManagementContracts.Create(null, "客服助手", null, null, Map.of());
+        var first = service.create(caller, request);
+        var second = service.create(caller, request);
+        assertThat(first.agentKey()).isNotBlank();
+        assertThat(second.agentKey()).isNotBlank().isNotEqualTo(first.agentKey());
+        var saved = ArgumentCaptor.forClass(AgentDO.class);
+        verify(agents, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).extracting(AgentDO::getAgentKey)
+                .containsExactly(first.agentKey(), second.agentKey());
+    }
+
+    @Test
     void directCreateAndReviseRequireCurrentCreatePermission() {
         var denied = new ApiException(HttpStatus.FORBIDDEN, "create_denied", "无创建权限", false);
         doThrow(denied).when(access).require("foundation.agents.create");

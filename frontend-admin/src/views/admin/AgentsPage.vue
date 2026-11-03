@@ -166,16 +166,6 @@
           > </ElFormItem
         ><ElCollapse
           ><ElCollapseItem title="初始配置（可选）" name="initial"
-            ><ElFormItem label="唯一标识"
-              ><ElInput
-                v-described-by="formTipId + '-field-1'"
-                :aria-describedby="formTipId + '-field-1'"
-                v-model="key"
-                placeholder="留空由系统生成"
-              />
-              <FieldTip :id="formTipId + '-field-1'"
-                >智能体的稳定标识；留空由系统生成。</FieldTip
-              > </ElFormItem
             ><ElFormItem label="系统提示词"
               ><ElInput
                 v-described-by="formTipId + '-field-2'"
@@ -486,13 +476,12 @@ const query = ref(''),
   draftFilter = ref(''),
   open = ref(false),
   name = ref(''),
-  key = ref(''),
   prompt = ref('')
 useUnsavedChanges({
   dirty: () =>
     !!pendingInstallationId.value ||
     !!pendingCreation.value ||
-    (open.value && !!(name.value || key.value || prompt.value)) ||
+    (open.value && !!(name.value || prompt.value)) ||
     templateDraftDirty(),
   busy: () => busy.value || templateSwitching.value,
   leaveMessage: installationLeaveMessage
@@ -513,7 +502,6 @@ function openCreate() {
   if (pendingCreation.value || creationStorageError.value || createdAgent.value) return
   error.value = ''
   name.value = ''
-  key.value = ''
   prompt.value = ''
   createFormRef.value?.clearValidate()
   open.value = true
@@ -539,7 +527,6 @@ async function create() {
     try {
       receipt = await api.agents.createWithReceipt(operation.requestId, {
         name: name.value.trim(),
-        agent_key: key.value.trim() || undefined,
         system_prompt: prompt.value
       })
     } catch (reason) {
@@ -557,7 +544,6 @@ async function create() {
     if (!acceptCreation(receipt, operation.requestId)) throw Error('创建回执不完整，请核对原请求')
     open.value = false
     name.value = ''
-    key.value = ''
     prompt.value = ''
     message.success('智能体已创建')
     return receipt.agent_id
@@ -797,7 +783,6 @@ watch(
     resourceSlots.value = []
     delegateSlots.value = []
     name.value = ''
-    key.value = ''
     prompt.value = ''
   },
   { flush: 'sync' }
@@ -1113,7 +1098,7 @@ async function install() {
 const { requestClose: closeDrawer0 } = useDrawerClose({
   open: () => open.value,
   busy: () => busy.value,
-  dirty: () => open.value && !!(name.value || key.value || prompt.value),
+  dirty: () => open.value && !!(name.value || prompt.value),
   close: () => {
     open.value = false
   }
