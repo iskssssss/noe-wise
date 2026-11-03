@@ -193,31 +193,27 @@ test('发布响应 401 后核对原发布且不重发', async ({ page }) => {
   await expect(page.getByText('保存并发布结果尚未确认', { exact: false })).toBeVisible()
   expect(command).toBeTruthy()
   expect(original).toBeTruthy()
-  const lookup = await page.evaluate(
-    async ({ agentId, requestId }) => {
-      const token = localStorage.getItem('skillforge.access_token')
-      const response = await fetch(
-        `/api/v1/agents/save-and-publish/result?agentId=${encodeURIComponent(agentId)}&requestId=${encodeURIComponent(requestId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      return {
-        status: response.status,
-        data: response.status === 200 ? (await response.json()).data : null
-      }
-    },
-    { agentId: agent, requestId: command!.request_id }
+  const checked = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === '/api/v1/agents/save-and-publish/result'
   )
-  expect(lookup.status).toBe(200)
-  expect(lookup.data).toEqual(original)
-  expect(String(lookup.data.agent_id)).toBe(agent)
-  expect(lookup.data.request_id).toBe(command!.request_id)
+  await page.getByRole('button', { name: '核对原操作', exact: true }).click()
+  const checkedResponse = await checked
+  expect(checkedResponse.status()).toBe(200)
+  const recovered = (await checkedResponse.json()).data
+  expect(recovered).toEqual(original)
+  expect(String(recovered.agent_id)).toBe(agent)
+  expect(recovered.request_id).toBe(command!.request_id)
+  await expect(page.getByText('保存并发布结果尚未确认', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('保存并发布已确认', { exact: false })).toBeVisible()
   await page.screenshot({ path: join(evidence, 'agent-trial-401.png'), fullPage: true })
   await writeFile(
     join(evidence, 'agent-trial-401.json'),
     JSON.stringify({
       agentId: agent,
       requestId: command!.request_id,
-      receipt: lookup.data,
+      receipt: recovered,
       posts,
       upstream,
       refreshes,
