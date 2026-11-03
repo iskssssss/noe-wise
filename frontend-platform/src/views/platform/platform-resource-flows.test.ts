@@ -358,7 +358,7 @@ it('部署编辑中可刷新工具目录及发布配置并保留手动名称', a
   expect(field('部署名称').getComponent(ElInput).props('modelValue')).toBe('手动命名')
 })
 
-it('系统智能体默认生成可编辑的合法标识，未编辑关闭不确认，填写名称即可创建', async () => {
+it('系统智能体无需填写标识，未编辑关闭不确认，填写名称即可创建', async () => {
   wrapper = mount(SystemAgentsPage, {
     attachTo: document.body,
     global: { directives: { permission: () => {} } }
@@ -371,13 +371,9 @@ it('系统智能体默认生成可编辑的合法标识，未编辑关闭不确�
       .trigger('click')
   await open()
   await flushPromises()
-  const key = () =>
-    wrapper!
-      .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === '唯一标识')!
-      .getComponent(ElInput)
-  expect(key().props('modelValue')).toMatch(/^agent-[a-z0-9-]+$/)
-  expect(key().props('readonly')).not.toBe(true)
+  expect(
+    wrapper.findAllComponents(ElFormItem).some((item) => item.props('label') === '唯一标识')
+  ).toBe(false)
   await wrapper
     .findAllComponents(ElButton)
     .find((button) => button.text() === '取消')!
@@ -386,7 +382,6 @@ it('系统智能体默认生成可编辑的合法标识，未编辑关闭不确�
   expect(mocks.confirm).not.toHaveBeenCalled()
   await open()
   await flushPromises()
-  const generated = key().props('modelValue')
   await wrapper
     .findAllComponents(ElFormItem)
     .find((item) => item.props('label') === '名称')!
@@ -399,11 +394,11 @@ it('系统智能体默认生成可编辑的合法标识，未编辑关闭不确�
   await flushPromises()
   expect(mocks.createAgent).toHaveBeenCalledWith(
     expect.objectContaining({
-      agent_key: generated,
       name: '报告整理助手',
       execution_mode: 'AGENT_RUN'
     })
   )
+  expect(mocks.createAgent.mock.calls[0]![0]).not.toHaveProperty('agent_key')
 })
 
 it('创建系统智能体时可一次填写模型和提示词', async () => {
@@ -488,6 +483,29 @@ it('创建结果未知后保留请求身份，重新进入时只读核对', asyn
   await flushPromises()
   expect(sessionStorage.getItem('skillforge.system-agent-create:platform-test')).toBeNull()
   expect(mocks.createAgent).toHaveBeenCalledTimes(1)
+})
+
+it('旧系统智能体待核对记录仍可读取原回执', async () => {
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  sessionStorage.setItem(
+    'skillforge.system-agent-create:platform-test',
+    JSON.stringify({ requestId, agentKey: 'old-key', name: '旧助手' })
+  )
+  mocks.createAgentReceipt.mockResolvedValue({ request_id: requestId, agent_id: 'agent-1' })
+  wrapper = mount(SystemAgentsPage, {
+    attachTo: document.body,
+    global: { directives: { permission: () => {} } }
+  })
+  await flushPromises()
+  expect(wrapper.text()).toContain(requestId)
+  await wrapper
+    .findAllComponents(ElButton)
+    .find((item) => item.text() === '核对创建结果')!
+    .trigger('click')
+  await flushPromises()
+  expect(mocks.createAgentReceipt).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(mocks.createAgent).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem('skillforge.system-agent-create:platform-test')).toBeNull()
 })
 
 it('工具部署名称跟随用户选择生成，手动命名后切换环境不覆盖', async () => {

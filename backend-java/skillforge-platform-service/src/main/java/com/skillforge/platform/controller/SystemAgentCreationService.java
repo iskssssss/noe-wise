@@ -44,7 +44,9 @@ public class SystemAgentCreationService {
                 throw new ApiException(HttpStatus.CONFLICT, "系统智能体创建请求标识已用于不同内容或操作人");
             return new Result(command.requestId(), row.agentId());
         }
-        var created = agents.create(payload.agentKey(), payload.name(), payload.description(), payload.executionMode(),
+        String agentKey = payload.agentKey() == null || payload.agentKey().isBlank()
+                ? "agent-" + command.requestId() : payload.agentKey();
+        var created = agents.create(agentKey, payload.name(), payload.description(), payload.executionMode(),
                 payload.systemPrompt(), payload.modelConfigId(), actor);
         if (receipts.complete(key, created.id()) != 1) throw new IllegalStateException("系统智能体创建回执写入失败");
         return new Result(command.requestId(), created.id());

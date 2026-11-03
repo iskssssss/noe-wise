@@ -23,7 +23,7 @@ import { api, type SystemAgentView, type SystemAgentExecutionMode } from '../../
 const { allowed, checked } = useActionPermissions()
 const auth = useAuthStore()
 const actor = computed(() => auth.user?.sub ?? '')
-const pending = ref<{ requestId: string; agentKey: string; name: string }>()
+const pending = ref<{ requestId: string; agentKey?: string; name: string }>()
 const storageError = ref('')
 const storageKey = (subject: string) => `skillforge.system-agent-create:${subject}`
 let disposed = false
@@ -39,11 +39,11 @@ watch(
     try {
       const raw = sessionStorage.getItem(storageKey(actor.value))
       if (!raw) return
-      const item = JSON.parse(raw) as { requestId: string; agentKey: string; name: string }
+      const item = JSON.parse(raw) as { requestId: string; agentKey?: string; name: string }
       if (
         !item ||
         typeof item.name !== 'string' ||
-        typeof item.agentKey !== 'string' ||
+        (item.agentKey !== undefined && typeof item.agentKey !== 'string') ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.requestId)
       )
         throw Error('invalid')
@@ -63,7 +63,6 @@ const router = useRouter(),
   rows = ref<SystemAgentView[]>([]),
   open = ref(false)
 const form = reactive({
-  agent_key: '',
   name: '',
   description: '',
   execution_mode: 'AGENT_RUN' as SystemAgentExecutionMode,
@@ -76,7 +75,6 @@ watch(
   () => {
     open.value = false
     Object.assign(form, {
-      agent_key: '',
       name: '',
       description: '',
       execution_mode: 'AGENT_RUN',
@@ -100,7 +98,6 @@ function startCreate() {
     return
   action.error.value = ''
   Object.assign(form, {
-    agent_key: 'agent-' + crypto.randomUUID(),
     name: '',
     description: '',
     execution_mode: 'AGENT_RUN',
@@ -130,13 +127,13 @@ function save() {
   if (!allowed('foundation.system_agents.create') || pending.value || storageError.value) return
   void action.run(async () => {
     await formRef.value?.validate()
-    if (!form.agent_key.trim() || !form.name.trim()) throw new Error('请填写标识和名称')
+    if (!form.name.trim()) throw new Error('请填写名称')
     const subject = actor.value,
       identity = auth.identityVersion
     if (!subject) throw Error('当前身份不可用，请重新登录')
     if ((form.system_prompt || form.model_config_id) && !allowed('foundation.system_agents.update'))
       throw Error('当前账号没有更新系统智能体权限')
-    const operation = { requestId: crypto.randomUUID(), agentKey: form.agent_key, name: form.name }
+    const operation = { requestId: crypto.randomUUID(), name: form.name }
     try {
       sessionStorage.setItem(storageKey(subject), JSON.stringify(operation))
     } catch {
@@ -144,7 +141,6 @@ function save() {
       return
     }
     const payload = {
-      agent_key: form.agent_key,
       name: form.name,
       description: form.description,
       execution_mode: form.execution_mode,
@@ -373,20 +369,6 @@ const formTipId = useId()
         @submit.prevent="save"
       >
         <p class="admin-muted">可在创建时填写模型和提示词；能力可随后配置，创建不会发布。</p>
-        <ElFormItem
-          label="唯一标识"
-          prop="agent_key"
-          :rules="[{ required: true, whitespace: true, message: '请输入唯一标识' }]"
-        >
-          <ElInput
-            v-described-by="'agent-key-help'"
-            v-model="form.agent_key"
-            aria-describedby="agent-key-help"
-          />
-          <p id="agent-key-help" class="admin-field-help">
-            已生成唯一标识，可按集成约定修改；创建后不可修改。
-          </p>
-        </ElFormItem>
         <ElFormItem
           label="名称"
           prop="name"

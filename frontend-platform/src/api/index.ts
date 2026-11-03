@@ -887,7 +887,7 @@ export const api = {
     createWithReceipt: (
       requestId: string,
       payload: {
-        agent_key: string
+        agent_key?: string
         name: string
         description: string
         execution_mode: SystemAgentExecutionMode
