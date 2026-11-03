@@ -127,12 +127,13 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
         platform.requireTenant("platform.agent_deployments.read",tenant);
         platform.requireDefinition("platform.agent_deployments.read",command.definitionId());
         AgentTemplateGrantService.requireKey(requestKey);
+        Deploy requested=deploymentIdentity(tenant,command,requestKey,true);
         return inTenant(tenant,()->{
-            var row=mapper.findExternal(command.integrationId(),tenant,command.externalAgentRef());
+            var row=mapper.findExternal(requested.integrationId(),tenant,requested.externalAgentRef());
             if(row==null)return new Receipt<>("NOT_FOUND",null);
             var response=mapper.findCreateResponse(row.deploymentId(),tenant,actorRef(true),requestKey);
             if(response==null)return new Receipt<>("NOT_FOUND",null);
-            if(!row.fingerprint().equals(fingerprint(command)))throw conflict("外部Agent标识已用于不同部署参数");
+            if(!row.fingerprint().equals(fingerprint(requested)))throw conflict("外部Agent标识已用于不同部署参数");
             return new Receipt<>("FOUND",readResponse(response));
         });
     }
@@ -140,22 +141,23 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
     /** 映射、实例、绑定修订和发布原子提交，授权读锁与撤销行更新串行。 */
     private View create(long tenant,Deploy command,String requestKey,boolean platformActor) {
         AgentTemplateGrantService.requireKey(requestKey);
-        if(command.externalAgentRef()==null||command.externalAgentRef().isBlank()||command.externalAgentRef().length()>128
-                ||command.externalAgentRef().chars().anyMatch(Character::isISOControl))throw invalid("外部Agent标识格式非法");
+        Deploy requested=deploymentIdentity(tenant,command,requestKey,platformActor);
+        if(requested.externalAgentRef()==null||requested.externalAgentRef().isBlank()||requested.externalAgentRef().length()>128
+                ||requested.externalAgentRef().chars().anyMatch(Character::isISOControl))throw invalid("外部Agent标识格式非法");
         java.util.function.Supplier<View> work=()->{
             // 平台入口不携带执行Tenant；先由受控目标范围绑定线程/数据库，再核验固定integration。
-            if(command.integrationId()!=null)integrations.requireIntegration(Long.toString(tenant),command.integrationId());
-            String fingerprint=fingerprint(command);
-            mapper.lockExternal(command.integrationId(),tenant,command.externalAgentRef());
-            var previous=mapper.findExternal(command.integrationId(),tenant,command.externalAgentRef());
+            if(requested.integrationId()!=null)integrations.requireIntegration(Long.toString(tenant),requested.integrationId());
+            String fingerprint=fingerprint(requested);
+            mapper.lockExternal(requested.integrationId(),tenant,requested.externalAgentRef());
+            var previous=mapper.findExternal(requested.integrationId(),tenant,requested.externalAgentRef());
             if(previous!=null) {
                 if(!previous.fingerprint().equals(fingerprint))throw conflict("外部Agent标识已用于不同部署参数");
                 var response=readResponse(mapper.findRevisionResponse(previous.deploymentId(),1));
                 mapper.recordCreateRequest(previous.deploymentId(),tenant,actorRef(platformActor),requestKey);
                 return response;
             }
-            var chain=grants.requireChainForAdmission(command.grantId(),tenant,command.definitionId(),"deploy");
-            grants.requireFrozenChainForAdmission(chain,tenant,command.definitionId(),"execute");
+            var chain=grants.requireChainForAdmission(requested.grantId(),tenant,requested.definitionId(),"deploy");
+            grants.requireFrozenChainForAdmission(chain,tenant,requested.definitionId(),"execute");
             var grant=chain.hops().getLast();
             if(platformActor||ServicePrincipalContext.get()!=null||InstitutionDeploymentManagementService.currentTarget()!=null) {
                 features.requireDirectDeployment(Long.toString(tenant));
@@ -164,15 +166,15 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
                 features.require(Long.toString(tenant),"agents");
                 quota.requireCapacity(Long.toString(tenant),com.skillforge.core.foundation.catalog.entitlements.ResourceKind.AGENT,1);
             }
-            var template=published(command.definitionId());
-            var local=new LocalBindings(command.resourceBindings(),command.delegationBindings(),command.parameters());
+            var template=published(requested.definitionId());
+            var local=new LocalBindings(requested.resourceBindings(),requested.delegationBindings(),requested.parameters());
             validateSyntax(template.getDefinition(),local);
             long agentId=SnowflakeIds.nextId();
             validateResources(tenant,agentId,local,1L);
             var agent=new AgentDO();
             agent.setId(agentId);agent.setTenantId(tenant);agent.setAgentKey("managed-agent-"+agentId);
             agent.setTemplateId(template.getId());agent.setTemplateVersion(template.getVersion());
-            agent.setName(command.name()==null||command.name().isBlank()?template.getName():command.name().trim());
+            agent.setName(requested.name()==null||requested.name().isBlank()?template.getName():requested.name().trim());
             agent.setIconUrl(template.getIconUrl());applyDefinition(agent,template.getDefinition(),local);
             agent.setStatus("draft");agent.setCreatedAt(Instant.now());agent.setUpdatedAt(agent.getCreatedAt());
             agent.setDelegationConfig(delegation(agent,local));
@@ -183,8 +185,8 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
             persistence.ensure(tenant,agentId);
             ensurePlatformTools(tenant,agentId,template.getDefinition());
             publications.publish(agent);
-            var row=new AgentDeploymentMapper.Row(SnowflakeIds.nextId(),command.integrationId(),tenant,agentId,template.getId(),
-                    grant.grantId(),grant.revision(),command.externalAgentRef(),fingerprint,write(local),1L,agent.getCreatedAt(),write(chain));
+            var row=new AgentDeploymentMapper.Row(SnowflakeIds.nextId(),requested.integrationId(),tenant,agentId,template.getId(),
+                    grant.grantId(),grant.revision(),requested.externalAgentRef(),fingerprint,write(local),1L,agent.getCreatedAt(),write(chain));
             if(mapper.insert(row)!=1)throw new IllegalStateException("部署回执写入失败");
             if(mapper.appendRevision(row.deploymentId(),actorRef(platformActor),requestKey)!=1)throw new IllegalStateException("部署修订写入失败");
             templates.recordInstallation(template.getId());
@@ -583,6 +585,13 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
         if(value==null)throw conflict("原部署回执不存在，不能重建历史响应");
         try {return Objects.requireNonNull(json.readValue(value,View.class));}
         catch(JsonProcessingException e){throw new IllegalStateException("部署幂等回执解码失败",e);}
+    }
+    /** 原生部署由服务端确定稳定标识，使原请求及其只读核对使用相同身份。 */
+    private Deploy deploymentIdentity(long tenant,Deploy command,String requestKey,boolean platformActor) {
+        if(command.integrationId()!=null || command.externalAgentRef()!=null) return command;
+        String identity=HexFormat.of().formatHex(digest(write(List.of(tenant,actorRef(platformActor),requestKey))));
+        return new Deploy(command.definitionId(),command.grantId(),null,"agent-"+identity,command.name(),
+                command.resourceBindings(),command.delegationBindings(),command.parameters(),command.tenantId());
     }
     /** 首次请求摘要不含凭据，CAS绑定修改与创建幂等账本独立。 */
     private String fingerprint(Deploy value) {return HexFormat.of().formatHex(digest(write(value)));}

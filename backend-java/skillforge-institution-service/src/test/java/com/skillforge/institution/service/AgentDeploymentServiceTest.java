@@ -196,6 +196,21 @@ class AgentDeploymentServiceTest {
         assertEquals("9",com.skillforge.common.context.ManagementContext.get().principalId());
     }
 
+    @Test void nativeDeploymentAndReceiptUseTheSameServerGeneratedIdentity() {
+        com.skillforge.common.context.ManagementContext.set(new com.skillforge.common.context.ManagementContext.Identity("9",1,1));
+        var command=new Deploy(31L,41L,null,null,null,List.of(),List.of(),Map.of(),7L);
+        assertThrows(ApiException.class,()->service.deploy(7,command,"request-a"));
+        assertEquals("NOT_FOUND",service.deployReceipt(7,command,"request-a").status());
+        assertEquals("NOT_FOUND",service.deployReceipt(7,command,"request-b").status());
+        var refs=org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(mapper,times(3)).findExternal(isNull(),eq(7L),refs.capture());
+        assertTrue(refs.getAllValues().get(0).startsWith("agent-"));
+        assertEquals(refs.getAllValues().get(0),refs.getAllValues().get(1));
+        assertNotEquals(refs.getAllValues().get(0),refs.getAllValues().get(2));
+        var external=new Deploy(31L,41L,"integration",null,null,List.of(),List.of(),Map.of(),7L);
+        assertThrows(ApiException.class,()->service.deploy(7,external,"request-c"));
+    }
+
     /** 真正integration服务要求已绑定目标，平台机器空Tenant不能被mock遮蔽；失败后两种上下文都恢复。 */
     @Test void platformMachineBindsTargetBeforeRealIntegrationCheckAndRestoresAfterFailure() {
         var integrationMapper=mock(InstitutionIntegrationMapper.class);

@@ -277,13 +277,8 @@ useUnsavedChanges({
 function deploymentInput(): PlatformDeploymentInput {
   const grantId = progress.grant?.grant_id ?? form.grant_id
   const integrationId = form.integration_id.trim() || null
-  let externalRef = form.external_agent_ref.trim()
-  if (!externalRef && integrationId === null)
-    externalRef =
-      progress.deploymentCommand?.input.integration_id === null
-        ? progress.deploymentCommand.input.external_agent_ref
-        : `agent-${crypto.randomUUID()}`
-  if (!form.definition_id || !grantId || !externalRef)
+  const externalRef = integrationId ? form.external_agent_ref.trim() : null
+  if (!form.definition_id || !grantId || (integrationId && !externalRef))
     throw Error('请选择定义、授权并填写外部智能体标识')
   if (progress.grant && !usableGrant(progress.grant, tenant, form.definition_id))
     throw Error('原授权当前不能用于部署，请在授权目录核对，不会自动切换授权链')
@@ -584,24 +579,13 @@ onMounted(() => {
             clearable
           />
         </ElFormItem>
-        <ElFormItem
-          :label="form.integration_id ? '外部智能体标识' : '实例标识（可选）'"
-          :required="!!form.integration_id"
-        >
+        <ElFormItem v-if="form.integration_id" label="外部智能体标识" required>
           <ElInput
             v-model="form.external_agent_ref"
             maxlength="128"
-            :placeholder="
-              form.integration_id ? '填写接入系统中的智能体标识' : '留空自动生成稳定标识'
-            "
+            placeholder="填写接入系统中的智能体标识"
           />
-          <p class="admin-field-help">
-            {{
-              form.integration_id
-                ? '请填写外部系统的真实标识。'
-                : '未选择外部接入时，系统会自动生成实例标识。'
-            }}
-          </p>
+          <p class="admin-field-help">请填写外部系统的真实标识。</p>
         </ElFormItem>
         <ElFormItem label="实例名称（可选）"
           ><ElInput v-model="form.name" placeholder="留空使用定义名称"

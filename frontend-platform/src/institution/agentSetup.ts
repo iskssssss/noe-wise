@@ -11,7 +11,7 @@ export type PlatformDeploymentInput = DeploymentBindings & {
   integration_id: string | null
   definition_id: string
   grant_id: string
-  external_agent_ref: string
+  external_agent_ref: string | null
   name?: string
 }
 
@@ -79,7 +79,9 @@ export class AgentSetupProgress {
       result.definition_id !== command.input.definition_id ||
       result.grant_id !== command.input.grant_id ||
       result.integration_id !== command.input.integration_id ||
-      result.external_agent_ref !== command.input.external_agent_ref
+      !result.external_agent_ref ||
+      (command.input.external_agent_ref !== null &&
+        result.external_agent_ref !== command.input.external_agent_ref)
     )
       throw Error('原部署回执的身份无法核实')
     this.deployment = result
@@ -141,7 +143,9 @@ export class AgentSetupProgress {
         result.definition_id !== command.input.definition_id ||
         result.grant_id !== command.input.grant_id ||
         result.integration_id !== command.input.integration_id ||
-        result.external_agent_ref !== command.input.external_agent_ref
+        !result.external_agent_ref ||
+        (command.input.external_agent_ref !== null &&
+          result.external_agent_ref !== command.input.external_agent_ref)
       )
         throw Error('部署成功响应的身份无法核实，请核对原请求')
       this.deployment = result

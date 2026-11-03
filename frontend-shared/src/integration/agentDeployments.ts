@@ -154,7 +154,7 @@ export function createAgentDeploymentsApi(
         integration_id: string | null
         definition_id: string
         grant_id: string
-        external_agent_ref: string
+        external_agent_ref: string | null
         name?: string
       },
       key: string = crypto.randomUUID(),

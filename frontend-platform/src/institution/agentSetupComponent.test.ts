@@ -326,17 +326,21 @@ describe('添加智能体真实页面装配', () => {
     expect(mocks.deploy).toHaveBeenCalledTimes(2)
   })
 
-  it('原生部署留空自动生成稳定标识，提交并读取同一回执', async () => {
+  it('原生部署由服务端生成标识', async () => {
     mocks.grants.mockResolvedValue({ items: [grant] })
-    mocks.deploy.mockImplementation(async (input) => ({ ...result, ...input }))
+    mocks.deploy.mockImplementation(async (input) => ({
+      ...result,
+      ...input,
+      external_agent_ref: 'agent-server'
+    }))
     const wrapper = await open('31', true)
-    expect(wrapper.text()).toContain('系统会自动生成实例标识')
+    expect(wrapper.text()).not.toContain('实例标识（可选）')
     await button(wrapper, '部署智能体').trigger('click')
     await flushPromises()
     expect(mocks.deploy).toHaveBeenCalledOnce()
     const input = mocks.deploy.mock.calls[0]![0]
     expect(input.integration_id).toBeNull()
-    expect(input.external_agent_ref).toMatch(/^agent-[0-9a-f-]{36}$/)
+    expect(input.external_agent_ref).toBeNull()
     expect(wrapper.text()).toContain('智能体已部署')
   })
   it('外部接入未填写真实标识时不创建授权或部署', async () => {
@@ -353,7 +357,11 @@ describe('添加智能体真实页面装配', () => {
     mocks.deploy.mockRejectedValueOnce(
       new HttpClientError({ status: 422, userMessage: '部署未通过' })
     )
-    mocks.deploy.mockImplementationOnce(async (input) => ({ ...result, ...input }))
+    mocks.deploy.mockImplementationOnce(async (input) => ({
+      ...result,
+      ...input,
+      external_agent_ref: 'agent-server'
+    }))
     const wrapper = await open('31', true)
     await button(wrapper, '部署智能体').trigger('click')
     await flushPromises()
@@ -363,7 +371,7 @@ describe('添加智能体真实页面装配', () => {
     expect(mocks.deploy.mock.calls[1]).toEqual(mocks.deploy.mock.calls[0])
     expect(wrapper.text()).toContain('智能体已部署')
   })
-  it('原生部署结果未知时保留生成的原标识，核对不重复部署', async () => {
+  it('原生部署结果未知时保留原请求，核对不重复部署', async () => {
     mocks.grants.mockResolvedValue({ items: [grant] })
     mocks.deploy.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '结果未知' }))
     const first = await open('31', true)
@@ -371,10 +379,13 @@ describe('添加智能体真实页面装配', () => {
     await flushPromises()
     const input = mocks.deploy.mock.calls[0]![0]
     const key = mocks.deploy.mock.calls[0]![1]
-    expect(input.external_agent_ref).toMatch(/^agent-[0-9a-f-]{36}$/)
+    expect(input.external_agent_ref).toBeNull()
     first.unmount()
     wrappers.splice(wrappers.indexOf(first), 1)
-    mocks.deploymentReceipt.mockResolvedValue({ status: 'FOUND', result: { ...result, ...input } })
+    mocks.deploymentReceipt.mockResolvedValue({
+      status: 'FOUND',
+      result: { ...result, ...input, external_agent_ref: 'agent-server' }
+    })
     const restored = await open('31', true)
     await button(restored, '核对原请求').trigger('click')
     await flushPromises()
