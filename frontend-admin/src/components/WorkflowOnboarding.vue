@@ -60,6 +60,7 @@ const workflows = ref<WorkflowDraftListItem[]>([])
 const instances = ref<BuilderWorkflowInstance[]>([])
 const selected = ref('')
 const selectionTouched = ref(false)
+const changedAfterConfirmation = ref(false)
 const autoSelected = ref('')
 const mode = ref<'REUSE' | 'INSTALL' | 'UPDATE'>()
 const expectedDefinition = ref('')
@@ -346,6 +347,7 @@ function candidates(slot: Slot) {
   })
 }
 async function chooseWorkflow() {
+  if (receipt.value?.status === 'SUCCEEDED') changedAfterConfirmation.value = true
   const preserve = selectionStale.value && configuredWorkflow === selected.value
   const previousFields = fields.value
   const previousConfig = config.value
@@ -615,6 +617,7 @@ async function accept(
   }
   pending.value = undefined
   receipt.value = value
+  changedAfterConfirmation.value = false
   if (value!.status === 'REJECTED') {
     if (!props.receiptOnly) agentRefreshRequired.value = true
     message.error(`接入未完成：${value!.error_message}`)
@@ -633,6 +636,16 @@ async function accept(
     }
   }
 }
+defineExpose({
+  canCloseConfirmed: () =>
+    receipt.value?.status === 'SUCCEEDED' &&
+    !changedAfterConfirmation.value &&
+    !ready.value &&
+    !locked.value &&
+    !instancesRefreshRequired.value &&
+    !storageError.value &&
+    !readRequestId.value.trim()
+})
 async function readConfirmedInstances() {
   const items = (await api.workflowDrafts.instances()).items
   if (

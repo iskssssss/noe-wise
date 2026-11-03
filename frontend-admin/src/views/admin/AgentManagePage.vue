@@ -715,6 +715,7 @@
       </p>
       <WorkflowOnboarding
         v-if="workflowOnboardingOpen && mountType === 'WORKFLOW'"
+        ref="workflowOnboarding"
         :agent-id="id"
         :mounts="agent?.mounts ?? []"
         :can-create="can('foundation.agents.create')"
@@ -1464,9 +1465,10 @@ async function restorePublication(publication: AgentPublication) {
   })
 }
 const mountSaved = ref('')
-const mountSnapshot = () =>
+const mountSavedWithoutType = ref('')
+const mountSnapshot = (includeType = true) =>
   JSON.stringify([
-    mountType.value,
+    ...(includeType ? [mountType.value] : []),
     versionId.value,
     priority.value,
     tokenBudget.value,
@@ -1496,6 +1498,7 @@ const advancedToolMount = ref(false)
 const autoToolId = ref<string>()
 const onboardingOpen = ref(false)
 const workflowOnboardingOpen = ref(false)
+const workflowOnboarding = ref<InstanceType<typeof WorkflowOnboarding>>()
 const onboardingLocked = ref(false)
 const onboardingUnknown = ref(false)
 const onboardingBusy = ref(false)
@@ -2024,12 +2027,29 @@ async function refreshWorkflowOptions() {
   })
 }
 function workflowConfirmed() {
+  const owner = publicationOwner.value
   refreshRequired.value = true
   if (mountOpen.value && mountType.value === 'WORKFLOW') workflowOptionsRefreshRequired.value = true
-  void reload().then((value) => {
-    if (!value) return
+  void reload().then(async (value) => {
+    if (!value || publicationOwner.value !== owner) return
     refreshRequired.value = false
     if (workflowOptionsRefreshRequired.value) void refreshWorkflowOptions()
+    const ids = [...new Set(value.mounts.map((mount) => mount.capabilityVersionId))].filter(
+      (versionId) => !mountVersionNames.value[versionId]
+    )
+    if (!ids.length) return
+    try {
+      const versions = await Promise.all(
+        ids.map((versionId) => api.capabilities.getVersion(versionId))
+      )
+      if (publicationDisposed || publicationOwner.value !== owner) return
+      for (const version of versions)
+        mountVersionNames.value[version.id] = `${version.name} / ${version.versionKey}`
+    } catch (cause) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      if (!publicationDisposed && publicationOwner.value === owner)
+        message.warning('工作流已接入，但能力名称未刷新，请重新读取')
+    }
   })
 }
 async function refreshWorkflowAgent() {
@@ -2073,6 +2093,7 @@ async function openMount() {
     )
       return
     mountSaved.value = mountSnapshot()
+    mountSavedWithoutType.value = mountSnapshot(false)
     mountOpen.value = true
   })
   openingSkillNotice = undefined
@@ -2203,9 +2224,16 @@ async function toggleOnboarding() {
 }
 async function requestCloseMount() {
   if (onboardingBusy.value || busy.value) return
-  if (onboardingOpen.value || workflowOnboardingOpen.value) {
+  const completedWorkflow =
+    workflowOnboardingOpen.value &&
+    !workflowOptionsRefreshRequired.value &&
+    !refreshRequired.value &&
+    mountSnapshot(false) === mountSavedWithoutType.value &&
+    workflowOnboarding.value?.canCloseConfirmed()
+  if ((onboardingOpen.value || workflowOnboardingOpen.value) && !completedWorkflow) {
     if (!(await confirmOnboardingExit())) return
   } else if (
+    !completedWorkflow &&
     mountSnapshot() !== mountSaved.value &&
     !(await confirm({
       title: '关闭表单',

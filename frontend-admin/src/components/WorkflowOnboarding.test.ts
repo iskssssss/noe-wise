@@ -1081,6 +1081,7 @@ describe('智能体内工作流接入', () => {
     await button(wrapper, '接入智能体').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('接入已确认')
+    expect(wrapper.vm.canCloseConfirmed()).toBe(false)
     expect(failure.hasFeedbackOwner).toBe(true)
     expect(mocks.warning).toHaveBeenCalledTimes(1)
     expect(button(wrapper, '重新读取安装列表').exists()).toBe(true)
@@ -1101,6 +1102,9 @@ describe('智能体内工作流接入', () => {
     await flushPromises()
     expect(mocks.submit).toHaveBeenCalledOnce()
     expect(button(wrapper, '重新选择当前工作流').exists()).toBe(true)
+    expect(wrapper.vm.canCloseConfirmed()).toBe(true)
+    await button(wrapper, '重新选择当前工作流').trigger('click')
+    expect(wrapper.vm.canCloseConfirmed()).toBe(false)
   })
   it('确定拒绝后可重新读取实例并再次明确选择，不自动重发', async () => {
     mocks.submit.mockImplementation(async (command) => ({

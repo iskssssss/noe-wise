@@ -98,6 +98,12 @@ test('唯一已发布工作流接入智能体', async ({ page }) => {
   )
   expect(onboardingPosts).toBe(1)
   await expect(panel.getByText(/接入已确认，安装修订/)).toBeVisible()
+  await expect(drawer.getByText('工作流接入已确认，智能体或挂载选项尚未刷新。')).toHaveCount(0, {
+    timeout: 30_000
+  })
+  await drawer.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(drawer).toBeHidden()
+  await expect(page.getByRole('row').filter({ hasText: '工作流' })).toContainText('唯一接入工作流')
   await page.screenshot({ path: join(evidence, 'onboard-confirmed.png'), fullPage: true })
   await writeFile(
     join(evidence, 'onboard-single.json'),
