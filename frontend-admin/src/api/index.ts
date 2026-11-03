@@ -1254,6 +1254,8 @@ export const api = {
 
   memories: {
     list: (query: MemoryListQuery = {}) => get<MemoryFact[]>(`/memories${memoryListQuery(query)}`),
+    detail: (factId: string) =>
+      get<MemoryFact>(`/memories/detail?fact_id=${encodeURIComponent(factId)}`),
     reviews: () => get<MemoryFact[]>('/memories/reviews'),
     page: (query: MemoryPageQuery = {}, signal?: AbortSignal) =>
       get<MemoryPageResult>(`/memories/page${memoryListQuery(query)}`, { signal }),

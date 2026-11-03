@@ -75,6 +75,16 @@ class MemoryGovernanceServiceTest {
     private static final String DRAFT_JSON = "{\"value\":{\"text\":\"correction draft\"},\"conditions\":[],\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null}}";
 
     @Test
+    void detailReadsCurrentFactWithinTenantAndRejectsOtherTenant() {
+        MemoryFact current = fact(REF, USER, MemoryScope.USER_AGENT, TYPE, FactStatus.FORGOTTEN);
+        Fixture fixture = new Fixture(current);
+        assertEquals(current.ref(), fixture.service.get(TENANT.value(), REF.factId()).ref());
+        assertEquals(FactStatus.FORGOTTEN, fixture.service.get(TENANT.value(), REF.factId()).status());
+        ApiException denied = assertThrows(ApiException.class, () -> fixture.service.get("999", REF.factId()));
+        assertEquals(HttpStatus.NOT_FOUND, denied.getStatus());
+    }
+
+    @Test
     void pageOmitsFactWhoseStatusChangedAfterCandidateSelection() {
         MemoryFact current = fact(REF, USER, MemoryScope.USER_AGENT, TYPE, FactStatus.FORGOTTEN);
         Fixture fixture = new Fixture(current);

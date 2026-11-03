@@ -99,6 +99,7 @@ describe('Memory 管理 API 契约', () => {
       end_user_id: 'user-a'
     })
     await api.memories.reviews()
+    await api.memories.detail('fact/1')
     await api.memories.review('fact/1', 3, true)
     await api.memories.forget('fact/1', 4)
     await api.memories.restore('fact/1', 5)
@@ -116,12 +117,13 @@ describe('Memory 管理 API 契约', () => {
       '/api/v1/memories?scope=USER_AGENT&type=episode&agent_id=7&end_user_id=user-a',
       '/api/v1/memories?scope=USER&type=preference&end_user_id=user-a',
       '/api/v1/memories/reviews',
+      '/api/v1/memories/detail?fact_id=fact%2F1',
       '/api/v1/memories/review',
       '/api/v1/memories/forget',
       '/api/v1/memories/restore',
       '/api/v1/memories/correct'
     ])
-    const writes = fetchMock.mock.calls.slice(4) as [string, RequestInit][]
+    const writes = fetchMock.mock.calls.slice(5) as [string, RequestInit][]
     expect(writes.map(([, init]) => (init.headers as Headers).get('Idempotency-Key'))).toEqual([
       'idem-review',
       'idem-forget',

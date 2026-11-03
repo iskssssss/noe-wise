@@ -73,6 +73,12 @@ public class MemoryGovernanceService {
         return list(tenantId, new ListQuery(status, null, null, null, null, limit));
     }
 
+    @Transactional(readOnly = true)
+    public MemoryFact get(String tenantId, String factId) {
+        Owner owner = requireOwner(tenantId, factId);
+        return withDecay(current(context(tenantId, owner), tenantId, factId), owner.decayScore());
+    }
+
     /**
      * 按可选 scope/type/owner 读取当前事实。非法过滤值失败关闭，不把未知层当成空结果。
      */

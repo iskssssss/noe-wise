@@ -60,7 +60,9 @@
       }}</FieldTip>
     </div>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
-      操作已完成，但当前列表尚未更新。请点击“查询”读取最新状态后继续修改。
+      {{
+        refreshCause === 'write' ? '操作已完成，但当前列表尚未更新。' : '当前列表尚未更新。'
+      }}请点击“查询”读取最新状态后继续修改。
     </p>
     <p v-else-if="loadError && data" class="admin-field-help" role="status">
       当前显示上次成功读取的结果，本次查询条件尚未确认生效。
@@ -187,7 +189,25 @@
       :show-close="!busy"
       class="admin-drawer"
       size="680px"
-      ><FeedbackNotice
+      ><div class="admin-field-help">
+        <ElButton :loading="latestMemory.loading.value" :disabled="busy" @click="checkLatest"
+          >核对最新状态</ElButton
+        >
+        <p v-if="latestMemory.data.value" role="status">
+          最新状态：{{ statusLabel(latestMemory.data.value.status) }}，版本
+          {{ latestMemory.data.value.revision }}。
+          <template v-if="latestMemory.data.value.revision !== selected?.revision"
+            >事实已变化，当前草稿仍在；如需保留请先复制，关闭抽屉会丢弃草稿。请查看最新事实后再决定如何处理。</template
+          >
+        </p>
+        <p v-if="latestMemory.data.value">
+          最新关系：{{ latestMemory.data.value.predicate }}；最新内容：{{
+            displayContent(latestMemory.data.value)
+          }}
+        </p>
+        <p v-if="latestMemory.error.value" role="alert">{{ latestMemory.error.value }}</p>
+      </div>
+      <FeedbackNotice
         v-if="error"
         :title="error"
         type="error"
@@ -294,7 +314,7 @@
           v-permission="['foundation.memory.update']"
           type="primary"
           :loading="busy"
-          :disabled="refreshRequired"
+          :disabled="refreshRequired || latestChanged"
           @click="save"
           >保存纠正</ElButton
         ></template
@@ -411,11 +431,15 @@ const pendingFilters = computed(
       data.value.query !== query.value.trim())
 )
 const refreshRequired = ref(false)
+const refreshCause = ref<'write' | 'stale'>('write')
 async function refresh() {
   cancelMore()
   moreError.value = ''
   const value = await reload()
-  if (value) refreshRequired.value = false
+  if (value) {
+    refreshRequired.value = false
+    refreshCause.value = 'write'
+  }
   return !!value
 }
 async function loadMore() {
@@ -512,6 +536,31 @@ const { busy, error, run } = useTask(),
   selected = ref<MemoryFact>(),
   saved = ref(''),
   form = reactive({ subject: '', predicate: '', object_json: '', confidence: 1, importance: 0.5 })
+const latestMemory = useResource(async () => {
+  const row = selected.value!
+  const identity = auth.identityVersion,
+    session = getSessionId()
+  const result = await api.memories.detail(row.ref.fact_id)
+  if (
+    !open.value ||
+    selected.value !== row ||
+    identity !== auth.identityVersion ||
+    session !== getSessionId()
+  )
+    throw Error('记忆查询已失效')
+  return result
+})
+const latestChanged = computed(
+  () => !!latestMemory.data.value && latestMemory.data.value.revision !== selected.value?.revision
+)
+async function checkLatest() {
+  const result = await latestMemory.reload()
+  if (result && result.revision !== selected.value?.revision) {
+    refreshCause.value = 'stale'
+    refreshRequired.value = true
+    await refresh()
+  }
+}
 const simpleEditable = ref(false)
 const expandedContent = ref<string[]>([])
 // 按 JSON 字符范围替换正文，其他字段不经过 JS 数字转换。
@@ -551,6 +600,9 @@ const { requestClose } = useDrawerClose({
 })
 function edit(row: MemoryFact) {
   if (refreshRequired.value || requiresSharingConfirmation(row)) return
+  latestMemory.invalidate()
+  latestMemory.data.value = undefined
+  latestMemory.error.value = ''
   selected.value = row
   Object.assign(form, {
     subject: row.subject,
@@ -565,7 +617,7 @@ function edit(row: MemoryFact) {
   open.value = true
 }
 async function save() {
-  if (refreshRequired.value) return
+  if (refreshRequired.value || latestChanged.value) return
   await run(async () => {
     if (selected.value && requiresSharingConfirmation(selected.value)) return
     if (!(await formRef.value?.validate().catch(() => false))) return
@@ -580,6 +632,7 @@ async function save() {
     const row = selected.value!
     await api.memories.correct(row.ref.fact_id, { expected_revision: row.revision, ...form })
     open.value = false
+    refreshCause.value = 'write'
     refreshRequired.value = true
     if (await refresh()) message.success('记忆纠正已保存')
   })

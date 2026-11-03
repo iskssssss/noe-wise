@@ -51,6 +51,13 @@ public final class MemoryGovernanceController {
     }
 
     @RequirePermission("foundation.memory.read")
+    @GetMapping("/detail")
+    @Operation(summary = "查询当前 Memory 事实详情")
+    public ApiResponse<MemoryFact> detail(@RequestParam(name = "fact_id") @NotBlank String factId) {
+        return ApiResponses.wrap(service.get(TenantIds.requireTenantId(), factId));
+    }
+
+    @RequirePermission("foundation.memory.read")
     @GetMapping("/page")
     @Operation(summary = "分页查询当前 Memory 事实")
     public ApiResponse<MemoryGovernanceService.Page> page(

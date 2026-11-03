@@ -8,6 +8,7 @@ import MemoryPage from './MemoryPage.vue'
 
 const mocks = vi.hoisted(() => ({
   page: vi.fn(),
+  detail: vi.fn(),
   list: vi.fn(),
   reviews: vi.fn(),
   agents: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('../../api', () => ({
         cursor?: string
       }) => mocks.page(query),
       list: mocks.list,
+      detail: mocks.detail,
       reviews: mocks.reviews,
       review: mocks.review,
       correct: mocks.correct,
@@ -129,6 +131,50 @@ afterEach(async () => {
 })
 
 describe('记忆筛选辅助目录独立恢复', () => {
+  it('核对最新事实保留草稿并阻止提交旧版本', async () => {
+    fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
+    mocks.detail.mockResolvedValue({
+      ...fact,
+      revision: 4,
+      status: 'FORGOTTEN',
+      predicate: '最新关系'
+    })
+    const wrapper = await render()
+    await button(wrapper, '纠正').trigger('click')
+    const subject = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === 'user-a')!
+    subject.vm.$emit('update:modelValue', '保留的草稿')
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(mocks.detail).toHaveBeenCalledWith('fact/user')
+    expect(subject.props('modelValue')).toBe('保留的草稿')
+    expect(document.body.textContent).toContain('最新状态：已遗忘，版本 4')
+    expect(document.body.textContent).toContain('最新关系：最新关系')
+    expect(button(wrapper, '保存纠正').props('disabled')).toBe(true)
+    expect(mocks.correct).not.toHaveBeenCalled()
+  })
+  it('核对失败时保留草稿并允许重新核对', async () => {
+    fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
+    mocks.detail.mockRejectedValueOnce(new Error('读取失败'))
+    const wrapper = await render()
+    await button(wrapper, '纠正').trigger('click')
+    const subject = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === 'user-a')!
+    subject.vm.$emit('update:modelValue', '未保存草稿')
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(subject.props('modelValue')).toBe('未保存草稿')
+    expect(document.body.textContent).toContain('读取失败')
+    mocks.detail.mockResolvedValueOnce(fact)
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '保存纠正').props('disabled')).toBe(false)
+    expect(mocks.correct).not.toHaveBeenCalled()
+  })
   it('空批次仍有游标时可继续加载，不把尚未扫描完的结果显示为无匹配', async () => {
     mocks.page
       .mockResolvedValueOnce({ items: [], next_cursor: 'next-1' })
