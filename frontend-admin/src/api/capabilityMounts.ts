@@ -184,6 +184,15 @@ export interface CapabilityDeployment {
   updatedAt?: string | null
 }
 
+export interface DeploymentCreateReceipt {
+  request_id: string
+  status: 'SUCCEEDED' | 'REJECTED'
+  deployment_id: string | null
+  deployment_key: string
+  error_code?: string | null
+  message?: string | null
+}
+
 /** 唯一事实源 PlatformToolCatalog 的公开只读投影。 */
 export interface PlatformTool {
   name: string
@@ -1076,23 +1085,34 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
       )
       .then(mapDeployment)
 
+  const deploymentPayload = (input: CreateCapabilityDeploymentInput) => ({
+    deployment_key: textValue(input.deploymentKey, 'deploymentKey'),
+    tool_version_id: catalogDecimalIdentity(input.toolVersionId, 'toolVersionId'),
+    provider_type: enumValue(input.providerType, DEPLOYMENT_PROVIDER_TYPES, 'providerType'),
+    provider_ref: textValue(input.providerRef, 'providerRef'),
+    environment: enumValue(input.environment, DEPLOYMENT_ENVIRONMENTS, 'environment'),
+    ...(input.status === undefined
+      ? {}
+      : { status: enumValue(input.status, MOUNT_STATUSES, 'status') })
+  })
+
   const createDeployment = (input: CreateCapabilityDeploymentInput, opts?: RequestOptions) =>
     http
-      .post<CapabilityDeploymentWire>(
-        '/capabilities/deployments',
-        {
-          deployment_key: textValue(input.deploymentKey, 'deploymentKey'),
-          tool_version_id: catalogDecimalIdentity(input.toolVersionId, 'toolVersionId'),
-          provider_type: enumValue(input.providerType, DEPLOYMENT_PROVIDER_TYPES, 'providerType'),
-          provider_ref: textValue(input.providerRef, 'providerRef'),
-          environment: enumValue(input.environment, DEPLOYMENT_ENVIRONMENTS, 'environment'),
-          ...(input.status === undefined
-            ? {}
-            : { status: enumValue(input.status, MOUNT_STATUSES, 'status') })
-        },
-        opts
-      )
+      .post<CapabilityDeploymentWire>('/capabilities/deployments', deploymentPayload(input), opts)
       .then(mapDeployment)
+
+  const createDeploymentWithReceipt = (requestId: string, input: CreateCapabilityDeploymentInput) =>
+    http.post<DeploymentCreateReceipt>(
+      '/capabilities/deployments/create-with-receipt',
+      { request_id: requestId, payload: deploymentPayload(input) },
+      { retryOnUnauthorized: false }
+    )
+
+  const deploymentCreateReceipt = (requestId: string) =>
+    http.get<DeploymentCreateReceipt | undefined>(
+      `/capabilities/deployments/create-with-receipt/result?request_id=${encodeURIComponent(requestId)}`,
+      { silent: true }
+    )
 
   const setDeploymentActive = (
     deploymentKey: string,
@@ -1192,6 +1212,8 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
     listDeployments,
     getDeployment,
     createDeployment,
+    createDeploymentWithReceipt,
+    deploymentCreateReceipt,
     startDeployment: (deploymentKey: string, revision: number, opts?: RequestOptions) =>
       setDeploymentActive(deploymentKey, revision, true, opts),
     stopDeployment: (deploymentKey: string, revision: number, opts?: RequestOptions) =>

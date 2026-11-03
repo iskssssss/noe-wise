@@ -1,22 +1,42 @@
 <template>
   <AdminPage title="工具部署" description="绑定工具身份与机构服务实例，新执行跟随工具当前发布版本。"
     ><template #extra
-      ><ElButton type="primary" @click="openCreate" :disabled="busy || creationUnknown"
+      ><ElButton
+        type="primary"
+        @click="openCreate"
+        :disabled="busy || !!creationUnknown || !!creationStorageError"
         >新增部署</ElButton
       ></template
     >
-    <section v-if="creationUnknown" class="admin-card" role="status">
-      创建结果尚未确认，原输入已保留。请只读核对部署标识“{{ form.deploymentKey }}”，不要重复创建；
-      查到或查不到当前部署均不能证明原请求结果。
-      <ElButton :disabled="busy" @click="checkDeployment">查看当前部署</ElButton>
-      <ElButton :disabled="busy" @click="open = true">查看原创建输入</ElButton>
-      <p v-if="checkedDeployment">
+    <section
+      v-for="operation in creationOperations"
+      :key="operation.requestId"
+      class="admin-card"
+      role="status"
+    >
+      部署“{{ operation.deploymentKey }}”的创建结果尚未确认，请求号：{{ operation.requestId }}。
+      查不到原回执时结果仍未确认，请勿重复创建。
+      <ElButton :disabled="busy || !canRead" @click="checkCreation(false, operation)"
+        >核对原创建结果</ElButton
+      >
+      <ElButton :disabled="busy || !canRead" @click="checkDeployment(operation)"
+        >查看当前部署</ElButton
+      >
+      <ElButton
+        v-if="creationInputRequestId === operation.requestId"
+        :disabled="busy"
+        @click="open = true"
+        >查看原创建输入</ElButton
+      >
+      <p v-if="checkedDeployment && checkedRequestId === operation.requestId">
         当前部署：{{ checkedDeployment.deploymentKey }} · 工具版本
         {{ checkedDeployment.toolVersionId }} · {{ checkedDeployment.providerType }} /
         {{ checkedDeployment.providerRef }} · {{ checkedDeployment.environment }} · 修订
         {{ checkedDeployment.revision }}
       </p>
     </section>
+    <p v-if="creationStorageError" role="status">{{ creationStorageError }}</p>
+    <p v-if="confirmedChange" role="status">{{ confirmedChange }}</p>
     <div class="admin-toolbar admin-filters">
       <ElInput
         v-model="query"
@@ -105,7 +125,7 @@
       ><p v-if="creationUnknown" role="status">创建结果尚未确认，以下原输入仅供核对。</p>
       <ElForm
         ref="formRef"
-        :disabled="busy || creationUnknown"
+        :disabled="busy || !!creationUnknown"
         :model="form"
         :rules="rules"
         label-position="top"
@@ -150,7 +170,7 @@
             v-described-by="'deployment-provider-help'"
             aria-describedby="deployment-provider-help"
             v-model="form.providerRef"
-            :disabled="busy || creationUnknown"
+            :disabled="busy || !!creationUnknown"
             :options="providerOptions"
             :placeholder="form.providerType === 'PLATFORM' ? '选择平台工具' : '选择连接器实例'"
           />
@@ -180,7 +200,7 @@
           v-permission="['foundation.capabilities.create']"
           type="primary"
           :loading="busy"
-          :disabled="creationUnknown"
+          :disabled="!!creationUnknown || !!creationStorageError"
           @click="create"
           >创建</ElButton
         ></template
@@ -209,18 +229,53 @@ import {
 import type { FormInstance, FormRules } from 'element-plus'
 import {
   api,
+  getSessionId,
   type CapabilityDeployment,
   type CreateCapabilityDeploymentInput,
   type CapabilityVersion
 } from '../../api'
+import { useAuthStore } from '../../stores/auth'
+const auth = useAuthStore()
+const owner = computed(() =>
+  auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
+)
+const canRead = computed(
+  () => auth.user?.permissions.includes('foundation.capabilities.read') === true
+)
+const canCreate = computed(
+  () => auth.user?.permissions.includes('foundation.capabilities.create') === true
+)
+let disposed = false
+let directoryRequest = 0
 const {
   data,
   loading,
   error: loadError,
   reload,
   invalidate
-} = useResource(() => api.capabilities.deployments())
-let disposed = false
+} = useResource(async () => {
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId(),
+    request = ++directoryRequest
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canRead.value
+  try {
+    const result = await api.capabilities.deployments()
+    if (!current()) throw Error('部署目录读取已失效')
+    return result
+  } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      if (request === directoryRequest) invalidate()
+    }
+    throw cause
+  }
+})
 onScopeDispose(() => {
   disposed = true
 })
@@ -259,22 +314,55 @@ const filtered = computed(() =>
 const platformTools = ref<Awaited<ReturnType<typeof api.capabilities.platformTools>>>([])
 const connectors = ref<Awaited<ReturnType<typeof api.connectors.instances>>['items']>([])
 const directoryLoaded = ref(false)
-onMounted(refresh)
+onMounted(async () => {
+  await refresh()
+  const recoveryOwner = owner.value
+  for (const operation of [...creationOperations.value]) {
+    if (disposed || !canRead.value || owner.value !== recoveryOwner) break
+    await checkCreation(true, operation)
+  }
+})
 async function refresh() {
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canRead.value
+  if (!current()) return
   confirmedChange.value = ''
   const deployments = await reload()
-  if (deployments === undefined) return
+  if (deployments === undefined || !current()) return
   directoryLoaded.value = true
   await run(async () => {
     const ids = [...new Set(deployments.map((d) => d.toolVersionId))]
-    const result = await Promise.all(ids.map((id) => api.capabilities.getVersion(id)))
-    versionNames.value = Object.fromEntries(
-      result.map((v) => [v.id, `${v.name} / ${v.versionKey}`])
-    )
+    try {
+      const result = await Promise.all(ids.map((id) => api.capabilities.getVersion(id)))
+      if (current())
+        versionNames.value = Object.fromEntries(
+          result.map((v) => [v.id, `${v.name} / ${v.versionKey}`])
+        )
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
   })
 }
-const creationUnknown = ref(false)
+type CreationOperation = { requestId: string; deploymentKey: string }
+const creationOperations = ref<CreationOperation[]>([])
+const creationUnknown = computed(() => creationOperations.value[0])
+const creationInputRequestId = ref('')
+const creationStorageError = ref('')
+const storagePrefix = (subject: string) => `skillforge.tool-deployment-create:${subject}:`
+const storageKey = (subject: string, requestId: string) => storagePrefix(subject) + requestId
 const checkedDeployment = ref<CapabilityDeployment>()
+const checkedRequestId = ref('')
 const { busy, error, run } = useTask(),
   open = ref(false),
   saved = ref(''),
@@ -287,11 +375,86 @@ const { busy, error, run } = useTask(),
     providerRef: '',
     environment: 'DEVELOPMENT'
   })
+function syncOperations(subject: string, preserveExisting = false) {
+  const operations: CreationOperation[] = []
+  creationStorageError.value = ''
+  if (!subject) {
+    creationOperations.value = operations
+    return
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key?.startsWith(storagePrefix(subject))) continue
+      const text = localStorage.getItem(key)
+      if (!text) throw Error('invalid')
+      const record = JSON.parse(text) as CreationOperation
+      if (
+        !record ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId) ||
+        typeof record.deploymentKey !== 'string' ||
+        !record.deploymentKey ||
+        key !== storageKey(subject, record.requestId)
+      )
+        throw Error('invalid')
+      operations.push({ requestId: record.requestId, deploymentKey: record.deploymentKey })
+    }
+  } catch {
+    creationStorageError.value = '无法读取原创建记录，请恢复浏览器存储后重新进入。'
+  }
+  if (preserveExisting) {
+    for (const existing of creationOperations.value) {
+      if (!operations.some((item) => item.requestId === existing.requestId))
+        operations.push(existing)
+    }
+  }
+  creationOperations.value = operations
+}
+function onCreationStorage(event: StorageEvent) {
+  if (
+    event.storageArea === localStorage &&
+    (!event.key || event.key.startsWith(storagePrefix(owner.value)))
+  )
+    syncOperations(owner.value, true)
+}
+window.addEventListener('storage', onCreationStorage)
+onScopeDispose(() => window.removeEventListener('storage', onCreationStorage))
 useUnsavedChanges({
-  dirty: () => creationUnknown.value,
-  leaveMessage: () =>
-    '创建结果尚未确认，离开后将失去本页保留的原输入。请先记录部署标识并核对，勿重复创建。'
+  dirty: () => !!creationUnknown.value,
+  leaveMessage: () => '创建结果尚未确认，请保留原请求并核对，勿重复创建。'
 })
+watch(
+  owner,
+  (subject, previous) => {
+    if (previous && subject !== previous) {
+      open.value = false
+      checkedDeployment.value = undefined
+      Object.assign(form, {
+        deploymentKey: '',
+        toolVersionId: '',
+        providerType: 'MCP',
+        providerRef: '',
+        environment: 'DEVELOPMENT'
+      })
+      invalidate()
+    }
+    creationInputRequestId.value = ''
+    syncOperations(subject)
+  },
+  { immediate: true, flush: 'sync' }
+)
+watch(
+  [owner, () => auth.identityVersion, () => auth.sessionIdentity, canRead],
+  () => {
+    invalidate()
+    data.value = undefined
+    versionNames.value = {}
+    directoryLoaded.value = false
+    confirmedChange.value = ''
+    checkedDeployment.value = undefined
+  },
+  { flush: 'sync' }
+)
 watch(error, (value) => {
   if (value) message.error(value)
 })
@@ -330,20 +493,43 @@ const { requestClose } = useDrawerClose({
   }
 })
 async function openCreate() {
-  if (creationUnknown.value) return
+  if (creationUnknown.value || creationStorageError.value || !canCreate.value) return
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canCreate.value
   await run(async () => {
-    const [defs, tools, instances] = await Promise.all([
-      api.capabilities.definitions('TOOL', 'PUBLISHED'),
-      api.capabilities.platformTools(),
-      api.connectors.instances()
-    ])
+    let defs: Awaited<ReturnType<typeof api.capabilities.definitions>>,
+      tools: Awaited<ReturnType<typeof api.capabilities.platformTools>>,
+      instances: Awaited<ReturnType<typeof api.connectors.instances>>,
+      loadedVersions: CapabilityVersion[]
+    try {
+      ;[defs, tools, instances] = await Promise.all([
+        api.capabilities.definitions('TOOL', 'PUBLISHED'),
+        api.capabilities.platformTools(),
+        api.connectors.instances()
+      ])
+      loadedVersions = await Promise.all(
+        defs
+          .filter((d) => d.defaultVersionId)
+          .map((d) => api.capabilities.getVersion(d.defaultVersionId!))
+      )
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
+    if (!current()) return
     platformTools.value = tools
     connectors.value = instances.items
-    versions.value = await Promise.all(
-      defs
-        .filter((d) => d.defaultVersionId)
-        .map((d) => api.capabilities.getVersion(d.defaultVersionId!))
-    )
+    versions.value = loadedVersions
     Object.assign(form, {
       deploymentKey: '',
       toolVersionId: '',
@@ -356,58 +542,202 @@ async function openCreate() {
   })
 }
 async function create() {
-  if (creationUnknown.value) return
+  if (creationUnknown.value || creationStorageError.value || !canCreate.value) return
   if (!(await formRef.value?.validate().catch(() => false))) return
+  let checkAfterWrite = false
   await run(async () => {
     if (!form.deploymentKey.trim() || !form.providerRef.trim() || !form.toolVersionId)
       throw Error('请填写部署标识，选择已发布工具和对应的连接器或平台工具')
     if (!providerOptions.value.some((option) => option.id === form.providerRef))
       throw Error('所选连接器或平台工具已不可用，请从当前列表重新选择')
-    let created: CapabilityDeployment
+    const subject = owner.value,
+      identity = auth.identityVersion,
+      session = getSessionId()
+    if (!subject || !session) throw Error('当前登录状态不可用，请重新登录')
+    syncOperations(subject, true)
+    if (creationUnknown.value || creationStorageError.value) return
+    const operation = {
+      requestId: crypto.randomUUID(),
+      deploymentKey: form.deploymentKey.trim()
+    }
     try {
-      created = await api.capabilities.createDeployment({ ...form })
-    } catch (cause) {
-      // 这些业务码在创建链校验或事务回滚时产生，不能用状态码替代写入结果。
-      if (
-        cause instanceof HttpClientError &&
-        (cause.code === 'CAPABILITY_VERSION_NOT_PUBLISHED' ||
-          cause.code === 'CAPABILITY_DEPLOYMENT_INVALID')
+      localStorage.setItem(storageKey(subject, operation.requestId), JSON.stringify(operation))
+    } catch {
+      creationStorageError.value = '无法保存原创建记录，尚未发送请求。'
+      return
+    }
+    creationOperations.value = [...creationOperations.value, operation]
+    creationInputRequestId.value = operation.requestId
+    const current = () =>
+      !disposed &&
+      owner.value === subject &&
+      auth.identityVersion === identity &&
+      getSessionId() === session &&
+      canCreate.value &&
+      creationOperations.value.some(
+        (item) =>
+          item.requestId === operation.requestId && item.deploymentKey === operation.deploymentKey
       )
-        throw cause
-      if (cause instanceof HttpClientError && cause.code === 'CAPABILITY_DUPLICATE') {
-        cause.claimFeedback()
-        throw Error('部署标识已存在，请更换标识后创建。')
-      }
+    let receipt: Awaited<ReturnType<typeof api.capabilities.createDeploymentWithReceipt>>
+    try {
+      receipt = await api.capabilities.createDeploymentWithReceipt(operation.requestId, { ...form })
+    } catch (cause) {
       if (cause instanceof HttpClientError) cause.claimFeedback()
-      if (!disposed) {
-        creationUnknown.value = true
-        message.warning('工具部署创建结果尚未确认，请只读核对原标识，不要重复创建。')
+      if (current()) {
+        checkAfterWrite = true
+        message.warning('工具部署创建结果尚未确认，请核对原请求，不要重复创建。')
       }
       return
     }
-    if (disposed) return
-    invalidate()
-    data.value = [
-      ...(data.value ?? []).filter((item) => item.deploymentKey !== created.deploymentKey),
-      created
-    ]
-    const version = versions.value.find((v) => v.id === form.toolVersionId)
-    if (version) versionNames.value[version.id] = `${version.name} / ${version.versionKey}`
-    open.value = false
-    confirmedChange.value = '工具部署已创建'
-    if ((await reload()) !== undefined && !disposed) {
-      directoryLoaded.value = true
-      message.success(confirmedChange.value)
+    if (current() && !(await acceptCreation(receipt, operation, subject, current))) {
+      checkAfterWrite = true
+      message.warning('创建回执不匹配，请核对原请求，不要重复创建。')
     }
   })
+  if (checkAfterWrite) {
+    const operation = creationOperations.value.find(
+      (item) => item.requestId === creationInputRequestId.value
+    )
+    if (operation) await checkCreation(true, operation)
+  }
 }
-async function checkDeployment() {
+async function acceptCreation(
+  receipt: Awaited<ReturnType<typeof api.capabilities.deploymentCreateReceipt>>,
+  operation: CreationOperation,
+  subject: string,
+  current: () => boolean
+) {
+  if (
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    receipt.deployment_key !== operation.deploymentKey ||
+    !['SUCCEEDED', 'REJECTED'].includes(receipt.status) ||
+    (receipt.status === 'SUCCEEDED' &&
+      (typeof receipt.deployment_id !== 'string' || !receipt.deployment_id)) ||
+    (receipt.status === 'REJECTED' && receipt.error_code !== 'TOOL_DEPLOYMENT_CREATE_REJECTED')
+  )
+    return false
+  if (!current()) return false
+  const acceptedIdentity = auth.identityVersion,
+    acceptedSession = getSessionId()
+  const sameIdentity = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === acceptedIdentity &&
+    getSessionId() === acceptedSession
+  try {
+    const key = storageKey(subject, operation.requestId)
+    const raw = localStorage.getItem(key)
+    if (raw) {
+      const saved = JSON.parse(raw) as CreationOperation
+      if (
+        saved.requestId !== operation.requestId ||
+        saved.deploymentKey !== operation.deploymentKey
+      )
+        throw Error('invalid')
+      localStorage.removeItem(key)
+    }
+  } catch {
+    creationStorageError.value = '创建已确认，但无法清除本地请求记录，请恢复浏览器存储后核对。'
+    return false
+  }
+  creationOperations.value = creationOperations.value.filter(
+    (item) => item.requestId !== operation.requestId
+  )
+  creationStorageError.value = ''
+  const ownsInput = creationInputRequestId.value === operation.requestId
+  if (receipt.status === 'REJECTED') {
+    if (ownsInput) creationInputRequestId.value = ''
+    message.error(
+      receipt.message || '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
+    )
+    return true
+  }
+  if (ownsInput) {
+    creationInputRequestId.value = ''
+    open.value = false
+  }
+  confirmedChange.value = `工具部署已创建：${operation.deploymentKey}`
+  invalidate()
+  if (!canRead.value) {
+    if (sameIdentity()) message.success(confirmedChange.value)
+  } else if ((await reload()) !== undefined && sameIdentity() && canRead.value) {
+    directoryLoaded.value = true
+    message.success(confirmedChange.value)
+  }
+  return true
+}
+async function checkCreation(automatic = false, operation = creationUnknown.value) {
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  if (
+    !operation ||
+    !subject ||
+    !session ||
+    !canRead.value ||
+    !creationOperations.value.some(
+      (item) =>
+        item.requestId === operation.requestId && item.deploymentKey === operation.deploymentKey
+    )
+  )
+    return
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canRead.value &&
+    creationOperations.value.some(
+      (item) =>
+        item.requestId === operation.requestId && item.deploymentKey === operation.deploymentKey
+    )
   await run(async () => {
+    let receipt: Awaited<ReturnType<typeof api.capabilities.deploymentCreateReceipt>>
+    try {
+      receipt = await api.capabilities.deploymentCreateReceipt(operation.requestId)
+    } catch (cause) {
+      if (!current() && cause instanceof HttpClientError) cause.claimFeedback()
+      if (current()) throw cause
+      return
+    }
+    if (!current()) return
+    if (!(await acceptCreation(receipt, operation, subject, current)) && !automatic)
+      message.warning('尚未查到匹配的原创建回执，结果仍待核对。')
+  })
+}
+async function checkDeployment(operation: CreationOperation) {
+  await run(async () => {
+    const subject = owner.value,
+      identity = auth.identityVersion,
+      session = getSessionId()
+    if (!operation || !session || !canRead.value) return
     checkedDeployment.value = undefined
-    const current = await api.capabilities.getDeployment(form.deploymentKey.trim(), {
-      silent: true
-    })
-    if (!disposed) checkedDeployment.value = current
+    checkedRequestId.value = ''
+    const current = () =>
+      !disposed &&
+      owner.value === subject &&
+      auth.identityVersion === identity &&
+      getSessionId() === session &&
+      canRead.value &&
+      creationOperations.value.some(
+        (item) =>
+          item.requestId === operation.requestId && item.deploymentKey === operation.deploymentKey
+      )
+    try {
+      const deployment = await api.capabilities.getDeployment(operation.deploymentKey, {
+        silent: true
+      })
+      if (!current()) return
+      checkedDeployment.value = deployment
+      checkedRequestId.value = operation.requestId
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
   })
 }
 async function toggle(row: CapabilityDeployment) {

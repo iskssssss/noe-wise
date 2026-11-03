@@ -49,6 +49,47 @@ afterEach(() => {
   localStorage.clear()
 })
 
+it('部署原请求遇 401 不刷新认证或重发，回执只读使用原请求号', async () => {
+  localStorage.setItem('mounts.access', 'token')
+  localStorage.setItem('mounts.refresh', 'refresh-token')
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(response(null, 401))
+    .mockResolvedValueOnce(
+      response({
+        request_id: 'req-1',
+        status: 'SUCCEEDED',
+        deployment_id: '123',
+        deployment_key: 'clock'
+      })
+    )
+  vi.stubGlobal('fetch', fetchMock)
+  const catalog = createCapabilityCatalogApi(client())
+  await expect(
+    catalog.createDeploymentWithReceipt('req-1', {
+      deploymentKey: 'clock',
+      toolVersionId: '202',
+      providerType: 'PLATFORM',
+      providerRef: 'get_current_time',
+      environment: 'DEVELOPMENT'
+    })
+  ).rejects.toThrow()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/capabilities/deployments/create-with-receipt')
+  const request = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+  expect(request).toMatchObject({
+    request_id: 'req-1',
+    payload: { deployment_key: 'clock', tool_version_id: '202' }
+  })
+  expect(await catalog.deploymentCreateReceipt('req-1')).toMatchObject({
+    request_id: 'req-1',
+    deployment_id: '123'
+  })
+  expect(fetchMock.mock.calls[1][0]).toBe(
+    '/api/v1/capabilities/deployments/create-with-receipt/result?request_id=req-1'
+  )
+})
+
 describe('CapabilityMount API wire contract', () => {
   it('maps the snake_case mount-set list into typed camelCase fields', async () => {
     localStorage.setItem('mounts.access', 'token')

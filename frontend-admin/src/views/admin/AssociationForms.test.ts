@@ -17,16 +17,37 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({ user: { tenant_id: '7', sub: '8' }, identityVersion: 1 })
+  useAuthStore: () => ({
+    user: {
+      tenant_id: '7',
+      sub: '8',
+      permissions: ['foundation.capabilities.read', 'foundation.capabilities.create']
+    },
+    identityVersion: 1
+  })
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'test-session',
   api: {
     capabilities: {
       definitions: mocks.definitions,
       deployments: mocks.deployments,
       versions: mocks.versions,
       platformTools: mocks.platformTools,
-      createDeployment: mocks.createDeployment
+      createDeployment: mocks.createDeployment,
+      createDeploymentWithReceipt: async (
+        requestId: string,
+        payload: { deploymentKey: string }
+      ) => {
+        await mocks.createDeployment(payload)
+        return {
+          status: 'SUCCEEDED',
+          request_id: requestId,
+          deployment_id: '123',
+          deployment_key: payload.deploymentKey
+        }
+      },
+      deploymentCreateReceipt: vi.fn()
     },
     connectors: { instances: mocks.instances },
     skillDrafts: {

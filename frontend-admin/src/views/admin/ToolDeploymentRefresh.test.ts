@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
 import { ElButton, ElDrawer, ElInput, ElSelect } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
@@ -16,16 +16,19 @@ const calls = vi.hoisted(() => ({
   platformTools: vi.fn(),
   instances: vi.fn(),
   createDeployment: vi.fn(),
+  deploymentCreateReceipt: vi.fn(),
   getDeployment: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn()
 }))
+const browser = vi.hoisted(() => ({ session: 'test-session' }))
 vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@skillforge/shared/feedback')>()),
   message: { success: calls.success, warning: calls.warning, error: calls.error }
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => browser.session,
   api: {
     capabilities: {
       deployments: calls.deployments,
@@ -34,12 +37,18 @@ vi.mock('../../api', () => ({
       stopDeployment: calls.stopDeployment,
       definitions: calls.definitions,
       platformTools: calls.platformTools,
-      createDeployment: calls.createDeployment,
+      createDeploymentWithReceipt: calls.createDeployment,
+      deploymentCreateReceipt: calls.deploymentCreateReceipt,
       getDeployment: calls.getDeployment
     },
     connectors: { instances: calls.instances }
   }
 }))
+const authState = reactive({
+  user: { tenant_id: '7', sub: '8', permissions: ['foundation.capabilities.read'] },
+  identityVersion: 1
+})
+vi.mock('../../stores/auth', () => ({ useAuthStore: () => authState }))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
 let wrapper: VueWrapper | undefined
 const deployment = (key: string, version: string) => ({
@@ -53,6 +62,11 @@ const deployment = (key: string, version: string) => ({
 })
 beforeEach(() => {
   vi.resetAllMocks()
+  sessionStorage.clear()
+  localStorage.clear()
+  browser.session = 'test-session'
+  authState.user = { tenant_id: '7', sub: '8', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion = 1
   calls.deployments.mockResolvedValue([deployment('original', '1')])
   calls.version.mockImplementation(async (id: string) => ({
     id,
@@ -64,7 +78,15 @@ beforeEach(() => {
   calls.instances.mockResolvedValue({
     items: [{ instance_id: 'server', name: '客户系统', executor_type: 'mcp' }]
   })
-  calls.createDeployment.mockResolvedValue(deployment('new-one', '2'))
+  calls.createDeployment.mockImplementation(
+    async (requestId: string, input: { deploymentKey: string }) => ({
+      status: 'SUCCEEDED',
+      request_id: requestId,
+      deployment_id: '123',
+      deployment_key: input.deploymentKey
+    })
+  )
+  calls.deploymentCreateReceipt.mockResolvedValue(undefined)
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -122,6 +144,7 @@ it('preserves loaded names after metadata failure and recovers through the same 
 const permissions = ref<string[]>([])
 function mountWithPermissions(codes: string[]) {
   permissions.value = codes
+  authState.user.permissions = [...new Set([...codes, 'foundation.capabilities.read'])]
   wrapper = mount(ToolDeploymentsPage, {
     attachTo: document.body,
     global: { directives: { permission: createPermissionDirective(() => permissions) } }
@@ -180,6 +203,250 @@ async function prepareCreate() {
   await flushPromises()
 }
 
+it('断连后关闭页面并以新会话重开，只读原回执且不重复创建', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  calls.createDeployment.mockRejectedValueOnce(new Error('连接中断'))
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const requestId = calls.createDeployment.mock.calls[0]![0] as string
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(wrapper!.text()).toContain('创建结果尚未确认')
+  wrapper!.unmount()
+  browser.session = 'new-session'
+  calls.deploymentCreateReceipt.mockResolvedValue({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  })
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledTimes(2)
+  expect(wrapper!.text()).toContain('工具部署已创建：new-one')
+  expect(action('新增部署')!.props('disabled')).toBe(false)
+  expect(calls.createDeployment).toHaveBeenCalledTimes(1)
+  expect(
+    localStorage.getItem(`skillforge.tool-deployment-create:["7","8"]:${requestId}`)
+  ).toBeNull()
+})
+
+it('不匹配的原回执和身份变化的迟到响应都不能解锁', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  calls.createDeployment.mockRejectedValueOnce(new Error('连接中断'))
+  let complete!: (receipt: unknown) => void
+  calls.deploymentCreateReceipt.mockReturnValueOnce(
+    new Promise((resolve) => {
+      complete = resolve
+    })
+  )
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const requestId = calls.createDeployment.mock.calls[0]![0] as string
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  complete({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  })
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('工具部署已创建：new-one')
+  expect(
+    localStorage.getItem(`skillforge.tool-deployment-create:["7","8"]:${requestId}`)
+  ).not.toBeNull()
+  authState.user = { tenant_id: '7', sub: '8', permissions: ['foundation.capabilities.read'] }
+  await flushPromises()
+  calls.deploymentCreateReceipt.mockResolvedValueOnce({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'other'
+  })
+  await action('核对原创建结果')!.trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain('创建结果尚未确认')
+  expect(calls.createDeployment).toHaveBeenCalledTimes(1)
+})
+
+it('不同标签保存的两个原请求分别恢复，确认一个不覆盖另一个', async () => {
+  const first = '11111111-1111-4111-8111-111111111111'
+  const second = '22222222-2222-4222-8222-222222222222'
+  const key = (id: string) => `skillforge.tool-deployment-create:["7","8"]:${id}`
+  localStorage.setItem(key(first), JSON.stringify({ requestId: first, deploymentKey: 'one' }))
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  const record = JSON.stringify({ requestId: second, deploymentKey: 'two' })
+  localStorage.setItem(key(second), record)
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: key(second), newValue: record, storageArea: localStorage })
+  )
+  await flushPromises()
+  expect(wrapper!.text()).toContain('部署“一”的创建结果尚未确认'.replace('一', 'one'))
+  expect(wrapper!.text()).toContain('部署“two”的创建结果尚未确认')
+  expect(action('新增部署')!.props('disabled')).toBe(true)
+  calls.deploymentCreateReceipt.mockResolvedValueOnce({
+    status: 'SUCCEEDED',
+    request_id: first,
+    deployment_id: '123',
+    deployment_key: 'one'
+  })
+  const cards = wrapper!.findAll('section.admin-card')
+  const firstCard = cards.find((card) => card.text().includes(first))!
+  await firstCard
+    .findAllComponents(ElButton)
+    .find((button: { text: () => string }) => button.text() === '核对原创建结果')!
+    .trigger('click')
+  await flushPromises()
+  expect(localStorage.getItem(key(first))).toBeNull()
+  expect(localStorage.getItem(key(second))).toBe(record)
+  expect(wrapper!.text()).toContain('部署“two”的创建结果尚未确认')
+  localStorage.removeItem(key(second))
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: key(second), oldValue: record, storageArea: localStorage })
+  )
+  await flushPromises()
+  expect(wrapper!.text()).toContain('部署“two”的创建结果尚未确认')
+  expect(action('新增部署')!.props('disabled')).toBe(true)
+  expect(calls.createDeployment).not.toHaveBeenCalled()
+})
+
+it('切换主体后清除旧目录且丢弃迟到的版本读取', async () => {
+  let finish!: (version: { id: string; name: string; versionKey: string }) => void
+  calls.version.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  mountWithPermissions([])
+  await flushPromises()
+  expect(wrapper!.text()).toContain('original')
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('original')
+  finish({ id: '1', name: '旧身份工具', versionKey: 'v1' })
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('旧身份工具')
+  expect(wrapper!.text()).not.toContain('original')
+})
+
+it('不同主体仅恢复各自原请求', async () => {
+  const first = '11111111-1111-4111-8111-111111111111'
+  const second = '22222222-2222-4222-8222-222222222222'
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","8"]:${first}`,
+    JSON.stringify({ requestId: first, deploymentKey: 'first-actor' })
+  )
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","9"]:${second}`,
+    JSON.stringify({ requestId: second, deploymentKey: 'second-actor' })
+  )
+  mountWithPermissions([])
+  await flushPromises()
+  expect(wrapper!.text()).toContain('first-actor')
+  expect(wrapper!.text()).not.toContain('second-actor')
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledExactlyOnceWith(first)
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  await flushPromises()
+  expect(wrapper!.text()).toContain('second-actor')
+  expect(wrapper!.text()).not.toContain('first-actor')
+})
+
+it('切换到没有待核对请求的主体不展示或保留原主体记录', async () => {
+  const first = '11111111-1111-4111-8111-111111111111'
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","8"]:${first}`,
+    JSON.stringify({ requestId: first, deploymentKey: 'first-actor' })
+  )
+  mountWithPermissions([])
+  await flushPromises()
+  expect(wrapper!.text()).toContain('first-actor')
+  authState.user = { tenant_id: '99', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('first-actor')
+  expect(wrapper!.text()).not.toContain('创建结果尚未确认')
+  expect(
+    localStorage.getItem(`skillforge.tool-deployment-create:["7","8"]:${first}`)
+  ).not.toBeNull()
+})
+
+it('切换主体后迟到目录与读取失败均不进入新主体页面', async () => {
+  let finish!: (value: ReturnType<typeof deployment>[]) => void
+  calls.deployments.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  mountWithPermissions([])
+  await flushPromises()
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  finish([deployment('旧租户部署', '1')])
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('旧租户部署')
+  expect(calls.version).not.toHaveBeenCalled()
+  expect(calls.error).not.toHaveBeenCalled()
+})
+
+it('创建响应前撤销权限不清除原请求或展示迟到结果', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  let finish!: (receipt: unknown) => void
+  calls.createDeployment.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const requestId = calls.createDeployment.mock.calls[0]![0] as string
+  authState.user.permissions = ['foundation.capabilities.read']
+  finish({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  })
+  await flushPromises()
+  expect(
+    localStorage.getItem(`skillforge.tool-deployment-create:["7","8"]:${requestId}`)
+  ).not.toBeNull()
+  expect(wrapper!.text()).toContain('创建结果尚未确认')
+  expect(calls.success).not.toHaveBeenCalled()
+})
+
+it('主体切换后查看当前部署的迟到失败不显示给新主体', async () => {
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","8"]:${requestId}`,
+    JSON.stringify({ requestId, deploymentKey: 'first-actor' })
+  )
+  mountWithPermissions([])
+  await flushPromises()
+  let fail!: (reason: unknown) => void
+  calls.getDeployment.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      fail = reject
+    })
+  )
+  await action('查看当前部署')!.trigger('click')
+  await flushPromises()
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  fail(new HttpClientError({ status: 403, code: 'FORBIDDEN', userMessage: '旧身份无权访问' }))
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('first-actor')
+  expect(calls.error).not.toHaveBeenCalled()
+})
+
 it('创建成功并刷新后展示新部署及一次成功消息', async () => {
   mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
@@ -189,7 +456,7 @@ it('创建成功并刷新后展示新部署及一次成功消息', async () => {
   await flushPromises()
   expect(wrapper!.text()).toContain('new-one')
   expect(calls.createDeployment).toHaveBeenCalledTimes(1)
-  expect(calls.success).toHaveBeenCalledExactlyOnceWith('工具部署已创建')
+  expect(calls.success).toHaveBeenCalledExactlyOnceWith('工具部署已创建：new-one')
   expect(calls.warning).not.toHaveBeenCalled()
 })
 
@@ -205,7 +472,7 @@ it('创建成功后刷新失败保留回执和筛选，手动刷新只读取', a
   expect(wrapper!.text()).toContain('new-one')
   expect(wrapper!.text()).not.toContain('original')
   expect(calls.warning).toHaveBeenCalledExactlyOnceWith(
-    '工具部署已创建；列表刷新失败。请点击“刷新”，不必重复操作。'
+    '工具部署已创建：new-one；列表刷新失败。请点击“刷新”，不必重复操作。'
   )
   expect(calls.success).not.toHaveBeenCalled()
   calls.deployments.mockResolvedValue([deployment('original', '1'), deployment('new-one', '2')])
@@ -248,7 +515,7 @@ it.each([
   )
   expect(wrapper!.text()).toContain('original')
   expect(calls.warning).toHaveBeenCalledExactlyOnceWith(
-    '工具部署创建结果尚未确认，请只读核对原标识，不要重复创建。'
+    '工具部署创建结果尚未确认，请核对原请求，不要重复创建。'
   )
   expect(calls.success).not.toHaveBeenCalled()
   expect(calls.deployments).toHaveBeenCalledTimes(1)
@@ -299,17 +566,18 @@ it('初次读取和创建后刷新均失败时保留回执并标明目录不完�
   expect(calls.createDeployment).toHaveBeenCalledTimes(1)
 })
 
-it('明确业务拒绝保留输入且允许修改，不标记未知', async () => {
+it('持久拒绝回执保留输入且允许修改，不标记未知', async () => {
   mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
   await prepareCreate()
-  calls.createDeployment.mockRejectedValueOnce(
-    new HttpClientError({
-      status: 422,
-      code: 'CAPABILITY_VERSION_NOT_PUBLISHED',
-      userMessage: '工具版本未发布'
-    })
-  )
+  calls.createDeployment.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    status: 'REJECTED',
+    deployment_id: null,
+    deployment_key: 'new-one',
+    error_code: 'TOOL_DEPLOYMENT_CREATE_REJECTED',
+    message: '工具版本未发布'
+  }))
   await action('创建')!.trigger('click')
   await flushPromises()
   expect(calls.error).toHaveBeenCalledExactlyOnceWith('工具版本未发布')
@@ -321,16 +589,23 @@ it('明确业务拒绝保留输入且允许修改，不标记未知', async () =
   expect(calls.deployments).toHaveBeenCalledTimes(1)
 })
 
-it('部署标识重复是明确拒绝，可修改后重新创建', async () => {
+it('部署标识拒绝回执可修改后重新创建', async () => {
   mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
   await prepareCreate()
-  calls.createDeployment.mockRejectedValueOnce(
-    new HttpClientError({ status: 409, code: 'CAPABILITY_DUPLICATE', userMessage: '冲突' })
-  )
+  calls.createDeployment.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    status: 'REJECTED',
+    deployment_id: null,
+    deployment_key: 'new-one',
+    error_code: 'TOOL_DEPLOYMENT_CREATE_REJECTED',
+    message: '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
+  }))
   await action('创建')!.trigger('click')
   await flushPromises()
-  expect(calls.error).toHaveBeenCalledExactlyOnceWith('部署标识已存在，请更换标识后创建。')
+  expect(calls.error).toHaveBeenCalledExactlyOnceWith(
+    '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
+  )
   expect(action('创建')!.props('disabled')).toBe(false)
   expect(wrapper!.text()).not.toContain('创建结果尚未确认')
   await wrapper!.findComponent(ElDrawer).findComponent(ElInput).find('input').setValue('another')
@@ -338,6 +613,7 @@ it('部署标识重复是明确拒绝，可修改后重新创建', async () => {
   await flushPromises()
   expect(calls.createDeployment).toHaveBeenCalledTimes(2)
   expect(calls.createDeployment).toHaveBeenLastCalledWith(
+    expect.any(String),
     expect.objectContaining({ deploymentKey: 'another' })
   )
 })
@@ -356,6 +632,7 @@ it('部署标识 129 字符在入口拒绝，127 字符允许提交', async () =
   await action('创建')!.trigger('click')
   await flushPromises()
   expect(calls.createDeployment).toHaveBeenCalledExactlyOnceWith(
+    expect.any(String),
     expect.objectContaining({ deploymentKey: 'a'.repeat(127) })
   )
 })
