@@ -1,8 +1,41 @@
 import { expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h, reactive, ref } from 'vue'
-import { ElForm, ElSelect, ElOption, type FormInstance } from 'element-plus'
+import { ElForm, ElFormItem, ElInput, ElSelect, ElOption, type FormInstance } from 'element-plus'
 import AgentConfigFields from '@skillforge/shared/admin/AgentConfigFields.vue'
+
+it.each([false, true])('说明字段按宿主模型能力展示并提交：%s', async (supported) => {
+  const value = reactive({
+    name: '测试',
+    system_prompt: '职责',
+    model_config_id: 'model' as string | null,
+    ...(supported ? { description: '原说明' } : {})
+  })
+  const wrapper = mount(
+    defineComponent({
+      setup: () => () =>
+        h(ElForm, { model: value }, () =>
+          h(AgentConfigFields, {
+            modelValue: value,
+            models: [],
+            'onUpdate:modelValue': (next: typeof value) => Object.assign(value, next)
+          })
+        )
+    })
+  )
+  try {
+    const field = wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '说明')
+    expect(Boolean(field)).toBe(supported)
+    if (field) {
+      await field.getComponent(ElInput).setValue('新说明')
+      expect(value.description).toBe('新说明')
+    } else expect(value).not.toHaveProperty('description')
+  } finally {
+    wrapper.unmount()
+  }
+})
 
 it('平台侧未选模型时仍阻止保存', async () => {
   const form = ref<FormInstance>()
@@ -23,19 +56,23 @@ it('平台侧未选模型时仍阻止保存', async () => {
   }
 })
 
-
 it('同名模型显示模型、提供方和配置标识，选择仍提交原配置 ID', async () => {
-  const value = reactive({ name: '测试', system_prompt: '职责', model_config_id: '' as string | null })
+  const value = reactive({
+    name: '测试',
+    system_prompt: '职责',
+    model_config_id: '' as string | null
+  })
   const wrapper = mount(
     defineComponent({
-      setup: () => () => h(AgentConfigFields, {
-        modelValue: value,
-        models: [
-          { id: '101', name: '对话模型', model_id: 'deepseek-flash', provider_id: 'east' },
-          { id: '102', name: '对话模型', model_id: 'deepseek-flash', provider_id: 'west' }
-        ],
-        'onUpdate:modelValue': (next: typeof value) => Object.assign(value, next)
-      })
+      setup: () => () =>
+        h(AgentConfigFields, {
+          modelValue: value,
+          models: [
+            { id: '101', name: '对话模型', model_id: 'deepseek-flash', provider_id: 'east' },
+            { id: '102', name: '对话模型', model_id: 'deepseek-flash', provider_id: 'west' }
+          ],
+          'onUpdate:modelValue': (next: typeof value) => Object.assign(value, next)
+        })
     })
   )
   try {

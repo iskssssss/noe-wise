@@ -17,6 +17,8 @@ test('编辑后发布并试用同一智能体的新配置', async ({ page }) => 
   const marker = required('E2E_TRIAL_PROMPT_MARKER')
   const expectedReply = required('E2E_EXPECTED_REPLY')
   const baseline = process.env.E2E_AGENT_TRIAL_MODE === 'baseline'
+  const descriptionMode = process.env.E2E_AGENT_DESCRIPTION
+  let descriptionFields = 0
   let publications = 0
   let sessionWrites = 0
   let chatWrites = 0
@@ -36,6 +38,20 @@ test('编辑后发布并试用同一智能体的新配置', async ({ page }) => 
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`/admin/agents/${agent}$`))
   await page.getByLabel('系统提示词', { exact: true }).fill(`你是测试智能体。${marker}`)
+  if (descriptionMode) {
+    const description = page.getByRole('textbox', { name: '说明', exact: true })
+    descriptionFields = await description.count()
+    expect(descriptionFields).toBe(descriptionMode === 'baseline' ? 1 : 0)
+    if (descriptionMode === 'baseline')
+      await description.fill(required('E2E_TRIAL_DESCRIPTION_MARKER'))
+    await page
+      .getByRole('textbox', { name: '角色描述', exact: true })
+      .fill(required('E2E_TRIAL_ROLE_MARKER'))
+    await page.screenshot({
+      path: join(evidence, 'agent-description-before-publish.png'),
+      fullPage: true
+    })
+  }
   const publish = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -62,6 +78,10 @@ test('编辑后发布并试用同一智能体的新配置', async ({ page }) => 
   const receipt = (await result.json()).data
   expect(String(receipt.agent_id)).toBe(agent)
   expect(receipt.request_id).toBe(command.request_id)
+  if (descriptionMode) {
+    expect(command.payload.role_description).toBe(required('E2E_TRIAL_ROLE_MARKER'))
+    expect(command.payload).not.toHaveProperty('description')
+  }
   expect(String(receipt.publication_id)).toMatch(/^[1-9]\d*$/)
   expect(Number(receipt.revision)).toBeGreaterThan(0)
   if (baseline) {
@@ -88,6 +108,25 @@ test('编辑后发布并试用同一智能体的新配置', async ({ page }) => 
   expect(detail.status).toBe(200)
   expect(String(detail.data.id)).toBe(agent)
   expect(Number(detail.data.published_revision)).toBe(Number(receipt.revision))
+  if (descriptionMode) {
+    expect(detail.data.role_description).toBe(required('E2E_TRIAL_ROLE_MARKER'))
+    expect(detail.data).not.toHaveProperty('description')
+    expect(JSON.stringify(detail.data)).not.toContain(required('E2E_TRIAL_DESCRIPTION_MARKER'))
+    await writeFile(
+      join(evidence, 'agent-description-persistence.json'),
+      JSON.stringify(
+        {
+          descriptionMode,
+          descriptionFields,
+          payload: command.payload,
+          persistedRole: detail.data.role_description,
+          hasPersistedDescription: Object.hasOwn(detail.data, 'description')
+        },
+        null,
+        2
+      )
+    )
+  }
   await page.screenshot({ path: join(evidence, 'agent-trial-ready.png'), fullPage: true })
   await page.locator('.el-select').filter({ hasText: '终端用户' }).getByRole('combobox').click()
   await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
@@ -121,6 +160,8 @@ test('编辑后发布并试用同一智能体的新配置', async ({ page }) => 
     JSON.stringify({
       agentId: agent,
       marker,
+      descriptionMode,
+      descriptionFields,
       receipt,
       sessionId: String(session.session_id),
       runId: String(chat.execution_id),

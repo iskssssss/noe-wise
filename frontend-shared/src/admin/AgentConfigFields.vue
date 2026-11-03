@@ -44,7 +44,7 @@ const formTipId = useId()
       @update:model-value="update('name', $event)"
     />
   </ElFormItem>
-  <ElFormItem label="说明"
+  <ElFormItem v-if="'description' in modelValue" label="说明"
     ><ElInput
       v-described-by="formTipId + '-field-1'"
       :aria-describedby="formTipId + '-field-1'"
@@ -76,7 +76,11 @@ const formTipId = useId()
       <ElOption
         v-for="model in models"
         :key="model.id"
-        :label="[model.name, model.model_id, model.provider_id, '标识 ' + model.id].filter(Boolean).join(' · ')"
+        :label="
+          [model.name, model.model_id, model.provider_id, '标识 ' + model.id]
+            .filter(Boolean)
+            .join(' · ')
+        "
         :value="model.id"
     /></ElSelect>
     <p :id="`${helpId}-model`" class="admin-field-help">

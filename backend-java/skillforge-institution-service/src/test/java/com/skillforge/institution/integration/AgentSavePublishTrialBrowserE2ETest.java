@@ -26,6 +26,8 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
     @Test void editedAgentPublicationIsUsedByRealTrial() throws Exception {
         login();
         String marker="TRIAL_CONFIG_"+SnowflakeIds.nextId();
+        String roleMarker = "TRIAL_ROLE_" + SnowflakeIds.nextId();
+        String descriptionMarker = "TRIAL_UNUSED_DESCRIPTION_" + SnowflakeIds.nextId();
         Path evidence=Path.of("build","runtime-e2e","agent-save-publish-trial-"+SnowflakeIds.nextId()).toAbsolutePath();
         Path browser=evidence.resolve("playwright");Files.createDirectories(browser);
         Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");
@@ -38,6 +40,7 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
         var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());
         env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);
         env.put("E2E_AGENT_ID",agentId);env.put("E2E_TRIAL_PROMPT_MARKER",marker);env.put("E2E_EXPECTED_REPLY","fixture-answer-"+runId);
+        env.put("E2E_TRIAL_ROLE_MARKER", roleMarker); env.put("E2E_TRIAL_DESCRIPTION_MARKER", descriptionMarker);
         env.remove("SDK4_LIVE_MODEL_KEY");env.remove("E2E_LIVE_MODEL");
         Process process=command.start();
         try(var owned=new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -84,6 +87,15 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
         var codec=new AgentExecutionCodec(new CodecLimits(properties.getMaxPayloadCodeUnits(),properties.getMaxPayloadNodes(),properties.getMaxPayloadDepth()));
         var actual=ModelRequestTestMaterials.decode(codec,new TypedPayload(material.get("schema_id").toString(),material.get("canonical_json").toString()),jdbc,tenantId);
         assertTrue(actual.request().messages().stream().anyMatch(message->message.role()==ModelPort.ModelRole.SYSTEM && message.textContent().contains(marker)),"真实模型请求必须包含本次发布后的提示词");
+        if (System.getenv("E2E_AGENT_DESCRIPTION") != null) {
+            String mode = System.getenv("E2E_AGENT_DESCRIPTION");
+            assertEquals(mode, facts.path("descriptionMode").asText());
+            assertEquals("baseline".equals(mode) ? 1 : 0, facts.path("descriptionFields").asInt());
+            assertTrue(actual.request().messages().stream().anyMatch(message -> message.role() == ModelPort.ModelRole.SYSTEM && message.textContent().contains(roleMarker)), "角色描述须进入本次真实模型系统指令");
+            assertTrue(actual.request().messages().stream().noneMatch(message -> message.textContent().contains(descriptionMarker)), "未保存的说明不能冒充已生效配置");
+            assertEquals(1, countRuntime("SELECT count(*) FROM nw_agent_publications WHERE tenant_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND snapshot::text LIKE ? AND snapshot::text NOT LIKE ?", tenantId, publishedId, "%" + roleMarker + "%", "%" + descriptionMarker + "%"));
+            Files.writeString(evidence.resolve("description-runtime.json"), objectMapper.writeValueAsString(Map.of("mode", mode, "agentId", agentId, "publicationId", publishedId, "runId", run, "descriptionFields", facts.path("descriptionFields").asInt(), "roleInModel", true, "unusedDescriptionInModel", false)));
+        }
         assertEquals(1,provider.requestCount());
         assertTrue(countRuntime("SELECT count(*) FROM nw_usage_events WHERE tenant_id=CAST(? AS bigint) AND run_id=? AND agent_revision_id=CAST(? AS bigint) AND agent_revision=?",tenantId,run,publishedId,revision)>0,"用量事实须归属同一发布修订");
         Files.writeString(evidence.resolve("trial-runtime.json"),objectMapper.writeValueAsString(Map.of("agentId",agentId,"publicationId",publishedId,"revision",revision,"runId",run,"modelActions",1,"matchingPrompt",true,"matchingUsageRevision",true)));
