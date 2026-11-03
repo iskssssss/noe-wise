@@ -71,7 +71,9 @@
           ? '任务尚未读取成功，请重新查询'
           : appliedQuery
             ? '当前条件没有匹配任务'
-            : '此会话暂无任务'
+            : appliedIncludeClosed
+              ? '此会话暂无任务'
+              : '当前没有进行中的任务，可勾选“包含已结束任务”查看历史'
       "
       ><ElTableColumn
         min-width="200"
