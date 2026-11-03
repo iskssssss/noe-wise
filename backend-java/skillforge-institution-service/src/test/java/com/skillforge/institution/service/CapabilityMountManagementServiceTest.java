@@ -175,6 +175,18 @@ class CapabilityMountManagementServiceTest {
     }
 
     @Test
+    void derivesSkillActivationWhenRequestOmitsIt() {
+        configureCatalog(CapabilityType.SKILL, 100L, 101L, "ALWAYS");
+        var request = new CapabilityMountRequest(CapabilityType.SKILL, 100L, 101L,
+                new SkillMountConfigRequest(null, 1000L), null, null, null, 0);
+        service.create(7L, 9L, request);
+        var command = ArgumentCaptor.forClass(com.skillforge.core.agent.capabilitymount.CreateCapabilityMountCommand.class);
+        verify(persistence).create(command.capture());
+        assertThat(command.getValue().config()).isEqualTo(
+                new CapabilityMount.SkillMountConfig(SkillActivationMode.ALWAYS, 1000L));
+    }
+
+    @Test
     void rejectsInvalidPublishedSkillActivationWithoutCreatingMount() {
         configureCatalog(CapabilityType.SKILL, 100L, 101L, "INVALID_MODE");
         assertStatus(HttpStatus.UNPROCESSABLE_ENTITY,

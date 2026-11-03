@@ -547,19 +547,8 @@
             </ElFormItem></ElCollapseItem
           ></ElCollapse
         ><template v-if="mountType === 'SKILL'"
-          ><ElFormItem label="激活方式"
-            ><ElSelect
-              v-described-by="formTipId + '-field-6'"
-              :aria-describedby="formTipId + '-field-6'"
-              v-model="activation"
-              ><ElOption value="ALWAYS" label="始终激活" /><ElOption
-                value="ON_DEMAND"
-                label="按需激活"
-            /></ElSelect>
-            <FieldTip :id="formTipId + '-field-6'"
-              >选择技能在什么条件下进入执行上下文。</FieldTip
-            > </ElFormItem
-          ><ElFormItem label="Token 预算" required :error="tokenBudgetError"
+          ><p class="admin-field-help">激活方式由技能的当前发布版本决定。</p>
+          <ElFormItem label="Token 预算" required :error="tokenBudgetError"
             ><ElInputNumber
               v-described-by="'mount-token-help'"
               aria-describedby="mount-token-help"
@@ -859,8 +848,7 @@ import {
   type CapabilityMount,
   type CapabilityMountRequest,
   type CapabilityDeployment,
-  type WorkflowMountOption,
-  type SkillActivationMode
+  type WorkflowMountOption
 } from '../../api'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { useAuthStore } from '../../stores/auth'
@@ -1481,7 +1469,6 @@ const mountSnapshot = () =>
     mountType.value,
     versionId.value,
     priority.value,
-    activation.value,
     tokenBudget.value,
     deploymentKey.value,
     workflowInstanceId.value,
@@ -1495,7 +1482,6 @@ const mountOpen = ref(false),
   definitionId = ref<string>(),
   versionId = ref<string>(),
   priority = ref(0),
-  activation = ref<SkillActivationMode>('ON_DEMAND'),
   tokenBudget = ref(2000),
   deploymentKey = ref(''),
   deployments = ref<CapabilityDeployment[]>([]),
@@ -2077,7 +2063,6 @@ async function openMount() {
     onboardingOpen.value = false
     workflowOnboardingOpen.value = false
     advancedToolMount.value = false
-    activation.value = 'ON_DEMAND'
     tokenBudget.value = 2000
     await readMountOptions()
     if (
@@ -2128,7 +2113,7 @@ async function addMount() {
       request = {
         ...base,
         capabilityType: 'SKILL',
-        skillConfig: { activationMode: activation.value, tokenBudget: tokenBudget.value }
+        skillConfig: { tokenBudget: tokenBudget.value }
       }
     } else if (mountType.value === 'TOOL') {
       const key = tool

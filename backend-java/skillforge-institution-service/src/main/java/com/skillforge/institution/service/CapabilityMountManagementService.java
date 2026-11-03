@@ -319,8 +319,8 @@ public class CapabilityMountManagementService {
                     requireSelected(type, request.skillConfig() != null,
                             request.toolConfig(), request.workflowConfig(), request.knowledgeConfig());
                     SkillMountConfigRequest value = request.skillConfig();
-                    if (value.activationMode() == null || value.tokenBudget() == null) {
-                        throw invalid("SKILL config 必须包含 activationMode/tokenBudget", null);
+                    if (value.tokenBudget() == null) {
+                        throw invalid("SKILL config 必须包含 tokenBudget", null);
                     }
                     yield new SkillMountConfig(com.skillforge.core.capability.SkillActivationMode.valueOf(
                             String.valueOf(version.descriptor().get("activation_mode"))), value.tokenBudget());

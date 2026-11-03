@@ -111,7 +111,7 @@ export type CapabilityMountRequest = {
 } & (
   | {
       capabilityType: 'SKILL'
-      skillConfig: SkillMountConfig
+      skillConfig: { activationMode?: SkillActivationMode; tokenBudget: number }
       toolConfig?: never
       workflowConfig?: never
       knowledgeConfig?: never
@@ -690,6 +690,7 @@ function requestToWire(request: CapabilityMountRequest): Record<string, unknown>
       return fail('SKILL config is required')
     }
     if (
+      request.skillConfig.activationMode !== undefined &&
       request.skillConfig.activationMode !== 'ALWAYS' &&
       request.skillConfig.activationMode !== 'ON_DEMAND'
     )
@@ -697,7 +698,9 @@ function requestToWire(request: CapabilityMountRequest): Record<string, unknown>
     return {
       ...base,
       skill_config: {
-        activation_mode: request.skillConfig.activationMode,
+        ...(request.skillConfig.activationMode === undefined
+          ? {}
+          : { activation_mode: request.skillConfig.activationMode }),
         token_budget: positiveNumber(request.skillConfig.tokenBudget, 'skillConfig.tokenBudget')
       }
     }

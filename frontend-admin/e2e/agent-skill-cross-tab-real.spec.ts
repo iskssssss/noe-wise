@@ -123,12 +123,8 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   const selection = drawer.locator('.el-form-item').filter({ hasText: '按名称、用途或标识查找' })
   await selection.locator('.el-select__wrapper').click()
   await page.getByRole('option').filter({ hasText: 'cross-tab-skill' }).click()
-  await drawer
-    .locator('.el-form-item')
-    .filter({ hasText: '激活方式' })
-    .locator('.el-select__wrapper')
-    .click()
-  await page.getByRole('option', { name: '始终激活', exact: true }).click()
+  await expect(drawer.getByText('激活方式由技能的当前发布版本决定。')).toBeVisible()
+  await expect(drawer.getByRole('combobox', { name: '激活方式' })).toHaveCount(0)
   expect(mountPosts).toBe(0)
   await page.screenshot({ path: join(evidence, 'skill-before-mount.png'), fullPage: true })
   const mounted = page.waitForResponse(
@@ -147,7 +143,7 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   expect(String(command.agent_id)).toBe(agent)
   expect(command.payload.capability_type).toBe('SKILL')
   expect(String(command.payload.capability_definition_id)).toBe(definition)
-  expect(command.payload.skill_config.activation_mode).toBe('ALWAYS')
+  expect(command.payload.skill_config).not.toHaveProperty('activation_mode')
   expect(mount).toBeTruthy()
   expect(String(mount.capability_version_id)).toBe(version)
   expect(mountPosts).toBe(1)
