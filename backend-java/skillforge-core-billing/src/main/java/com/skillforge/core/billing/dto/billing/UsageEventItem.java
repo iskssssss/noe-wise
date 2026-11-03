@@ -28,7 +28,7 @@ import java.math.BigDecimal;
  * @param totalAmount 合计精确金额（分）
  * @param exchangeRateToCny 写时汇率快照
  * @param pricingSnapshotVersion 写时计价快照版本
- * @param usageEventKind 事实类型（measured / reconciliation / adjustment）
+ * @param usageEventKind 事实类型（measured / usage_report / reconciliation / adjustment）
  * @param amountStatus 金额状态（priced / unpriced / unresolved）
  * @param adjustmentOfEventId 对账/补偿引用的原始事件 ID
  * @param eventId 业务幂等 identifier

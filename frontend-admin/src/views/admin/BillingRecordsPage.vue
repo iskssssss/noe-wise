@@ -60,6 +60,9 @@
       <p v-if="filtersChanged" class="admin-muted" role="status">
         筛选条件已修改，点击查询后应用；翻页仍使用上次查询条件。
       </p>
+      <p v-if="tab === 'records'" class="admin-field-help">
+        用量报告记录调用过程，不代表新增调用；调用次数和费用请查看请求汇总。
+      </p>
       <ElTable
         table-layout="auto"
         v-if="tab === 'records'"
@@ -71,7 +74,11 @@
           show-overflow-tooltip
           prop="event_type"
           label="类型"
-        /><ElTableColumn
+        /><ElTableColumn width="120" label="事实类型"
+          ><template #default="{ row }">{{
+            usageKindLabel(row.usage_event_kind)
+          }}</template></ElTableColumn
+        ><ElTableColumn
           min-width="200"
           show-overflow-tooltip
           prop="model"
@@ -322,7 +329,11 @@
             min-width="140"
             show-overflow-tooltip
             prop="event_type"
-            label="事件" /><ElTableColumn
+            label="事件" /><ElTableColumn width="120" label="事实类型"
+            ><template #default="{ row }">{{
+              usageKindLabel(row.usage_event_kind)
+            }}</template></ElTableColumn
+          ><ElTableColumn
             min-width="200"
             show-overflow-tooltip
             prop="model"
@@ -377,6 +388,15 @@ import {
   type BillingRequestDetail,
   type TraceView
 } from '../../api'
+const usageKinds: Record<string, string> = {
+  measured: '计量结果',
+  usage_report: '用量报告',
+  reconciliation: '对账',
+  adjustment: '调整'
+}
+function usageKindLabel(kind?: string | null) {
+  return kind ? (usageKinds[kind] ?? kind) : '未记录'
+}
 const tab = ref('records'),
   range = ref<[string, string]>(),
   model = ref(''),
