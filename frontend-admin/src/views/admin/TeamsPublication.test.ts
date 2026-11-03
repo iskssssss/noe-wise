@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   saveAndPublish: vi.fn(),
   saveAndPublishResult: vi.fn(),
   push: vi.fn(),
+  session: 'browser-session',
   tenant: 'tenant',
   member: 'user',
   permissions: [
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   ]
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => mocks.session,
   api: {
     teams: {
       list: mocks.list,
@@ -79,6 +81,7 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.tenant = 'tenant'
   mocks.member = 'user'
+  mocks.session = 'browser-session'
   mocks.permissions = [
     'foundation.teams.read',
     'foundation.teams.create',
@@ -128,6 +131,97 @@ async function click(text: string) {
   await button(text).trigger('click')
   await flushPromises()
 }
+
+describe('团队成员目录前台刷新', () => {
+  it('返回页面只更新目录，保留草稿与成员选择', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    await open()
+    await click('新增团队')
+    const drawer = wrapper.findComponent(ElDrawer)
+    await drawer.findAllComponents(ElInput)[0]!.setValue('保留名称')
+    const [members, primary] = drawer.findAllComponents(ElSelect)
+    members!.vm.$emit('update:modelValue', ['agent-1'])
+    members!.vm.$emit('change', ['agent-1'])
+    await flushPromises()
+    mocks.agents.mockResolvedValueOnce({
+      items: [{ id: 'agent-3', name: '新成员', status: 'published' }]
+    })
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(mocks.agents).toHaveBeenCalledTimes(2)
+    expect(drawer.findAllComponents(ElInput)[0]!.props('modelValue')).toBe('保留名称')
+    expect(members!.props('modelValue')).toEqual(['agent-1'])
+    expect(primary!.props('modelValue')).toBe('agent-1')
+    expect(members!.findAllComponents(ElOption).map((option) => option.props('value'))).toContain(
+      'agent-3'
+    )
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(mocks.agents).toHaveBeenCalledTimes(2)
+  })
+
+  it('身份变化后丢弃旧读取且不以新会话自动读取旧抽屉', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    await open()
+    await click('新增团队')
+    let finish!: (value: { items: Array<{ id: string; name: string; status: string }> }) => void
+    mocks.agents.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    mocks.session = 'new-browser-session'
+    finish({ items: [{ id: 'old', name: '旧结果', status: 'published' }] })
+    await flushPromises()
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(mocks.agents).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).not.toContain('旧结果')
+  })
+
+  it('切换会话后丢弃迟到的读取错误', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    await open()
+    await click('新增团队')
+    let fail!: (reason: Error) => void
+    mocks.agents.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        })
+    )
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    mocks.session = 'new-browser-session'
+    fail(new Error('过期会话错误'))
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('过期会话错误')
+  })
+
+  it('读取权限撤销时丢弃已发出的目录结果', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    await open()
+    await click('新增团队')
+    let finish!: (value: { items: Array<{ id: string; name: string; status: string }> }) => void
+    mocks.agents.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    authState.user.permissions = authState.user.permissions.filter(
+      (p) => p !== 'foundation.agents.read'
+    )
+    finish({ items: [{ id: 'revoked', name: '已撤权结果', status: 'published' }] })
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('已撤权结果')
+  })
+})
 
 describe('团队保存配置后显式发布新修订', () => {
   it.each(['保存', '发布新修订', '保存并发布'])(

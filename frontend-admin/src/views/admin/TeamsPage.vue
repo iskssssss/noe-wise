@@ -315,7 +315,13 @@ import {
   useUnsavedChanges,
   useDrawerClose
 } from '@skillforge/shared/admin'
-import { api, type Team, type TeamDraft, type TeamSaveAndPublishReceipt } from '../../api'
+import {
+  api,
+  getSessionId,
+  type Team,
+  type TeamDraft,
+  type TeamSaveAndPublishReceipt
+} from '../../api'
 const {
   data,
   loading,
@@ -443,15 +449,33 @@ const open = ref(false),
   members = ref<string[]>([]),
   saved = ref(''),
   formRef = ref<FormInstance>()
+let directoryRequest = 0
 const {
   data: agentDirectory,
   loading: agentsLoading,
   error: agentLoadError,
   reload: reloadAgentDirectory,
   invalidate: invalidateAgents
-} = useResource(async () =>
-  (await api.agents.list()).items.filter((agent) => agent.status === 'published')
-)
+} = useResource(async () => {
+  const identity = pageIdentity.value,
+    session = getSessionId(),
+    epoch = editorEpoch,
+    request = ++directoryRequest
+  const current = () =>
+    !disposed &&
+    identity === pageIdentity.value &&
+    session === getSessionId() &&
+    epoch === editorEpoch &&
+    open.value
+  try {
+    const result = (await api.agents.list()).items.filter((agent) => agent.status === 'published')
+    if (!current()) throw Error('成员选项读取已失效')
+    return result
+  } catch (reason) {
+    if (!current() && request === directoryRequest) invalidateAgents()
+    throw reason
+  }
+})
 const agents = computed(() => {
   const options = new Map<string, { id: string; name: string; role: string }>(
     (agentDirectory.value ?? []).map((agent) => [
@@ -477,6 +501,53 @@ function markMemberSelection() {
   autoMember.value = ''
 }
 let editorEpoch = 0
+let directorySession: string | null = null
+let lastForegroundRead = 0
+function refreshForegroundAgents() {
+  const session = getSessionId()
+  if (session !== directorySession) {
+    invalidateAgents()
+    return
+  }
+  if (
+    disposed ||
+    !open.value ||
+    document.visibilityState !== 'visible' ||
+    locked.value ||
+    !can('foundation.agents.read') ||
+    !session ||
+    agentsLoading.value ||
+    Date.now() - lastForegroundRead < 5000
+  )
+    return
+  lastForegroundRead = Date.now()
+  void reloadAgentDirectory()
+}
+function onDirectoryVisibility() {
+  if (document.visibilityState !== 'visible') invalidateAgents()
+  else refreshForegroundAgents()
+}
+window.addEventListener('focus', refreshForegroundAgents)
+document.addEventListener('visibilitychange', onDirectoryVisibility)
+watch(
+  [open, locked, () => auth.sessionIdentity],
+  () => {
+    if (!open.value || locked.value || getSessionId() !== directorySession) invalidateAgents()
+  },
+  { flush: 'sync' }
+)
+watch(
+  () => can('foundation.agents.read'),
+  (allowed, previous) => {
+    if (previous && !allowed) invalidateAgents()
+  },
+  { flush: 'sync' }
+)
+onScopeDispose(() => {
+  invalidateAgents()
+  window.removeEventListener('focus', refreshForegroundAgents)
+  document.removeEventListener('visibilitychange', onDirectoryVisibility)
+})
 const filteredAgents = computed(() => {
   const keyword = memberSearch.value.trim().toLocaleLowerCase()
   return agents.value.filter((agent) =>
@@ -554,6 +625,8 @@ async function edit(row?: Team) {
   await run(async () => {
     memberSearch.value = ''
     editorEpoch++
+    directorySession = getSessionId()
+    lastForegroundRead = 0
     memberSelectionTouched.value = false
     autoMember.value = ''
     editing.value = row
@@ -573,8 +646,17 @@ async function edit(row?: Team) {
 }
 async function loadAgents() {
   const epoch = editorEpoch,
-    identity = pageIdentity.value
+    identity = pageIdentity.value,
+    session = getSessionId()
   const directory = await reloadAgentDirectory()
+  if (
+    !disposed &&
+    pageIdentity.value === identity &&
+    editorEpoch === epoch &&
+    open.value &&
+    session === getSessionId()
+  )
+    directorySession = session
   if (
     disposed ||
     pageIdentity.value !== identity ||
