@@ -84,10 +84,10 @@ class InstitutionDeploymentRlsTransactionTest {
     private long headquarters, target, third, relation, grant, toolVersion, definition, targetAgentDeployment;
     private long headquartersTool, targetTool;
 
-    /** 新隔离库完整迁移至本批V307；机构连接永不使用迁移所有者或BYPASSRLS。 */
+    /** 新隔离库迁移至创建请求回执版本V348；机构连接不使用迁移所有者或BYPASSRLS。 */
     @BeforeAll static void database() throws Exception {
         Flyway.configure().dataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword())
-                .locations("classpath:db/migration").target("307").load().migrate();
+                .locations("classpath:db/migration").target("348").load().migrate();
         owner = new JdbcTemplate(new DriverManagerDataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword()));
         owner.execute("CREATE ROLE institution_deployment_reader LOGIN PASSWORD 'isolated-restricted-password' NOSUPERUSER NOBYPASSRLS");
         owner.execute("GRANT USAGE ON SCHEMA public TO institution_deployment_reader");
@@ -124,7 +124,7 @@ class InstitutionDeploymentRlsTransactionTest {
         }
         // core-shared不反向依赖core-agent；读取官方SQL，仅将跨模块返回DTO改为Map，不替换SQL或语句身份。
         loadSelects(config, Files.readString(repositoryFile("backend-java/skillforge-core-agent/src/main/resources/mapper/AgentDeploymentMapper.xml")),
-                Set.of("databaseContext", "restoreDatabaseContext", "impact"));
+                Set.of("databaseContext", "restoreDatabaseContext", "impact", "findExternal", "findCreateResponse"));
         for (String resource : List.of("mapper/AgentRuntimeExecutionStoreMapper.xml", "mapper/AgentRuntimeMemoryMapper.xml")) {
             var input = new ClassPathResource(resource);
             loadSelects(config, input.getContentAsString(java.nio.charset.StandardCharsets.UTF_8),
@@ -133,7 +133,7 @@ class InstitutionDeploymentRlsTransactionTest {
         return new SqlSessionTemplate(new MybatisSqlSessionFactoryBuilder().build(config));
     }
 
-    /** 只提取无include依赖的官方SELECT；保留原SQL、参数与缓存设置，避免镜像业务查询。 */
+    /** 提取官方SELECT及所需列片段；保留原SQL、参数与缓存设置，避免镜像业务查询。 */
     private static void loadSelects(MybatisConfiguration config, String original, Set<String> names) {
         var namespace = Pattern.compile("<mapper namespace=\"([^\"]+)\"").matcher(original);
         assertTrue(namespace.find()); String name = namespace.group(1);
@@ -142,8 +142,14 @@ class InstitutionDeploymentRlsTransactionTest {
         while (statements.find()) if (names.contains(statements.group(1)))
             selected.add(statements.group().replaceFirst("resultType=\"[^\"]+\"", "resultType=\"map\""));
         assertEquals(names.size(), selected.size(), "官方Mapper语句必须仍存在");
+        String fragments = "";
+        if (names.contains("findExternal")) {
+            var columns = Pattern.compile("<sql id=\"columns\">.*?</sql>", Pattern.DOTALL).matcher(original);
+            assertTrue(columns.find());
+            fragments = columns.group();
+        }
         String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" \"https://mybatis.org/dtd/mybatis-3-mapper.dtd\">"
-                + "<mapper namespace=\"" + name + "\">" + String.join("\n", selected) + "</mapper>";
+                + "<mapper namespace=\"" + name + "\">" + fragments + String.join("\n", selected) + "</mapper>";
         new XMLMapperBuilder(new StringReader(xml), config, "rls-official-fragment:" + name, config.getSqlFragments()).parse();
     }
 
@@ -203,6 +209,31 @@ class InstitutionDeploymentRlsTransactionTest {
             assertNull(tools.selectById(created)); return null;
         }));
         assertEquals(target, owner.queryForObject("SELECT tenant_id FROM nw_tool_deployments WHERE id=?", Long.class, created));
+        assertPoolIdentityEmpty();
+    }
+
+    /** 读取窗口使用正式创建回执SQL，只允许原目标及原操作者的原请求。 */
+    @Test void targetReadWindowFindsOnlyTheOriginalCreationReceipt() {
+        String actor="tenant:"+headquarters+":member:1";
+        owner.update("INSERT INTO nw_agent_deployment_revisions(deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,actor_ref,command_ref) SELECT deployment_id,revision,tenant_id,grant_id,grant_revision,bindings,grant_chain,?,? FROM nw_agent_deployments WHERE deployment_id=?",actor,"original",targetAgentDeployment);
+        owner.update("INSERT INTO nw_agent_deployment_receipts(deployment_id,revision,tenant_id,response) VALUES(?,1,?,?::jsonb)",targetAgentDeployment,target,"{\"result\":\"ok\"}");
+        owner.update("INSERT INTO nw_agent_deployment_create_requests(deployment_id,tenant_id,actor_ref,command_ref) VALUES(?,?,?,?)",targetAgentDeployment,target,actor,"reused");
+        String external=owner.queryForObject("SELECT external_agent_ref FROM nw_agent_deployments WHERE deployment_id=?",String.class,targetAgentDeployment);
+        asHeadquarters(() -> writer.execute(status -> management.withTarget(Long.toString(target), READ, () -> {
+            var query=new java.util.HashMap<String,Object>();
+            query.put("tenantId",target); query.put("integrationId",null); query.put("externalAgentRef",external);
+            Map<String,Object> row=sessions.selectOne(DEPLOYMENTS+"findExternal",query);
+            assertEquals(targetAgentDeployment,((Number)row.get("deployment_id")).longValue());
+            var request=Map.of("deploymentId",targetAgentDeployment,"tenantId",target,"actorRef",actor,"commandRef","reused");
+            assertNotNull(sessions.selectOne(DEPLOYMENTS+"findCreateResponse",request));
+            var wrongActor=Map.of("deploymentId",targetAgentDeployment,"tenantId",target,"actorRef",actor+"-other","commandRef","reused");
+            assertNull(sessions.selectOne(DEPLOYMENTS+"findCreateResponse",wrongActor));
+            var wrongKey=Map.of("deploymentId",targetAgentDeployment,"tenantId",target,"actorRef",actor,"commandRef","other");
+            assertNull(sessions.selectOne(DEPLOYMENTS+"findCreateResponse",wrongKey));
+            var wrongTarget=Map.of("deploymentId",targetAgentDeployment,"tenantId",third,"actorRef",actor,"commandRef","reused");
+            assertNull(sessions.selectOne(DEPLOYMENTS+"findCreateResponse",wrongTarget));
+            return null;
+        })));
         assertPoolIdentityEmpty();
     }
 
