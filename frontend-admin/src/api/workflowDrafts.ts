@@ -340,6 +340,19 @@ export function createWorkflowDraftApi({ get, post, put }: WorkflowDraftHttp) {
           createdAt: item.created_at
         }))
       })),
+    createWithReceipt: (requestId: string, definition: Record<string, unknown>) =>
+      post<{ request_id: string; draft: WorkflowDraftWire }>(
+        '/builder/workflows/create-with-receipt',
+        { request_id: requestId, definition },
+        { retryOnUnauthorized: false }
+      ).then((receipt) => ({ requestId: receipt.request_id, draft: draftFromWire(receipt.draft) })),
+    createReceipt: (requestId: string) =>
+      get<{ request_id: string; draft: WorkflowDraftWire } | undefined>(
+        `/builder/workflows/create-with-receipt/result?request_id=${encodeURIComponent(requestId)}`
+      ).then(
+        (receipt) =>
+          receipt && { requestId: receipt.request_id, draft: draftFromWire(receipt.draft) }
+      ),
     create: (workflowId: string, definition: Record<string, unknown>) =>
       post<WorkflowDraftWire>(
         '/builder/workflows',

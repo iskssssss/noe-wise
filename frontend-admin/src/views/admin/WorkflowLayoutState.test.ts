@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   snapshotGet: vi.fn(),
   save: vi.fn(),
   create: vi.fn(),
+  createReceipt: vi.fn(),
   replace: vi.fn(),
   snapshotSave: vi.fn(),
   validate: vi.fn(),
@@ -55,7 +56,11 @@ vi.mock('../../api', () => ({
     workflowDrafts: {
       get: mocks.get,
       save: mocks.save,
-      create: mocks.create,
+      createWithReceipt: async (requestId: string, definition: Record<string, unknown>) => ({
+        requestId,
+        draft: await mocks.create('workflow-server', definition)
+      }),
+      createReceipt: mocks.createReceipt,
       validate: mocks.validate,
       validateNewContent: mocks.validateNewContent,
       validateContent: mocks.validateContent,
@@ -1081,46 +1086,53 @@ describe('工作流布局保存与恢复', () => {
     expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(true)
   })
 
-  it('创建结果未知时锁定原标识，刷新和只读核对不重复创建', async () => {
+  it('创建结果未知后只读核对原请求，取得回执后进入草稿', async () => {
     routeParams.workflowId = ''
     mocks.create.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '连接中断' }))
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
-    const idField = wrapper
-      .findAllComponents(ElFormItem)
-      .find((field) => field.props('label') === '业务标识')!
-    const generated = idField.findComponent(ElInput).props('modelValue') as string
-    await button('保存并配置测试').trigger('click')
+    expect(
+      wrapper.findAllComponents(ElFormItem).some((field) => field.props('label') === '业务标识')
+    ).toBe(false)
+    await button('保存草稿').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('创建结果尚未确认')
-    expect(wrapper.text()).toContain('创建结果待核对')
-    expect(wrapper.text()).not.toContain('新建草稿 · 尚未保存')
+    const pending = sessionStorage.getItem('noewise:workflow-create:workflow-test-session')!
+    expect(pending).toMatch(/^request:[0-9a-f-]{36}$/)
     expect(button('保存草稿').props('disabled')).toBe(true)
-    expect(button('保存并配置测试').props('disabled')).toBe(true)
-    expect(wrapper.find('[aria-label="工作流测试"]').exists()).toBe(false)
-    expect(mocks.replace).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem('noewise:workflow-create:workflow-test-session')).toBe(generated)
     wrapper.unmount()
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
-    expect(wrapper.text()).toContain(generated)
-    expect(button('保存草稿').props('disabled')).toBe(true)
-    mocks.get.mockRejectedValueOnce(new HttpClientError({ status: 404, userMessage: '未找到' }))
+    mocks.createReceipt.mockResolvedValueOnce(undefined)
     await button('核对原工作流').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('不能证明原请求未受理')
-    mocks.get.mockResolvedValueOnce({ ...value, workflowId: generated })
+    mocks.createReceipt.mockResolvedValueOnce({ requestId: pending.slice(8), draft: value })
     await button('核对原工作流').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('不能证明原创建请求已经结束')
-    expect(button('保存草稿').props('disabled')).toBe(true)
+    expect(mocks.replace).toHaveBeenCalledWith({ path: '/admin/workflows/flow', state: {} })
+    expect(sessionStorage.getItem('noewise:workflow-create:workflow-test-session')).toBeNull()
     expect(mocks.create).toHaveBeenCalledOnce()
     expect(mocks.snapshotSave).not.toHaveBeenCalled()
+  })
+  it('升级前待核对的旧标识仍按原工作流只读查询', async () => {
+    routeParams.workflowId = ''
+    sessionStorage.setItem('noewise:workflow-create:workflow-test-session', 'workflow-old')
+    mocks.get.mockResolvedValueOnce({ ...value, workflowId: 'workflow-old' })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    await button('核对原工作流').trigger('click')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledWith('workflow-old')
+    expect(wrapper.text()).toContain('不能证明原创建请求已经结束')
+    expect(mocks.createReceipt).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('noewise:workflow-create:workflow-test-session')).toBe(
+      'workflow-old'
+    )
   })
   it('明确的权限拒绝不伪造未知结果，可以在授权恢复后再次提交', async () => {
     routeParams.workflowId = ''
     mocks.create.mockRejectedValueOnce(
-      new HttpClientError({ status: 403, code: 'FORBIDDEN', userMessage: '无权限' })
+      new HttpClientError({ status: 403, code: 'WORKFLOW_CREATE_REJECTED', userMessage: '无权限' })
     )
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
@@ -1164,7 +1176,7 @@ describe('工作流布局保存与恢复', () => {
     storage.mockRestore()
   })
 
-  it('新建草稿自动生成业务标识，布局写入失败后沿用已创建的身份', async () => {
+  it('新建草稿使用服务端标识，布局写入失败后沿用已创建的身份', async () => {
     routeParams.workflowId = ''
     mocks.create.mockImplementation((workflowId: string, definition: Record<string, unknown>) =>
       Promise.resolve({ ...value, workflowId, definition })
@@ -1172,21 +1184,15 @@ describe('工作流布局保存与恢复', () => {
     mocks.snapshotSave.mockRejectedValueOnce(new Error('布局保存失败')).mockResolvedValueOnce({})
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
-    const idField = wrapper
-      .findAllComponents(ElFormItem)
-      .find((field) => field.props('label') === '业务标识')!
-    const generated = idField.findComponent(ElInput).props('modelValue') as string
-    expect(generated).toMatch(/^workflow-[0-9a-f-]{36}$/)
     await button('保存草稿').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledOnce()
-    expect(mocks.create.mock.calls[0]![0]).toBe(generated)
     expect(mocks.replace).not.toHaveBeenCalled()
     await button('保存草稿').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledOnce()
     expect(mocks.snapshotSave).toHaveBeenCalledTimes(2)
-    expect(mocks.replace.mock.calls[0]![0].path).toBe('/admin/workflows/' + generated)
+    expect(mocks.replace.mock.calls[0]![0].path).toBe('/admin/workflows/workflow-server')
   })
 
   it.each([
@@ -1603,11 +1609,6 @@ describe('工作流布局保存与恢复', () => {
     )
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
-    wrapper
-      .findAllComponents(ElFormItem)
-      .find((field) => field.props('label') === '业务标识')!
-      .findComponent(ElInput)
-      .vm.$emit('update:modelValue', 'flow-new')
     await flushPromises()
     await wrapper
       .findAllComponents(ElButton)
@@ -1633,11 +1634,6 @@ describe('工作流布局保存与恢复', () => {
       .mockResolvedValueOnce({ revision: 0, problems: [] })
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
-    wrapper
-      .findAllComponents(ElFormItem)
-      .find((field) => field.props('label') === '业务标识')!
-      .findComponent(ElInput)
-      .vm.$emit('update:modelValue', 'flow-retry')
     await flushPromises()
     await wrapper
       .findAllComponents(ElButton)
@@ -1650,11 +1646,7 @@ describe('工作流布局保存与恢复', () => {
     expect(wrapper.text()).toContain('尚未保存')
     expect(mocks.replace).not.toHaveBeenCalled()
     expect(
-      wrapper
-        .findAllComponents(ElFormItem)
-        .find((field) => field.props('label') === '业务标识')!
-        .findComponent(ElInput)
-        .props('disabled')
+      wrapper.findAllComponents(ElFormItem).some((field) => field.props('label') === '业务标识')
     ).toBe(false)
     await wrapper
       .findAllComponents(ElButton)

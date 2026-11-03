@@ -104,9 +104,7 @@
     </section>
     <section v-if="creationBlocked" class="admin-card" role="status">
       <template v-if="creationUnknown">
-        工作流“{{
-          creationUnknown
-        }}”的创建结果尚未确认。请核对原标识，不要重复创建；未找到或找到同标识草稿均不能证明原请求已经结束。刷新后只保留标识，不保留未保存的编辑内容。
+        工作流创建结果尚未确认，请核对原请求，不要重复创建。刷新后不保留未保存的编辑内容。
         <ElButton :disabled="busy" @click="checkUnknownCreation">核对原工作流</ElButton>
         <p v-if="creationCheck" class="admin-field-help">{{ creationCheck }}</p>
       </template>
@@ -388,16 +386,8 @@
           scroll-to-error
           @keydown.capture="guardFormEnter"
           ><div class="admin-form-grid">
-            <ElFormItem label="业务标识"
-              ><ElInput
-                v-described-by="formTipId + '-field-0'"
-                :aria-describedby="formTipId + '-field-0'"
-                v-model="workflowId"
-                :disabled="!!draft || creationBlocked"
-              />
-              <FieldTip :id="formTipId + '-field-0'"
-                >已自动生成稳定标识，创建前可修改；草稿建立后不可在此修改。</FieldTip
-              > </ElFormItem
+            <ElFormItem v-if="draft" label="工作流标识"
+              ><code>{{ workflowId }}</code></ElFormItem
             ><ElFormItem label="名称"
               ><ElInput
                 v-described-by="formTipId + '-field-1'"
@@ -504,7 +494,9 @@
         <ElAlert
           v-if="validationCurrent && !visibleProblems.length"
           :title="
-            dirty ? '当前未保存内容校验通过；保存后发布时会再次校验。' : '草稿校验通过，可以发布。'
+            !draft || dirty
+              ? '当前未保存内容校验通过；保存后发布时会再次校验。'
+              : '草稿校验通过，可以发布。'
           "
           type="success"
           :closable="false"
@@ -739,6 +731,7 @@
   />
 </template>
 <script setup lang="ts">
+import { canonicalJson } from '@skillforge/shared/utils/capabilityContent'
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
@@ -1027,7 +1020,7 @@ useUnsavedChanges({
     publicationPending.value
       ? `工作流发布结果尚未确认，请保留原请求号 ${publicationPending.value} 并核对回执。`
       : creationUnknown.value
-        ? `工作流“${creationUnknown.value}”的创建结果尚未确认，当前标签页会保留原标识；关闭标签页可能丢失记录。`
+        ? `工作流创建结果尚未确认，当前标签页会保留原请求；关闭标签页可能丢失记录。`
         : undefined
 })
 const selected = computed({
@@ -1173,12 +1166,13 @@ watch(
       creationStorageError.value = false
       try {
         const pending = sessionStorage.getItem(creationKey())
-        if (pending && !/^[a-z0-9][a-z0-9-]{0,127}$/.test(pending)) throw Error('invalid')
+        if (pending && !/^(?:request:[0-9a-f-]{36}|[a-z0-9][a-z0-9-]{0,127})$/.test(pending))
+          throw Error('invalid')
         creationUnknown.value = pending || ''
       } catch {
         creationStorageError.value = true
       }
-      workflowId.value = creationUnknown.value || `workflow-${crypto.randomUUID()}`
+      workflowId.value = ''
       nodes.value = [createNode('start', 'start', 0), createNode('end', 'end', 1)]
       edges.value = [
         { id: crypto.randomUUID(), source: 'start', target: 'end', condition: '', priority: 0 }
@@ -1445,41 +1439,49 @@ async function revisionWrite<T>(operation: () => Promise<T>): Promise<T> {
     throw caught
   }
 }
-/** 创建没有原请求回执，派发前先保留标识；任何不确定结果只允许读取核对。 */
-async function createDraft(id: string, definition: Record<string, unknown>) {
+/** 只读核对创建结果；旧记录仍按原工作流标识核对。 */
+async function createDraft(definition: Record<string, unknown>) {
+  const requestId = crypto.randomUUID(),
+    pending = `request:${requestId}`
+  const owner = installOwner.value,
+    identity = auth.identityVersion
   let key: string
   try {
     key = creationKey()
-    sessionStorage.setItem(key, id)
+    sessionStorage.setItem(key, pending)
   } catch {
     creationStorageError.value = true
     throw Error('无法保存创建记录，未发送创建请求；请恢复浏览器会话存储')
   }
   let result: WorkflowDraft
   try {
-    result = await api.workflowDrafts.create(id, definition)
-    if (!result || result.workflowId !== id) throw Error('创建回执身份无法核实')
+    const receipt = await api.workflowDrafts.createWithReceipt(requestId, definition)
+    if (!receipt || receipt.requestId !== requestId || !receipt.draft?.workflowId)
+      throw Error('创建回执身份无法核实')
+    if (
+      pageDisposed ||
+      !owner ||
+      owner !== installOwner.value ||
+      identity !== auth.identityVersion ||
+      route.params.workflowId
+    )
+      throw Error('身份或页面已变更，请重新核对原创建请求')
+    result = receipt.draft
   } catch (reason) {
-    const rejected =
-      reason instanceof HttpClientError &&
-      (([400, 422].includes(reason.status) && reason.code === 'VALIDATION_ERROR') ||
-        (reason.status === 401 && reason.code === 'UNAUTHORIZED') ||
-        (reason.status === 403 && reason.code === 'FORBIDDEN') ||
-        (reason.status === 409 && reason.code === 'CONFLICT'))
-    if (rejected) {
+    if (reason instanceof HttpClientError && reason.code === 'WORKFLOW_CREATE_REJECTED') {
       try {
         sessionStorage.removeItem(key)
       } catch {
         creationStorageError.value = true
       }
-    } else creationUnknown.value = id
+    } else creationUnknown.value = pending
     throw reason
   }
   try {
     sessionStorage.removeItem(key)
   } catch {
     draft.value = result
-    pendingDefinition.value = JSON.stringify(definition)
+    pendingDefinition.value = canonicalJson(definition)
     creationStorageError.value = true
     throw Error('工作流已创建，但创建记录无法清除，布局尚未保存；请恢复浏览器会话存储')
   }
@@ -1487,9 +1489,41 @@ async function createDraft(id: string, definition: Record<string, unknown>) {
 }
 async function checkUnknownCreation() {
   await run(async () => {
+    const pending = creationUnknown.value,
+      owner = installOwner.value,
+      identity = auth.identityVersion
+    if (pending.startsWith('request:')) {
+      const requestId = pending.slice('request:'.length)
+      const receipt = await api.workflowDrafts.createReceipt(requestId)
+      if (!receipt) {
+        creationCheck.value = '当前未查到回执，不能证明原请求未受理，请稍后继续核对。'
+        return
+      }
+      if (receipt.requestId !== requestId || !receipt.draft?.workflowId)
+        throw Error('创建回执身份无法核实')
+      if (
+        pageDisposed ||
+        !owner ||
+        owner !== installOwner.value ||
+        identity !== auth.identityVersion ||
+        creationUnknown.value !== pending ||
+        route.params.workflowId
+      )
+        throw Error('身份或页面已变更，请重新核对原创建请求')
+      accept(receipt.draft, {}, viewport.value)
+      try {
+        sessionStorage.removeItem(creationKey())
+      } catch {
+        creationStorageError.value = true
+        throw Error('创建已确认，但无法清除创建记录；请恢复浏览器会话存储')
+      }
+      creationUnknown.value = ''
+      await navigateSaved(receipt.draft)
+      return
+    }
     try {
-      const current = await api.workflowDrafts.get(creationUnknown.value)
-      if (current.workflowId !== creationUnknown.value) throw Error('读取到的工作流身份不一致')
+      const current = await api.workflowDrafts.get(pending)
+      if (current.workflowId !== pending) throw Error('读取到的工作流身份不一致')
       creationCheck.value = '找到同标识草稿；请人工核对，读取结果不能证明原创建请求已经结束。'
     } catch (reason) {
       if (reason instanceof HttpClientError && reason.status === 404) {
@@ -1505,10 +1539,6 @@ async function persistDraft() {
   if (creationBlocked.value) throw Error('创建结果尚未确认，请先核对原工作流')
   if (readonly.value) throw Error('此工作流已归档，不能保存修改')
   if (draftConflict.value) throw Error('请先查看最新差异，确认如何保留当前修改')
-  if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(workflowId.value)) {
-    activeTab.value = 'info'
-    throw Error('工作流业务标识须为 1–128 位小写字母、数字或连字符，且不能以连字符开头')
-  }
   if (!governanceValid.value || resourcePending.value) {
     activeTab.value = 'info'
     throw Error('请先修正输入与输出格式，或保存正在编辑的脚本文件')
@@ -1522,7 +1552,7 @@ async function persistDraft() {
   meta.name = workflowId.value
   const definition = workflowDefinition(nodes.value, edges.value, meta)
   const positions = Object.fromEntries(nodes.value.map((n) => [n.id, { x: n.x, y: n.y }]))
-  const submittedDefinition = JSON.stringify(definition)
+  const submittedDefinition = canonicalJson(definition)
   const owner = installOwner.value,
     identity = auth.identityVersion,
     originalRoute = route.params.workflowId
@@ -1540,11 +1570,19 @@ async function persistDraft() {
         ? await revisionWrite(() =>
             api.workflowDrafts.save(draft.value!.workflowId, draft.value!.revision, definition)
           )
-        : await createDraft(workflowId.value, definition)
+        : await createDraft(definition)
   if (!current()) throw Error('身份或页面已变更，草稿内容可能已保存，请重新读取后核对布局')
-  // 内容已写入时保留身份；布局失败后只补写布局，不重复保存相同定义。
+  // 创建后保留服务端身份；布局失败后继续编辑也必须使用同一身份。
+  if (!draft.value) {
+    workflowId.value = value.workflowId
+    meta.name = value.workflowId
+    const submittedMeta = definition.meta as Record<string, unknown>
+    pendingDefinition.value = canonicalJson({
+      ...definition,
+      meta: { ...submittedMeta, name: value.workflowId }
+    })
+  } else pendingDefinition.value = submittedDefinition
   draft.value = value
-  pendingDefinition.value = submittedDefinition
   saved.value = ''
   await revisionWrite(() =>
     api.workflowDrafts.snapshot.save(value.workflowId, value.revision, positions, viewport.value)
@@ -1581,7 +1619,7 @@ async function saveForTest() {
     !owner ||
     owner !== installOwner.value ||
     identity !== auth.identityVersion ||
-    originalWorkflow !== workflowId.value
+    (!isNew && originalWorkflow !== workflowId.value)
   )
     return
   await navigateSaved(result, false, true)

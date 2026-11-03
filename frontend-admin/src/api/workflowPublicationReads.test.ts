@@ -8,6 +8,37 @@ const summary = {
   created_at: '2026-10-29T00:00:00Z',
   current: true
 }
+it('工作流创建回执以服务端身份解析并支持空查询结果', async () => {
+  const wire = {
+    request_id: 'request-1',
+    draft: {
+      workflow_id: 'workflow-server',
+      status: 'draft',
+      revision: 1,
+      active_definition_version_id: null,
+      definition: {},
+      problems: []
+    }
+  }
+  const post = vi.fn().mockResolvedValue(wire)
+  const get = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(wire)
+  const api = createWorkflowDraftApi({ get, post, put: vi.fn() })
+  expect(await api.createWithReceipt('request-1', { meta: {} })).toMatchObject({
+    requestId: 'request-1',
+    draft: { workflowId: 'workflow-server' }
+  })
+  expect(post).toHaveBeenCalledWith(
+    '/builder/workflows/create-with-receipt',
+    { request_id: 'request-1', definition: { meta: {} } },
+    { retryOnUnauthorized: false }
+  )
+  expect(await api.createReceipt('request-1')).toBeUndefined()
+  expect(await api.createReceipt('request-1')).toMatchObject({
+    requestId: 'request-1',
+    draft: { workflowId: 'workflow-server' }
+  })
+})
+
 describe('工作流发布摘要与按版本详情读取', () => {
   it('组合命令不自动重发，原回执以精确身份读取', async () => {
     const get = vi.fn().mockResolvedValue(undefined)

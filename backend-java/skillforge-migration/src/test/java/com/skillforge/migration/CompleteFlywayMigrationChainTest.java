@@ -83,6 +83,28 @@ class CompleteFlywayMigrationChainTest {
                       AND obj_description(indexrelid, 'pg_class') IS NOT NULL
                     """));
             verifyConnectorDeploymentReferences(connection);
+            verifyWorkflowCreateReceiptIsolation(connection);
+        }
+    }
+
+    /** 限权角色仅能读取和写入当前机构的创建回执。 */
+    private static void verifyWorkflowCreateReceiptIsolation(Connection connection) throws SQLException {
+        connection.setAutoCommit(false);
+        try (Statement statement=connection.createStatement()) {
+            statement.execute("CREATE ROLE workflow_receipt_probe NOLOGIN");
+            statement.execute("GRANT SELECT, INSERT ON public.nw_workflow_create_receipts TO workflow_receipt_probe");
+            statement.execute("SET LOCAL ROLE workflow_receipt_probe");
+            statement.execute("SELECT set_config('app.tenant_id','7',true)");
+            statement.execute("INSERT INTO public.nw_workflow_create_receipts(request_id,tenant_id,actor_ref,request_fingerprint) VALUES ('00000000-0000-4000-8000-000000000001',7,'70',repeat('a',64))");
+            assertEquals(1,scalar(statement,"SELECT count(*) FROM public.nw_workflow_create_receipts"));
+            statement.execute("SELECT set_config('app.tenant_id','8',true)");
+            assertEquals(0,scalar(statement,"SELECT count(*) FROM public.nw_workflow_create_receipts"));
+            Savepoint before=connection.setSavepoint();
+            assertThrows(SQLException.class,()->statement.execute("INSERT INTO public.nw_workflow_create_receipts(request_id,tenant_id,actor_ref,request_fingerprint) VALUES ('00000000-0000-4000-8000-000000000002',7,'70',repeat('a',64))"));
+            connection.rollback(before);
+        } finally {
+            connection.rollback();
+            connection.setAutoCommit(true);
         }
     }
 
