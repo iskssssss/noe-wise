@@ -1181,14 +1181,21 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
     listRequirementOptions: (type: CapabilityType, opts?: RequestOptions) =>
       http
         .get<
-          Array<{ definition_id: string; name: string; version_id: string; version_key: string }>
+          Array<{
+            definition_id: string
+            name: string
+            version_id: string
+            version_key: string
+            skill_estimated_tokens: number | null
+          }>
         >('/capabilities/requirements/options?capability_type=' + encodeURIComponent(type), opts)
         .then((items) =>
           items.map((item): CapabilityRequirementOption => ({
             id: catalogDecimalIdentity(item.definition_id, 'definition_id'),
             name: item.name,
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
-            versionKey: item.version_key
+            versionKey: item.version_key,
+            skillEstimatedTokens: item.skill_estimated_tokens
           }))
         ),
     // 已在生产环境保留 Agent 挂载客户端使用的简短别名。

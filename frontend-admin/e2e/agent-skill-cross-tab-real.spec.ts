@@ -18,6 +18,19 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   const mode = process.env.E2E_AGENT_SKILL_REFRESH_MODE ?? 'candidate'
   expect(['baseline', 'candidate']).toContain(mode)
   const baseline = mode === 'baseline'
+  const budgetMode = process.env.E2E_SKILL_BUDGET
+  const budgetExperiment = budgetMode === 'baseline' || budgetMode === 'candidate'
+  let skillEstimate = 0
+  let requirementOptions: Array<{ definition_id: string; skill_estimated_tokens?: number }> = []
+  page.on('response', async (response) => {
+    const url = new URL(response.url())
+    if (
+      url.pathname === '/api/v1/capabilities/requirements/options' &&
+      url.searchParams.get('capability_type') === 'SKILL' &&
+      response.ok()
+    )
+      requirementOptions = (await response.json()).data
+  })
   let catalogReads = 0,
     mountPosts = 0,
     manualRefreshClicks = 0,
@@ -127,6 +140,25 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   await expect(drawer.getByRole('combobox', { name: '激活方式' })).toHaveCount(0)
   expect(mountPosts).toBe(0)
   await page.screenshot({ path: join(evidence, 'skill-before-mount.png'), fullPage: true })
+  if (budgetExperiment) {
+    await drawer.getByLabel('Token 预算', { exact: true }).fill('1')
+    if (budgetMode === 'candidate') {
+      skillEstimate = Number(
+        requirementOptions.find((option) => String(option.definition_id) === definition)
+          ?.skill_estimated_tokens
+      )
+      expect(skillEstimate).toBe(31)
+      await expect(drawer.getByText(/技能入口估算/)).toContainText(String(skillEstimate))
+      await expect(drawer.getByText(/不会加载/)).toBeVisible()
+      await expect(drawer.getByText(/不会加载/)).toContainText('ALWAYS')
+      await page.screenshot({
+        path: join(evidence, 'skill-budget-low-warning.png'),
+        fullPage: true
+      })
+      await drawer.getByLabel('Token 预算', { exact: true }).fill(String(skillEstimate))
+      await expect(drawer.getByText(/不会加载/)).toHaveCount(0)
+    }
+  }
   const mounted = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -149,6 +181,53 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   expect(mountPosts).toBe(1)
   await expect(drawer).toBeHidden()
   await page.screenshot({ path: join(evidence, 'skill-mounted.png'), fullPage: true })
+  let trialSession = '',
+    trialRun = '',
+    userBudgetExplanationVisible = false
+  if (budgetExperiment) {
+    expect(command.payload.skill_config.token_budget).toBe(
+      budgetMode === 'baseline' ? 1 : skillEstimate
+    )
+    const published = page.waitForResponse(
+      (result) =>
+        new URL(result.url()).pathname === '/api/v1/agents/publish' &&
+        result.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: '发布', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: '发布智能体', exact: true })
+      .getByRole('button', { name: '发布', exact: true })
+      .click()
+    expect((await published).status()).toBe(200)
+    const users = page.waitForResponse(
+      (result) => new URL(result.url()).pathname === '/api/v1/chat/end-users'
+    )
+    await page.getByRole('button', { name: '试用当前发布版本', exact: true }).click()
+    expect((await users).status()).toBe(200)
+    await page.locator('.el-select').filter({ hasText: '终端用户' }).getByRole('combobox').click()
+    await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
+    await page.getByPlaceholder('输入消息', { exact: true }).fill('请简短说明当前系统能力。')
+    const accepted = page.waitForResponse(
+      (result) =>
+        new URL(result.url()).pathname === '/api/v1/chat' && result.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: '发送', exact: true }).click()
+    const acceptedResponse = await accepted
+    expect(acceptedResponse.status()).toBe(202)
+    const input = (await acceptedResponse.json()).data
+    trialSession = String(input.session_id)
+    trialRun = String(input.execution_id)
+    await expect(
+      page.locator('.debug-message').filter({ hasText: required('E2E_EXPECTED_REPLY') })
+    ).toHaveCount(1, { timeout: 120_000 })
+    userBudgetExplanationVisible =
+      (await page.getByText(/BUDGET_EXCEEDED|技能.{0,20}(?:预算不足|未激活|超出预算)/).count()) > 0
+    await page.screenshot({ path: join(evidence, 'skill-budget-trial.png'), fullPage: true })
+    await writeFile(
+      join(evidence, 'skill-budget-visible.txt'),
+      await page.locator('body').innerText()
+    )
+  }
   await writeFile(
     join(evidence, 'skill-cross-tab.json'),
     JSON.stringify({
@@ -163,7 +242,13 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
       catalogReads,
       manualRefreshClicks,
       mountPosts,
-      skillPublishes
+      skillPublishes,
+      budgetExperiment,
+      budgetMode,
+      skillEstimate,
+      trialSession,
+      trialRun,
+      userBudgetExplanationVisible
     })
   )
 })

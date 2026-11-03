@@ -35,14 +35,22 @@ class CapabilityCatalogWireContractTest {
             else {assertTrue(tree.get("requires_plan").isBoolean());assertEquals(requiresPlan.booleanValue(),tree.get("requires_plan").booleanValue());}
         }
     }
-    @Test void requirementOptionIdsRemainExactInOnlyFourSnakeCaseFields()throws Exception {
+    @Test void requirementOptionKeepsExactIdsAndNullableSkillEstimate()throws Exception {
         long id=9007199254740993L;
-        var value=com.skillforge.platform.dto.capability.CapabilityRequirementOptionResponse.from(
-                new com.skillforge.core.capability.CapabilityRequirementOption(id,"当前发布",id+2,"v2"));
-        var tree=json.readTree(json.writeValueAsString(value));
-        assertEquals(4,tree.size());assertId(tree,"definition_id",id);assertId(tree,"version_id",id+2);
-        assertEquals("当前发布",tree.path("name").asText());assertEquals("v2",tree.path("version_key").asText());
-        assertFalse(tree.has("descriptor"));assertFalse(tree.has("files"));assertFalse(tree.has("tenant_id"));
+        for (Long estimate : new Long[]{null, 31L}) {
+            var value=com.skillforge.platform.dto.capability.CapabilityRequirementOptionResponse.from(
+                    new com.skillforge.core.capability.CapabilityRequirementOption(id,"当前发布",id+2,"v2",estimate));
+            var tree=json.readTree(json.writeValueAsString(value));
+            assertEquals(5,tree.size());assertId(tree,"definition_id",id);assertId(tree,"version_id",id+2);
+            assertEquals("当前发布",tree.path("name").asText());assertEquals("v2",tree.path("version_key").asText());
+            assertTrue(tree.has("skill_estimated_tokens"));
+            if (estimate == null) assertTrue(tree.get("skill_estimated_tokens").isNull());
+            else {
+                assertTrue(tree.get("skill_estimated_tokens").isIntegralNumber());
+                assertEquals(estimate.longValue(), tree.get("skill_estimated_tokens").longValue());
+            }
+            assertFalse(tree.has("descriptor"));assertFalse(tree.has("files"));assertFalse(tree.has("tenant_id"));
+        }
     }
     @Test void skillCatalogHasDescriptionAndPreciseNullableVersionIdentity()throws Exception {
         long id=9007199254740993L;

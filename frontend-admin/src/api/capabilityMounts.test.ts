@@ -637,7 +637,8 @@ it('requirement options use a scoped type GET and preserve exact published ident
         definition_id: '9223372036854775807',
         name: '当前工具',
         version_id: '9223372036854775806',
-        version_key: 'current'
+        version_key: 'current',
+        skill_estimated_tokens: null
       }
     ])
   )
@@ -652,7 +653,8 @@ it('requirement options use a scoped type GET and preserve exact published ident
       id: '9223372036854775807',
       name: '当前工具',
       versionId: '9223372036854775806',
-      versionKey: 'current'
+      versionKey: 'current',
+      skillEstimatedTokens: null
     }
   ])
 })

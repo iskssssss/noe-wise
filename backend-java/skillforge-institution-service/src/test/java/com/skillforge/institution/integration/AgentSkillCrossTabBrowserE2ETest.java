@@ -60,6 +60,7 @@ class AgentSkillCrossTabBrowserE2ETest extends ChatExecutionChainE2ETest {
         env.put("E2E_PASSWORD", PASSWORD);
         env.put("E2E_AGENT_ID", agentId);
         env.put("E2E_SKILL_MARKER", marker);
+        env.put("E2E_EXPECTED_REPLY", "fixture-answer-" + runId);
         env.remove("SDK4_LIVE_MODEL_KEY");
         env.remove("E2E_LIVE_MODEL");
         Process process = command.start();
@@ -101,14 +102,23 @@ class AgentSkillCrossTabBrowserE2ETest extends ChatExecutionChainE2ETest {
         assertEquals(1, countRuntime(
                 "SELECT count(*) FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND capability_definition_id=CAST(? AS bigint) AND capability_version_id=CAST(? AS bigint) AND activation_mode='ALWAYS'",
                 tenantId, agentId, mount, definition, version));
-        var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);
-        assertEquals(200, publication.statusCode(), publication.body());
-        var session = send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken);
-        assertEquals(200, session.statusCode(), session.body());
-        sessionId = successData(session).path("session_id").asText();
-        String actualRun = "run:" + runId;
+        String budgetMode = System.getenv("E2E_SKILL_BUDGET");
+        boolean budgetExperiment = java.util.Set.of("baseline", "candidate").contains(budgetMode == null ? "" : budgetMode);
+        String actualRun;
+        if (budgetExperiment) {
+            sessionId = facts.path("trialSession").asText(); actualRun = facts.path("trialRun").asText();
+            assertFalse(sessionId.isBlank()); assertFalse(actualRun.isBlank());
+            assertEquals("baseline".equals(budgetMode) ? 1 : facts.path("skillEstimate").asInt(), facts.path("mount").path("skill_config").path("token_budget").asInt());
+        } else {
+            var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);
+            assertEquals(200, publication.statusCode(), publication.body());
+            var session = send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken);
+            assertEquals(200, session.statusCode(), session.body());
+            sessionId = successData(session).path("session_id").asText(); actualRun = "run:" + runId;
+        }
         try {
-            var capture = postSse(chatPayload("请简短说明当前系统能力。"));
+            var capture = budgetExperiment ? observeSseUntil(sessionId, null, actualRun, java.util.Set.of("execution.completed", "error"))
+                    : postSse(chatPayload("请简短说明当前系统能力。"));
             assertEquals(200, capture.statusCode());
             assertTrue(capture.events().contains("execution.completed"), capture.raw());
             assertFalse(capture.events().contains("error"), capture.raw());
@@ -125,15 +135,24 @@ class AgentSkillCrossTabBrowserE2ETest extends ChatExecutionChainE2ETest {
                     properties.getMaxPayloadCodeUnits(), properties.getMaxPayloadNodes(), properties.getMaxPayloadDepth()));
             var request = ModelRequestTestMaterials.decode(codec,
                     new TypedPayload(row.get("schema_id").toString(), row.get("canonical_json").toString()), jdbc, tenantId);
-            assertTrue(request.request().messages().stream().anyMatch(message ->
-                            message.textContent().contains(marker)
-                                    && message.textContent().contains("Frozen capability: " + definition + " @ " + version)
-                                    && message.textContent().contains("skill:" + mount)),
-                    "实际模型上下文必须包含同一挂载的精确版本与包入口正文");
+            boolean hasSkillBody = request.request().messages().stream().anyMatch(message ->
+                    message.textContent().contains(marker) && message.textContent().contains("Frozen capability: " + definition + " @ " + version)
+                            && message.textContent().contains("skill:" + mount));
+            if (budgetExperiment) {
+                assertEquals("candidate".equals(budgetMode), hasSkillBody, "冻结预算决定是否注入技能正文");
+                var publishedSkill = successData(get("/api/v1/capabilities/versions/detail?versionId=" + version));
+                long estimatedTokens = publishedSkill.path("descriptor").path("estimated_tokens").asLong();
+                assertTrue(estimatedTokens > 1, publishedSkill.toString());
+                Files.writeString(evidence.resolve("skill-budget-experiment.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                        "agentId", agentId, "runId", actualRun, "mountId", mount, "versionId", version, "tokenBudget", facts.path("mount").path("skill_config").path("token_budget").asInt(),
+                        "estimatedTokens", estimatedTokens, "skillBodyInModel", hasSkillBody,
+                        "userBudgetExplanationVisible", facts.path("userBudgetExplanationVisible").asBoolean(),
+                        "modelMessages", request.request().messages())));
+            } else assertTrue(hasSkillBody, "实际模型上下文必须包含同一挂载的精确版本与包入口正文");
             assertEquals(1, provider.requestCount());
             Files.writeString(evidence.resolve("skill-runtime.json"), objectMapper.writeValueAsString(Map.of(
                     "agentId", agentId, "runId", actualRun, "mountId", mount, "definitionId", definition,
-                    "versionId", version, "skillContextVerified", true, "modelCalls", provider.requestCount())));
+                    "versionId", version, "skillContextVerified", hasSkillBody, "modelCalls", provider.requestCount())));
         } finally {
             var state = Map.of(
                     "runs", queryRows(jdbc, tenantId,

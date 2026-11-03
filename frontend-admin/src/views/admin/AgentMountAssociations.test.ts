@@ -1353,6 +1353,33 @@ describe('按挂载类型加载实际关联', () => {
       vi.unstubAllGlobals()
     }
   })
+  it('技能低预算解释不改写额度或阻止显式挂载，提高预算后恢复', async () => {
+    mocks.requirementOptions.mockResolvedValue([
+      { id: '10', name: '技能', versionId: '21', versionKey: '2', skillEstimatedTokens: 31 }
+    ])
+    const { drawer } = await open('SKILL')
+    drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '10')
+    await flushPromises()
+    const budget = drawer
+      .findAllComponents(ElInputNumber)
+      .find((item) => item.props('modelValue') === 2000)!
+    expect(document.body.textContent).toContain('技能入口估算 31 Token')
+    budget.vm.$emit('update:modelValue', 1)
+    await flushPromises()
+    expect(document.body.textContent).toContain('不会加载该技能入口，ALWAYS 技能也会跳过')
+    expect(button(drawer, '添加能力').props('disabled')).toBe(false)
+    expect(budget.props('modelValue')).toBe(1)
+    budget.vm.$emit('update:modelValue', 31)
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('不会加载该技能入口')
+    expect(mocks.getVersion).not.toHaveBeenCalled()
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledWith(
+      'agent-1',
+      expect.objectContaining({ skillConfig: { tokenBudget: 31 } })
+    )
+  })
   it('手动刷新目录保留选择与预算，版本变化后需确认', async () => {
     mocks.versions.mockResolvedValue([
       { id: '21', definitionId: '10', capabilityType: 'SKILL', name: '技能', versionKey: '1' }

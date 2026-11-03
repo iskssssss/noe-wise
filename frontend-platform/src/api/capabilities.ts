@@ -305,7 +305,13 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
     listRequirementOptions: (type: CapabilityType, opts?: RequestOptions) =>
       http
         .get<
-          Array<{ definition_id: string; name: string; version_id: string; version_key: string }>
+          Array<{
+            definition_id: string
+            name: string
+            version_id: string
+            version_key: string
+            skill_estimated_tokens: number | null
+          }>
         >(
           '/admin/capabilities/requirements/options?capability_type=' + encodeURIComponent(type),
           opts
@@ -315,7 +321,8 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
             id: catalogDecimalIdentity(item.definition_id, 'definition_id'),
             name: item.name,
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
-            versionKey: item.version_key
+            versionKey: item.version_key,
+            skillEstimatedTokens: item.skill_estimated_tokens
           }))
         ),
     listSkillCatalog: (opts?: RequestOptions) =>

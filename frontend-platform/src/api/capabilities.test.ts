@@ -291,7 +291,8 @@ it('platform requirement options use the fixed platform type scope and exact pub
       definition_id: '9223372036854775807',
       name: '当前技能',
       version_id: '9223372036854775806',
-      version_key: 'current'
+      version_key: 'current',
+      skill_estimated_tokens: 31
     }
   ])
   const client = createCapabilityCatalogApi(http as unknown as CapabilityCatalogHttp)
@@ -300,7 +301,8 @@ it('platform requirement options use the fixed platform type scope and exact pub
       id: '9223372036854775807',
       name: '当前技能',
       versionId: '9223372036854775806',
-      versionKey: 'current'
+      versionKey: 'current',
+      skillEstimatedTokens: 31
     }
   ])
   expect(http.get).toHaveBeenCalledExactlyOnceWith(

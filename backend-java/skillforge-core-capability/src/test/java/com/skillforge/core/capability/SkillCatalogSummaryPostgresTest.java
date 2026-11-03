@@ -121,7 +121,7 @@ class SkillCatalogSummaryPostgresTest {
         }
         if (!published) return;
         for (long version : List.of(id * 10 + 1, id * 10 + 2)) {
-            var descriptor = Map.of("package", Map.of("entrypoint", "SKILL.md", "files", List.of(Map.of(
+            var descriptor = Map.of("estimated_tokens", version * 100, "package", Map.of("entrypoint", "SKILL.md", "files", List.of(Map.of(
                     "path", "SKILL.md", "encoding", "UTF8", "content", "x".repeat(131072)))));
             try (var insert = connection.prepareStatement("INSERT INTO nw_capability_versions(id,definition_id,tenant_id,capability_type,version_key,name,trust_level,descriptor,content_hash,status,created_at,published_at) VALUES(?,?,?,?,?,?,?,?::jsonb,?,'PUBLISHED',now(),now())")) {
                 insert.setLong(1, version); insert.setLong(2, id); insert.setObject(3, tenant); insert.setString(4, type);
@@ -215,7 +215,8 @@ class SkillCatalogSummaryPostgresTest {
             var service = catalog(session);
             for (var type : CapabilityType.values()) {
                 long id = platformIds.get(type);
-                assertEquals(List.of(new CapabilityRequirementOption(id, "技能-" + id, id * 10 + 1, "v" + (id * 10 + 1))),
+                assertEquals(List.of(new CapabilityRequirementOption(id, "技能-" + id, id * 10 + 1, "v" + (id * 10 + 1),
+                                type == CapabilityType.SKILL ? (id * 10 + 1) * 100 : null)),
                         service.listRequirementOptions(CapabilityCatalogScope.platform(), type));
             }
             assertNotNull(service.getVersion(CapabilityCatalogScope.platform(), 31L).descriptor().get("package"),
@@ -232,6 +233,10 @@ class SkillCatalogSummaryPostgresTest {
                 assertEquals(List.of(own, shared), options.stream().map(CapabilityRequirementOption::definitionId).toList());
                 assertTrue(options.stream().allMatch(option -> option.versionId() == option.definitionId() * 10 + 1),
                         "旧default不能被较新的第二版本替代");
+                for (var option : options) {
+                    assertEquals(type == CapabilityType.SKILL ? option.versionId() * 100 : null,
+                            option.skillEstimatedTokens(), "入口估算必须来自精确发布版本；其他能力不携带技能估算");
+                }
             }
             var mapper = session.getMapper(CapabilityDefinitionMapper.class);
             assertEquals(List.of(1L), mapper.listRequirementOptions(8L, CapabilityType.SKILL).stream()
@@ -250,8 +255,8 @@ class SkillCatalogSummaryPostgresTest {
             try (var query = session.getConnection().prepareStatement(bound.getSql())) {
                 new DefaultParameterHandler(statement, arguments, bound).setParameters(query);
                 try (var rows = query.executeQuery()) {
-                    assertEquals(4, rows.getMetaData().getColumnCount());
-                    for (int column = 1; column <= 4; column++) assertNotEquals("jsonb", rows.getMetaData().getColumnTypeName(column));
+                    assertEquals(5, rows.getMetaData().getColumnCount());
+                    for (int column = 1; column <= 5; column++) assertNotEquals("jsonb", rows.getMetaData().getColumnTypeName(column));
                 }
             }
             assertNotNull(service.getVersion(CapabilityCatalogScope.tenant(7L), 51L).descriptor().get("package"));
@@ -272,7 +277,7 @@ class SkillCatalogSummaryPostgresTest {
         }
         TenantContext.clear();
         try (var session = factory.openSession()) {
-            assertEquals(List.of(new CapabilityRequirementOption(1L, "技能-1", 11L, "v11")),
+            assertEquals(List.of(new CapabilityRequirementOption(1L, "技能-1", 11L, "v11", 1100L)),
                     catalog(session).listRequirementOptions(CapabilityCatalogScope.platform(), CapabilityType.SKILL));
         }
     }

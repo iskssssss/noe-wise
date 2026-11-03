@@ -111,8 +111,8 @@ class CapabilityCatalogServiceTest {
     @Test
     void requirementOptionsBindRequestedScopeAndTypeWithoutVersionBodies() {
         TenantContext.clear();
-        var platform = List.of(new CapabilityRequirementOption(1L, "公共技能", 2L, "v1"));
-        var tenant = List.of(new CapabilityRequirementOption(3L, "机构工具", 4L, "v2"));
+        var platform = List.of(new CapabilityRequirementOption(1L, "公共技能", 2L, "v1", 31L));
+        var tenant = List.of(new CapabilityRequirementOption(3L, "机构工具", 4L, "v2", null));
         when(definitions.listRequirementOptions(null, CapabilityType.SKILL)).thenReturn(platform);
         when(definitions.listRequirementOptions(7L, CapabilityType.TOOL)).thenReturn(tenant);
         assertEquals(platform, service.listRequirementOptions(CapabilityCatalogScope.platform(), CapabilityType.SKILL));

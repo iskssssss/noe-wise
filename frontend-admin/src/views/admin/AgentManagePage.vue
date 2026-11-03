@@ -557,7 +557,19 @@
               :precision="0"
             />
             <p id="mount-token-help" class="admin-field-help">
-              必须填写正整数，表示这项技能可使用的 Token 预算。
+              必须填写正整数，限制每次加载技能入口或资源的估算大小，不是供应商实际用量。
+              <template v-if="selectedSkillEstimatedTokens != null">
+                技能入口估算 {{ selectedSkillEstimatedTokens }} Token。
+              </template>
+            </p>
+            <p
+              v-if="
+                selectedSkillEstimatedTokens != null && tokenBudget < selectedSkillEstimatedTokens
+              "
+              class="admin-field-help"
+              role="status"
+            >
+              当前预算不足，不会加载该技能入口，ALWAYS 技能也会跳过；请提高预算后再使用。
             </p></ElFormItem
           ></template
         ><ElFormItem v-if="mountType === 'TOOL' && advancedToolMount" label="工具部署"
@@ -1479,7 +1491,13 @@ const mountSnapshot = (includeType = true) =>
   ])
 const mountOpen = ref(false),
   mountType = ref<CapabilityType>('SKILL'),
-  versions = ref<Array<Pick<CapabilityVersion, 'id' | 'definitionId' | 'name' | 'versionKey'>>>([]),
+  versions = ref<
+    Array<
+      Pick<CapabilityVersion, 'id' | 'definitionId' | 'name' | 'versionKey'> & {
+        skillEstimatedTokens?: number | null
+      }
+    >
+  >([]),
   definitions = ref<CapabilityDefinition[]>([]),
   definitionId = ref<string>(),
   versionId = ref<string>(),
@@ -1618,6 +1636,13 @@ const selectedAvailableTool = computed(() =>
 )
 const selectedDefinition = computed(() =>
   mountableDefinitions.value.find((d) => d.id === definitionId.value)
+)
+const selectedSkillEstimatedTokens = computed(() =>
+  mountType.value === 'SKILL' && !skillSelectionStale.value
+    ? versions.value.find(
+        (version) => version.id === versionId.value && version.definitionId === definitionId.value
+      )?.skillEstimatedTokens
+    : undefined
 )
 const skillSelectionStale = computed(
   () =>
@@ -1780,7 +1805,8 @@ async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW', current?: () => bo
       id: option.versionId,
       definitionId: option.id,
       name: option.name,
-      versionKey: option.versionKey
+      versionKey: option.versionKey,
+      skillEstimatedTokens: option.skillEstimatedTokens
     }))
   }
 }
