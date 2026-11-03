@@ -41,7 +41,7 @@ test('real browser creates, replies, restores both clients and resolves a handof
   const text = `坐席已人工核实申请 ${runId}`
   const note = `人工核实完成并已通知用户 ${runId}`
   const evidence = fixture('E2E_ARTIFACT_DIR')
-  const mode = process.env.E2E_HANDOFF_PROGRESS_MODE ?? 'baseline'
+  const mode = process.env.E2E_HANDOFF_PROGRESS_MODE ?? 'candidate'
   const chat = await context.newPage()
   const errors: string[] = []
   let chatSubmissions = 0
