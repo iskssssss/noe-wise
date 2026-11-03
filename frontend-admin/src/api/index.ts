@@ -1451,7 +1451,11 @@ export const api = {
       }),
     // 注:createInstance 不含 capabilities——MCP 类型后端按地址+凭证自动 tools/list 发现;或创建后在编辑弹窗「拉取清单→导入能力」
     removeInstance: (instanceId: string) =>
-      del<{ status: string }>(`/connectors/instances/delete`, { instance_id: instanceId }),
+      del<{ status: string }>(
+        `/connectors/instances/delete`,
+        { instance_id: instanceId },
+        { retryOnUnauthorized: false }
+      ),
     /** 拉取 @mcp 类型实例暴露的工具清单（MCP tools/list 标准发现）。 */
     mcpTools: (instanceId: string) =>
       get<{ total: number; items: McpToolItem[] }>(

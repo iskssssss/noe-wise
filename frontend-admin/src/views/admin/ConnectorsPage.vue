@@ -576,7 +576,16 @@ async function checkUpdate(automatic = false) {
   })
 }
 async function remove(row: ConnectorInstanceItem) {
-  if (pendingCreate.value || pendingUpdate.value || storageError.value) return
+  const subject = actor.value,
+    identity = auth.identityVersion
+  const current = () =>
+    !disposed &&
+    !!subject &&
+    actor.value === subject &&
+    auth.identityVersion === identity &&
+    auth.user?.permissions.includes('foundation.connectors.delete') === true
+  if (!current() || busy.value || pendingCreate.value || pendingUpdate.value || storageError.value)
+    return
   if (
     await confirm({
       title: '删除连接器',
@@ -584,13 +593,31 @@ async function remove(row: ConnectorInstanceItem) {
       danger: true,
       content: '删除“' + row.name + '”？已挂载工具将无法继续访问。'
     })
-  )
+  ) {
+    if (
+      !current() ||
+      busy.value ||
+      pendingCreate.value ||
+      pendingUpdate.value ||
+      storageError.value
+    )
+      return
     await run(async () => {
-      await api.connectors.removeInstance(row.instance_id)
+      try {
+        await api.connectors.removeInstance(row.instance_id)
+      } catch (cause) {
+        if (!current()) {
+          if (cause instanceof HttpClientError) cause.claimFeedback()
+          throw 'cancel'
+        }
+        throw cause
+      }
+      if (!current()) return
       if (recoveryConnector.value === row.instance_id) recoveryConnector.value = ''
       message.success('连接器已删除')
       await reload()
     })
+  }
 }
 const { requestClose: closeDrawer0 } = useDrawerClose({
   open: () => open.value,

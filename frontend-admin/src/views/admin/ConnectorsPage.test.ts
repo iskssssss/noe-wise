@@ -13,6 +13,9 @@ const calls = vi.hoisted(() => ({
   updateResult: vi.fn(),
   createInstanceWithReceipt: vi.fn(),
   creationResult: vi.fn(),
+  removeInstance: vi.fn(),
+  confirm: vi.fn(),
+  success: vi.fn(),
   push: vi.fn(),
   permissions: [] as string[],
   identityVersion: 1
@@ -26,6 +29,14 @@ vi.mock('../../stores/auth', () => ({
     user: { tenant_id: '1', sub: 'member-1', permissions: calls.permissions }
   })
 }))
+vi.mock('@skillforge/shared/feedback', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillforge/shared/feedback')>()
+  return {
+    ...actual,
+    confirm: calls.confirm,
+    message: { ...actual.message, success: calls.success }
+  }
+})
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: calls.push }),
   onBeforeRouteLeave: vi.fn(),
@@ -64,6 +75,7 @@ beforeEach(() => {
   calls.identityVersion = 1
   calls.permissions = [
     'foundation.connectors.read',
+    'foundation.connectors.delete',
     'foundation.connectors.update',
     'foundation.capabilities.read',
     'foundation.capabilities.create',
@@ -83,6 +95,8 @@ beforeEach(() => {
     instance_id: 'new'
   }))
   calls.creationResult.mockResolvedValue(null)
+  calls.confirm.mockResolvedValue(true)
+  calls.removeInstance.mockResolvedValue({ status: 'deleted' })
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -511,4 +525,55 @@ it('明确发生在保存前的发现失败解除待核对并保留输入', asyn
       .findComponent(ElInput)
       .props('modelValue')
   ).toBe('失败后保留')
+})
+
+it('切换身份后旧删除确认不能派发请求', async () => {
+  let answer!: (value: boolean) => void
+  calls.confirm.mockReturnValueOnce(
+    new Promise<boolean>((resolve) => {
+      answer = resolve
+    })
+  )
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  calls.identityVersion++
+  answer(true)
+  await flushPromises()
+  expect(calls.removeInstance).not.toHaveBeenCalled()
+})
+
+it('确认期间删除权限被撤销时不派发请求', async () => {
+  let answer!: (value: boolean) => void
+  calls.confirm.mockReturnValueOnce(
+    new Promise<boolean>((resolve) => {
+      answer = resolve
+    })
+  )
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  calls.permissions.splice(calls.permissions.indexOf('foundation.connectors.delete'), 1)
+  answer(true)
+  await flushPromises()
+  expect(calls.removeInstance).not.toHaveBeenCalled()
+})
+
+it('删除响应迟到且身份已变化时不向新身份反馈或刷新', async () => {
+  let finish!: (value: unknown) => void
+  calls.removeInstance.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  page()
+  await flushPromises()
+  await button('删除').trigger('click')
+  await flushPromises()
+  expect(calls.removeInstance).toHaveBeenCalledOnce()
+  calls.identityVersion++
+  finish({ status: 'deleted' })
+  await flushPromises()
+  expect(calls.instances).toHaveBeenCalledTimes(1)
+  expect(calls.success).not.toHaveBeenCalledWith('连接器已删除')
 })
