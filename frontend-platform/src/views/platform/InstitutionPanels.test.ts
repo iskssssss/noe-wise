@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   definitions: vi.fn(),
   deploymentGrants: vi.fn(),
   createDeployment: vi.fn(),
+  deploymentReceipt: vi.fn(),
   credentials: vi.fn(),
   issue: vi.fn(),
   rotateCredential: vi.fn(),
@@ -36,7 +37,8 @@ vi.mock('../../api', () => ({
       list: mocks.deployments,
       definitions: mocks.definitions,
       grants: mocks.deploymentGrants,
-      create: mocks.createDeployment
+      create: mocks.createDeployment,
+      receipt: mocks.deploymentReceipt
     },
     platformIntegration: {
       institutionCredentials: mocks.credentials,
@@ -295,6 +297,7 @@ it.each(['新增可部署定义', '原授权失效'])(
     const field = (label: string) =>
       wrapper!.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
     expect(field('公共定义').getComponent(ElSelect).props('modelValue')).toBe('91')
+    await wrapper.get('input[placeholder="原生部署，或选择目标机构接入"]').setValue('integration-1')
     await field('外部智能体标识').get('input').setValue('external-1')
     mocks.deploymentGrants.mockResolvedValue({
       items: change === '新增可部署定义' ? [grant('91'), grant('92')] : []
@@ -527,12 +530,27 @@ it('自动预选不扩大创建权限，未知写入核对保留原参数与请�
   expect(wrapper.text()).not.toContain('保存机构部署')
   wrapper.unmount()
   mocks.allowed.mockReturnValue(true)
-  mocks.createDeployment.mockRejectedValueOnce(new Error('网络断开')).mockResolvedValueOnce({})
+  mocks.createDeployment.mockRejectedValueOnce(new Error('网络断开'))
+  mocks.deploymentReceipt
+    .mockResolvedValueOnce({ status: 'NOT_FOUND', result: null })
+    .mockResolvedValueOnce({
+      status: 'FOUND',
+      result: {
+        deployment_id: 'd1',
+        agent_id: 'a1',
+        tenant_id: '77',
+        definition_id: '91',
+        grant_id: 'g1',
+        integration_id: 'integration-1',
+        external_agent_ref: 'assistant'
+      }
+    })
   wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
   await flushPromises()
   const field = (label: string) =>
     wrapper!.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
   field('公共定义').getComponent(ElSelect).vm.$emit('update:modelValue', '91')
+  await wrapper.get('input[placeholder="原生部署，或选择目标机构接入"]').setValue('integration-1')
   await field('外部智能体标识').getComponent(ElInput).get('input').setValue('assistant')
   await flushPromises()
   await wrapper
@@ -552,7 +570,78 @@ it('自动预选不扩大创建权限，未知写入核对保留原参数与请�
   expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
   await button('核对原请求').trigger('click')
   await flushPromises()
-  expect(mocks.createDeployment.mock.calls[1]).toEqual(mocks.createDeployment.mock.calls[0])
+  expect(mocks.deploymentReceipt.mock.calls[0]).toEqual(mocks.createDeployment.mock.calls[0])
+  expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).toContain('核对原请求')
+  await button('核对原请求').trigger('click')
+  await flushPromises()
+  expect(mocks.deploymentReceipt).toHaveBeenCalledTimes(2)
+  expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).not.toContain('核对原请求')
+})
+
+it('原生部署无需输入标识并将生成交给服务端', async () => {
+  mocks.deploymentGrants.mockResolvedValue({
+    items: [
+      {
+        grant_id: 'g1',
+        definition_id: '91',
+        target_tenant_id: '77',
+        status: 'active',
+        actions: ['deploy', 'execute'],
+        expires_at: null
+      }
+    ]
+  })
+  mocks.createDeployment.mockResolvedValueOnce({})
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  const field = (label: string) =>
+    wrapper!.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+  field('公共定义').getComponent(ElSelect).vm.$emit('update:modelValue', '91')
+  await flushPromises()
+  expect(
+    wrapper.findAllComponents(ElFormItem).some((item) => item.props('label') === '外部智能体标识')
+  ).toBe(false)
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model') !== undefined)!
+    .trigger('submit')
+  await flushPromises()
+  expect(mocks.createDeployment).toHaveBeenCalledOnce()
+  expect(mocks.createDeployment.mock.calls[0]![0]).toMatchObject({
+    integration_id: null,
+    external_agent_ref: null
+  })
+})
+
+it('选择外部接入后必须填写真实智能体标识', async () => {
+  mocks.deploymentGrants.mockResolvedValue({
+    items: [
+      {
+        grant_id: 'g1',
+        definition_id: '91',
+        target_tenant_id: '77',
+        status: 'active',
+        actions: ['deploy', 'execute'],
+        expires_at: null
+      }
+    ]
+  })
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  const definition = wrapper
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '公共定义')!
+  definition.getComponent(ElSelect).vm.$emit('update:modelValue', '91')
+  await wrapper.get('input[placeholder="原生部署，或选择目标机构接入"]').setValue('integration-1')
+  await flushPromises()
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model') !== undefined)!
+    .trigger('submit')
+  await flushPromises()
+  expect(mocks.createDeployment).not.toHaveBeenCalled()
 })
 
 it('部署已保存但列表刷新失败时阻止再次创建，刷新成功后恢复', async () => {
@@ -575,6 +664,7 @@ it('部署已保存但列表刷新失败时阻止再次创建，刷新成功后�
   const field = (label: string) =>
     wrapper!.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
   field('公共定义').getComponent(ElSelect).vm.$emit('update:modelValue', '91')
+  await wrapper.get('input[placeholder="原生部署，或选择目标机构接入"]').setValue('integration-1')
   await field('外部智能体标识').getComponent(ElInput).get('input').setValue('assistant')
   await flushPromises()
   mocks.deployments.mockRejectedValueOnce(new Error('目录暂时不可用'))

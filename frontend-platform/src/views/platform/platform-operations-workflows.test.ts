@@ -198,6 +198,7 @@ describe('平台操作上下文与原操作恢复', () => {
     await click(wrapper, '查询机构部署')
     await select(wrapper, '公共定义', 'definition-1')
     expect(field(wrapper, '直接授权').getComponent(ElSelect).props('modelValue')).toBe('grant-1')
+    await select(wrapper, '接入标识', 'integration-1')
     await field(wrapper, '外部智能体标识').get('input').setValue('external-agent')
     await field(wrapper, '实例名称').get('input').setValue('机构甲助手')
     await click(wrapper, '查询机构部署')
@@ -217,7 +218,9 @@ describe('平台操作上下文与原操作恢复', () => {
     expect(mocks.deploymentList.mock.lastCall?.[1]).toBe('A')
     await click(wrapper, '查询机构部署')
     expect(field(wrapper, '公共定义').getComponent(ElSelect).props('modelValue')).toBe('')
-    expect(field(wrapper, '外部智能体标识').get<HTMLInputElement>('input').element.value).toBe('')
+    expect(
+      wrapper.findAllComponents(ElFormItem).some((item) => item.props('label') === '外部智能体标识')
+    ).toBe(false)
     expect(field(wrapper, '实例名称').get<HTMLInputElement>('input').element.value).toBe('')
     expect(mocks.deploymentList.mock.lastCall?.[1]).toBe('B')
   })

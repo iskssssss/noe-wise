@@ -188,7 +188,7 @@ function create() {
       !list.data.value ||
       !form.definition_id ||
       !form.grant_id ||
-      !form.external_agent_ref.trim()
+      (!!form.integration_id.trim() && !form.external_agent_ref.trim())
     )
       throw Error('请先查询机构并选择定义、直接授权和外部智能体标识')
     if (!availableGrants.value.some((grant) => grant.grant_id === form.grant_id))
@@ -197,7 +197,7 @@ function create() {
       ...form,
       tenant_id: appliedTenant.value,
       integration_id: form.integration_id.trim() || null,
-      external_agent_ref: form.external_agent_ref.trim(),
+      external_agent_ref: form.integration_id.trim() ? form.external_agent_ref.trim() : null,
       name: form.name.trim() || undefined,
       resource_bindings: [],
       delegation_bindings: [],
@@ -222,7 +222,27 @@ function create() {
           if (value) refreshRequired.value = false
         })
       },
-      requireTarget
+      requireTarget,
+      async (key) => {
+        const receipt = await checked('platform.agent_deployments.read', () =>
+          api.agentDeployments.receipt(input, key)
+        )
+        if (receipt.status === 'NOT_FOUND') return undefined
+        const result = receipt.result
+        if (
+          !result?.deployment_id ||
+          !result.agent_id ||
+          result.tenant_id !== input.tenant_id ||
+          result.definition_id !== input.definition_id ||
+          result.grant_id !== input.grant_id ||
+          result.integration_id !== input.integration_id ||
+          !result.external_agent_ref ||
+          (input.external_agent_ref !== null &&
+            result.external_agent_ref !== input.external_agent_ref)
+        )
+          throw Error('原部署回执身份无法核实')
+        return result
+      }
     )
   })
 }
@@ -297,7 +317,7 @@ watch(
       :closable="false"
     /><ElAlert
       v-if="uncertain"
-      title="部署结果待核对，请先刷新稳定部署目录，不能重复创建并推定原操作失败。"
+      title="部署结果待核对，请查询原请求回执；未查到回执不代表原请求失败。"
       type="warning"
       :closable="false"
     />
@@ -375,6 +395,7 @@ watch(
         原生部署留空；指定接入时必须属于目标机构。稳定部署映射创建后保持归属。
       </p>
       <ElFormItem
+        v-if="form.integration_id"
         label="外部智能体标识"
         prop="external_agent_ref"
         :rules="[{ required: true, whitespace: true, message: '请填写外部智能体标识' }]"
