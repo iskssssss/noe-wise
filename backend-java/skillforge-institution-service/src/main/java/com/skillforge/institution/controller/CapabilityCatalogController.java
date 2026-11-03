@@ -305,7 +305,8 @@ public class CapabilityCatalogController {
         ToolDeployment.Environment environment = parseEnvironment(request.environment());
         providerValidator.validate(scope.tenantId(), providerType, request.providerRef(), environment);
         return ApiResponses.wrap(CapabilityDeploymentResponse.from(catalog.createDeployment(
-                scope, request.deploymentKey(), request.toolVersionId(), providerType,
+                scope, request.deploymentKey() == null || request.deploymentKey().isBlank()
+                        ? "tool-" + java.util.UUID.randomUUID() : request.deploymentKey(), request.toolVersionId(), providerType,
                 request.providerRef(), environment, request.status())));
     }
 

@@ -14,12 +14,17 @@
       class="admin-card"
       role="status"
     >
-      部署“{{ operation.deploymentKey }}”的创建结果尚未确认，请求号：{{ operation.requestId }}。
+      {{
+        operation.deploymentKey ? `部署“${operation.deploymentKey}”` : '工具部署'
+      }}的创建结果尚未确认，请求号：{{ operation.requestId }}。
       查不到原回执时结果仍未确认，请勿重复创建。
       <ElButton :disabled="busy || !canRead" @click="checkCreation(false, operation)"
         >核对原创建结果</ElButton
       >
-      <ElButton :disabled="busy || !canRead" @click="checkDeployment(operation)"
+      <ElButton
+        v-if="operation.deploymentKey"
+        :disabled="busy || !canRead"
+        @click="checkDeployment(operation)"
         >查看当前部署</ElButton
       >
       <ElButton
@@ -132,15 +137,6 @@
         scroll-to-error
         @submit.prevent="create"
         @keydown.capture="guardFormEnter"
-        ><ElFormItem label="部署标识" prop="deploymentKey"
-          ><ElInput
-            v-described-by="formTipId + '-field-0'"
-            :aria-describedby="formTipId + '-field-0'"
-            v-model="form.deploymentKey"
-          />
-          <FieldTip :id="formTipId + '-field-0'"
-            >填写工具部署的稳定标识，用于能力挂载引用。</FieldTip
-          > </ElFormItem
         ><ElFormItem label="工具（跟随当前发布）" prop="toolVersionId"
           ><ElSelect
             v-described-by="formTipId + '-field-1'"
@@ -281,10 +277,6 @@ onScopeDispose(() => {
 })
 const formRef = ref<FormInstance>()
 const rules: FormRules = {
-  deploymentKey: [
-    { required: true, whitespace: true, message: '请输入部署标识', trigger: 'blur' },
-    { max: 128, message: '部署标识不能超过 128 个字符', trigger: 'blur' }
-  ],
   toolVersionId: [
     {
       type: 'string',
@@ -354,7 +346,7 @@ async function refresh() {
     }
   })
 }
-type CreationOperation = { requestId: string; deploymentKey: string }
+type CreationOperation = { requestId: string; deploymentKey?: string }
 const creationOperations = ref<CreationOperation[]>([])
 const creationUnknown = computed(() => creationOperations.value[0])
 const creationInputRequestId = ref('')
@@ -369,7 +361,6 @@ const { busy, error, run } = useTask(),
   confirmedChange = ref(''),
   versions = ref<CapabilityVersion[]>([]),
   form = reactive<CreateCapabilityDeploymentInput>({
-    deploymentKey: '',
     toolVersionId: '',
     providerType: 'MCP',
     providerRef: '',
@@ -392,8 +383,8 @@ function syncOperations(subject: string, preserveExisting = false) {
       if (
         !record ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId) ||
-        typeof record.deploymentKey !== 'string' ||
-        !record.deploymentKey ||
+        (record.deploymentKey !== undefined &&
+          (typeof record.deploymentKey !== 'string' || !record.deploymentKey)) ||
         key !== storageKey(subject, record.requestId)
       )
         throw Error('invalid')
@@ -430,7 +421,6 @@ watch(
       open.value = false
       checkedDeployment.value = undefined
       Object.assign(form, {
-        deploymentKey: '',
         toolVersionId: '',
         providerType: 'MCP',
         providerRef: '',
@@ -531,7 +521,6 @@ async function openCreate() {
     connectors.value = instances.items
     versions.value = loadedVersions
     Object.assign(form, {
-      deploymentKey: '',
       toolVersionId: '',
       providerType: 'MCP',
       providerRef: '',
@@ -546,8 +535,8 @@ async function create() {
   if (!(await formRef.value?.validate().catch(() => false))) return
   let checkAfterWrite = false
   await run(async () => {
-    if (!form.deploymentKey.trim() || !form.providerRef.trim() || !form.toolVersionId)
-      throw Error('请填写部署标识，选择已发布工具和对应的连接器或平台工具')
+    if (!form.providerRef.trim() || !form.toolVersionId)
+      throw Error('请选择已发布工具和对应的连接器或平台工具')
     if (!providerOptions.value.some((option) => option.id === form.providerRef))
       throw Error('所选连接器或平台工具已不可用，请从当前列表重新选择')
     const subject = owner.value,
@@ -556,9 +545,8 @@ async function create() {
     if (!subject || !session) throw Error('当前登录状态不可用，请重新登录')
     syncOperations(subject, true)
     if (creationUnknown.value || creationStorageError.value) return
-    const operation = {
-      requestId: crypto.randomUUID(),
-      deploymentKey: form.deploymentKey.trim()
+    const operation: CreationOperation = {
+      requestId: crypto.randomUUID()
     }
     try {
       localStorage.setItem(storageKey(subject, operation.requestId), JSON.stringify(operation))
@@ -610,10 +598,12 @@ async function acceptCreation(
   if (
     !receipt ||
     receipt.request_id !== operation.requestId ||
-    receipt.deployment_key !== operation.deploymentKey ||
+    (operation.deploymentKey !== undefined && receipt.deployment_key !== operation.deploymentKey) ||
     !['SUCCEEDED', 'REJECTED'].includes(receipt.status) ||
     (receipt.status === 'SUCCEEDED' &&
-      (typeof receipt.deployment_id !== 'string' || !receipt.deployment_id)) ||
+      (typeof receipt.deployment_id !== 'string' ||
+        !receipt.deployment_id ||
+        !receipt.deployment_key)) ||
     (receipt.status === 'REJECTED' && receipt.error_code !== 'TOOL_DEPLOYMENT_CREATE_REJECTED')
   )
     return false
@@ -648,16 +638,14 @@ async function acceptCreation(
   const ownsInput = creationInputRequestId.value === operation.requestId
   if (receipt.status === 'REJECTED') {
     if (ownsInput) creationInputRequestId.value = ''
-    message.error(
-      receipt.message || '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
-    )
+    message.error(receipt.message || '工具部署创建被拒绝，请检查工具与提供方配置。')
     return true
   }
   if (ownsInput) {
     creationInputRequestId.value = ''
     open.value = false
   }
-  confirmedChange.value = `工具部署已创建：${operation.deploymentKey}`
+  confirmedChange.value = `工具部署已创建：${receipt.deployment_key}`
   invalidate()
   if (!canRead.value) {
     if (sameIdentity()) message.success(confirmedChange.value)
@@ -711,7 +699,7 @@ async function checkDeployment(operation: CreationOperation) {
     const subject = owner.value,
       identity = auth.identityVersion,
       session = getSessionId()
-    if (!operation || !session || !canRead.value) return
+    if (!operation?.deploymentKey || !session || !canRead.value) return
     checkedDeployment.value = undefined
     checkedRequestId.value = ''
     const current = () =>

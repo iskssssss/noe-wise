@@ -260,7 +260,7 @@ export interface CapabilityDefinitionQuery {
 }
 
 export interface CreateCapabilityDeploymentInput {
-  deploymentKey: string
+  deploymentKey?: string
   toolVersionId: string
   providerType: ToolDeploymentProviderType
   providerRef: string
@@ -1089,7 +1089,9 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
       .then(mapDeployment)
 
   const deploymentPayload = (input: CreateCapabilityDeploymentInput) => ({
-    deployment_key: textValue(input.deploymentKey, 'deploymentKey'),
+    ...(input.deploymentKey
+      ? { deployment_key: textValue(input.deploymentKey, 'deploymentKey') }
+      : {}),
     tool_version_id: catalogDecimalIdentity(input.toolVersionId, 'toolVersionId'),
     provider_type: enumValue(input.providerType, DEPLOYMENT_PROVIDER_TYPES, 'providerType'),
     provider_ref: textValue(input.providerRef, 'providerRef'),

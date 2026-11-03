@@ -67,7 +67,6 @@ it('部署原请求遇 401 不刷新认证或重发，回执只读使用原请�
   const catalog = createCapabilityCatalogApi(client())
   await expect(
     catalog.createDeploymentWithReceipt('req-1', {
-      deploymentKey: 'clock',
       toolVersionId: '202',
       providerType: 'PLATFORM',
       providerRef: 'get_current_time',
@@ -79,8 +78,9 @@ it('部署原请求遇 401 不刷新认证或重发，回执只读使用原请�
   const request = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
   expect(request).toMatchObject({
     request_id: 'req-1',
-    payload: { deployment_key: 'clock', tool_version_id: '202' }
+    payload: { tool_version_id: '202' }
   })
+  expect(request.payload).not.toHaveProperty('deployment_key')
   expect(await catalog.deploymentCreateReceipt('req-1')).toMatchObject({
     request_id: 'req-1',
     deployment_id: '123'

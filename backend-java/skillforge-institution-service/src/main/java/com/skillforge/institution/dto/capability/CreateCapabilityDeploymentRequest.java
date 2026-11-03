@@ -9,7 +9,7 @@ import jakarta.validation.constraints.Size;
 /** 租户创建 ToolDeployment 请求；仅提交 Provider 引用，不接受凭证字段。 */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public record CreateCapabilityDeploymentRequest(
-        @NotBlank @Size(max = 128) String deploymentKey,
+        @Size(max = 128) String deploymentKey,
         @NotNull @Positive Long toolVersionId,
         @NotBlank String providerType,
         @NotBlank @Size(max = 255) String providerRef,

@@ -78,14 +78,12 @@ beforeEach(() => {
   calls.instances.mockResolvedValue({
     items: [{ instance_id: 'server', name: '客户系统', executor_type: 'mcp' }]
   })
-  calls.createDeployment.mockImplementation(
-    async (requestId: string, input: { deploymentKey: string }) => ({
-      status: 'SUCCEEDED',
-      request_id: requestId,
-      deployment_id: '123',
-      deployment_key: input.deploymentKey
-    })
-  )
+  calls.createDeployment.mockImplementation(async (requestId: string) => ({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  }))
   calls.deploymentCreateReceipt.mockResolvedValue(undefined)
 })
 afterEach(() => {
@@ -197,7 +195,6 @@ async function prepareCreate() {
   await action('新增部署')!.trigger('click')
   await flushPromises()
   const drawer = wrapper!.findComponent(ElDrawer)
-  await drawer.findComponent(ElInput).find('input').setValue('new-one')
   drawer.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', '2')
   drawer.findComponent(EntitySelect).vm.$emit('update:modelValue', 'server')
   await flushPromises()
@@ -263,7 +260,7 @@ it('不匹配的原回执和身份变化的迟到响应都不能解锁', async (
   await flushPromises()
   calls.deploymentCreateReceipt.mockResolvedValueOnce({
     status: 'SUCCEEDED',
-    request_id: requestId,
+    request_id: '11111111-1111-4111-8111-111111111111',
     deployment_id: '123',
     deployment_key: 'other'
   })
@@ -313,6 +310,22 @@ it('不同标签保存的两个原请求分别恢复，确认一个不覆盖另�
   expect(wrapper!.text()).toContain('部署“two”的创建结果尚未确认')
   expect(action('新增部署')!.props('disabled')).toBe(true)
   expect(calls.createDeployment).not.toHaveBeenCalled()
+})
+
+it('旧待核对记录仍可按原标识只读查看部署', async () => {
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","8"]:${requestId}`,
+    JSON.stringify({ requestId, deploymentKey: 'old-key' })
+  )
+  calls.getDeployment.mockResolvedValue(deployment('old-key', '2'))
+  mountWithPermissions([])
+  await flushPromises()
+  await action('查看当前部署')!.trigger('click')
+  await flushPromises()
+  expect(calls.getDeployment).toHaveBeenCalledExactlyOnceWith('old-key', { silent: true })
+  expect(wrapper!.text()).toContain('当前部署：old-key')
+  expect(action('新增部署')!.props('disabled')).toBe(true)
 })
 
 it('切换主体后清除旧目录且丢弃迟到的版本读取', async () => {
@@ -510,8 +523,8 @@ it.each([
   calls.createDeployment.mockRejectedValueOnce(failure)
   await action('创建')!.trigger('click')
   await flushPromises()
-  expect(wrapper!.findComponent(ElDrawer).findComponent(ElInput).find('input').element.value).toBe(
-    'new-one'
+  expect(wrapper!.findComponent(ElDrawer).findComponent(EntitySelect).props('modelValue')).toBe(
+    'server'
   )
   expect(wrapper!.text()).toContain('original')
   expect(calls.warning).toHaveBeenCalledExactlyOnceWith(
@@ -523,17 +536,7 @@ it.each([
   expect(action('创建')!.props('disabled')).toBe(true)
   await action('取消')!.trigger('click')
   await flushPromises()
-  calls.getDeployment.mockResolvedValue(deployment('new-one', '2'))
-  await action('查看当前部署')!.trigger('click')
-  await flushPromises()
-  expect(calls.getDeployment).toHaveBeenCalledExactlyOnceWith('new-one', { silent: true })
-  expect(wrapper!.text()).toContain('当前部署：new-one')
-  expect(action('新增部署')!.props('disabled')).toBe(true)
-  expect(calls.createDeployment).toHaveBeenCalledTimes(1)
-  calls.getDeployment.mockRejectedValueOnce(new Error('未查到部署'))
-  await action('查看当前部署')!.trigger('click')
-  await flushPromises()
-  expect(calls.error).toHaveBeenCalledWith('未查到部署')
+  expect(action('查看当前部署')).toBeUndefined()
   expect(action('新增部署')!.props('disabled')).toBe(true)
   expect(calls.createDeployment).toHaveBeenCalledTimes(1)
 })
@@ -581,60 +584,23 @@ it('持久拒绝回执保留输入且允许修改，不标记未知', async () =
   await action('创建')!.trigger('click')
   await flushPromises()
   expect(calls.error).toHaveBeenCalledExactlyOnceWith('工具版本未发布')
-  expect(wrapper!.findComponent(ElDrawer).findComponent(ElInput).find('input').element.value).toBe(
-    'new-one'
+  expect(wrapper!.findComponent(ElDrawer).findComponent(EntitySelect).props('modelValue')).toBe(
+    'server'
   )
   expect(action('创建')!.props('disabled')).toBe(false)
   expect(wrapper!.text()).not.toContain('创建结果尚未确认')
   expect(calls.deployments).toHaveBeenCalledTimes(1)
 })
 
-it('部署标识拒绝回执可修改后重新创建', async () => {
+it('创建部署时不要求或提交手填标识', async () => {
   mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
   await prepareCreate()
-  calls.createDeployment.mockImplementationOnce(async (requestId: string) => ({
-    request_id: requestId,
-    status: 'REJECTED',
-    deployment_id: null,
-    deployment_key: 'new-one',
-    error_code: 'TOOL_DEPLOYMENT_CREATE_REJECTED',
-    message: '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
-  }))
+  expect(wrapper!.findComponent(ElDrawer).text()).not.toContain('部署标识')
   await action('创建')!.trigger('click')
   await flushPromises()
-  expect(calls.error).toHaveBeenCalledExactlyOnceWith(
-    '工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。'
-  )
-  expect(action('创建')!.props('disabled')).toBe(false)
-  expect(wrapper!.text()).not.toContain('创建结果尚未确认')
-  await wrapper!.findComponent(ElDrawer).findComponent(ElInput).find('input').setValue('another')
-  await action('创建')!.trigger('click')
-  await flushPromises()
-  expect(calls.createDeployment).toHaveBeenCalledTimes(2)
-  expect(calls.createDeployment).toHaveBeenLastCalledWith(
-    expect.any(String),
-    expect.objectContaining({ deploymentKey: 'another' })
-  )
-})
-
-it('部署标识 129 字符在入口拒绝，127 字符允许提交', async () => {
-  mountWithPermissions(['foundation.capabilities.create'])
-  await flushPromises()
-  await prepareCreate()
-  const input = wrapper!.findComponent(ElDrawer).findComponent(ElInput).find('input')
-  await input.setValue('a'.repeat(129))
-  await action('创建')!.trigger('click')
-  await flushPromises()
-  expect(calls.createDeployment).not.toHaveBeenCalled()
-  await vi.waitFor(() => expect(document.body.textContent).toContain('部署标识不能超过 128 个字符'))
-  await input.setValue('a'.repeat(127))
-  await action('创建')!.trigger('click')
-  await flushPromises()
-  expect(calls.createDeployment).toHaveBeenCalledExactlyOnceWith(
-    expect.any(String),
-    expect.objectContaining({ deploymentKey: 'a'.repeat(127) })
-  )
+  expect(calls.createDeployment).toHaveBeenCalledTimes(1)
+  expect(calls.createDeployment.mock.calls[0]![1]).not.toHaveProperty('deploymentKey')
 })
 
 it('创建请求在途时提供方引用不可编辑', async () => {

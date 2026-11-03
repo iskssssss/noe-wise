@@ -49,7 +49,7 @@ public class ToolDeploymentCreationService {
     public Result create(long tenant, Command command) {
         access.require("foundation.capabilities.create");
         String actor = subject(tenant);
-        CreateCapabilityDeploymentRequest payload = normalize(command.payload());
+        CreateCapabilityDeploymentRequest payload = normalize(command.payload(), command.requestId());
         String fingerprint = fingerprint(payload);
         String requestId = command.requestId().toString();
         context.bindTenant(tenant);
@@ -74,7 +74,7 @@ public class ToolDeploymentCreationService {
     public Result reject(long tenant, Command command) {
         access.require("foundation.capabilities.create");
         String actor = subject(tenant);
-        var payload = normalize(command.payload());
+        var payload = normalize(command.payload(), command.requestId());
         String fingerprint = fingerprint(payload);
         String requestId = command.requestId().toString();
         context.bindTenant(tenant);
@@ -100,7 +100,7 @@ public class ToolDeploymentCreationService {
     private Result result(UUID requestId, ToolDeploymentCreateReceiptMapper.Row row) {
         if ("REJECTED".equals(row.outcome()))
             return new Result(requestId, "REJECTED", null, row.deploymentKey(),
-                    "TOOL_DEPLOYMENT_CREATE_REJECTED", "工具部署创建被拒绝，请检查部署标识是否已存在及工具与提供方配置。");
+                    "TOOL_DEPLOYMENT_CREATE_REJECTED", "工具部署创建被拒绝，请检查工具与提供方配置。");
         if (!"SUCCEEDED".equals(row.outcome()))
             throw new IllegalStateException("工具部署创建回执尚未完成");
         if (row.deploymentId() == null || row.deploymentKey() == null)
@@ -115,8 +115,10 @@ public class ToolDeploymentCreationService {
         return subject.memberId();
     }
 
-    private CreateCapabilityDeploymentRequest normalize(CreateCapabilityDeploymentRequest request) {
-        return new CreateCapabilityDeploymentRequest(request.deploymentKey().trim(), request.toolVersionId(),
+    private CreateCapabilityDeploymentRequest normalize(CreateCapabilityDeploymentRequest request, UUID requestId) {
+        String key = request.deploymentKey() == null || request.deploymentKey().isBlank()
+                ? "tool-" + requestId : request.deploymentKey().trim();
+        return new CreateCapabilityDeploymentRequest(key, request.toolVersionId(),
                 request.providerType().trim().toUpperCase(Locale.ROOT), request.providerRef().trim(),
                 request.environment().trim().toUpperCase(Locale.ROOT),
                 request.status() == null || request.status().isBlank() ? "ACTIVE" : request.status().trim().toUpperCase(Locale.ROOT));

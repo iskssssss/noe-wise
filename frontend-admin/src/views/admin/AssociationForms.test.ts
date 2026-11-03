@@ -173,7 +173,6 @@ describe('关联表单校验', () => {
     await button(wrapper, '新增部署').trigger('click')
     await flushPromises()
     const drawer = wrapper.findComponent(ElDrawer)
-    await drawer.findComponent(ElInput).find('input').setValue('customer-search')
     const selects = drawer.findAllComponents(ElSelect)
     selects[0]!.vm.$emit('update:modelValue', '20')
     const provider = selects[1]!
