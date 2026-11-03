@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { clearTokens, saveTokens } from './index'
+import { api, clearTokens, saveTokens } from './index'
 import { useAuthStore } from '../stores/auth'
 
 afterEach(() => {
@@ -10,6 +10,34 @@ afterEach(() => {
 })
 
 describe('平台登录认证请求', () => {
+  it.each(['request', 'complete', 'invite'] as const)(
+    '公开账号恢复和邀请 %s 不携带旧平台令牌',
+    async (action) => {
+      saveTokens({ access_token: 'expired-platform-token', refresh_token: 'expired-refresh-token' })
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 'INVALID_ACCESS_TOKEN',
+            message: '拒绝',
+            data: null,
+            trace_id: 'test'
+          }),
+          { status: 401 }
+        )
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const command = { token: 'synthetic-token', new_password: 'synthetic-password' }
+      const result =
+        action === 'request'
+          ? api.auth.requestRecovery({ username: 'member' })
+          : action === 'complete'
+            ? api.auth.completeRecovery(command)
+            : api.auth.activate(command)
+      await expect(result).rejects.toMatchObject({ status: 401 })
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(new Headers(fetcher.mock.calls[0]![1].headers).has('X-Platform-Token')).toBe(false)
+    }
+  )
   it('已有旧令牌时匿名登录，登录后的资料请求携带新平台令牌', async () => {
     setActivePinia(createPinia())
     saveTokens({ access_token: 'expired-platform-token', refresh_token: 'expired-refresh-token' })

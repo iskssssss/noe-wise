@@ -1,3 +1,5 @@
+import type { RequestOptions } from '../../utils/http'
+
 /** 两个账号体系共用传输类型；令牌读取和刷新仍归宿主现有客户端。 */
 export interface SecurityAuthTokens {
   access_token: string
@@ -48,7 +50,7 @@ export interface SecurityDevice {
 /** 宿主提供的typed请求函数，不另取token。 */
 export type SecurityGet = <T>(path: string) => Promise<T>
 /** 宿主提供的typed写入函数。 */
-export type SecurityPost = <T>(path: string, body?: unknown) => Promise<T>
+export type SecurityPost = <T>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
 /** 扩展已有auth namespace；prefix由宿主固定，不从用户输入取得。 */
 export function createSecurityAuthApi(get: SecurityGet, post: SecurityPost, prefix: string) {
   return {
@@ -58,12 +60,12 @@ export function createSecurityAuthApi(get: SecurityGet, post: SecurityPost, pref
     enable: (code: string) => post<SecurityEnabled>(prefix + '/mfa/enable', { code }),
     verify: (code: string) => post<SecurityAuthTokens>(prefix + '/mfa/verify', { code }),
     requestRecovery: (body: { tenant_slug?: string; username: string }) =>
-      post<{ status: string }>(prefix + '/recovery/request', body),
+      post<{ status: string }>(prefix + '/recovery/request', body, { anonymous: true }),
     completeRecovery: (body: { token: string; new_password: string }) =>
-      post<{ status: string }>(prefix + '/recovery/complete', body),
+      post<{ status: string }>(prefix + '/recovery/complete', body, { anonymous: true }),
     disable: () => post<{ status: string }>(prefix + '/mfa/disable'),
     activate: (body: { token: string; new_password: string }) =>
-      post<{ status: string }>(prefix + '/invite/activate', body)
+      post<{ status: string }>(prefix + '/invite/activate', body, { anonymous: true })
   }
 }
 /** 当前安全管理客户端，直接使用宿主请求函数。 */

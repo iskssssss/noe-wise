@@ -49,7 +49,13 @@ watch(
 onScopeDispose(clear)
 /** 请求只发往已登记邮箱；相同响应不透露账号是否存在。 */
 async function request() {
-  if (busy.value || props.disabled || !props.username) return
+  if (
+    busy.value ||
+    props.disabled ||
+    !props.username ||
+    (props.tenantSlug !== undefined && !props.tenantSlug)
+  )
+    return
   const current = generation
   emit('start')
   busy.value = true
@@ -120,8 +126,15 @@ async function complete() {
         <ElRadioButton value="invitation">接受邀请</ElRadioButton>
       </ElRadioGroup>
       <template v-if="form.purpose === 'recovery' && !hasCredential">
-        <p>填写上方账号信息，发送恢复邮件至登记邮箱。</p>
-        <ElButton :loading="busy" :disabled="busy || disabled || !username" @click="request"
+        <p>
+          {{
+            tenantSlug === undefined ? '填写上方用户名' : '填写上方机构标识和用户名'
+          }}，发送恢复邮件至登记邮箱。
+        </p>
+        <ElButton
+          :loading="busy"
+          :disabled="busy || disabled || !username || (tenantSlug !== undefined && !tenantSlug)"
+          @click="request"
           >发送密码恢复邮件</ElButton
         >
       </template>

@@ -145,6 +145,27 @@ describe('登录请求认证边界', () => {
     expect(headers.get('Content-Type')).toBe('application/json')
   })
 
+  it.each(['request', 'complete', 'invite'] as const)(
+    '公开账号恢复和邀请 %s 不携带旧令牌，也不自动重发',
+    async (action) => {
+      localStorage.setItem('skillforge.access_token', 'expired-access-token')
+      localStorage.setItem('skillforge.refresh_token', 'old-refresh-token')
+      const fetchMock = vi.fn().mockResolvedValue(apiResponse(null, 401))
+      vi.stubGlobal('fetch', fetchMock)
+      const command = { token: 'synthetic-token', new_password: 'synthetic-password' }
+      const result =
+        action === 'request'
+          ? api.auth.requestRecovery({ tenant_slug: 'test', username: 'member' })
+          : action === 'complete'
+            ? api.auth.completeRecovery(command)
+            : api.auth.activate(command)
+      await expect(result).rejects.toMatchObject({ status: 401 })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(new Headers(fetchMock.mock.calls[0]![1].headers).has('Authorization')).toBe(false)
+      expect(localStorage.getItem('skillforge.access_token')).toBe('expired-access-token')
+    }
+  )
+
   it('登录被拒绝时不借用旧刷新令牌重试或清除其他登录态', async () => {
     localStorage.setItem('skillforge.access_token', 'old-access-token')
     localStorage.setItem('skillforge.refresh_token', 'old-refresh-token')
