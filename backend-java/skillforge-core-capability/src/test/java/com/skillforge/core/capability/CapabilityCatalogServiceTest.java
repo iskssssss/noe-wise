@@ -232,6 +232,22 @@ class CapabilityCatalogServiceTest {
     }
 
     @Test
+    void platformDeploymentRejectsDifferentHandlerBeforeWriting() {
+        var published = version(definition("TOOL"), "PUBLISHED");
+        published.setDescriptor(Map.of("tool_name", "get_current_time"));
+        when(versions.selectOne(any())).thenReturn(published);
+
+        var failure = assertThrows(ApiException.class, () -> service.createDeployment(
+                CapabilityCatalogScope.tenant(7L), "wrong-clock", published.getId(),
+                com.skillforge.core.capability.tool.ToolDeployment.ProviderType.PLATFORM, "template_render",
+                com.skillforge.core.capability.tool.ToolDeployment.Environment.DEVELOPMENT, "ACTIVE"));
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, failure.getStatus());
+        assertEquals(CapabilityCatalogErrors.DEPLOYMENT_INVALID, failure.getCode());
+        verify(deployments, never()).insert(any(ToolDeploymentRecordDO.class));
+    }
+
+    @Test
     void createsDefinitionAndStrictlyDecodesEveryClosedDescriptor() {
         when(definitions.insert(any(CapabilityDefinitionDO.class))).thenReturn(1);
         CapabilityCatalogScope scope = CapabilityCatalogScope.tenant(7L);

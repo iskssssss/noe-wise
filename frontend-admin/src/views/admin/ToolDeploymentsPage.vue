@@ -163,15 +163,17 @@
           > </ElFormItem
         ><ElFormItem label="提供方引用" prop="providerRef"
           ><EntitySelect
+            v-if="form.providerType !== 'PLATFORM'"
             v-described-by="'deployment-provider-help'"
             aria-describedby="deployment-provider-help"
             v-model="form.providerRef"
             :disabled="busy || !!creationUnknown"
             :options="providerOptions"
-            :placeholder="form.providerType === 'PLATFORM' ? '选择平台工具' : '选择连接器实例'"
+            placeholder="选择连接器实例"
           />
+          <p v-else>{{ form.providerRef || '所选工具没有匹配的平台处理器' }}</p>
           <p id="deployment-provider-help" class="admin-field-help">
-            平台工具从内置目录选择；MCP 和连接器从当前机构的实例目录选择。切换提供方会清空原引用。
+            平台处理器按所选工具契约自动匹配；MCP 和连接器从当前机构的实例目录选择。
           </p></ElFormItem
         ><ElAlert
           v-if="!providerOptions.length"
@@ -456,11 +458,18 @@ watch(loadError, (value) => {
 })
 const providerOptions = computed(() =>
   form.providerType === 'PLATFORM'
-    ? platformTools.value.map((tool) => ({
-        id: tool.name,
-        label: tool.name,
-        description: tool.description
-      }))
+    ? platformTools.value
+        .filter(
+          (tool) =>
+            tool.name ===
+            versions.value.find((version) => version.id === form.toolVersionId)?.descriptor
+              .tool_name
+        )
+        .map((tool) => ({
+          id: tool.name,
+          label: tool.name,
+          description: tool.description
+        }))
     : connectors.value
         .filter(
           (connector) =>
@@ -468,12 +477,10 @@ const providerOptions = computed(() =>
         )
         .map((connector) => ({ id: connector.instance_id, label: connector.name }))
 )
-watch(
-  () => form.providerType,
-  () => {
-    form.providerRef = ''
-  }
-)
+watch([() => form.providerType, () => form.toolVersionId], ([provider], [previousProvider]) => {
+  if (provider === 'PLATFORM') form.providerRef = providerOptions.value[0]?.id ?? ''
+  else if (provider !== previousProvider) form.providerRef = ''
+})
 const { requestClose } = useDrawerClose({
   open: () => open.value,
   busy: () => busy.value,

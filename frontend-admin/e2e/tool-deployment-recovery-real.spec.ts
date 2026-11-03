@@ -9,7 +9,8 @@ function required(name: string) {
 }
 
 test('部署创建响应丢失后核对原请求并运行工具', async ({ page, context }) => {
-  const key = required('E2E_DEPLOYMENT_KEY')
+  test.skip(Boolean(process.env.E2E_TOOL_PROVIDER_BINDING), '本轮验证工具契约与处理器绑定')
+  let key = ''
   const mode = process.env.E2E_TOOL_DEPLOYMENT_MODE ?? 'candidate'
   const responseMode = process.env.E2E_TOOL_DEPLOYMENT_RESPONSE ?? 'disconnect'
   let posts = 0,
@@ -43,7 +44,7 @@ test('部署创建响应丢失后核对原请求并运行工具', async ({ page,
         const request = route.request().postDataJSON()
         requestId = String(request.request_id ?? '')
         expect(requestId).toMatch(/^[0-9a-f-]{36}$/i)
-        expect(request.payload.deployment_key).toBe(key)
+        expect(request.payload.deployment_key).toBeUndefined()
       }
       const upstream = await route.fetch()
       upstreamStatus = upstream.status()
@@ -51,8 +52,9 @@ test('部署创建响应丢失后核对原请求并运行工具', async ({ page,
       if (mode === 'candidate') {
         upstreamReceipt = (await upstream.json()).data
         expect(upstreamReceipt?.request_id).toBe(requestId)
-        expect(upstreamReceipt?.deployment_key).toBe(key)
-      }
+        key = String(upstreamReceipt?.deployment_key ?? '')
+        expect(key).toMatch(/^tool-/)
+      } else key = String((await upstream.json()).data.deployment_key)
       if (responseMode === '401')
         await route.fulfill({
           status: 401,
@@ -79,7 +81,6 @@ test('部署创建响应丢失后核对原请求并运行工具', async ({ page,
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: '新增部署', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: '新增工具部署' })
-  await drawer.getByLabel('部署标识', { exact: true }).fill(key)
   await drawer.getByLabel('工具（跟随当前发布）', { exact: true }).click()
   await page.getByRole('option', { name: 'get_current_time', exact: true }).click()
   await drawer
@@ -89,13 +90,10 @@ test('部署创建响应丢失后核对原请求并运行工具', async ({ page,
     )
     .click()
   await page.getByRole('option', { name: '平台内置工具', exact: true }).click()
-  await drawer
-    .getByLabel('提供方引用', { exact: true })
-    .locator(
-      'xpath=ancestor::div[contains(concat(" ",normalize-space(@class)," ")," el-select__wrapper ")][1]'
-    )
-    .click()
-  await page.getByRole('option', { name: /get_current_time/ }).click()
+  await expect(drawer.getByLabel('提供方引用', { exact: true })).toContainText('get_current_time')
+  await expect(drawer.getByLabel('提供方引用', { exact: true }).getByRole('combobox')).toHaveCount(
+    0
+  )
   await drawer.getByRole('button', { name: '创建', exact: true }).click()
   if (mode === 'baseline') {
     await expect(page.getByText('创建结果尚未确认，原输入已保留。', { exact: false })).toBeVisible()
@@ -151,6 +149,89 @@ test('部署创建响应丢失后核对原请求并运行工具', async ({ page,
         requestId,
         receiptAfterReopen,
         upstreamReceipt
+      },
+      null,
+      2
+    )
+  )
+})
+
+test('工具契约与平台处理器绑定后由同一部署执行', async ({ page }) => {
+  const mode = process.env.E2E_TOOL_PROVIDER_BINDING
+  test.skip(!mode, '仅在工具绑定专项运行')
+  let posts = 0
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/capabilities/deployments/create-with-receipt'
+    )
+      posts++
+  })
+  await page.goto('/login?redirect=%2Fadmin%2Ftool-deployments')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill('runtime-e2e-admin')
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('button', { name: '新增部署', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: '新增工具部署' })
+  await drawer.getByLabel('工具（跟随当前发布）', { exact: true }).click()
+  await page.getByRole('option', { name: 'get_current_time', exact: true }).click()
+  await drawer
+    .getByLabel('提供方', { exact: true })
+    .locator(
+      'xpath=ancestor::div[contains(concat(" ",normalize-space(@class)," ")," el-select__wrapper ")][1]'
+    )
+    .click()
+  await page.getByRole('option', { name: '平台内置工具', exact: true }).click()
+  let manualReferenceSelections = 0
+  if (mode === 'baseline') {
+    await drawer
+      .getByLabel('提供方引用', { exact: true })
+      .locator(
+        'xpath=ancestor::div[contains(concat(" ",normalize-space(@class)," ")," el-select__wrapper ")][1]'
+      )
+      .click()
+    await page.getByRole('option', { name: /^template_render(?:\s|$)/ }).click()
+    manualReferenceSelections++
+  } else {
+    await expect(drawer).toContainText('get_current_time')
+    await expect(
+      drawer.getByLabel('提供方引用', { exact: true }).getByRole('combobox')
+    ).toHaveCount(0)
+  }
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/capabilities/deployments/create-with-receipt' &&
+      response.request().method() === 'POST'
+  )
+  await drawer.getByRole('button', { name: '创建', exact: true }).click()
+  const response = await created
+  expect(response.ok()).toBe(true)
+  const envelope = await response.json()
+  expect(envelope.code).toBe('OK')
+  expect(envelope.data.status).toBe('SUCCEEDED')
+  expect(response.request().postDataJSON().payload.provider_ref).toBe(
+    mode === 'baseline' ? 'template_render' : 'get_current_time'
+  )
+  const key = String(envelope.data.deployment_key)
+  expect(key).toMatch(/^tool-/)
+  await expect(page.getByRole('row').filter({ hasText: key })).toBeVisible()
+  expect(posts).toBe(1)
+  await page.screenshot({
+    path: join(required('E2E_ARTIFACT_DIR'), 'provider-binding-created.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(required('E2E_ARTIFACT_DIR'), 'browser-receipt.json'),
+    JSON.stringify(
+      {
+        key,
+        bindingMode: mode,
+        posts,
+        upstreamStatus: response.status(),
+        upstreamReceipt: envelope.data,
+        payload: response.request().postDataJSON().payload,
+        manualReferenceSelections
       },
       null,
       2

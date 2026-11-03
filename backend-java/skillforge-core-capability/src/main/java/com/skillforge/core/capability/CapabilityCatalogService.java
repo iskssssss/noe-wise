@@ -629,6 +629,11 @@ public class CapabilityCatalogService {
                     CapabilityCatalogErrors.VERSION_NOT_PUBLISHED,
                     "published TOOL version not found");
         }
+        if (providerType == ToolDeployment.ProviderType.PLATFORM
+                && !ref.equals(version.getDescriptor().get("tool_name"))) {
+            throw error(HttpStatus.UNPROCESSABLE_ENTITY, CapabilityCatalogErrors.DEPLOYMENT_INVALID,
+                    "平台工具处理器必须与已发布工具契约一致");
+        }
         // MCP 仅支持只读幂等；业务参数中的去重键不构成 Runtime 崩溃重放协议。
         if (providerType == ToolDeployment.ProviderType.MCP
                 && Boolean.TRUE.equals(version.getDescriptor().get("idempotent"))

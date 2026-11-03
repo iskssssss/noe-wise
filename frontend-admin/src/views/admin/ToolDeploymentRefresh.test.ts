@@ -667,3 +667,75 @@ it('启停写入失败保留旧状态，不自动重发或读取目录', async (
   expect(calls.stopDeployment).toHaveBeenCalledExactlyOnceWith('original', 1)
   expect(calls.deployments).toHaveBeenCalledTimes(1)
 })
+
+it('平台工具从发布契约自动绑定同名处理器，创建无需再次选择引用', async () => {
+  calls.version.mockImplementation(async (id: string) => ({
+    id,
+    name: '当前时间',
+    versionKey: 'v1',
+    descriptor: { tool_name: 'get_current_time' }
+  }))
+  calls.platformTools.mockResolvedValue([
+    { name: 'get_current_time', description: '读取当前时间' },
+    { name: 'template_render', description: '渲染模板' }
+  ])
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await action('新增部署')!.trigger('click')
+  await flushPromises()
+  const drawer = wrapper!.findComponent(ElDrawer)
+  const selects = drawer.findAllComponents(ElSelect)
+  selects[0]!.vm.$emit('update:modelValue', '2')
+  selects[1]!.vm.$emit('update:modelValue', 'PLATFORM')
+  await flushPromises()
+  expect(drawer.findComponent(EntitySelect).exists()).toBe(false)
+  expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('get_current_time')
+  expect(calls.createDeployment).not.toHaveBeenCalled()
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  expect(calls.createDeployment).toHaveBeenCalledExactlyOnceWith(
+    expect.any(String),
+    expect.objectContaining({
+      toolVersionId: '2',
+      providerType: 'PLATFORM',
+      providerRef: 'get_current_time'
+    })
+  )
+})
+
+it('平台部署切换工具后更新处理器绑定，不沿用上一工具或显示名称', async () => {
+  calls.definitions.mockResolvedValue([{ defaultVersionId: '2' }, { defaultVersionId: '3' }])
+  calls.version.mockImplementation(async (id: string) => ({
+    id,
+    name: id === '3' ? '模板显示名' : '时钟显示名',
+    versionKey: 'v1',
+    descriptor: { tool_name: id === '3' ? 'template_render' : 'get_current_time' }
+  }))
+  calls.platformTools.mockResolvedValue([
+    { name: 'get_current_time', description: '读取当前时间' },
+    { name: 'template_render', description: '渲染模板' }
+  ])
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await action('新增部署')!.trigger('click')
+  await flushPromises()
+  const drawer = wrapper!.findComponent(ElDrawer)
+  const selects = drawer.findAllComponents(ElSelect)
+  selects[0]!.vm.$emit('update:modelValue', '2')
+  selects[1]!.vm.$emit('update:modelValue', 'PLATFORM')
+  await flushPromises()
+  expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('get_current_time')
+  selects[0]!.vm.$emit('update:modelValue', '3')
+  await flushPromises()
+  expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('template_render')
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  expect(calls.createDeployment).toHaveBeenCalledExactlyOnceWith(
+    expect.any(String),
+    expect.objectContaining({
+      toolVersionId: '3',
+      providerType: 'PLATFORM',
+      providerRef: 'template_render'
+    })
+  )
+})
