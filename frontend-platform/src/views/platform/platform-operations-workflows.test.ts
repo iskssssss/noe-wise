@@ -62,6 +62,7 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
 }))
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
+  sessionStorage.clear()
   vi.clearAllMocks()
   mocks.auth = reactive({
     identityVersion: 1,

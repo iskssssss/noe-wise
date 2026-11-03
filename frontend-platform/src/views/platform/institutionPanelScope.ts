@@ -27,25 +27,11 @@ export function useInstitutionPanelCommand() {
   async function execute<T>(
     write: (key: string) => Promise<T>,
     accept: (value: T) => void | Promise<void>,
-    guard: () => void,
-    readReceipt?: (key: string) => Promise<T | undefined>
+    guard: () => void
   ) {
     if (running.value) throw new Error('原请求正在处理，请等待完成')
     if (pending.value) throw new Error('原请求结果待核对，请先核对原请求')
     const key = crypto.randomUUID()
-    const check = async () => {
-      guard()
-      running.value = true
-      try {
-        const result = await readReceipt!(key)
-        guard()
-        if (result === undefined) throw Error('尚未查到原请求回执，请稍后继续核对')
-        await accept(result)
-        pending.value = undefined
-      } finally {
-        running.value = false
-      }
-    }
     const invoke = async () => {
       guard()
       running.value = true
@@ -58,7 +44,7 @@ export function useInstitutionPanelCommand() {
             ? Number(reason.status)
             : 0
         if (status >= 400 && status < 500 && status !== 408) pending.value = undefined
-        else pending.value = { key, reconcile: readReceipt ? check : invoke }
+        else pending.value = { key, reconcile: invoke }
         throw reason
       } finally {
         running.value = false

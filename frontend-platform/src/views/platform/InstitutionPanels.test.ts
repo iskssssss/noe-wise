@@ -52,7 +52,10 @@ vi.mock('../../api', () => ({
   }
 }))
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({ identityVersion: 1, user: { permissions: [] } })
+  useAuthStore: () => ({
+    identityVersion: 1,
+    user: { sub: 'operator-1', tenant_id: '0', permissions: [] }
+  })
 }))
 vi.mock('../../composables/actionPermissions', () => ({
   useActionPermissions: () => ({
@@ -95,6 +98,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 beforeEach(() => {
+  sessionStorage.clear()
   vi.clearAllMocks()
   mocks.allowed.mockReturnValue(true)
   mocks.confirm.mockResolvedValue(true)
@@ -570,7 +574,9 @@ it('自动预选不扩大创建权限，未知写入核对保留原参数与请�
   expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
   await button('核对原请求').trigger('click')
   await flushPromises()
-  expect(mocks.deploymentReceipt.mock.calls[0]).toEqual(mocks.createDeployment.mock.calls[0])
+  expect(mocks.deploymentReceipt.mock.calls[0]).toEqual(
+    mocks.createDeployment.mock.calls[0]!.slice(0, 2)
+  )
   expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).toContain('核对原请求')
   await button('核对原请求').trigger('click')
@@ -578,6 +584,167 @@ it('自动预选不扩大创建权限，未知写入核对保留原参数与请�
   expect(mocks.deploymentReceipt).toHaveBeenCalledTimes(2)
   expect(mocks.createDeployment).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).not.toContain('核对原请求')
+})
+
+it('部署请求未知后重新进入原机构，只读核对原请求并恢复', async () => {
+  mocks.deploymentGrants.mockResolvedValue({
+    items: [
+      {
+        grant_id: 'g1',
+        definition_id: '91',
+        target_tenant_id: '77',
+        status: 'active',
+        actions: ['deploy', 'execute'],
+        expires_at: null
+      }
+    ]
+  })
+  mocks.createDeployment.mockRejectedValueOnce(new Error('网络中断'))
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  const definition = wrapper
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '公共定义')!
+  definition.getComponent(ElSelect).vm.$emit('update:modelValue', '91')
+  await flushPromises()
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model') !== undefined)!
+    .trigger('submit')
+  await flushPromises()
+  const [input, key] = mocks.createDeployment.mock.calls[0]!
+  expect(input.external_agent_ref).toBeNull()
+  expect(mocks.createDeployment.mock.calls[0]![2]).toEqual({ retryOnUnauthorized: false })
+  wrapper.unmount()
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  expect(wrapper.text()).toContain('机构 77 的部署结果待核对')
+  mocks.deploymentReceipt.mockResolvedValueOnce({ status: 'NOT_FOUND', result: null })
+  await button('核对原请求').trigger('click')
+  await flushPromises()
+  expect(mocks.deploymentReceipt).toHaveBeenCalledWith(input, key)
+  expect(mocks.createDeployment).toHaveBeenCalledOnce()
+  expect(wrapper.text()).toContain('核对原请求')
+  mocks.deploymentReceipt.mockResolvedValueOnce({
+    status: 'FOUND',
+    result: { ...input, deployment_id: 'd1', agent_id: 'a1', external_agent_ref: 'agent-server' }
+  })
+  await button('核对原请求').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('核对原请求')
+  expect(sessionStorage.length).toBe(0)
+  expect(mocks.createDeployment).toHaveBeenCalledOnce()
+})
+
+it('创建成功但记录清除失败时仍阻止重复创建，并可再次核对', async () => {
+  mocks.deploymentGrants.mockResolvedValue({
+    items: [
+      {
+        grant_id: 'g1',
+        definition_id: '91',
+        target_tenant_id: '77',
+        status: 'active',
+        actions: ['deploy', 'execute'],
+        expires_at: null
+      }
+    ]
+  })
+  mocks.createDeployment.mockImplementationOnce(async (input) => ({
+    ...input,
+    deployment_id: 'd1',
+    agent_id: 'a1',
+    external_agent_ref: 'agent-server'
+  }))
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  wrapper
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '公共定义')!
+    .getComponent(ElSelect)
+    .vm.$emit('update:modelValue', '91')
+  await flushPromises()
+  const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+    throw Error('存储不可用')
+  })
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model') !== undefined)!
+    .trigger('submit')
+  await flushPromises()
+  expect(wrapper.text()).toContain('核对原请求')
+  const [input] = mocks.createDeployment.mock.calls[0]!
+  remove.mockRestore()
+  mocks.deploymentReceipt.mockResolvedValueOnce({
+    status: 'FOUND',
+    result: { ...input, deployment_id: 'd1', agent_id: 'a1', external_agent_ref: 'agent-server' }
+  })
+  await button('核对原请求').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('核对原请求')
+  expect(wrapper.text()).not.toContain('无法读取或保存原请求')
+  expect(mocks.createDeployment).toHaveBeenCalledOnce()
+})
+
+it('恢复记录属于其他机构时不核对或创建新部署', async () => {
+  const key = `noewise:platform-deployment-create:${encodeURIComponent(JSON.stringify(['0', 'operator-1']))}`
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({
+      key: 'original-request',
+      input: {
+        tenant_id: '77',
+        definition_id: '91',
+        grant_id: 'g1',
+        integration_id: null,
+        external_agent_ref: null,
+        resource_bindings: [],
+        delegation_bindings: [],
+        parameters: {}
+      }
+    })
+  )
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '88' }, global })
+  await flushPromises()
+  expect(wrapper.text()).toContain('机构 77 的部署结果待核对')
+  await button('核对原请求').trigger('click')
+  await flushPromises()
+  expect(mocks.deploymentReceipt).not.toHaveBeenCalled()
+  expect(mocks.createDeployment).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).not.toBeNull()
+})
+
+it('无法保存原请求时不发送部署', async () => {
+  mocks.deploymentGrants.mockResolvedValue({
+    items: [
+      {
+        grant_id: 'g1',
+        definition_id: '91',
+        target_tenant_id: '77',
+        status: 'active',
+        actions: ['deploy', 'execute'],
+        expires_at: null
+      }
+    ]
+  })
+  wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
+  await flushPromises()
+  wrapper
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '公共定义')!
+    .getComponent(ElSelect)
+    .vm.$emit('update:modelValue', '91')
+  await flushPromises()
+  const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw Error('存储不可用')
+  })
+  await wrapper
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model') !== undefined)!
+    .trigger('submit')
+  await flushPromises()
+  expect(mocks.createDeployment).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('无法读取或保存原请求')
+  storage.mockRestore()
 })
 
 it('原生部署无需输入标识并将生成交给服务端', async () => {
@@ -593,7 +760,12 @@ it('原生部署无需输入标识并将生成交给服务端', async () => {
       }
     ]
   })
-  mocks.createDeployment.mockResolvedValueOnce({})
+  mocks.createDeployment.mockImplementationOnce(async (input) => ({
+    ...input,
+    deployment_id: 'd1',
+    agent_id: 'a1',
+    external_agent_ref: input.external_agent_ref ?? 'agent-server'
+  }))
   wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
   await flushPromises()
   const field = (label: string) =>
@@ -658,7 +830,12 @@ it('部署已保存但列表刷新失败时阻止再次创建，刷新成功后�
       }
     ]
   })
-  mocks.createDeployment.mockResolvedValueOnce({})
+  mocks.createDeployment.mockImplementationOnce(async (input) => ({
+    ...input,
+    deployment_id: 'd1',
+    agent_id: 'a1',
+    external_agent_ref: input.external_agent_ref ?? 'agent-server'
+  }))
   wrapper = mount(AgentDeploymentsPage, { props: { tenantId: '77' }, global })
   await flushPromises()
   const field = (label: string) =>

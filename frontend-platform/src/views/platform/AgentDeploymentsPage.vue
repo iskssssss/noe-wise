@@ -14,11 +14,15 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { api } from '../../api'
 import { createOperationOptions } from '../../api/entityOptions'
 import { useActionPermissions } from '../../composables/actionPermissions'
-import { usableGrant } from '../../institution/agentSetup'
-import { useInstitutionPanelScope, useInstitutionPanelCommand } from './institutionPanelScope'
+import { usableGrant, type PlatformDeploymentInput } from '../../institution/agentSetup'
+import type { AgentDeployment } from '@skillforge/shared/integration/agentDeployments'
+import { HttpClientError } from '@skillforge/shared/utils/http'
+import { useAuthStore } from '../../stores/auth'
+import { useInstitutionPanelScope } from './institutionPanelScope'
 const props = defineProps<{ tenantId?: string; embedded?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const scope = useInstitutionPanelScope(() => props.tenantId ?? '')
+const auth = useAuthStore()
 const { allowed, checked } = useActionPermissions()
 const tenantOptions = createOperationOptions('tenants', 'platform.agent_deployments.read')
 const tenant = ref(props.tenantId ?? '')
@@ -38,8 +42,30 @@ const grants = useResource((signal) =>
 )
 const action = useTask()
 const formRef = ref<FormInstance>()
-const command = useInstitutionPanelCommand()
-const uncertain = computed(() => !!command.pending.value)
+const storageKey = auth.user?.sub
+  ? `noewise:platform-deployment-create:${encodeURIComponent(JSON.stringify([auth.user.tenant_id, auth.user.sub]))}`
+  : ''
+const pending = ref<{ key: string; input: PlatformDeploymentInput }>()
+const storageFailed = ref(!storageKey)
+if (storageKey) {
+  try {
+    const raw = sessionStorage.getItem(storageKey)
+    if (raw) {
+      const saved = JSON.parse(raw) as { key: string; input: PlatformDeploymentInput }
+      if (
+        !saved.key ||
+        !saved.input?.tenant_id ||
+        !saved.input.definition_id ||
+        !saved.input.grant_id
+      )
+        throw Error('invalid')
+      pending.value = saved
+    }
+  } catch {
+    storageFailed.value = true
+  }
+}
+const uncertain = computed(() => !!pending.value || storageFailed.value)
 const form = reactive({
   definition_id: '',
   grant_id: '',
@@ -203,51 +229,88 @@ function create() {
       delegation_bindings: [],
       parameters: {}
     }
-    await command.execute(
-      (key) =>
-        checked('platform.agent_deployments.create', () => api.agentDeployments.create(input, key)),
-      () => {
-        automaticDefinitionId.value = ''
-        Object.assign(form, {
-          definition_id: '',
-          grant_id: '',
-          integration_id: '',
-          external_agent_ref: '',
-          name: ''
-        })
-        emit('changed')
-        message.success('机构部署已保存；是否可运行请查看列表中的就绪状态')
-        refreshRequired.value = true
-        void list.reload().then((value) => {
-          if (value) refreshRequired.value = false
-        })
-      },
-      requireTarget,
-      async (key) => {
-        const receipt = await checked('platform.agent_deployments.read', () =>
-          api.agentDeployments.receipt(input, key)
-        )
-        if (receipt.status === 'NOT_FOUND') return undefined
-        const result = receipt.result
-        if (
-          !result?.deployment_id ||
-          !result.agent_id ||
-          result.tenant_id !== input.tenant_id ||
-          result.definition_id !== input.definition_id ||
-          result.grant_id !== input.grant_id ||
-          result.integration_id !== input.integration_id ||
-          !result.external_agent_ref ||
-          (input.external_agent_ref !== null &&
-            result.external_agent_ref !== input.external_agent_ref)
-        )
-          throw Error('原部署回执身份无法核实')
-        return result
+    const operation = { key: crypto.randomUUID(), input }
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(operation))
+    } catch {
+      storageFailed.value = true
+      throw Error('无法保存原请求，未发送部署；请恢复浏览器会话存储')
+    }
+    pending.value = operation
+    try {
+      const result = await checked('platform.agent_deployments.create', () =>
+        api.agentDeployments.create(input, operation.key, { retryOnUnauthorized: false })
+      )
+      requireTarget()
+      acceptDeployment(operation, result)
+    } catch (reason) {
+      if (reason instanceof HttpClientError && [400, 401, 403, 422].includes(reason.status)) {
+        try {
+          sessionStorage.removeItem(storageKey)
+          pending.value = undefined
+        } catch {
+          storageFailed.value = true
+        }
       }
-    )
+      throw reason
+    }
+  })
+}
+function acceptDeployment(
+  operation: { key: string; input: PlatformDeploymentInput },
+  result: AgentDeployment
+) {
+  const input = operation.input
+  if (
+    !result?.deployment_id ||
+    !result.agent_id ||
+    result.tenant_id !== input.tenant_id ||
+    result.definition_id !== input.definition_id ||
+    result.grant_id !== input.grant_id ||
+    result.integration_id !== input.integration_id ||
+    !result.external_agent_ref ||
+    (input.external_agent_ref !== null && result.external_agent_ref !== input.external_agent_ref)
+  )
+    throw Error('原部署回执身份无法核实')
+  try {
+    sessionStorage.removeItem(storageKey)
+  } catch {
+    storageFailed.value = true
+    throw Error('部署已确认，但无法清除原请求记录；请恢复浏览器会话存储')
+  }
+  storageFailed.value = false
+  pending.value = undefined
+  automaticDefinitionId.value = ''
+  Object.assign(form, {
+    definition_id: '',
+    grant_id: '',
+    integration_id: '',
+    external_agent_ref: '',
+    name: ''
+  })
+  emit('changed')
+  message.success('机构部署已保存；是否可运行请查看列表中的就绪状态')
+  refreshRequired.value = true
+  void list.reload().then((value) => {
+    if (value) refreshRequired.value = false
   })
 }
 function reconcile() {
-  void action.run(() => command.reconcile())
+  void action.run(async () => {
+    const operation = pending.value
+    if (!operation) throw Error('无法读取原请求，请恢复浏览器会话存储')
+    if (props.tenantId && props.tenantId !== operation.input.tenant_id)
+      throw Error('请返回原机构核对部署请求')
+    const requireTarget = scope.capture()
+    const receipt = await checked('platform.agent_deployments.read', () =>
+      api.agentDeployments.receipt(operation.input, operation.key)
+    )
+    requireTarget()
+    if (pending.value !== operation) throw Error('原请求已变化，请重新核对')
+    if (receipt.status === 'NOT_FOUND') throw Error('尚未查到原请求回执，请稍后继续核对')
+    if (!receipt.result) throw Error('原部署回执身份无法核实')
+    acceptDeployment(operation, receipt.result)
+  })
 }
 useUnsavedChanges({
   dirty: () => hasDraft.value,
@@ -266,8 +329,8 @@ watch(
     list.data.value = undefined
     refreshRequired.value = false
     appliedTenant.value = ''
-    tenant.value = value ?? ''
-    if (value) query()
+    tenant.value = value ?? pending.value?.input.tenant_id ?? ''
+    if (tenant.value) query()
   },
   { immediate: true }
 )
@@ -317,11 +380,15 @@ watch(
       :closable="false"
     /><ElAlert
       v-if="uncertain"
-      title="部署结果待核对，请查询原请求回执；未查到回执不代表原请求失败。"
+      :title="
+        pending
+          ? `机构 ${pending.input.tenant_id} 的部署结果待核对；未查到回执不代表原请求失败。`
+          : '无法读取或保存原请求，请恢复浏览器会话存储。'
+      "
       type="warning"
       :closable="false"
     />
-    <ElButton v-if="uncertain" :loading="action.busy.value" @click="reconcile">核对原请求</ElButton>
+    <ElButton v-if="pending" :loading="action.busy.value" @click="reconcile">核对原请求</ElButton>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
       部署已保存，但列表尚未更新；请刷新稳定部署后继续，避免重复创建。
     </p>
