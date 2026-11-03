@@ -36,6 +36,8 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     private com.skillforge.core.foundation.settings.OperationalSettingsService.Snapshot originalRate;
     private long fixtureRateRevision;
     private long fixtureRateActor;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.skillforge.core.chat.session.SessionMailboxService historyMailbox;
 
     @BeforeEach
     void configureBrowserRatePolicy() {
@@ -142,6 +144,21 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             }).when(workflowEngine).runControlled(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         }
 
+        if (System.getenv("E2E_CHAT_HISTORY_PAGES") != null) {
+            String sentinel = "earliest-history-" + fixtureRunId();
+            for (int i = 0; i < 65; i++) {
+                String id = "history-page-" + String.format("%03d", i) + "-" + fixtureRunId();
+                var data = Map.<String, Object>of("message_id", id, "message_version", 1,
+                        "role", "assistant", "content", i == 0 ? sentinel : "历史分页消息 " + i,
+                        "state", "completed", "citations", List.of());
+                com.skillforge.common.context.TenantContext.runWithTenant(tenantId,
+                        () -> historyMailbox.appendOutput(tenantId, sessionId, "fixture:" + id,
+                                "message.delta", Map.of("event", "message.delta", "data", data)));
+            }
+            environment.put("E2E_HISTORY_SESSION", sessionId);
+            environment.put("E2E_HISTORY_SENTINEL", sentinel);
+            command.command().addAll(List.of("--grep", "已加载历史分页"));
+        }
         Process process = command.start();
         Set<ProcessHandle> owned = new LinkedHashSet<>();
         owned.add(process.toHandle());

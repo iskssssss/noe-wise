@@ -651,6 +651,156 @@ describe('历史会话绑定与关闭', () => {
   })
 })
 
+describe('已加载历史分页与最新消息合并', () => {
+  const message = (id: string, version: number, content: string) => ({
+    message_id: id,
+    message_version: version,
+    role: 'assistant' as const,
+    content,
+    created_at: '2026-11-04T00:00:00Z',
+    metadata: {},
+    references: []
+  })
+  const page = (
+    session: string,
+    messages: ReturnType<typeof message>[],
+    more: boolean,
+    before?: string
+  ) => ({
+    ...history(session),
+    messages,
+    has_more: more,
+    next_before_message_id: before
+  })
+  const observer = (index = 0) =>
+    mocks.observe.mock.calls[index]![1] as {
+      onHistory: (session: string, value: ReturnType<typeof page>) => void
+      onEvent: (event: { event: string; data: Record<string, unknown> }) => void
+    }
+  async function older() {
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '加载较早消息')!
+      .trigger('click')
+    await flushPromises()
+  }
+  const contents = () => wrapper.findAll('.debug-message').map((card) => card.text())
+
+  it('最新观察和运行后刷新保留早页，同身份消息只采用最高版本', async () => {
+    mocks.history.mockResolvedValueOnce(
+      page('A', [message('shared', 2, '当前版本2')], true, 'shared')
+    )
+    await setup()
+    mocks.history.mockResolvedValueOnce(
+      page('A', [message('old', 1, '最早正文'), message('shared', 1, '过期版本1')], false)
+    )
+    await older()
+    observer().onHistory(
+      'A',
+      page(
+        'A',
+        [message('shared', 3, '最新版本3'), message('new', 1, '新回复版本1')],
+        true,
+        'shared'
+      )
+    )
+    await flushPromises()
+    expect(contents()).toEqual([
+      expect.stringContaining('最早正文'),
+      expect.stringContaining('最新版本3'),
+      expect.stringContaining('新回复版本1')
+    ])
+    mocks.history.mockResolvedValueOnce(
+      page(
+        'A',
+        [message('shared', 2, '迟到版本2'), message('new', 2, '新回复版本2')],
+        true,
+        'shared'
+      )
+    )
+    observer().onEvent({ event: 'execution.completed', data: { run_id: 'run:A' } })
+    await flushPromises()
+    expect(contents()).toEqual([
+      expect.stringContaining('最早正文'),
+      expect.stringContaining('最新版本3'),
+      expect.stringContaining('新回复版本2')
+    ])
+    expect(wrapper.text()).not.toContain('过期版本1')
+    expect(wrapper.text()).not.toContain('迟到版本2')
+    expect(wrapper.findAll('button').some((button) => button.text() === '加载较早消息')).toBe(false)
+  })
+
+  it('最新页不替换最早分页游标，历史耗尽后不会重新打开分页', async () => {
+    const latest = page('A', [message('tail', 1, '尾页正文')], true, 'tail')
+    mocks.history.mockResolvedValueOnce(latest)
+    await setup()
+    mocks.history.mockResolvedValueOnce(
+      page('A', [message('middle', 1, '中间正文')], true, 'middle')
+    )
+    await older()
+    observer().onHistory('A', latest)
+    await flushPromises()
+    mocks.history.mockResolvedValueOnce(page('A', [message('head', 1, '首段正文')], false))
+    await older()
+    expect(mocks.history).toHaveBeenLastCalledWith('A', 'middle')
+    expect(mocks.history.mock.calls[1]).toEqual(['A', 'tail'])
+    observer().onHistory('A', latest)
+    await flushPromises()
+    expect(wrapper.findAll('button').some((button) => button.text() === '加载较早消息')).toBe(false)
+    expect(contents()).toEqual([
+      expect.stringContaining('首段正文'),
+      expect.stringContaining('中间正文'),
+      expect.stringContaining('尾页正文')
+    ])
+  })
+
+  it('较早页与当前边界重叠时去重，保留高版本及最新运行状态', async () => {
+    mocks.history.mockResolvedValueOnce({
+      ...page('A', [message('edge', 4, '边界最新正文')], true, 'edge'),
+      activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'running' }]
+    })
+    await setup()
+    mocks.history.mockResolvedValueOnce({
+      ...page('A', [message('first', 1, '较早正文'), message('edge', 2, '边界旧正文')], false),
+      activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'completed' }]
+    })
+    await older()
+    expect(contents()).toEqual([
+      expect.stringContaining('较早正文'),
+      expect.stringContaining('边界最新正文')
+    ])
+    expect(wrapper.text()).not.toContain('边界旧正文')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '停止运行')!
+        .attributes('disabled')
+    ).toBeUndefined()
+  })
+
+  it('切换会话清除前一会话分页，前一观察回调不能回填', async () => {
+    mocks.history.mockResolvedValueOnce(page('A', [message('A-tail', 1, '甲尾页')], true, 'A-tail'))
+    const { sessions } = await setup()
+    mocks.history.mockResolvedValueOnce(page('A', [message('A-head', 1, '甲早页')], false))
+    await older()
+    const previous = observer()
+    mocks.history.mockResolvedValueOnce(page('B', [message('B-tail', 1, '乙尾页')], true, 'B-tail'))
+    sessions.vm.$emit('change', 'B')
+    await flushPromises()
+    previous.onHistory('A', page('A', [message('A-late', 5, '甲迟到正文')], false))
+    await flushPromises()
+    expect(contents()).toEqual([expect.stringContaining('乙尾页')])
+    mocks.history.mockResolvedValueOnce(page('B', [message('B-head', 1, '乙早页')], false))
+    await older()
+    expect(mocks.history).toHaveBeenLastCalledWith('B', 'B-tail')
+    expect(contents()).toEqual([
+      expect.stringContaining('乙早页'),
+      expect.stringContaining('乙尾页')
+    ])
+    expect(wrapper.text()).not.toContain('甲')
+  })
+})
+
 describe('待办回复沿已确认会话目标派发', () => {
   const cases = [
     ['Agent', 'user_input'],

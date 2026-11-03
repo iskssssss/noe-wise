@@ -1350,6 +1350,19 @@ onScopeDispose(() => {
   controller?.abort()
   resetBrowserView()
 })
+function mergeHistoryMessages(
+  current: ChatHistoryMessage[],
+  incoming: ChatHistoryMessage[],
+  prepend = false
+) {
+  const merged = new Map<string, ChatHistoryMessage>()
+  for (const message of prepend ? [...incoming, ...current] : [...current, ...incoming]) {
+    const previous = merged.get(message.message_id)
+    if (!previous || message.message_version >= previous.message_version)
+      merged.set(message.message_id, message)
+  }
+  return [...merged.values()]
+}
 function applyHistory(value: ChatHistoryResponse) {
   const sent = pendingInput.value
   if (
@@ -1363,8 +1376,15 @@ function applyHistory(value: ChatHistoryResponse) {
     )
   )
     acceptInput(sent)
-  history.value = value
-  messages.value = value.messages
+  const current = history.value?.session_id === value.session_id ? history.value : undefined
+  messages.value = mergeHistoryMessages(current ? messages.value : [], value.messages)
+  history.value = {
+    ...value,
+    messages: messages.value,
+    ...(current
+      ? { has_more: current.has_more, next_before_message_id: current.next_before_message_id }
+      : {})
+  }
   pendingItems.value = value.pending_interactions
   if (!pendingItems.value.some((item) => item.execution_id === pendingSelection.value))
     pendingSelection.value = pendingItems.value[0]?.execution_id ?? ''
@@ -1943,8 +1963,14 @@ async function older() {
     const current = history.value
     if (!current) return
     const previous = await api.chat.history(sessionId.value, current.next_before_message_id)
-    history.value = { ...previous, messages: [...previous.messages, ...messages.value] }
-    messages.value = history.value.messages
+    if (history.value?.session_id !== previous.session_id) return
+    messages.value = mergeHistoryMessages(messages.value, previous.messages, true)
+    history.value = {
+      ...history.value,
+      messages: messages.value,
+      has_more: previous.has_more,
+      next_before_message_id: previous.next_before_message_id
+    }
   })
 }
 async function stop(targetRun?: string) {

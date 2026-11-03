@@ -1035,3 +1035,84 @@ test('Webhook 暂停提交后响应中断可只读核对原操作', async ({ pag
     )
   )
 })
+
+test('已加载历史分页在一次真实运行后保留', async ({ page }) => {
+  test.skip(!process.env.E2E_CHAT_HISTORY_PAGES, '仅运行隔离历史分页场景')
+  test.setTimeout(180_000)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await mkdir(evidence, { recursive: true })
+  const sessionId = required('E2E_HISTORY_SESSION')
+  const sentinel = required('E2E_HISTORY_SENTINEL')
+  const snapshots: { url: string; body: { data: { messages: { content: string }[] } } }[] = []
+  let submissions = 0
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat')
+      submissions++
+  })
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/api/v1/chat/history' && response.ok()) {
+      snapshots.push({ url: response.url(), body: await response.json() })
+    }
+  })
+  await page.goto('/login?redirect=/admin/chat')
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  const sessionsReady = responseAt(page, '/api/v1/chat/sessions')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  const sessions = await dataOf(await sessionsReady)
+  const session = sessions.find((item: { session_id: string }) => item.session_id === sessionId)
+  expect(session).toBeTruthy()
+  await page.locator('.el-select').filter({ hasText: '历史会话' }).getByRole('combobox').click()
+  const initialReady = responseAt(page, '/api/v1/chat/history')
+  await page.getByRole('option', { name: session.summary || sessionId, exact: true }).click()
+  const initial = await dataOf(await initialReady)
+  expect(initial.messages).toHaveLength(30)
+  expect(initial.has_more).toBe(true)
+  for (let i = 0; i < 2; i++) {
+    const olderReady = responseAt(page, '/api/v1/chat/history')
+    await page.getByRole('button', { name: '加载较早消息', exact: true }).click()
+    await dataOf(await olderReady)
+  }
+  await expect(page.locator('.debug-message').filter({ hasText: sentinel })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: '加载较早消息', exact: true })).toHaveCount(0)
+  await expect(page.locator('.debug-message')).toHaveCount(65)
+  await page.screenshot({ path: join(evidence, 'history-pages-before.png'), fullPage: true })
+  await page.getByPlaceholder('输入消息', { exact: true }).fill('验证历史分页保留')
+  const accepted = responseAt(page, '/api/v1/chat', 'POST')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  const acceptedResponse = await accepted
+  const receipt = await dataOf(acceptedResponse)
+  const submitted = acceptedResponse.request().postDataJSON()
+  await expect(
+    page.locator('.debug-message').filter({ hasText: required('E2E_EXPECTED_REPLY') })
+  ).toHaveCount(1)
+  await expect
+    .poll(() =>
+      snapshots.some((snapshot) =>
+        snapshot.body.data.messages.some(
+          (message) => message.content === required('E2E_EXPECTED_REPLY')
+        )
+      )
+    )
+    .toBe(true)
+  const latest = snapshots.at(-1)!.body.data
+  const baseline = process.env.E2E_CHAT_HISTORY_PAGES === 'baseline'
+  await expect(page.locator('.debug-message').filter({ hasText: sentinel })).toHaveCount(
+    baseline ? 0 : 1
+  )
+  await expect(page.getByRole('button', { name: '加载较早消息', exact: true })).toHaveCount(
+    baseline ? 1 : 0
+  )
+  await expect(page.locator('.debug-message')).toHaveCount(baseline ? 30 : 67)
+  expect(submissions).toBe(1)
+  await page.screenshot({ path: join(evidence, 'history-pages-after.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'history-pages-network.json'),
+    JSON.stringify({ snapshots, latest, submissions, baseline }, null, 2)
+  )
+  await writeFile(
+    join(evidence, 'browser-receipt.json'),
+    JSON.stringify({ sessionId, runId: receipt.execution_id, inputId: submitted.client_message_id })
+  )
+})
