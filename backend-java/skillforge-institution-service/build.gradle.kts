@@ -125,6 +125,7 @@ tasks.named<Test>("test") {
     exclude("**/StagingRuntimeE2E.class")
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
+    exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
@@ -143,6 +144,21 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
+}
+
+tasks.register<Test>("channelRuntimeBrowserE2E") {
+    description = "验证渠道创建后使用会话端运行智能体"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChannelRuntimeBrowserE2ETest.createdChannelCanRunAgent") }
+    inputs.files(fileTree("../..") {
+        include("frontend-admin/src/**", "frontend-admin/e2e/channel-runtime-real.spec.ts", "frontend-admin/playwright.channel*.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
+        include("frontend-chat/src/**", "frontend-chat/vite.config.ts", "frontend-chat/index.html", "frontend-chat/package.json")
+        include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
+    }).withPropertyName("channelRuntimeFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {
