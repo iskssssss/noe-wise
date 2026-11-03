@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   users: vi.fn(),
   review: vi.fn(),
   correct: vi.fn(),
-  restore: vi.fn()
+  restore: vi.fn(),
+  forget: vi.fn()
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'session-a',
@@ -35,7 +36,8 @@ vi.mock('../../api', () => ({
       reviews: mocks.reviews,
       review: mocks.review,
       correct: mocks.correct,
-      restore: mocks.restore
+      restore: mocks.restore,
+      forget: mocks.forget
     },
     agents: { list: mocks.agents },
     chat: { endUsers: mocks.users }
@@ -128,6 +130,36 @@ afterEach(async () => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   await flushPromises()
   document.body.innerHTML = ''
+})
+
+it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实使用原版本恢复为活动状态', async (status) => {
+  fact.status = status
+  fact.scope = 'USER_AGENT'
+  fact.review_required = false
+  mocks.restore.mockImplementation(async () => {
+    fact = { ...fact, status: 'ACTIVE', revision: 4 }
+    return fact
+  })
+  const wrapper = await render()
+  expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '遗忘')).toBe(false)
+  await button(wrapper, '恢复').trigger('click')
+  await flushPromises()
+  confirmationButton('恢复记忆').click()
+  await flushPromises()
+  expect(mocks.restore).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  expect(mocks.forget).not.toHaveBeenCalled()
+  expect(button(wrapper, '遗忘').exists()).toBe(true)
+})
+
+it.each(['REJECTED', 'ARCHIVED'] as const)('%s事实不展示非法状态迁移入口', async (status) => {
+  fact.status = status
+  fact.review_required = true
+  const wrapper = await render()
+  const actions = wrapper.findAllComponents(ElButton).map((item) => item.text())
+  expect(actions).not.toContain('遗忘')
+  expect(actions).not.toContain('恢复')
+  expect(actions).not.toContain('批准')
+  expect(actions).not.toContain('拒绝')
 })
 
 describe('记忆筛选辅助目录独立恢复', () => {

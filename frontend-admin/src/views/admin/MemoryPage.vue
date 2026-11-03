@@ -135,14 +135,14 @@
             >纠正</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
-            v-if="row.review_required || requiresSharingConfirmation(row as MemoryFact)"
+            v-if="row.status === 'PENDING_CONFIRM'"
             link
             @click="review(row as MemoryFact, true)"
             :disabled="busy || refreshRequired"
             >批准</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
-            v-if="row.review_required || requiresSharingConfirmation(row as MemoryFact)"
+            v-if="row.status === 'PENDING_CONFIRM'"
             link
             type="danger"
             @click="review(row as MemoryFact, false)"
@@ -150,10 +150,11 @@
             >拒绝</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
+            v-if="row.status !== 'REJECTED' && row.status !== 'ARCHIVED'"
             link
             :disabled="busy || refreshRequired"
             @click="changeState(row as MemoryFact)"
-            >{{ row.status === 'FORGOTTEN' ? '恢复' : '遗忘' }}</ElButton
+            >{{ ['FORGOTTEN', 'DECAYED'].includes(row.status) ? '恢复' : '遗忘' }}</ElButton
           ><ElText
             v-if="replacementNotice(row as MemoryFact)"
             class="memory-review-notice"
@@ -691,23 +692,23 @@ async function review(row: MemoryFact, approved: boolean) {
 }
 async function changeState(row: MemoryFact) {
   if (refreshRequired.value) return
-  const forgotten = row.status === 'FORGOTTEN'
+  const restoring = row.status === 'FORGOTTEN' || row.status === 'DECAYED'
   if (
     !(await confirm({
-      title: forgotten ? '恢复记忆' : '遗忘记忆',
-      confirmText: forgotten ? '恢复记忆' : '遗忘记忆',
-      content: forgotten
+      title: restoring ? '恢复记忆' : '遗忘记忆',
+      confirmText: restoring ? '恢复记忆' : '遗忘记忆',
+      content: restoring
         ? '恢复这条记忆，允许后续任务按原共享范围使用？'
         : '这条记忆将不再供后续任务使用；已经开始的任务保留原快照。'
     }))
   )
     return
   await run(async () => {
-    await (forgotten ? api.memories.restore : api.memories.forget)(row.ref.fact_id, row.revision)
+    await (restoring ? api.memories.restore : api.memories.forget)(row.ref.fact_id, row.revision)
     refreshRequired.value = true
     if (await refresh())
       message.success(
-        forgotten ? '记忆已恢复，后续任务可按原范围使用' : '记忆已遗忘，后续任务不再使用'
+        restoring ? '记忆已恢复，后续任务可按原范围使用' : '记忆已遗忘，后续任务不再使用'
       )
   })
 }
