@@ -157,6 +157,54 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
       JSON.stringify({ mode, searchQuery, sentinel, sourceVersion, searches }, null, 2)
     )
   }
+  if (process.env.E2E_KNOWLEDGE_TOP_K) {
+    const mode = process.env.E2E_KNOWLEDGE_TOP_K
+    expect(['baseline', 'candidate']).toContain(mode)
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.getByRole('tab', { name: '检索验证', exact: true }).click()
+    await page.getByLabel('检索问题', { exact: true }).fill(required('E2E_KNOWLEDGE_QUERY'))
+    const samples: { phase: string; payload: unknown; items: unknown[] }[] = []
+    for (const phase of ['default', 'explicit-two', 'default-again']) {
+      if (phase !== 'default') {
+        await page
+          .getByRole('switch', { name: '仅本次检索覆盖参数', exact: true })
+          .locator('..')
+          .click()
+        if (phase === 'explicit-two')
+          await page.getByRole('spinbutton', { name: '本次返回数量', exact: true }).fill('2')
+      }
+      const searched = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/v1/knowledge/search'
+      )
+      await page.getByRole('button', { name: '检索', exact: true }).click()
+      const response = await searched
+      expect(response.status()).toBe(200)
+      const envelope = await response.json()
+      expect(envelope.code).toBe('OK')
+      const payload = response.request().postDataJSON()
+      expect(payload.top_k).toBe(phase === 'explicit-two' ? 2 : undefined)
+      const count = phase === 'explicit-two' ? 2 : mode === 'baseline' ? 3 : 1
+      expect(envelope.data.items).toHaveLength(count)
+      for (const item of envelope.data.items) {
+        expect(item.content).toContain(required('E2E_KNOWLEDGE_SENTINEL'))
+        expect(item.document_id).toBe(required('E2E_KNOWLEDGE_DOCUMENT'))
+      }
+      await expect(
+        page.getByText(`本次召回 ${count} 条结果，请核对内容和来源。`, { exact: true })
+      ).toBeVisible()
+      await page.screenshot({
+        path: join(evidence, `knowledge-top-k-${phase}.png`),
+        fullPage: true
+      })
+      samples.push({ phase, payload, items: envelope.data.items })
+    }
+    await writeFile(
+      join(evidence, 'knowledge-top-k-search.json'),
+      JSON.stringify({ mode, kbId: kb, configuredTopK: 1, samples }, null, 2)
+    )
+  }
   await writeFile(
     join(evidence, 'agent-knowledge-single.json'),
     JSON.stringify({

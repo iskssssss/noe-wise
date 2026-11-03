@@ -496,6 +496,41 @@ class KnowledgeServiceTest {
         assertEquals(2, pinned.size());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(value = {
+            "active,2,NULL,0,true,2",
+            "pinned,2,NULL,0,true,2",
+            "active,2,3,99,true,3",
+            "pinned,2,3,99,true,3",
+            "active,NULL,NULL,0,true,5",
+            "pinned,NULL,NULL,0,true,5",
+            "active,2,NULL,4,false,4"
+    }, nullValues = "NULL")
+    void searchLimitResolvesRequestThenBaseThenOperationalDefault(
+            String scope, Integer baseLimit, Integer requestedLimit, int internalLimit,
+            boolean requestPresent, int expectedLimit) {
+        var base = activeBase("v1");
+        base.setTopK(baseLimit);
+        base.setRetrievalMode(KnowledgeConstants.RETRIEVAL_MODE_FULL_TEXT);
+        String source = "pinned".equals(scope) ? "v1" : null;
+        var expected = List.of(new KnowledgeHit("10", "20", "selected", "v1", "content selected", 1.0, null));
+        if (source == null) {
+            when(searchIndexer.searchVersions("7", "10", "q", expectedLimit, List.of("v1")))
+                    .thenReturn(List.of(item("selected", 1.0, "v1")));
+        } else {
+            when(searchIndexer.search("7", "10", "q", expectedLimit, source))
+                    .thenReturn(List.of(item("selected", 1.0, "v1")));
+        }
+        var request = requestPresent ? new KnowledgeSearchRequest("10", "q", requestedLimit,
+                "full_text", false, null, null, false, source) : null;
+
+        assertEquals(expected, service.search("7", "10", "q", internalLimit, request));
+
+        if (source == null) verify(searchIndexer).searchVersions("7", "10", "q", expectedLimit, List.of("v1"));
+        else verify(searchIndexer).search("7", "10", "q", expectedLimit, source);
+        verifyNoInteractions(embeddingProvider, rerankProvider);
+    }
+
     @Test
     void allKeywordFallbacksUseOneQueryWithThePinnedFilterAndCandidateLimit() {
         when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());

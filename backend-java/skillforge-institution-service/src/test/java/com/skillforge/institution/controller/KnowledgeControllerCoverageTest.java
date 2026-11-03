@@ -88,9 +88,11 @@ class KnowledgeControllerCoverageTest {
     void searchResponseProjectsTypedHits() {
         when(knowledge.search(any(), any(), any(), anyInt(), any())).thenReturn(
                 List.of(new KnowledgeHit("31", "d1", "c1", "v1", "answer", 0.9, 0.8)));
-        assertThat(controller.search(new KnowledgeSearchRequest("31", "query", null, null,
-                null, null, null, null)).data().items()).hasSize(1);
-        assertThat(controller.search(new KnowledgeSearchRequest("31", "query", 2, "hybrid",
-                true, 0.4, 0.7, true)).data().items()).hasSize(1);
+        var inherited = new KnowledgeSearchRequest("31", "query", null, null, null, null, null, null);
+        assertThat(controller.search(inherited).data().items()).hasSize(1);
+        verify(knowledge).search("7", "31", "query", 0, inherited);
+        var override = new KnowledgeSearchRequest("31", "query", 2, "hybrid", true, 0.4, 0.7, true);
+        assertThat(controller.search(override).data().items()).hasSize(1);
+        verify(knowledge).search("7", "31", "query", 2, override);
     }
 }

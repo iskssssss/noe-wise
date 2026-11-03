@@ -239,7 +239,7 @@ public class KnowledgeController {
     @PostMapping("/search")
     public ApiResponse<KnowledgeSearchResponse> search(@Valid @RequestBody KnowledgeSearchRequest request) {
         management.requireBase(TenantIds.requireTenantId(), request.kbId(), "execute");
-        int topK = request.topK() == null ? KnowledgeConstants.DEFAULT_TOP_K : request.topK();
+        int topK = request.topK() == null ? 0 : request.topK();
         var hits = knowledgeService.search(TenantIds.requireTenantId(), request.kbId(), request.query(), topK, request);
         return ApiResponses.wrap(new KnowledgeSearchResponse(hits.stream().map(hit ->
                 new KnowledgeSearchItemResponse(hit.content(), hit.score(), hit.vectorScore(), hit.chunkId(), hit.documentId())).toList()));

@@ -925,9 +925,10 @@ public class KnowledgeService {
         if (!KnowledgeConstants.BASE_STATUS_ACTIVE.equals(base.getStatus())) {
             return List.of();
         }
-        int effectiveTopK = request != null && request.topK() == null
-                ? settings.defaultTopK()
-                : (topK > 0 ? topK : settings.defaultTopK());
+        int defaultTopK = base.getTopK() == null ? settings.defaultTopK() : base.getTopK();
+        int effectiveTopK = request == null
+                ? (topK > 0 ? topK : defaultTopK)
+                : (request.topK() == null ? defaultTopK : request.topK());
         String mode = economical(base, settings)
                 ? KnowledgeConstants.RETRIEVAL_MODE_FULL_TEXT
                 : retrievalModeOf(base, request, settings);

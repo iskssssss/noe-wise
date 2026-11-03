@@ -33,6 +33,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
     @Test void singlePublishedKnowledgeMountFeedsSameAgentRuntime() throws Exception {
         login();
         boolean caseSearch = System.getenv("E2E_KNOWLEDGE_CASE") != null;
+        boolean topKExperiment = System.getenv("E2E_KNOWLEDGE_TOP_K") != null;
         String sentinel = (caseSearch ? "SingleKnowledgeMixedCase" : "singleknowledge") + SnowflakeIds.nextId();
         String query = caseSearch ? sentinel.toLowerCase(java.util.Locale.ROOT) : sentinel;
         Path evidence=Path.of("build","runtime-e2e","agent-knowledge-single-"+SnowflakeIds.nextId()).toAbsolutePath();
@@ -41,6 +42,31 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             model.start();TenantContext.setTenantId(tenantId);
             try {configureTenantModel(model.endpoint());} finally {TenantContext.clear();}
             var published=new RuntimeExecutionKnowledgeFixture(objectMapper,httpClient,baseUrl(),accessToken).publish(runId,sentinel);
+            if (topKExperiment) {
+                var configured = send("/api/v1/knowledge/bases/update", "PATCH", Map.of("kb_id", published.kbId(),
+                        "payload", Map.of("top_k", 1, "chunk_size", 100, "chunk_overlap", 0)), accessToken);
+                assertEquals(200, configured.statusCode(), configured.body());
+                var detail = get("/api/v1/knowledge/bases/detail?kbId=" + published.kbId());
+                assertEquals(200, detail.statusCode(), detail.body()); assertEquals(1, successData(detail).path("top_k").asInt());
+                Files.writeString(evidence.resolve("knowledge-top-k-configuration.json"), detail.body());
+                String content = String.join("\n\n", java.util.stream.IntStream.range(0, 3)
+                        .mapToObj(index -> sentinel + " " + index + " " + "x".repeat(60)).toList());
+                var updated = send("/api/v1/knowledge/documents/update", "PATCH", Map.of("doc_id", published.documentId(), "payload", Map.of(
+                        "title", "默认条数验收文档", "content", content, "expected_source_version", published.sourceVersion())), accessToken);
+                assertEquals(200, updated.statusCode(), updated.body());
+                String sourceVersion = successData(updated).path("source_version").asText(); assertFalse(sourceVersion.isBlank());
+                assertEquals(3, countRuntime("SELECT count(*) FROM knowledge_chunk_values WHERE tenant_id=CAST(? AS bigint) AND source_version=?", tenantId, sourceVersion));
+                var revision = send("/api/v1/knowledge/bases/revisions", "POST", Map.of("kb_id", published.kbId()), accessToken);
+                assertEquals(200, revision.statusCode(), revision.body()); String number = successData(revision).path("revision").asText();
+                var ready = send("/api/v1/knowledge/bases/revisions/ready", "POST", Map.of("kb_id", published.kbId(), "revision", number, "payload", Map.of(
+                        "source_versions", java.util.List.of(sourceVersion), "policy", Map.of("model_invocable", true, "user_invocable", false,
+                                "allowed_operators", java.util.List.of("KEYWORD"), "freshness_policy", "PINNED", "citation_required", true))), accessToken);
+                assertEquals(200, ready.statusCode(), ready.body());
+                var next = send("/api/v1/knowledge/bases/revisions/publish", "POST", Map.of("kb_id", published.kbId(), "revision", number), accessToken);
+                assertEquals(200, next.statusCode(), next.body()); var result = successData(next);
+                published = new RuntimeExecutionKnowledgeFixture.Published(published.kbId(), published.documentId(), sourceVersion, result.path("id").asLong(),
+                        published.definitionId(), result.path("capability_version_id").asLong(), sentinel, content);
+            }
             var revised=send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken);
             assertEquals(200,revised.statusCode(),revised.body());agentId=successData(revised).path("id").asText();
             Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");
@@ -52,7 +78,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);
             env.put("E2E_AGENT_ID",agentId);env.put("E2E_KNOWLEDGE_ID",published.kbId());env.put("E2E_KNOWLEDGE_NAME","execution-knowledge-"+runId);
             env.put("E2E_KNOWLEDGE_REVISION",Long.toString(published.revisionId()));env.put("E2E_KNOWLEDGE_DEFINITION",Long.toString(published.definitionId()));env.put("E2E_KNOWLEDGE_VERSION",Long.toString(published.capabilityVersionId()));
-            env.put("E2E_KNOWLEDGE_QUERY", query); env.put("E2E_KNOWLEDGE_SENTINEL", sentinel); env.put("E2E_KNOWLEDGE_SOURCE_VERSION", published.sourceVersion());
+            env.put("E2E_KNOWLEDGE_DOCUMENT", published.documentId()); env.put("E2E_KNOWLEDGE_QUERY", query); env.put("E2E_KNOWLEDGE_SENTINEL", sentinel); env.put("E2E_KNOWLEDGE_SOURCE_VERSION", published.sourceVersion());
             env.remove("SDK4_LIVE_MODEL_KEY");env.remove("E2E_LIVE_MODEL");
             Process process=command.start();
             try(var owned=new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -95,6 +121,12 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
                 assertEquals(published.kbId(),request.target().descriptorId());
                 var retrieved=assertInstanceOf(KnowledgePortal.KnowledgeOutcome.Retrieved.class,codec.decodeKnowledgeOutcome(new TypedPayload(row.get("result_schema").toString(),row.get("result_json").toString())));
                 assertFalse(retrieved.bundle().items().isEmpty());
+                if (topKExperiment) {
+                    assertTrue(retrieved.bundle().items().size() <= request.request().budget().maxItems());
+                    Files.writeString(evidence.resolve("knowledge-top-k-runtime-boundary.json"), objectMapper.writeValueAsString(Map.of(
+                            "runId", actualRun, "kbId", published.kbId(), "sourceVersion", published.sourceVersion(), "baseTopK", 1,
+                            "runtimeMaxItems", request.request().budget().maxItems(), "retrievedItems", retrieved.bundle().items().size(), "runtimeScope", "frozen KnowledgeRequest budget")));
+                }
                 for(var item:retrieved.bundle().items()) {
                     assertEquals(published.kbId(),item.sourceId());assertEquals(published.sourceVersion(),item.sourceVersion());
                     assertTrue(objectMapper.readTree(item.content().canonicalJson()).path("text").asText().contains(sentinel));
