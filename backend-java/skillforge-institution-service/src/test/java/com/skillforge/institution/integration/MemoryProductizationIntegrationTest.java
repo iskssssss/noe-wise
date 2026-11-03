@@ -1030,6 +1030,41 @@ class MemoryProductizationIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void governancePageSearchesAuthoritativeContentAndRequiresReadPermission() throws Exception {
+        append(owner, "page-first-" + SnowflakeIds.nextId(), false, "observed", "first");
+        drainExtraction();
+        append(owner, "page-second-" + SnowflakeIds.nextId(), false, "observed", "second");
+        drainExtraction();
+        String token = governanceAdministratorToken();
+        String root = "http://127.0.0.1:" + port + "/api/v1/memories/page";
+        try (var http = HttpClient.newHttpClient()) {
+            var unauthorized = http.send(HttpRequest.newBuilder(URI.create(root)).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertTrue(unauthorized.statusCode() == 401 || unauthorized.statusCode() == 403);
+            var first = http.send(HttpRequest.newBuilder(URI.create(root + "?limit=1"))
+                    .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, first.statusCode());
+            var page1 = json.readTree(first.body()).path("data");
+            assertEquals(1, page1.path("items").size());
+            String cursor = page1.path("next_cursor").asText();
+            assertFalse(cursor.isBlank());
+            var second = http.send(HttpRequest.newBuilder(URI.create(root + "?limit=1&cursor=" + cursor))
+                    .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, second.statusCode());
+            var page2 = json.readTree(second.body()).path("data");
+            assertEquals(1, page2.path("items").size());
+            assertNotEquals(page1.path("items").get(0).at("/ref/fact_id").asText(),
+                    page2.path("items").get(0).at("/ref/fact_id").asText());
+            var search = http.send(HttpRequest.newBuilder(URI.create(root + "?q=first&limit=1"))
+                    .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, search.statusCode());
+            assertEquals(1, json.readTree(search.body()).at("/data/items").size());
+            var wrongOwner = http.send(HttpRequest.newBuilder(URI.create(root + "?q=first&end_user_id=" + (endUser + 1)))
+                    .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(0, json.readTree(wrongOwner.body()).at("/data/items").size());
+        }
+    }
+
+    @Test
     void listFiltersByScopeTypeAndOwner() {
         append("memory-session-pref-" + SnowflakeIds.nextId(), false, "observed", "light");
         extraction.poll();

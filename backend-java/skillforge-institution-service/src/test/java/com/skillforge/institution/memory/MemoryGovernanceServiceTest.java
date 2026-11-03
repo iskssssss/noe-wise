@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -72,6 +73,21 @@ class MemoryGovernanceServiceTest {
     private static final Instant CREATED = Instant.parse("2026-01-01T00:00:00Z");
     private static final Instant ACCEPTED = Instant.parse("2026-01-01T01:00:00Z");
     private static final String DRAFT_JSON = "{\"value\":{\"text\":\"correction draft\"},\"conditions\":[],\"temporal\":{\"kind\":\"stable\",\"from\":null,\"to\":null}}";
+
+    @Test
+    void pageOmitsFactWhoseStatusChangedAfterCandidateSelection() {
+        MemoryFact current = fact(REF, USER, MemoryScope.USER_AGENT, TYPE, FactStatus.FORGOTTEN);
+        Fixture fixture = new Fixture(current);
+        when(fixture.mapper.pageOwners(eq(TENANT.value()), eq("ACTIVE"), isNull(), isNull(), isNull(),
+                isNull(), isNull(), isNull(), isNull(), eq(201))).thenReturn(List.of(
+                new MemoryGovernanceMapper.PageOwner(REF.factId(), USER.value(), AGENT.value(),
+                        SESSION.sessionId(), 0, CREATED.getEpochSecond(), CREATED.getNano())));
+        when(fixture.memories.findCurrent(any(CurrentFactReadBatch.class))).thenReturn(List.of(Optional.of(current)));
+        var page = fixture.service.page(TENANT.value(),
+                new MemoryGovernanceService.ListQuery("ACTIVE", null, null, null, null, 100), null, null);
+        assertEquals(List.of(), page.items());
+        assertEquals(null, page.nextCursor());
+    }
 
     /** 对已被遗忘的事实使用旧 revision 纠正，保留原草稿命令并采用 Port 的真实冲突类型。 */
     @Test

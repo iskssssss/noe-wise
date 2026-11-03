@@ -242,6 +242,23 @@ class MemoryMapperIntegrationTest {
         assertNull(governance.owner("1", "fact"));
     }
     @Test
+    void governancePagesUseStableFactTieBreakerAndFiltersBeforeCursor() {
+        for (String fact : List.of("a", "b", "c")) {
+            admin.update("insert into agent_runtime_memory_fact_heads(tenant_id,fact_id,end_user_id,agent_id,current_revision,scope,type_id) values('1',?,42,'agent',1,'USER_AGENT','preference')", fact);
+            admin.update("insert into agent_runtime_memory_fact_revisions values('1',?,1,null,'session','ACTIVE',10,5,1)", fact);
+        }
+        var governance = sessions.getMapper(MemoryGovernanceMapper.class);
+        var first = governance.pageOwners("1", "ACTIVE", "USER_AGENT", "preference", "agent", 42L, null, null, null, 2);
+        assertEquals(List.of("c", "b"), first.stream().map(MemoryGovernanceMapper.PageOwner::factId).toList());
+        var next = governance.pageOwners("1", "ACTIVE", "USER_AGENT", "preference", "agent", 42L, 10L, 5, "b", 2);
+        assertEquals(List.of("a"), next.stream().map(MemoryGovernanceMapper.PageOwner::factId).toList());
+        assertTrue(governance.pageOwners("1", "FORGOTTEN", null, null, null, null, null, null, null, 2).isEmpty());
+        assertTrue(governance.pageOwners("1", null, null, null, "other", null, null, null, null, 2).isEmpty());
+        TenantContext.setTenantId("2");
+        assertTrue(governance.pageOwners("1", null, null, null, null, null, null, null, null, 2).isEmpty());
+    }
+
+    @Test
     void sessionGovernanceDerivesPersonalActorFromCommittedSourceWithoutInventingFactOwnership() {
         admin.update("insert into agent_runtime_memory_fact_heads(tenant_id,fact_id,end_user_id,agent_id,current_revision,scope,type_id) values('1','session-fact',null,null,1,'SESSION','preference')");
         admin.update("insert into agent_runtime_memory_fact_revisions values('1','session-fact',1,'session','session','ACTIVE',0,0,1)");

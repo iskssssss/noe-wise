@@ -56,7 +56,7 @@
       <FieldTip :id="formTipId + '-group-0'">{{
         reviews
           ? '待审核显示机构审核队列；关闭后可按范围、智能体和终端用户查询记忆。'
-          : '按范围、智能体和终端用户组合查询，未选择的条件不限制结果。每次最多返回 100 条。'
+          : '按范围、智能体和终端用户组合查询，未选择的条件不限制结果。可加载更多结果。'
       }}</FieldTip>
     </div>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
@@ -77,28 +77,31 @@
       <ElInput
         v-model="query"
         clearable
-        aria-label="筛选当前记忆"
-        placeholder="在当前结果中搜索主体、关系或内容"
+        aria-label="搜索记忆"
+        placeholder="搜索主体、关系或内容，点击查询应用"
       /><span v-if="data" class="admin-muted" role="status"
-        >当前显示 {{ filtered.length }} 条{{ data.reviews ? '待审核记忆' : '记忆' }}</span
+        >当前显示 {{ data.items.length }} 条{{ data.reviews ? '待审核记忆' : '记忆'
+        }}{{ data.nextCursor ? '，仍有更多结果' : '' }}</span
       ><span v-else class="admin-muted" role="status">{{
         loading ? '正在读取记忆…' : '记忆列表尚未读取'
       }}</span>
     </div>
     <ElTable
       table-layout="auto"
-      :data="filtered"
+      :data="data?.items ?? []"
       v-loading="loading"
       :empty-text="
         !data
           ? loading
             ? '正在读取记忆…'
             : '记忆列表尚未读取，请查询后查看'
-          : query
-            ? '当前结果没有匹配记忆，请调整关键词'
-            : data?.reviews
-              ? '当前没有待审核记忆'
-              : '没有找到记忆，可调整查询范围'
+          : data.nextCursor
+            ? '当前批次没有匹配记忆，可继续加载更多'
+            : data.query
+              ? '没有匹配记忆，请调整关键词'
+              : data?.reviews
+                ? '当前没有待审核记忆'
+                : '没有找到记忆，可调整查询范围'
       "
       ><ElTableColumn min-width="140" show-overflow-tooltip label="范围"
         ><template #default="{ row }">{{ statusLabel(row.scope) }}</template></ElTableColumn
@@ -164,7 +167,16 @@
           ></template
         ></ElTableColumn
       ></ElTable
-    ><ElDrawer
+    >
+    <div v-if="data?.nextCursor" class="admin-toolbar">
+      <ElButton
+        :loading="loadingMore"
+        :disabled="loading || busy || pendingFilters || refreshRequired"
+        @click="loadMore"
+        >加载更多</ElButton
+      >
+    </div>
+    <ElDrawer
       v-model="open"
       title="纠正记忆"
       :before-close="requestClose"
@@ -299,7 +311,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import type { FormInstance } from 'element-plus'
 import { findNodeAtLocation, parseTree } from 'jsonc-parser'
-import { computed, onMounted, reactive, ref, useId } from 'vue'
+import { computed, onMounted, onScopeDispose, reactive, ref, useId, watch } from 'vue'
 import {
   AdminPage,
   EntitySelect,
@@ -309,7 +321,15 @@ import {
   useDrawerClose
 } from '@skillforge/shared/admin'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
-import { api, type MemoryFact, type MemoryListQuery } from '../../api'
+import {
+  api,
+  getSessionId,
+  type MemoryFact,
+  type MemoryListQuery,
+  type MemoryPageQuery
+} from '../../api'
+import { useAuthStore } from '../../stores/auth'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import { confirm, message } from '@skillforge/shared/feedback'
 import { memoryContentText, parseMemoryContent } from '@skillforge/shared/memory/contracts'
 const formRef = ref<FormInstance>()
@@ -317,31 +337,67 @@ const objectError = ref('')
 const scope = ref<MemoryListQuery['scope']>(),
   agentId = ref(''),
   endUserId = ref(''),
-  reviews = ref(false)
+  reviews = ref(false),
+  query = ref('')
+const auth = useAuthStore()
+let moreGeneration = 0
+let firstReadGeneration = 0
+let moreController: AbortController | undefined
+const loadingMore = ref(false),
+  moreError = ref('')
+function cancelMore() {
+  moreGeneration++
+  moreController?.abort()
+  moreController = undefined
+  loadingMore.value = false
+}
 const {
   data,
   loading,
   error: loadError,
-  reload
-} = useResource(async () => {
+  reload,
+  invalidate
+} = useResource(async (signal) => {
+  const identity = auth.identityVersion,
+    session = getSessionId(),
+    read = ++firstReadGeneration
   const requestedReviews = reviews.value
   const requestedScope = scope.value
   const requestedAgentId = agentId.value
   const requestedUserId = endUserId.value
-  const items = await (requestedReviews
-    ? api.memories.reviews()
-    : api.memories.list({
-        scope: requestedScope,
-        agent_id: requestedAgentId || undefined,
-        end_user_id: requestedUserId || undefined,
-        limit: 100
-      }))
+  const requestedQuery = query.value.trim()
+  const request: MemoryPageQuery = {
+    status: requestedReviews ? 'PENDING_CONFIRM' : undefined,
+    scope: requestedReviews ? undefined : requestedScope,
+    agent_id: requestedReviews ? undefined : requestedAgentId || undefined,
+    end_user_id: requestedReviews ? undefined : requestedUserId || undefined,
+    q: requestedQuery || undefined,
+    limit: 100
+  }
+  let result: Awaited<ReturnType<typeof api.memories.page>>
+  try {
+    result = await api.memories.page(request, signal)
+  } catch (reason) {
+    if (
+      (identity !== auth.identityVersion || session !== getSessionId()) &&
+      read === firstReadGeneration
+    )
+      invalidate()
+    throw reason
+  }
+  if (identity !== auth.identityVersion || session !== getSessionId()) {
+    if (read === firstReadGeneration) invalidate()
+    throw Error('记忆查询已失效')
+  }
   return {
-    items,
+    items: result.items,
+    nextCursor: result.next_cursor,
     reviews: requestedReviews,
     scope: requestedScope,
     agentId: requestedAgentId,
-    endUserId: requestedUserId
+    endUserId: requestedUserId,
+    query: requestedQuery,
+    request
   }
 })
 const pendingFilters = computed(
@@ -351,22 +407,82 @@ const pendingFilters = computed(
       (!reviews.value &&
         (data.value.scope !== scope.value ||
           data.value.agentId !== agentId.value ||
-          data.value.endUserId !== endUserId.value)))
+          data.value.endUserId !== endUserId.value)) ||
+      data.value.query !== query.value.trim())
 )
 const refreshRequired = ref(false)
 async function refresh() {
+  cancelMore()
+  moreError.value = ''
   const value = await reload()
   if (value) refreshRequired.value = false
   return !!value
 }
-const query = ref('')
-const filtered = computed(() =>
-  (data.value?.items ?? []).filter((item) =>
-    (item.subject + item.predicate + item.object.canonical_json)
-      .toLowerCase()
-      .includes(query.value.trim().toLowerCase())
+async function loadMore() {
+  const previous = data.value
+  if (
+    !previous?.nextCursor ||
+    loadingMore.value ||
+    loading.value ||
+    pendingFilters.value ||
+    refreshRequired.value
   )
+    return
+  const generation = ++moreGeneration,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  const controller = new AbortController()
+  moreController = controller
+  loadingMore.value = true
+  moreError.value = ''
+  const current = () =>
+    generation === moreGeneration &&
+    data.value === previous &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    !pendingFilters.value
+  try {
+    const result = await api.memories.page(
+      { ...previous.request, cursor: previous.nextCursor },
+      controller.signal
+    )
+    if (!current()) return
+    const seen = new Set(previous.items.map((item) => item.ref.fact_id))
+    data.value = {
+      ...previous,
+      items: [...previous.items, ...result.items.filter((item) => !seen.has(item.ref.fact_id))],
+      nextCursor: result.next_cursor
+    }
+  } catch (reason) {
+    if (reason instanceof HttpClientError) reason.claimFeedback()
+    if (current() && !controller.signal.aborted)
+      moreError.value = reason instanceof Error ? reason.message : '无法读取更多记忆'
+  } finally {
+    if (generation === moreGeneration) {
+      loadingMore.value = false
+      moreController = undefined
+    }
+  }
+}
+watch(
+  [scope, agentId, endUserId, reviews, query],
+  () => {
+    invalidate()
+    cancelMore()
+  },
+  { flush: 'sync' }
 )
+watch(
+  [() => auth.identityVersion, () => auth.sessionIdentity],
+  () => {
+    invalidate()
+    cancelMore()
+    data.value = undefined
+    moreError.value = ''
+  },
+  { flush: 'sync' }
+)
+onScopeDispose(cancelMore)
 function displayContent(row: MemoryFact) {
   const parsed = parseMemoryContent(row.object.canonical_json)
   return parsed ? memoryContentText(parsed) : row.object.canonical_json
@@ -384,7 +500,7 @@ const userOptions = computed(() =>
 )
 const pageError = computed(() =>
   [
-    error.value || loadError.value,
+    error.value || loadError.value || moreError.value,
     agentDirectory.error.value && `智能体选项读取失败：${agentDirectory.error.value}`,
     userDirectory.error.value && `终端用户选项读取失败：${userDirectory.error.value}`
   ]

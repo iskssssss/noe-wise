@@ -873,7 +873,17 @@ export interface MemoryListQuery {
   limit?: number
 }
 
-function memoryListQuery(query: MemoryListQuery): string {
+export interface MemoryPageQuery extends MemoryListQuery {
+  q?: string
+  cursor?: string
+}
+
+export interface MemoryPageResult {
+  items: MemoryFact[]
+  next_cursor: string | null
+}
+
+function memoryListQuery(query: MemoryPageQuery): string {
   const parts: string[] = []
   const append = (key: string, value: string | number | undefined) => {
     if (value === undefined || value === '') return
@@ -885,6 +895,8 @@ function memoryListQuery(query: MemoryListQuery): string {
   append('agent_id', query.agent_id)
   append('end_user_id', query.end_user_id)
   append('limit', query.limit)
+  append('q', query.q)
+  append('cursor', query.cursor)
   return parts.length ? `?${parts.join('&')}` : ''
 }
 
@@ -1243,6 +1255,8 @@ export const api = {
   memories: {
     list: (query: MemoryListQuery = {}) => get<MemoryFact[]>(`/memories${memoryListQuery(query)}`),
     reviews: () => get<MemoryFact[]>('/memories/reviews'),
+    page: (query: MemoryPageQuery = {}, signal?: AbortSignal) =>
+      get<MemoryPageResult>(`/memories/page${memoryListQuery(query)}`, { signal }),
     review: (
       factId: string,
       expectedRevision: number,

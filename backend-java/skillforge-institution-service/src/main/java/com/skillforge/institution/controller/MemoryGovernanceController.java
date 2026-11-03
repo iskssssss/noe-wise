@@ -51,6 +51,22 @@ public final class MemoryGovernanceController {
     }
 
     @RequirePermission("foundation.memory.read")
+    @GetMapping("/page")
+    @Operation(summary = "分页查询当前 Memory 事实")
+    public ApiResponse<MemoryGovernanceService.Page> page(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String scope,
+            @RequestParam(required = false) String type,
+            @RequestParam(name = "agent_id", required = false) String agentId,
+            @RequestParam(name = "end_user_id", required = false) Long endUserId,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(200) int limit) {
+        return ApiResponses.wrap(service.page(TenantIds.requireTenantId(),
+                new MemoryGovernanceService.ListQuery(status, scope, type, agentId, endUserId, limit), q, cursor));
+    }
+
+    @RequirePermission("foundation.memory.read")
     @GetMapping("/reviews")
     @Operation(summary = "查询待审核 Memory")
     public ApiResponse<List<MemoryFact>> reviews(

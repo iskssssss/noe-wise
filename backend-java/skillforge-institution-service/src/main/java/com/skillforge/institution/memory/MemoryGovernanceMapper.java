@@ -12,6 +12,10 @@ public interface MemoryGovernanceMapper {
     List<Owner> owners(@Param("tenant") String tenant, @Param("status") String status,
             @Param("scope") String scope, @Param("type") String type,
             @Param("agent") String agent, @Param("endUser") Long endUser, @Param("limit") int limit);
+    List<PageOwner> pageOwners(@Param("tenant") String tenant, @Param("status") String status,
+            @Param("scope") String scope, @Param("type") String type, @Param("agent") String agent,
+            @Param("endUser") Long endUser, @Param("second") Long second, @Param("nano") Integer nano,
+            @Param("fact") String fact, @Param("limit") int limit);
     /** 读取指定租户事实所有者；不存在或 RLS 不可见时返回 null。 */
     Owner owner(@Param("tenant") String tenant, @Param("fact") String fact);
 
@@ -29,4 +33,8 @@ public interface MemoryGovernanceMapper {
             MemoryGovernanceRequest.Operation operation, String requestFingerprint, Instant acceptedAt) { }
     record RevisionTargetRow(String targetFactId, long targetRevision) { }
     record Owner(String factId, long endUserId, String agentId, String sessionId, double decayScore) { }
+    record PageOwner(String factId, long endUserId, String agentId, String sessionId, double decayScore,
+            long createdEpochSecond, int createdNano) {
+        Owner owner() { return new Owner(factId, endUserId, agentId, sessionId, decayScore); }
+    }
 }

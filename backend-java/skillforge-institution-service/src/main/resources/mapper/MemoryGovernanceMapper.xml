@@ -25,6 +25,31 @@
         <if test="endUser != null">and coalesce(h.end_user_id,o.end_user_id)=#{endUser}</if>
         order by r.created_epoch_second desc,r.created_nano desc limit #{limit}
     </select>
+    <select id="pageOwners" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$PageOwner">
+        select h.fact_id,coalesce(h.end_user_id,o.end_user_id) as end_user_id,
+            coalesce(h.agent_id,(select s.agent_id from agent_runtime_memory_fact_sources s
+                where s.tenant_id=h.tenant_id and s.fact_id=h.fact_id and s.revision=r.content_revision
+                order by s.source_ordinal limit 1)) as agent_id,
+            coalesce(r.session_id,r.source_session_id) as session_id,
+            coalesce(p.projected_decay_score,0)::double precision as decay_score,
+            r.created_epoch_second,r.created_nano
+        from agent_runtime_memory_fact_heads h join agent_runtime_memory_fact_revisions r
+            on r.tenant_id=h.tenant_id and r.fact_id=h.fact_id and r.revision=h.current_revision
+        join agent_runtime_session_owners o on o.tenant_id=h.tenant_id and o.session_id=r.source_session_id and o.subject_kind='USER'
+        left join agent_runtime_memory_usage_projection p on p.tenant_id=h.tenant_id and p.fact_id=h.fact_id
+        where h.tenant_id=#{tenant} and h.group_binding_id is null
+        <if test="status != null">and r.status=#{status}</if>
+        <if test="scope != null">and h.scope=#{scope}</if>
+        <if test="type != null">and h.type_id=#{type}</if>
+        <if test="agent != null">and coalesce(h.agent_id,(select s.agent_id from agent_runtime_memory_fact_sources s
+                where s.tenant_id=h.tenant_id and s.fact_id=h.fact_id and s.revision=r.content_revision
+                order by s.source_ordinal limit 1))=#{agent}</if>
+        <if test="endUser != null">and coalesce(h.end_user_id,o.end_user_id)=#{endUser}</if>
+        <if test="second != null">
+            and (r.created_epoch_second,r.created_nano,h.fact_id) &lt; (#{second},#{nano},#{fact})
+        </if>
+        order by r.created_epoch_second desc,r.created_nano desc,h.fact_id desc limit #{limit}
+    </select>
     <select id="owner" resultType="com.skillforge.institution.memory.MemoryGovernanceMapper$Owner">
         <include refid="ownerColumns"/> and h.fact_id=#{fact}
     </select>

@@ -7,6 +7,7 @@ import type { MemoryFact } from '../../api'
 import MemoryPage from './MemoryPage.vue'
 
 const mocks = vi.hoisted(() => ({
+  page: vi.fn(),
   list: vi.fn(),
   reviews: vi.fn(),
   agents: vi.fn(),
@@ -16,8 +17,18 @@ const mocks = vi.hoisted(() => ({
   restore: vi.fn()
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'session-a',
   api: {
     memories: {
+      page: (query: {
+        status?: string
+        scope?: string
+        agent_id?: string
+        end_user_id?: string
+        limit?: number
+        q?: string
+        cursor?: string
+      }) => mocks.page(query),
       list: mocks.list,
       reviews: mocks.reviews,
       review: mocks.review,
@@ -28,6 +39,11 @@ vi.mock('../../api', () => ({
     chat: { endUsers: mocks.users }
   }
 }))
+vi.mock('../../stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const auth = reactive({ identityVersion: 0, sessionIdentity: 'session-a' })
+  return { useAuthStore: () => auth }
+})
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
@@ -80,6 +96,26 @@ beforeEach(() => {
   }
   mocks.list.mockImplementation(async () => [fact])
   mocks.reviews.mockImplementation(async () => [fact])
+  mocks.page.mockImplementation(
+    async (query: {
+      status?: string
+      scope?: string
+      agent_id?: string
+      end_user_id?: string
+      limit?: number
+    }) => ({
+      items:
+        query.status === 'PENDING_CONFIRM'
+          ? await mocks.reviews()
+          : await mocks.list({
+              scope: query.scope,
+              agent_id: query.agent_id,
+              end_user_id: query.end_user_id,
+              limit: query.limit
+            }),
+      next_cursor: null
+    })
+  )
   mocks.agents.mockResolvedValue({ items: [{ id: 'agent-a', name: '客服助手' }] })
   mocks.users.mockResolvedValue([{ id: 'user-a', display_name: '客户甲' }])
   mocks.review.mockResolvedValue({})
@@ -93,6 +129,47 @@ afterEach(async () => {
 })
 
 describe('记忆筛选辅助目录独立恢复', () => {
+  it('空批次仍有游标时可继续加载，不把尚未扫描完的结果显示为无匹配', async () => {
+    mocks.page
+      .mockResolvedValueOnce({ items: [], next_cursor: 'next-1' })
+      .mockResolvedValueOnce({ items: [fact], next_cursor: null })
+    const wrapper = await render()
+    expect(wrapper.text()).toContain('当前批次没有匹配记忆，可继续加载更多')
+    expect(wrapper.text()).toContain('仍有更多结果')
+    await button(wrapper, '加载更多').trigger('click')
+    await flushPromises()
+    expect(mocks.page.mock.calls[1]![0]).toMatchObject({ cursor: 'next-1', limit: 100 })
+    expect(wrapper.text()).toContain('summary-style')
+    expect(wrapper.text()).not.toContain('仍有更多结果')
+  })
+  it('关键词按查询按钮发送至服务端，切换筛选丢弃迟到的旧分页结果', async () => {
+    let resolveMore!: (value: unknown) => void
+    mocks.page.mockResolvedValueOnce({ items: [fact], next_cursor: 'next-1' })
+    mocks.page.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMore = resolve
+        })
+    )
+    const wrapper = await render()
+    await button(wrapper, '加载更多').trigger('click')
+    const search = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('placeholder') === '搜索主体、关系或内容，点击查询应用')!
+    search.vm.$emit('update:modelValue', '旧事实')
+    await flushPromises()
+    resolveMore({ items: [{ ...fact, predicate: '不应显示的旧分页' }], next_cursor: null })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('不应显示的旧分页')
+    mocks.page.mockResolvedValueOnce({
+      items: [{ ...fact, predicate: '旧事实' }],
+      next_cursor: null
+    })
+    await button(wrapper, '查询').trigger('click')
+    await flushPromises()
+    expect(mocks.page.mock.calls.at(-1)![0]).toMatchObject({ q: '旧事实', limit: 100 })
+    expect(wrapper.text()).toContain('旧事实')
+  })
   it('展示已应用的记忆范围，筛选未查询或查询失败不冒充新结果', async () => {
     const wrapper = await render()
     expect(wrapper.text()).toContain('当前结果：范围 全部 · 智能体 全部 · 终端用户 全部')
@@ -146,7 +223,7 @@ describe('记忆筛选辅助目录独立恢复', () => {
     wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'USER_AGENT')
     const filter = wrapper
       .findAllComponents(ElInput)
-      .find((input) => input.props('placeholder') === '在当前结果中搜索主体、关系或内容')!
+      .find((input) => input.props('placeholder') === '搜索主体、关系或内容，点击查询应用')!
     filter.vm.$emit('update:modelValue', 'summary')
     await button(wrapper, '纠正').trigger('click')
     await flushPromises()

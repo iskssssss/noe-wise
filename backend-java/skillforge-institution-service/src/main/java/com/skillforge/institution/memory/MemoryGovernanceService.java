@@ -33,10 +33,15 @@ import com.skillforge.runtime.api.port.SessionOwner;
 import com.skillforge.runtime.api.port.VerifiedIdentity;
 import com.skillforge.runtime.memory.MemoryRuntime;
 import com.skillforge.institution.memory.MemoryGovernanceMapper.Owner;
+import com.skillforge.institution.memory.MemoryGovernanceMapper.PageOwner;
 import com.skillforge.institution.memory.MemoryGovernanceRequest.Operation;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -94,6 +99,74 @@ public class MemoryGovernanceService {
     /** 治理列表过滤；空白字段表示不限制。 */
     public record ListQuery(String status, String scope, String type, String agentId,
             Long endUserId, int limit) { }
+
+    /** 治理搜索使用权威事实正文；每次至多扫描 1000 条，可通过游标继续。 */
+    @Transactional(readOnly = true)
+    public Page page(String tenantId, ListQuery query, String search, String cursor) {
+        validate(query);
+        int limit = Math.max(1, Math.min(query.limit(), 200));
+        String status = text(query.status());
+        String keyword = text(search);
+        if (keyword != null) {
+            if (keyword.length() > 256) throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "memory_query_invalid");
+            keyword = keyword.toLowerCase(Locale.ROOT);
+        }
+        Cursor position = decodeCursor(cursor);
+        List<MemoryFact> items = new ArrayList<>(limit);
+        int scanned = 0;
+        while (scanned < 1000) {
+            int chunk = Math.min(200, 1000 - scanned);
+            List<PageOwner> rows = mapper.pageOwners(tenantId, status, text(query.scope()),
+                    text(query.type()), text(query.agentId()), query.endUserId(),
+                    position == null ? null : position.second(), position == null ? null : position.nano(),
+                    position == null ? null : position.factId(), chunk + 1);
+            int count = Math.min(chunk, rows.size());
+            List<CurrentFactRead> reads = rows.subList(0, count).stream().map(row -> new CurrentFactRead(
+                    context(tenantId, row.owner()), new MemoryFactRef(new TenantId(tenantId), row.factId()))).toList();
+            List<Optional<MemoryFact>> current = memories.findCurrent(new CurrentFactReadBatch(reads));
+            if (current.size() != count) throw new IllegalStateException("memory_current_batch_size_mismatch");
+            for (int index = 0; index < count; index++) {
+                PageOwner row = rows.get(index);
+                position = new Cursor(row.createdEpochSecond(), row.createdNano(), row.factId());
+                scanned++;
+                Optional<MemoryFact> value = current.get(index);
+                if (value.isPresent()) {
+                    MemoryFact fact = withDecay(value.get(), row.decayScore());
+                    // 权威内容由独立连接读取；若并发治理已改变状态，不把它放入旧状态筛选结果。
+                    if ((status == null || status.equals(fact.status().name()))
+                            && (keyword == null || (fact.subject() + fact.predicate() + fact.object().canonicalJson())
+                            .toLowerCase(Locale.ROOT).contains(keyword))) items.add(fact);
+                }
+                if (items.size() == limit)
+                    return new Page(List.copyOf(items), index + 1 < rows.size() ? encodeCursor(position) : null);
+            }
+            if (rows.size() <= count) return new Page(List.copyOf(items), null);
+        }
+        return new Page(List.copyOf(items), encodeCursor(position));
+    }
+
+    public record Page(List<MemoryFact> items, @JsonProperty("next_cursor") String nextCursor) { }
+    private record Cursor(long second, int nano, String factId) { }
+
+    private static String encodeCursor(Cursor cursor) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (cursor.second() + ":" + cursor.nano() + ":" + cursor.factId()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Cursor decodeCursor(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            if (value.length() > 4096) throw new IllegalArgumentException();
+            String[] parts = new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8).split(":", 3);
+            if (parts.length != 3 || parts[2].isBlank()) throw new IllegalArgumentException();
+            long second = Long.parseLong(parts[0]);
+            int nano = Integer.parseInt(parts[1]);
+            if (nano < 0 || nano > 999999999) throw new IllegalArgumentException();
+            return new Cursor(second, nano, parts[2]);
+        } catch (IllegalArgumentException invalid) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "memory_cursor_invalid");
+        }
+    }
 
     /** 通过 Runtime 提交状态迁移；宿主触发器与 head 原子更新衰减，不追加独立写入。 */
     @Transactional(rollbackFor = Exception.class)
