@@ -72,7 +72,7 @@ Pop-Location
 corepack pnpm --dir desktop-client dev
 ```
 
-在“模型设置”中填写自己的供应商、API 地址、模型名和 API Key，再选择工作目录开始会话。任务上下文会发送到所配置的供应商，模型调用可能产生费用；文件修改会写入所选目录，命令执行需要用户确认。其它平台使用对应 Gradle Wrapper；使用方式、打包及限制见[桌面客户端说明](desktop-client/README.md)。
+在“模型设置”中选择 DeepSeek 或自定义 OpenAI Chat Completions 兼容服务，确认或填写 API 地址和模型名，输入 API Key，再选择工作目录开始会话。任务上下文会发送到所配置的供应商，模型调用可能产生费用；文件修改会写入所选目录，命令执行需要用户确认。其它平台使用对应 Gradle Wrapper；使用方式、打包及限制见[桌面客户端说明](desktop-client/README.md)。
 
 ### 运行机构与平台服务
 

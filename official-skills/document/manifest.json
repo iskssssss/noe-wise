@@ -44,7 +44,7 @@
       "document.zip"
     ]
   },
-  "version": "2.1.5",
+  "version": "2.1.7",
   "output_naming": {
     "parameter": "output_name",
     "meaning": "actual safe basename; title is display only",

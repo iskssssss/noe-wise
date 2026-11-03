@@ -2,7 +2,7 @@
 
 本套件记录 A 采集时生产规则在人工标注样本上的实际表现。它只服务 A「契约与评估基线」，实现与证据入口复用[记忆评测工具](../README.md)。
 
-**当前版本的记忆提取已在 C 切换为来源绑定的 v2 契约。A 的旧候选输入未包含来源、时间、条件与关系，已退役；当前 runner 对记忆分支记录 `RETIRED_INPUT_SCHEMA` / `NOT_RUN`，样本结果保留 `UNKNOWN`，不补造 v2 字段，也不再声称旧 A 完整复跑。** 交付解析分支仍可独立观测，新增报告明确 `productionRulesChanged=true`。下文对 A 原始候选过滤输出的说明只适用于历史冻结采集。
+**当前版本的记忆提取已在 C 切换为来源绑定的 v2 契约。A 的旧候选输入未包含来源、时间、条件与关系，已退役；当前 runner 对记忆分支记录 `RETIRED_INPUT_SCHEMA` / `NOT_RUN`，样本结果保留 `UNKNOWN`，不补造 v2 字段，也不再声称旧 A 完整复跑。** 当前交付解析分支同样输出 `RETIRED_INPUT_SCHEMA` / `NOT_RUN`，不能将它记作新一轮有效观测；历史报告中 `productionRulesChanged=true` 仅描述原范围。下文对 A 原始候选过滤输出的说明只适用于历史冻结采集。
 
 当前自然语言模型提取使用 [C 样本与 runner](../semantic-c/README.md)。
 

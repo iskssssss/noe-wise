@@ -440,7 +440,7 @@ flowchart TB
 - FR-17.4 `ContextPipeline` 的阶段顺序稳定且可测试；工作上下文、近期会话视图、任务投影、会话事实、近期情节、长期事实和知识结果由独立 Provider 注册接入，不修改主组装流程或互相充当权威存储。
 - FR-17.5 每次模型调用使用不可变 `AgentContextSnapshot`；进入模型请求的人格、关系、上下文块、来源引用和预算结果均先记录到 SessionLog，回放使用该快照而非按当前状态重新检索。
 - FR-17.6 `PolicyChain` 的拒绝、降级、脱敏和放行结果进入 SessionLog；能力插件和 Skills 不得绕过策略链。
-- FR-17.7 `MemoryPort` 的基础实现只接受 `SESSION` 与 `USER_AGENT` 作用域，支持来源事件引用、作用域隔离、读取预算和显式删除；工作记忆由 LoopState/AgentContextSnapshot 承载，近期会话和中期情节是可重建检索视图，高级冲突消解与衰减留在 FR-9。用户级 `USER`、读/写分权以及归属与来源分离由 [FR-9](04-后续阶段需求扩展-P1-P3.md#fr-9-记忆产品增强p1) 定义，不改变本条 SESSION/USER_AGENT 隔离。
+- FR-17.7 MVP-0 阶段的基础范围为 `SESSION` 与 `USER_AGENT`，支持来源事件引用、作用域隔离、读取预算和显式删除；工作记忆由 LoopState/AgentContextSnapshot 承载，近期会话和中期情节是可重建检索视图，高级冲突消解与衰减留在 FR-9。该阶段范围不是当前 API 的完整 scope 清单：当前持久归属还包含 `USER`、`GROUP` 与 `GROUP_MEMBER`；归属、来源与访问权限分别见 [FR-9](04-后续阶段需求扩展-P1-P3.md#fr-9-记忆产品增强p1) 和[群记忆契约](02-微内核插件架构实现思路.md#581-群记忆归属与冻结目标契约)。
 - FR-17.8 入口必须提供可校验的 `end_user_id`；渠道 externalRef 仅作审计/关联，不能在运行时映射、创建或覆盖终端用户身份，也不自动猜测身份。
 - FR-17.9 定时器和业务事件经统一 Inbound 进入 Agent；触发器不得直接构造模型回复或绕过输入幂等。
 - FR-17.10 主动输出必须经过可插拔的授权、频控、安静时段和渠道可达性策略；具体产品规则由 P1 配置。

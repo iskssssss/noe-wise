@@ -4,7 +4,7 @@ description: 搜索互联网资料、读取公开网页并比较多个来源，�
 license: MIT
 compatibility: managed http_request HTTPS; run_code Node SDK; code_execute Python 3.12 standard library
 metadata:
-  version: 1.0.6
+  version: 1.0.7
   upstream-commit: 778122e5f9c680f541eeceda5a5b36405eb7980c
   homepage: https://github.com/tavily-ai/skills
 allowed-tools: http_request run_code code_execute read_skill_resource get_current_time finalize_task_outputs list_artifacts
@@ -12,7 +12,7 @@ allowed-tools: http_request run_code code_execute read_skill_resource get_curren
 
 # 搜索与多来源研究
 
-先读取 [执行与证据契约](references/research-contract.md)。本 Skill 使用真实 `http_request` 调用 Tavily 免费 search/extract，并由本平台模型完成综合研究。当前免费流程不调用 Tavily 的付费 `/research`、`/map`、`/crawl`，不启动 OAuth、不安装 CLI、不购买额度。上游参考已裁剪为 API 使用方法，不增加 CLI、登录或自动重试步骤。Skill 指令不授予工具或域名权限。
+先读取 [执行与证据契约](references/research-contract.md)。本 Skill 使用真实 `http_request` 调用 Tavily 免费 search/extract，并由本平台模型完成综合研究。当前免费流程不调用 Tavily 的付费 `/research`、`/map`、`/crawl`，不启动 OAuth、不安装 CLI、不购买额度，也不自动重试。Skill 指令不授予工具或域名权限。
 
 明确要核实的问题、时间范围和比较维度，复杂问题分成 2–4 个短查询；一般先 basic、3–5 条结果。近期事实调用 `get_current_time` 确认日期。搜索、查询或提取 URL 会发送给 Tavily；仅使用公开信息，不发送附件正文、租户数据、客户信息、私有链接或凭据。默认使用免认证、受限额度路径，不扫描环境或读取本机登录配置。
 

@@ -4,7 +4,7 @@ description: 根据用户内容生成可离线使用的网页、报告、仪表�
 license: Apache-2.0
 compatibility: Python 3.12 or Node.js 24
 metadata:
-  version: 2.1.8
+  version: 2.1.9
   upstream-commit: 683bc88e56f3e09ba94f7055977f3d3aa499f202
   homepage: https://github.com/anthropics/skills
 ---

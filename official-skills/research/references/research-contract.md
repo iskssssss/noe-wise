@@ -1,6 +1,6 @@
 # 网络、输入与来源契约
 
-本平台采用 Tavily 官方 search/extract 方法；适配方法参考见 [search](upstream-tavily-search.txt)、[extract](upstream-tavily-extract.txt)。这两份参考基于上游 commit `778122e5f9c680f541eeceda5a5b36405eb7980c`，许可见 [MIT](../licenses/tavily-mit.txt)。已移除上游 CLI 与登录流程，平台执行使用下述工具契约。
+本包使用 Tavily 的 search/extract API。所含 Tavily 材料来源 commit 为 `778122e5f9c680f541eeceda5a5b36405eb7980c`，适用 [MIT 许可证](../licenses/tavily-mit.txt)。平台执行使用下述工具契约，不启动 CLI 或登录流程。
 
 ## 免费搜索与网页提取
 

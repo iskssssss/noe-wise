@@ -11,6 +11,8 @@ Agent Group 没有独立产品入口，却把多成员、计划、执行、计�
 
 ## 决策
 
+以下是当时针对旧 Agent Group 的历史决定；现有共享聊天群及 Agent Team 有独立的目标、身份、群记忆和授权语义，不等同于被移除的旧对象。当前 Session 可绑定 Agent、Team 或群目标，具体入口以 [Harness](../../harness-design/03-核心对象模型与状态机.md#511-群归属与执行身份目标契约) 为准。
+
 - 删除 Agent Group 模板、实例、成员和渠道绑定概念。
 - 不再新增 group 级路由、权限、配额、记忆或执行语义。
 - 单个 Session 绑定一个 Agent。

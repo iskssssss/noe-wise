@@ -212,52 +212,13 @@ child admission 必须先验证 Entry 的 `scope_run_id/agent_id` 证明与父�
 
 计划仍有未准入任务时，若其冻结执行范围在当前授权检查中确定失效，整项工作进入既有取消链并等待已准入执行收敛，不制造未执行的子 Run，也不修改已批准计划。数据库或服务瞬时失败保留恢复重试；平台容量或资源互斥等待不作为撤权取消。
 
-### 5.1 入口 `end_user_id` 不变量
+### 5.1 入口身份与群归属
 
-`end_user_id` 是整个用户处理链的入口事实，不是运行时可推导的辅助字段。每一个能启动
-Session/Agent/Workflow 链的入口都必须显式携带正数 `end_user_id`：
+Session 的固定归属、Run 的原始请求者、当前认证操作者和实际执行 Agent 是不同事实。个人 Session 的 `SessionSubject.User` 包含真实正数 EndUserId；不能用默认用户、`anonymous`、外部引用或其他会话的用户来补造。个人 Run 若以终端用户为请求者，该用户必须与个人 Session 归属一致；系统请求者仍按其自身可信身份和原因果事实授权。
 
-| 入口 | 入口承载 | 后续允许的动作 |
-| :-- | :-- | :-- |
-| Chat/SSE/Sync | `ChatRequest.context.end_user_id` | 入口校验后复制到 Inbox payload、Session、AgentRun、CostContext |
-| 机构端创建 Session | `CreateSessionRequest.end_user_id` | 校验租户归属后写入 Session；不能创建默认用户 |
-| Open Platform 创建 Session | `OpenPlatformCreateSessionRequest.end_user_id` | 校验租户归属后冻结到 Session；`externalUserRef` 只作审计/关联 |
-| Open Platform message/action/callback/command | 创建时已冻结的 Session identity | 作为同一 Session 的只读入口投影写入 Inbox；不得重新映射 |
-| Workflow DispatchOrder / Agent delegation | 上游已冻结的 `end_user_id` | 只读透传到 `AgentRun`、Workflow Ledger、子 Context 和用量 |
-| 定时器/恢复/重启 | 原始入口已持久化的 execution identity | 仅复用该已记录事实并校验一致性；缺失或不一致直接失败 |
+群 Session 使用 `SessionSubject.Group` 和同一生命周期的 `GroupBindingRef`，不包含 owner EndUser，不能以群主、当前成员、零或占位用户代替。群 Run 单独固定真实 `RunRequester`、可选来源消息、实际执行 Agent、入口来源与因果身份；终端用户请求者和系统请求者分别按各自身份与当前授权校验。入口、出队、执行及披露仍须按所属操作复验群、成员、服务 Agent 和资源授权，群绑定或历史事实不自动授予后续权限。
 
-传播关系如下，任何虚线“查找”都不是合法路径：
-
-```mermaid
-flowchart LR
-    E[入口 end_user_id] --> I[Inbound payload/context]
-    I --> S[Session.endUserId]
-    S --> A[AgentRun / Workflow Execution]
-    A --> C[Capability Snapshot / child Context]
-    A --> M[Memory / Knowledge / Tool / LLM]
-    A --> U[CostContext / Usage Ledger]
-    R[恢复/重启] --> A
-    X[tenant default user / Session 反查 / externalUserRef / user_id 别名 / anonymous] -.禁止.-> E
-```
-
-约束是硬性的：
-
-- 缺失、非法或非正数时在当前入口 fail closed；不得把它替换成租户默认用户、`anonymous`、
-  `user_id` 别名或任意外部用户映射。
-- Session、AgentRun、Workflow DispatchOrder、DelegationOrder、Capability Snapshot、
-  KnowledgeRequest、工具/模型调用和 CostContext 只能复制或校验该值，不能通过查询获得另一个值。
-- Open Platform 的 `externalUserRef` 与 `externalConversationRef` 用于审计、幂等和会话定位；它们
-  不能创建、选择或覆盖内部 `end_user_id`。
-- 恢复器可以从原始 execution/Session 事实重放入口 ID，这是回放已持久化的输入事实，不是新的
-  身份兜底；若原事实缺失、当前显式值不一致或租户不匹配，必须拒绝恢复。
-- `CostContext` 嵌套作用域允许子作用域省略该字段以继承父入口值，但禁止改写为不同 ID；这只是
-  传播，不是用户查询。
-- 跨边界 JSON、Context、事件和快照中的身份字段必须带语义名称（如 `end_user_id`、`tenant_id`、
-  `session_id`、`agent_id`、`execution_id`）；不得用裸 `id` 表示用户、租户、会话或执行身份。
-
-当前代码的 Chat 传输仍使用 `context.end_user_id` 作为统一 DTO 字段；这是入口协议字段，不代表
-服务端可以从 `Session` 或 `EndUserService` 补齐它。该不变量适用于委派子 Agent，即 Parent 不
-传递新的用户定义，Child 只继承 Parent 已受理并冻结的入口身份。
+子委派创建独立内部 `delegation:*` Session：个人 AGENT 目标绑定子 Agent，TEAM 与 GROUP 目标分别保留父 target；其 subject 沿父归属，子 Run 的 requester、Agent、来源和因果依据按真实父子事实固定。恢复、结果读取和取消沿原身份及当前权限核验，不因新操作者、目标变更或凭证变化重建原归属。完整类型与约束见 [SessionSubject](../backend-java/agent-runtime-api/src/main/java/com/skillforge/runtime/api/SessionSubject.java)、[RunIdentity](../backend-java/agent-runtime-api/src/main/java/com/skillforge/runtime/api/port/RunIdentity.java) 和 [childOwner](../backend-java/skillforge-institution-service/src/main/java/com/skillforge/institution/runtime/AgentDelegationHost.java)。旧 `SessionStorePort` 的个人分支要求真实 User，不能据此声称该端口本身已支持群 Session；群使用其专属宿主路径和当前执行存储。
 
 ## 6. 委派输入与结果契约
 
@@ -613,9 +574,7 @@ flowchart LR
 - 委派命令回执与恢复结果回执进入原主 SessionLog，可回放且不重执行 child Agent。
 - Agent 委派配置、工作室配置、委派命令、DAG 工作和任务不接受容量或 Token 预算；每个子任务继续受目标 Agent 普通 Run 与平台既有限制。
 - 旧 `DelegationOrder`、旧 ledger 字段/状态约束和旧非生产数据直接删除或重建；不存在兼容 DTO、双路由或历史数据回填。
-- 所有 Chat、Session、Open Platform、Workflow、Agent delegation 入口缺失或篡改 `end_user_id` 均稳定拒绝。
-  正常链路的 Session、AgentRun、Workflow、Memory/Knowledge/Tool/LLM 与 Usage 记录使用同一入口值，
-  不存在默认用户、外部身份映射或 `anonymous` 兜底。
+- 个人分支保留真实 EndUser 归属；群分支保留 GroupBindingRef，分别固定原 RunRequester、实际 Agent 和可信来源。恢复使用原身份并复核当前授权，不用默认用户或 `anonymous` 补造群 owner。
 
 ### 17.2 后续演进
 
@@ -626,7 +585,7 @@ flowchart LR
 | 验收编号 | 可执行验收 | 证据 |
 | :-- | :-- | :-- |
 | DG-AC-01 | AGENT 或 TEAM Session 创建都不提前冻结委派范围；每个主 Run 首次受理冻结一个通用 `AgentRunBinding`，主助手只能选择该 scope 中当前授权且非自身的成员，TEAM 再与当前工作室成员取交集；同一 Run 恢复不漂移，新 Run 可冻结新配置 | RunBinding 并发/回放测试 + TargetProjection/Agent 与工作室授权单测 |
-| DG-AC-02 | 子 Agent 使用独立 `delegation:*` Session、自己的 system prompt、model resolution、Policy 与四类 CapabilityMountSnapshot；AGENT 父会话的 child Session target 是 child Agent，TEAM 父会话的 child Session 保留 TEAM target 且 actor 是 child Agent；产品 Session 归属和用户可见作者保持主助手 | child Session/RunIdentity 断言 + 模型请求与 Outbox 负向测试 |
+| DG-AC-02 | 子 Agent 使用独立 `delegation:*` Session、自己的 system prompt、model resolution、Policy 与四类 CapabilityMountSnapshot；AGENT 父会话的 child target 是 child Agent，TEAM 和 GROUP 分别保留父 target，subject 保留真实归属，实际执行 Agent 是 child Agent；产品 Session 归属和用户可见作者保持主助手 | child Session/RunIdentity 断言 + 模型请求与 Outbox 负向测试 |
 | DG-AC-03 | Schema 独立定义 delegate、wait_delegates、message_delegate、cancel_delegate、delegate_status、delegation_targets 与独立 plan 的字段和状态，delegate 默认为持久等待；精简通用指引不复制 Schema，动态公开目录不充当授权，代码按动作重新强制校验 | Schema/decoder 契约测试 + prompt 代表性场景 + 授权负向测试 |
 | DG-AC-04 | 普通 instruction 规范化的 Task 与 Plan 的结构化 Task 都只作为稳定 child input 的首个任务输入一次；重试核验 fingerprint/RunIdentity，不重复插入正文；子 Run 的 targets 为空且递归 start 稳定拒绝 | child admission 重放测试 + 模型请求断言 + 叶子执行负向测试 |
 | DG-AC-05 | Agent 委派配置、工作室、委派命令和 DAG 不含容量或 Token 预算；实际用量继续关联 delegation/parent/child 并服从目标 Agent 普通 Run 与平台限制 | Schema 检索 + Usage Ledger 集成查询 |
@@ -638,7 +597,7 @@ flowchart LR
 | DG-AC-11 | 子结果、用量与 evidence 从真实 child AgentRun/outcome/checkpoint/既有账本读取；RECOVERY 不接收结果正文；父模型只见原主 SessionLog 的幂等 `agent.delegation` 结果回执，回放外部调用计数为零 | 结果来源负向测试 + SessionLog replay 测试 |
 | DG-AC-12 | 子 Agent 不能消费用户 Inbox、直接写用户 Outbox 或继续委派；主助手不能直读子 Workflow checkpoint，最终回复仍由原主 Run 产生 | 架构依赖规则 + 负向入口测试 |
 | DG-AC-13 | 旧 DelegationOrder、递归路径、预算字段、旧 ledger schema/状态和旧入口已删除；旧数据不回填，也不存在隐式兼容路径 | schema/入口架构检索 + 负向测试 |
-| DG-AC-14 | Chat/Open Platform/Session/Workflow/Delegation 入口缺失或篡改 `end_user_id` 稳定拒绝；同一入口值贯穿 Session、AgentRun、Workflow、Capability、Knowledge/Tool/LLM 与 Usage，恢复只重放已持久化入口事实 | EndUserIdentity/入口契约单测 + 端到端链路断言 + 代码架构检索 |
+| DG-AC-14 | 个人 Session 的真实用户归属与终端用户 requester 一致；群 Session 保留真实 GroupBindingRef，终端用户或系统 requester、来源和实际 Agent 分别核验。父子恢复不篡改身份，群不得以零或默认用户伪造 owner；各入口及披露仍检查当前授权 | 个人/群 SessionOwner、RunIdentity 与委派 child identity 契约测试 + 授权负向及端到端验证 |
 | DG-AC-15 | 子 HITL 只保存在内部 `delegation:*` Session、child AgentRun 与原 Workflow/Action/Session 事实域；Entry waiting 是读取投影，不建立 delegation outbox 或产品 Session 的第二份 pending；父 `wait` 保持 `DELEGATED`，子恢复按稳定 child identity 定位 | child HITL/send/重启集成测试 + 产品 Session 隔离断言 |
 | DG-AC-16 | Target Snapshot 校验失败不创建 Entry；Entry 创建后 child admission 只使用稳定内部 Session/child input/child Run，重试验证原输入与 RunIdentity；取消与准入共锁保证任务最多受理一次，拒绝输入投影为 failed 且不伪造 Run 结果 | 故障注入与 admit/cancel 竞争测试 + Entry/AgentRun/Inbox 数据断言 |
 | DG-AC-17 | 直接委派与通用计划的 MEMBER 只从同一冻结 scope 选目标；DAG Request 只以 `controlRun` 引用 scope，不含 `teamVersion`；计划使用统一 DagWork；MEMBER 执行复用委派事实，PRIMARY 留在原 Run，审批、等待与恢复引用同一工作 | Plan decoder/审批/依赖/恢复集成测试 + schema 检索 |
@@ -715,7 +674,7 @@ Plan 模式批准精确分工版本，普通模式可按当前已提交分工自
 
 `TeamWorkSnapshot` 同时提供工作 `revision/status` 和父 Run `run_revision/run_status`。两个修订分别单调前进；成员完成后父 Run 尚未结束时继续同步并显示汇总阶段，直到主助手最终答复可见。流式接收期间延后的历史刷新必须在接收结束后补做，服务端用户消息按 `input_id` 替换乐观消息；没有归属的历史 SSE 正文不得挂到当前轮次。最终成果卡位于对应助手正文之后、复制/引用操作之前。
 
-创建及编辑工作室时只选择主 Agent 当前启用委派名单中的已授权协作者和 `primary_agent_id`，角色描述及能力摘要只读展示；没有角色描述或能力时显示空态，不阻止选择。会话端和机构端均不填写职责、并行容量或 Token 预算。移除主助手后必须重新选择；已撤权或已移出委派名单的成员可移除但移除前不可保存；保存失败保留草稿，保存期间禁用重复提交及关闭。
+创建及编辑工作室时选择已发布成员和其中的 `primary_agent_id`；机构后台成员目录展示已发布智能体，并不按所选主助手的委派名单预先过滤。服务端保存和发布时校验协作者属于主 Agent 当前启用的委派名单；不符合时拒绝并保留页面草稿。成员职责信息为只读展示，没有角色描述时显示空态；会话端和机构端均不填写职责、并行容量或 Token 预算。移除主助手后必须重新选择；已撤权或已移出委派名单的成员可移除但移除前不可保存，保存期间禁用重复提交及关闭。
 
 普通 AGENT 与 TEAM 会话都使用同一“本次协作”入口。右侧详情在“协作”和“产物”之间切换：协作页按历史顺序展示 work 卡并用稳定 `work_id` 选择旧工作，刷新最新投影不能覆盖用户显式选择的历史卡；任务控制和结果打开都使用卡片自身的 `work_id` 与 `artifact_id`。任务列表与只读 DAG 共用执行事实，逐项显示负责人、阶段、依赖、等待原因、结果和限制，不编造百分比。
 

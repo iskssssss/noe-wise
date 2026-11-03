@@ -1,6 +1,6 @@
 # 企业文档内容组织
 
-本参考基于 [Anthropic internal-comms 方法参考](upstream/internal-comms/SKILL.md) 与同目录的 [Apache-2.0 许可证](upstream/internal-comms/LICENSE.txt)，固定来源 commit 为 `683bc88e56f3e09ba94f7055977f3d3aa499f202`。灵知 已将格式与信息收集流程适配为中文文档的有序 sections/blocks；上游是写作参考，不授予 Slack、邮件、日历访问或发送权限，不继承其逐项询问流程。
+本文件包含经调整的 Anthropic internal-comms 材料，来源 commit 为 `683bc88e56f3e09ba94f7055977f3d3aa499f202`，适用 [Apache-2.0 许可证](upstream/internal-comms/LICENSE.txt)。本文使用中文文档的有序 sections/blocks；示例不授予外部工具访问或发送权限，也不要求逐项询问。
 
 先根据当前请求确定受众、目的和覆盖时间。已有信息足够时直接组织；缺失事实保留“待确认”，不要为填满模板编造数字、负责人、进度或官方口径。用户提供的企业格式优先于参考格式，示例中的占位文本与数量不作为真实业务事实。
 
@@ -8,14 +8,14 @@
 
 | 文档类型 | 推荐内容顺序 | 现有输入映射 |
 | --- | --- | --- |
-| 周报、状态更新 | 进展 → 下一步计划 → 问题与依赖 | 各自成为一个一级 section，paragraph 或 bullets；参考 [3P 方法参考](upstream/internal-comms/examples/3p-updates.md) |
+| 周报、状态更新 | 进展 → 下一步计划 → 问题与依赖 | 各自成为一个一级 section，paragraph 或 bullets；见 [内容示例](upstream/internal-comms/examples/3p-updates.md) |
 | 管理层汇报 | 当前结论 → 关键事实与影响 → 风险 → 需要的决策 | 首节写结论，table 用于比较选项；需决策事项明确期限和已知负责人 |
 | 项目更新 | 目标 → 已完成与证据 → 计划 → 阻塞 → 协作事项 | 以可观察成果表达进展，计划与已完成分节，避免把预期写成结果 |
-| FAQ | 问题 → 简明答案 → 适用范围或权威来源 | 每个问题作为 heading、答案作为 paragraph；不确定或需官方答复的事项明确标注；参考 [FAQ 方法参考](upstream/internal-comms/examples/faq-answers.md) |
-| 机构内部简报 | 机构级公告 → 重点进展 → 相关团队事项 | 按影响范围聚合，链接仅来自当前已授权资料；参考 [简报方法参考](upstream/internal-comms/examples/company-newsletter.md) |
+| FAQ | 问题 → 简明答案 → 适用范围或权威来源 | 每个问题作为 heading、答案作为 paragraph；不确定或需官方答复的事项明确标注；见 [FAQ 示例](upstream/internal-comms/examples/faq-answers.md) |
+| 机构内部简报 | 机构级公告 → 重点进展 → 相关团队事项 | 按影响范围聚合，链接仅来自当前已授权资料；见 [简报示例](upstream/internal-comms/examples/company-newsletter.md) |
 | 事件报告 | 影响 → 已知时间线 → 处置 → 原因状态 → 后续行动 | 未确认原因写为待调查，行动 table 列出事项、已知责任人与期限 |
 
-不匹配以上类型时使用 [一般沟通参考](upstream/internal-comms/examples/general-comms.md) 的受众、目的、语气原则。正式交付格式与现有生成器契约保持一致，写作模板不改变默认 Markdown 或用户明确要求 Word/PDF 的规则。
+不匹配以上类型时按受众、目的和语气组织内容，可查看 [一般沟通示例](upstream/internal-comms/examples/general-comms.md)。正式交付格式与现有生成器契约保持一致，写作模板不改变默认 Markdown 或用户明确要求 Word/PDF 的规则。
 
 ## 事实与行动的表达
 

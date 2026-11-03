@@ -6,6 +6,22 @@
 
 系列性质是**通用设计教程**。其中的状态、字段、伪代码与策略用于推演，不构成统一产品协议，也不表示已经执行了真实模型评测。示例结果是读者可核对的教学预期。Java、Vue 片段用于解释边界，不配套可运行工程。
 
+## 与项目实现的关系
+
+课程讲述一套虚构报告助手的设计选择，不是灵知当前功能清单。课程中的审批、自动唤醒、跨 Run 目标和动态插件等场景不能单凭教程推断已实现或已在部署环境验证。查找灵知的当前行为时，先从下面的所属设计和源码入口核对；设计目标与实际装配不一致时，以当前源码、配置及对应测试为准。
+
+| 课程主题 | 灵知的事实来源与实现入口 |
+| :-- | :-- |
+| 01–05、19–25、29–30：运行对象、状态推进与恢复 | [运行对象与状态机](../../harness-design/03-核心对象模型与状态机.md)、[Agent 决策循环](../../backend-java/agent-runtime-core/src/main/java/com/skillforge/runtime/core/AgentExecutionLoop.java)与[会话执行编排](../../backend-java/agent-runtime-session/src/main/java/com/skillforge/runtime/session/AgentExecutionProgram.java) |
+| 06–10、33–34：模型、能力与 Runtime 边界 | [微内核与插件架构](../../harness-design/02-微内核插件架构实现思路.md)、[技术架构](../02-架构与设计/01-技术架构.md)与 [Gradle 模块清单](../../backend-java/settings.gradle.kts) |
+| 11–15：上下文、知识与记忆 | [上下文视图](../../harness-design/03-上下文视图与执行优化.md)、[知识内容与存储治理](../02-架构与设计/20-知识不可变内容与存储治理.md)、[记忆管理](../02-架构与设计/07-记忆管理.md)与 [MemoryRuntime](../../backend-java/agent-runtime-memory/src/main/java/com/skillforge/runtime/memory/MemoryRuntime.java) |
+| 16–18：委派与团队 | [委派与多智能体运行时](../../harness-design/08-Agent委派与多智能体运行时.md)和[委派宿主](../../backend-java/skillforge-institution-service/src/main/java/com/skillforge/institution/runtime/AgentDelegationHost.java) |
+| 27–28、31–32：产物、前端与轨迹 | [代码执行与产物交付](../02-架构与设计/12-代码执行沙箱与产物交付.md)、[前端共享层](../02-架构与设计/08-前端共享层设计.md)与[会话观测](../02-架构与设计/17-平台会话观测设计.md) |
+| 35–40：技能、模板、平台治理与计费 | [技能维护台](../02-架构与设计/15-技能维护台设计.md)、[时间契约](../02-架构与设计/13-全系统时间契约.md)、[用量与账单](../02-架构与设计/14-用量与账单设计.md)及[未实现功能清单](../02-架构与设计/11-未实现功能清单.md) |
+| 41–43：验证与工程协作 | [测试与验收策略](../04-指南与运维/03-测试与验收策略.md)及[文档归属与编辑规范](../../.agents/skills/nw-docs/references/documentation-standards.md) |
+
+第 26 课的持续目标和第 37 课的动态插件讨论的是通用方案；后者涉及的动态插件安装、热更新和供应链治理仍列在项目[未闭环主题](../02-架构与设计/11-未实现功能清单.md#2-其他平台缺口)中。课程示意 API、状态名和字段也不替代项目的公开契约。
+
 ## 怎样沿路线学习
 
 按编号阅读即可形成完整路径。每课开头列出必要前置，结尾有相邻课程导航；前置关系只指向更早的课程，上一课不必都是强制依赖。

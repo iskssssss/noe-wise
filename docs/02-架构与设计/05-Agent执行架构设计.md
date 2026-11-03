@@ -11,7 +11,7 @@
 | 微内核、插件与宿主边界 | [Harness 02](../../harness-design/02-微内核插件架构实现思路.md) |
 | 契约、对象与状态机 | [Harness 03](../../harness-design/03-核心对象模型与状态机.md) |
 | P1/P2 扩展 | [Harness 04](../../harness-design/04-后续阶段需求扩展-P1-P3.md) |
-| M1 Java 落地 | [Harness 05](../../harness-design/02-微内核插件架构实现思路.md) |
+| M1 Java 落地 | [Harness 02](../../harness-design/02-微内核插件架构实现思路.md) |
 | MVP-0 实施与门禁 | [Harness 06](../../harness-design/06-MVP-0技术底座实施方案.md) |
 | Agent 委派与多智能体运行时 | [Harness 08](../../harness-design/08-Agent委派与多智能体运行时.md) |
 | 实现与验证 | 当前源码、契约测试及对应候选的原始运行结果；设计文档不作为验收证据 |

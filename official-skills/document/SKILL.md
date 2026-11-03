@@ -4,7 +4,7 @@ description: 创建带标题层级、表格、图片和分页的 Markdown/Word �
 license: Apache-2.0
 compatibility: Python 3.12
 metadata:
-  version: 2.1.6
+  version: 2.1.7
   runtime: python-docx==1.1.2,lxml==6.1.3,typing-extensions==4.16.0
 ---
 
@@ -24,7 +24,7 @@ metadata:
 
 入口为 `scripts/generate_document.py`，读取唯一的 `document.json`。输入可参考 [Markdown](examples/document.json)、[Word](examples/document-word.json) 和 [明确命名](examples/document-named.json)；完整字段与脚本输入路径见 [输入与能力范围](references/document-schema.md)。依赖由包清单声明。
 
-`sections` 每项含非空 `heading`、1 至 5 的 `level` 与有序 `blocks`。`format` 省略时生成 Markdown；`docx` 生成 Word；`pdf` 先生成 DOCX，随后使用可用的 PDF 转换能力。`output_name` 指定实际文件名，不能用正文 `title` 替代。
+`sections` 每项含非空 `heading` 与有序 `blocks`；`level` 可选，范围为 1 至 5，默认 1。`format` 省略时生成 Markdown；`docx` 生成 Word；`pdf` 先生成 DOCX，随后使用可用的 PDF 转换能力。`output_name` 指定实际文件名，不能用正文 `title` 替代。
 
 默认文件名为 `document.md` 或 `document.docx`，Markdown 图片另存到 `assets/`。需要 PDF 时检查转换后的实际 PDF；只需要 PDF 时，DOCX 是中间文件。PDF 与 ZIP 同时要求时，转换完成后打包真实 PDF，不把中间 DOCX 当作 PDF。
 

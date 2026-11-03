@@ -4,6 +4,6 @@
 
 编辑入口见[提示词导航](NAVIGATION.md)。平台宿主核心、通用聊天行为、计划与 Goal、独立系统用途、协作和成果契约等正文，位于 [src/main/resources/com/skillforge/prompts](src/main/resources/com/skillforge/prompts)。每个模块整篇进入所属调用链；聊天专项模块按冻结能力与当前工具目录选择，不解析具名块，不生成 txt 副本。
 
-工具和 Schema 说明由所属 Tool 定义维护；Runtime 情境正文由 Session 模块维护并随其 JAR 打包。宿主 Java 仅依赖 `agent-runtime-session-spi`，Runtime SDK 不读取宿主源码、构建目录或提示词 JAR。配置来源、条件启用和冻结版本见 [Harness 上下文设计](../../harness-design/03-上下文视图与执行优化.md)。
+工具和 Schema 说明由所属 Tool 定义维护；Session 通过实际装配入口维护运行上下文，不打包无生产消费者的情境正文。宿主 Java 仅依赖 `agent-runtime-session-spi`，Runtime SDK 不读取宿主源码、构建目录或提示词 JAR。配置来源、条件启用和冻结版本见 [Harness 上下文设计](../../harness-design/03-上下文视图与执行优化.md)。
 
 通用规则按真实调用链保持单一归属：宿主核心负责指令与公开边界，聊天通用正文负责证据与回复，能力正文只补专项行为；工具字段和参数教程留给工具定义。独立系统用途不装配整套聊天能力，摘要用途保留各自的数据归属、来源与续接语义。

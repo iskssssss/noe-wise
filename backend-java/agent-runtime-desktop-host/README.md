@@ -64,8 +64,8 @@ API Key 只保留在 Host 内存中，由桌面主进程从系统保护的凭据
 
 | 工具 | 用途与限制 |
 |---|---|
-| `list_files` | 列举目录直接子项，最多返回 200 项并标记截断 |
-| `read_file` | 读取不超过 256 KiB 的 UTF-8 文本并记录观察版本 |
+| `list_files` | 按文件名升序列举目录直接子项，每页最多 200 项；截断时用 `nextAfter` 作为 `after` 继续，可按 `nameContains` 做区分大小写的字面文件名筛选；目录变化时分页不构成快照 |
+| `read_file` | 分页读取不超过 256 KiB 的 UTF-8 文本并记录观察版本；截断时使用 `nextLine` 和 `nextColumn` 继续读取 |
 | `search_files` | 在文件或目录中搜索字面文本；默认返回行内容及包含首个命中的完整字符起点 `readColumn`，可结合行号作为 `read_file` 的 `offset`、`column` 回读；列从 1 开始按 UTF-16 代码单元计数。`output=matches` 仅返回路径、行号和本页匹配行数。按游标继续并报告跳过和深度限制，计数不是全部结果 |
 | `write_file` | 创建文件或替换已读取的文件，父目录须存在，结果不超过 256 KiB |
 | `edit_file` | 在已读取的文件中替换唯一匹配片段，返回实际修改前后内容及有界 diff 预览 |
@@ -78,7 +78,7 @@ API Key 只保留在 Host 内存中，由桌面主进程从系统保护的凭据
 
 文件工具校验规范化后的真实路径，包括符号链接及 Windows junction 目标；拒绝目录越界、Windows 备用数据流和驱动器限定路径。已有文件须先读取；同一进程不同会话通过共享锁原子检查观察版本并替换，发生版本冲突时须重新读取。该控制不等于对其他编辑器或已批准 Shell 的文件系统沙箱。
 
-命令默认超时 120 秒，可按工具参数在 1–600 秒内指定。stdout、stderr 分别并发采集，最多保存各自 64 KiB，超出时继续排空管道并标记截断。工具按照 UTF-8 解码，结果包含 `outputEncoding`、`stdoutDecodingErrors` 和 `stderrDecodingErrors`；原生程序应自行配置 UTF-8 输出。Windows 的本机程序可能使用独立于 Shell 的旧代码页，例如 JDK 21 的 `stdout.encoding` 不一定跟随 `file.encoding`；不能通过猜测代码页或替换乱码宣称原始输出已正确还原。
+命令默认超时在 macOS 为 60 秒，其他系统为 120 秒，可按工具参数在 1–600 秒内指定。stdout、stderr 分别并发采集，最多保存各自 64 KiB，超出时继续排空管道并标记截断。工具按照 UTF-8 解码，结果包含 `outputEncoding`、`stdoutDecodingErrors` 和 `stderrDecodingErrors`；原生程序应自行配置 UTF-8 输出。Windows 的本机程序可能使用独立于 Shell 的旧代码页，例如 JDK 21 的 `stdout.encoding` 不一定跟随 `file.encoding`；不能通过猜测代码页或替换乱码宣称原始输出已正确还原。
 
 Windows 使用固定 PowerShell 监督脚本和独立命令数据。业务 Shell 先以挂起状态创建，加入启用 `KILL_ON_JOB_CLOSE` 的 Windows Job Object 后才恢复执行；监督进程在正常退出、取消或宿主进程退出时清理 Job 成员，并确认活动进程归零后生成绑定本次操作的回执。PowerShell cmdlet 错误通过 `ErrorActionPreference=Stop` 与异常边界表达，原生程序退出码单独保留。缺失或不匹配的清理回执返回 UNKNOWN。
 

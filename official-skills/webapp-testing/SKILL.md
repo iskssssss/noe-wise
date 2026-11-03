@@ -4,7 +4,7 @@ description: 对已生成或明确上传的单文件 HTML 进行真实离线浏�
 license: Apache-2.0
 compatibility: code_execute Node.js 24 with managed Playwright 1.62.1 Chromium
 metadata:
-  version: 1.0.3
+  version: 1.0.4
   upstream-commit: 683bc88e56f3e09ba94f7055977f3d3aa499f202
   homepage: https://github.com/anthropics/skills
 allowed-tools: code_execute read_skill_resource list_artifacts read_image
@@ -12,7 +12,7 @@ allowed-tools: code_execute read_skill_resource list_artifacts read_image
 
 # 网页自动验收
 
-读取 [执行契约](references/check-contract.md)，参考 [检查计划](examples/webapp-check.json)。[上游方法](references/upstream-webapp-testing.md) 提供先观察、再操作和查看日志的思路；该参考已适配为受管检查方法，不增加安装或服务启动步骤。本包只检查已明确挂载的单文件 HTML，不连接外部站点或个人浏览器，不自动登录、提交业务、访问网络或执行任意 JavaScript 验收代码。
+读取 [执行契约](references/check-contract.md) 和 [检查计划](examples/webapp-check.json)，先观察页面，再操作并查看日志。本包只检查已明确挂载的单文件 HTML，不连接外部站点或个人浏览器，不自动登录、提交业务、访问网络或执行任意 JavaScript 验收代码，也不增加安装或服务启动步骤。
 
 先用 `list_artifacts` 获取真实 HTML 的 artifact_id/path，再以 `artifact_inputs` 挂载该文件。当前调用工作区独立；不能猜测路径、使用宿主文件或假定前一次 `/workspace/output/index.html` 仍存在。没有 HTML 时先调用 web-app 生成，再读取真实成果。本包 examples 是参考，不是用户数据。
 

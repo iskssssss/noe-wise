@@ -273,7 +273,7 @@ python -X utf8 -B tools/chat_regression/behavior_main.py experiment-compare --ex
 
 `experiment-compare` 和 `compare` 退出码 `0` 表示质量控制条件可比，`1` 表示不可比，`2` 表示输入或执行错误；可比不等于候选更好，也不等于评测通过。这些开发与评审产物始终不授予发布资格，不接入产品强制发布门禁。
 
-`regression-plan` 只读取已冻结批次，将 `failed` 与 `unknown` 场景转换为当前套件的独立本地计划，每个场景默认 3 次、串行执行。它不启动模型、不重评旧结果，也不表示历史失败已复现。
+`regression-plan` 只读取已冻结批次，将 `failed` 与 `unknown` 场景转换为当前套件的独立本地计划：Product 场景每个执行 1 次，其他套件每个执行 3 次，均串行执行。它不启动模型、不重评旧结果，也不表示历史失败已复现。
 
 ```powershell
 python -X utf8 -B tools/chat_regression/behavior_main.py regression-plan --root tools/chat_regression/runs/<冻结批次> --out .runtime-logs/behavior-regression/<新目录> --batch <新批次名>

@@ -4,18 +4,18 @@
 
 | Skill | 精确版本 | 入口与依赖 |
 |---|---|---|
-| [document](../../official-skills/document/SKILL.md) | `2.1.6` | Python；Word 冻结 3 个完整依赖，新增企业内容组织参考 |
+| [document](../../official-skills/document/SKILL.md) | `2.1.7` | Python；Word 冻结 3 个完整依赖，新增企业内容组织参考 |
 | [spreadsheet](../../official-skills/spreadsheet/SKILL.md) | `2.0.5` | Python；冻结 2 个完整依赖，公式重算需镜像中的 LibreOffice Calc |
-| [presentation](../../official-skills/presentation/SKILL.md) | `2.1.8` | Node；冻结 19 个完整依赖，企业内容组织和十套受管主题 |
-| [web-app](../../official-skills/web-app/SKILL.md) | `2.1.8` | Python HTML 无第三方依赖；React 备用 Node 入口冻结 6 个完整依赖，支持统一主题 |
-| [code-delivery](../../official-skills/code-delivery/SKILL.md) | `1.1.5` | Python 标准库；明确文件清单的源码交付包装器 |
+| [presentation](../../official-skills/presentation/SKILL.md) | `2.1.9` | Node；冻结 19 个完整依赖，企业内容组织和十套受管主题 |
+| [web-app](../../official-skills/web-app/SKILL.md) | `2.1.9` | Python HTML 无第三方依赖；React 备用 Node 入口冻结 6 个完整依赖，支持统一主题 |
+| [code-delivery](../../official-skills/code-delivery/SKILL.md) | `1.1.6` | Python 标准库；明确文件清单的源码交付包装器 |
 | [configuration](../../official-skills/configuration/SKILL.md) | `2.0.5` | Python；JSON/YAML 与 JSON Schema 校验，冻结 7 个完整依赖 |
-| [document-read](../../official-skills/document-read/SKILL.md) | `1.0.3` | Python；不动态安装依赖，使用镜像固定 Docling、OCR 与本地模型 |
-| [webapp-testing](../../official-skills/webapp-testing/SKILL.md) | `1.0.3` | Node；`playwright-core==1.62.1` 与镜像预装 Chromium，执行时断网 |
-| [research](../../official-skills/research/SKILL.md) | `1.0.6` | 受管 `run_code` 保存 Tavily 免费 search/extract 原始 HTTP 响应，Python 标准库保留 corpus、回读正文与生成报告 |
-| [mcp-builder](../../official-skills/mcp-builder/SKILL.md) | `1.0.5` | Python MCP SDK `1.26.0`；冻结 29 个完整依赖，真实 stdio 协议验证后交付源码 |
+| [document-read](../../official-skills/document-read/SKILL.md) | `1.0.4` | Python；不动态安装依赖，使用镜像固定 Docling、OCR 与本地模型 |
+| [webapp-testing](../../official-skills/webapp-testing/SKILL.md) | `1.0.4` | Node；`playwright-core==1.62.1` 与镜像预装 Chromium，执行时断网 |
+| [research](../../official-skills/research/SKILL.md) | `1.0.7` | 受管 `run_code` 保存 Tavily 免费 search/extract 原始 HTTP 响应，Python 标准库保留 corpus、回读正文与生成报告 |
+| [mcp-builder](../../official-skills/mcp-builder/SKILL.md) | `1.0.6` | Python MCP SDK `1.26.0`；冻结 29 个完整依赖，真实 stdio 协议验证后交付源码 |
 
-构包以 `SKILL.md` 的 `metadata.version` 作为 ZIP 文件名与官方发布版本；本次更新的 spreadsheet、web-app 的 manifest 顶层 `version` 与其对齐，该字段不选择 Runtime 入口。平台通用编辑器的 `version_key` 独立于包作者版本；官方构包发布工具显式沿用作者版本。
+构包以 `SKILL.md` 的 `metadata.version` 作为 ZIP 文件名与官方发布版本；manifest 若含顶层 `version`，应与其对齐，该字段不选择 Runtime 入口。平台通用编辑器的 `version_key` 独立于包作者版本；官方构包发布工具显式沿用作者版本。
 
 ## 八个补强方向与事实源
 
@@ -82,7 +82,7 @@ python -X utf8 -B tools/skills/package_skills.py --output .agent-work-state/skil
 python -X utf8 -B tools/skills/package_skills.py --output .agent-work-state/skill-strengthening/packages --apply --platform-url http://127.0.0.1:8100 --token-env SKILLFORGE_PLATFORM_TOKEN
 ```
 
-平台启动时零预置 Skill：源码包不进入应用资源、不自动创建平台定义，也不默认挂载到 Agent。`--apply` 查询平台公共目录；缺少 `skill:<名称>` 时，通过正式 definitions API 创建 `SKILL` 定义，再执行草稿创建、更新、校验与发布。已有且唯一的同名平台定义直接复用，不创建重复定义。草稿校验后按 revision 发布，回读冻结正文。既有已发布版本只有完整文件集合一致、文本仅统一 LF 且其他文件保持原字节后内容完全一致时才能复用；回执用 `content_comparison: exact/utf8_lf` 区分原始字节相同与仅换行差异，并记录真实冻结字节的逐文件 `frozen_file_sha256`，不改写已发布字节。新发布仍要求回读正文与本次构包文件逐字节 `exact` 一致；同版本换行以外的内容或文件集合差异、其他编辑草稿都拒绝覆盖。内容变化必须使用新版本。发布通过 Catalog 推进该定义的当前默认版本；机构或 Agent 仍需通过现有能力目录明确选择并采用具体版本，固定版本挂载与已受理执行不会自动切换。`--apply` 不修改业务 Agent 挂载，不代表 Git commit、push、生产部署或真实用例通过。
+平台启动时零预置 Skill：源码包不进入应用资源、不自动创建平台定义，也不默认挂载到 Agent。`--apply` 查询平台公共目录；缺少 `skill:<名称>` 时，通过正式 definitions API 创建 `SKILL` 定义，再执行草稿创建、更新、校验与发布。已有且唯一的同名平台定义直接复用，不创建重复定义。草稿校验后按 revision 发布，回读冻结正文。既有已发布版本只有完整文件集合一致、文本仅统一 LF 且其他文件保持原字节后内容完全一致时才能复用；回执用 `content_comparison: exact/utf8_lf` 区分原始字节相同与仅换行差异，并记录真实冻结字节的逐文件 `frozen_file_sha256`，不改写已发布字节。新发布仍要求回读正文与本次构包文件逐字节 `exact` 一致；同版本换行以外的内容或文件集合差异、其他编辑草稿都拒绝覆盖。内容变化必须使用新版本。发布通过 Catalog 推进该定义的当前默认版本；机构或 Agent 通过能力目录选择稳定定义，管理服务解析当前发布版本；已有挂载及已受理执行继续以各自的持久或冻结事实为准，不自动替换。`--apply` 不修改业务 Agent 挂载，不代表 Git commit、push、生产部署或真实用例通过。
 
 创建定义、创建/更新草稿与发布均在写操作前由 journal 记录 `unknown`，收到响应后记录 `observed`。未知结果按原定义、版本及草稿查询核对，不删除 journal、换版本号或重发请求。平台发布、安装、模型执行、正式下载和视觉检查分别形成证据。
 

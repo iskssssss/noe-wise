@@ -4,8 +4,8 @@ description: 读取用户上传或本会话已授权的PDF、扫描件、Word、
 license: MIT
 compatibility: code_execute Python 3.12; frozen Docling runtime and local OCR models
 metadata:
-  version: 1.0.3
-allowed-tools: code_execute list_artifacts finalize_task_outputs
+  version: 1.0.4
+allowed-tools: read_skill_resource code_execute list_artifacts finalize_task_outputs
 ---
 
 # 文档读取与分析
@@ -22,4 +22,4 @@ PDF默认 `pdf_pipeline: "structured"`，用本地布局、表格模型和 `chi_
 
 用户明确要求转换文件时使用 action: "export"：默认 Markdown，format: "json" 仅按用户明确要求。生成后用 output_files 收集 document.md 或 document.json，仍通过 result.json 回读正文与范围。选定 PDF 页范围的导出仍是部分文件，标题和最终回复应明确范围。核验候选后调用 finalize_task_outputs，提交完整的 key、title、kind、可选 base_revision_id 和 representations；检查 JSON、日志和原输入不混入最终成果。
 
-Docling上游 [Skill与参考资料](references/docling/SKILL.md) 保留固定来源用于能力说明；其中CLI、动态安装、URL、远程服务、VLM和自动重试示例不适用于本平台。实际执行以本入口和受管契约为准。
+本包使用的 Docling 本地解析能力及限制见 [读取契约](references/input-contract.md)。实际执行以本入口和受管契约为准；不使用 CLI、动态安装、URL、远程服务、VLM 或自动重试。

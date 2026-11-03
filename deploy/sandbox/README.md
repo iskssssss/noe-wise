@@ -4,15 +4,20 @@
 
 ## 启动
 
-需要 Docker Engine 28 或兼容实现，支持 bridge `gateway_mode_ipv4=isolated` 和 volume `volume-subpath`。复制 `.env.example` 为 `.env`，将 `SANDBOX_SERVICE_TOKEN` 换成至少 32 个随机字符。令牌只配置到机构服务和 sandbox service，不能写入代码请求、任务输入或日志。
+需要 Docker Engine 28 或兼容实现，支持 bridge `gateway_mode_ipv4=isolated` 和 volume `volume-subpath`。首次配置时将 `deploy/sandbox/.env.example` 复制为同目录的本地 .env 文件，将 `SANDBOX_SERVICE_TOKEN` 换成至少 32 个随机字符；已有配置不要覆盖。令牌只配置到机构服务和 sandbox service，不能写入代码请求、任务输入或日志。
 
 先在 `backend-java/` 生成服务 JAR；Docker 构建只打包该产物，不在镜像构建中运行 Gradle。服务基础镜像默认固定到已验证的多架构摘要，可通过 `SANDBOX_SERVICE_BASE_IMAGE` 替换为管理员镜像仓库中的同等 JRE 21 镜像。
 
+从仓库根目录执行：
+
 ```powershell
+Push-Location backend-java
 .\gradlew.bat :skillforge-sandbox-service:bootJar --no-parallel --no-daemon
-docker compose --profile runtime-images build python-runtime-image node-runtime-image
-docker compose build sandbox-ca-init sandbox-egress-proxy sandbox-service
-docker compose up -d sandbox-egress-proxy sandbox-service
+if ($LASTEXITCODE -ne 0) { throw '沙箱服务构建失败' }
+Pop-Location
+docker compose --env-file deploy/sandbox/.env -f deploy/sandbox/compose.yml --profile runtime-images build python-runtime-image node-runtime-image
+docker compose --env-file deploy/sandbox/.env -f deploy/sandbox/compose.yml build sandbox-ca-init sandbox-egress-proxy sandbox-service
+docker compose --env-file deploy/sandbox/.env -f deploy/sandbox/compose.yml up -d sandbox-egress-proxy sandbox-service
 ```
 
 `runtime-images` profile 仅用于 build，不要对该 profile 执行 `up`。服务启动时把运行镜像标签解析为本地 `sha256:` image ID，后续任务使用固定 ID。服务还会检查任务网络确为 `internal + isolated gateway + IPv6 disabled`、代理健康以及任务/CA 卷存在；任一条件不满足时拒绝启动。

@@ -72,7 +72,7 @@ Starter 提供通用基础组件，不自动提供具体宿主的身份存储、
 
 当前命名统一维护的是目标初始化链，仅用于新建或另行授权重建的环境，不能将改写过的 V1 当作既有库的升级迁移。变更 schema 后运行 `:agent-runtime-adapter-jdbc:exportRuntimeSchemaManifest`：任务仅创建并销毁自身的临时 PostgreSQL，按正式 Mapper 导出到该模块 `build/schema/runtime-schema-v1.tsv`；审查后更新受控清单，再运行 schema 生命周期和存储测试。不得通过手改编码定义绕过结构漂移检查。
 
-只有注册了 `ExecutionHostRegistry.Host` 时，Starter 才创建 `ExecutionHostRegistry` 和 `ExecutionHostWorker`；执行宿主还需提供 `ExecutionTenantDiscovery` 与 `AgentRuntimeTenantBinder`。Worker 自动启动字段是 `agent-runtime.workers.auto-startup`；宿主在来源、身份与恢复屏障准备完成后才启用它。通用限额、保留期和租约配置见 [AgentRuntimeProperties](../agent-runtime-spring-boot-starter/src/main/java/com/skillforge/runtime/starter/AgentRuntimeProperties.java)，不从平台配置或旧扁平别名推断。
+只有注册了 `ExecutionHostRegistry.Host` 时，Starter 才创建 `ExecutionHostRegistry` 和 `ExecutionHostWorker`；执行宿主还需提供 `ExecutionTenantDiscovery` 与 `AgentRuntimeTenantBinder`。Worker 自动启动字段是 `agent-runtime.workers.auto-startup`，默认 `true`；若来源、身份或恢复屏障尚未准备好，宿主必须在启动前显式设为 `false`，准备完成后按宿主生命周期控制启动。通用限额、保留期和租约配置见 [AgentRuntimeProperties](../agent-runtime-spring-boot-starter/src/main/java/com/skillforge/runtime/starter/AgentRuntimeProperties.java)，不从平台配置或旧扁平别名推断。
 
 SDK 的 Spring 配置只绑定 `agent-runtime.*`；平台宿主另有 `skillforge.agent-runtime.*`，承载其身份与回调配置，不属于 SDK。配置在启动时生效；标准环境变量遵循 Spring Boot 的点转下划线、连字符删除和大写规则，例如 `agent-runtime.model-maximum-response-bytes` 对应 `AGENTRUNTIME_MODELMAXIMUMRESPONSEBYTES`。
 
@@ -92,6 +92,6 @@ Spring 拥有它创建的 Worker、控制 Scheduler 和 `ModelProviderRuntime`�
 
 当前 `ExecutionStore` 共享契约位于 testkit 的 `ExecutionStoreContract`，覆盖准入幂等与重建读取、未过期 claim 排他；JDBC 与 SQLite 的生产存储测试均调用它。旧 `ExecutionLedgerPortContract` 只证明对应旧端口，不能替代当前 typed store 的证据。
 
-## P2 边界
+## 委派与 Session 派生边界
 
-1.0.0 只冻结 DelegateAction 与 Delegation Ports 的类型位置。Core 对 `DELEGATED` 稳定 fail closed，未发布 `agent-runtime-delegation`，`AgentRuntime` 也不含 `forkSession`；这些 P2 类型不能被解释为已经接线的委派或 Session 派生能力。
+当前 Core 可根据已装配的目标视图路由委派动作，Session 执行程序也包含委派请求与等待结果的处理；缺少委派装配时不会据此推断目标或默认允许。这些运行时组件仍需要宿主提供实际委派能力，不能仅凭类型或路由结果认为子任务已执行。BOM 未发布独立的 `agent-runtime-delegation` 构件，当前公开构件也不提供 `forkSession`；SDK 消费方需按实际宿主装配和验收范围判断能力，不能把接口类型当成完整委派或 Session 派生支持。

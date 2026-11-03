@@ -4,7 +4,7 @@ description: 生成可编辑中文 PPTX，支持标题、章节、双栏、图�
 license: Apache-2.0
 compatibility: Node.js 24
 metadata:
-  version: 2.1.8
+  version: 2.1.9
   runtime: pptxgenjs==3.12.0
 ---
 

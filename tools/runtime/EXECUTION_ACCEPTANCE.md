@@ -14,12 +14,12 @@ python -X utf8 -B tools/runtime/run_execution_acceptance.py process --gradle-use
 
 | lane | 当前声明方法数 | 范围 |
 | --- | ---: | --- |
-| http | 11 | 首链1、KEYWORD知识1、原生并行工具1、HUMAN/MCP/取消/UNKNOWN等待4、Workflow与委派组合2、原Run预算及UNKNOWN预算2 |
+| http | 14 | 首链1、KEYWORD知识1、原生并行工具1、HUMAN/MCP/取消/UNKNOWN等待及拒绝7、Workflow与委派组合2、原Run预算及UNKNOWN预算2 |
 | process | 4 | 保存结果/未知派发恢复、HUMAN等待、Browser等待、委派子HUMAN等待 |
 | program | 1 | 真实sandbox RPC、独立typed工具child及共享预算 |
-| capacity | 3 | ordinary、multi-step、long-history，各50并发/50预热/500测量；本分支采用三家门诊试点参考线 |
+| capacity | 3 | ordinary、multi-step、long-history，各50并发/50预热/500测量；测试内的本地延迟参考值不代表真实模型或生产环境验收 |
 
-具体方法名由 plan 打印。只选择当前类声明的方法，不隐式继承基类旧链用例；七个热样本的比较诊断不列入功能矩阵。这是当前明确的选择范围，**不能证明历史“13组26用例”的完整selector清单**；该旧统计只在重构Note中保留，未找到可移植入库runner或列表。这里也未把当前19方法冒充旧26用例的恢复。浏览器产品、媒体、独立SDK和其他宿主消费者有各自门禁，不包含在本入口。
+具体方法名由 plan 打印。只选择当前类声明的方法，不隐式继承基类旧链用例；七个热样本的比较诊断不列入功能矩阵。上述数量是当前源码下的选择范围，不代表浏览器产品、媒体、独立 SDK 和其他宿主消费者的验收；这些范围有各自门禁。
 
 ## 依赖与资源归属
 
@@ -45,6 +45,6 @@ SKILLFORGE_S03_EXTERNAL_SCHEMA_VERSION
 
 process 测试关闭父Host worker，以两个不同OS子JVM运行正式应用，使用 `destroyForcibly` 并等待退出；恢复数据跨真实进程边界，原始typed Run/Action/Attempt/等待/预算及外调去重都有原断言。子进程边界故障注入使用测试Bean spy控制准确提交点，未以mock对象重建冒充重启。每个测试记录自有PID、ready/边界文件、前后持久事实和 `allOwnedChildrenReaped`；数据库/角色/Redis由中央owner在所有所属JVM退出后精确回收。runner只等待Gradle自然退出，不自行删除数据库或停止共享服务。
 
-`program` 另需 `SKILLFORGE_RUNTIME_PROGRAM_E2E=1`、`CODE_EXECUTION_SMOKE_ENDPOINT`、至少32字符的 `CODE_EXECUTION_SMOKE_TOKEN` 以及中央拥有的真实Runner。`capacity` 不应与其他lane并行，也不由功能通过推导通过；禁止开启 `SKILLFORGE_PERF_SQL=1` 或 `SKILLFORGE_PERF_SQL_CALLERS=1`。
+`program` 另需 `SKILLFORGE_RUNTIME_PROGRAM_E2E=1`、`CODE_EXECUTION_SMOKE_ENDPOINT`、至少32字符的 `CODE_EXECUTION_SMOKE_TOKEN` 以及中央拥有的真实Runner。`capacity` 不应与其他lane并行，也不由功能通过推导通过；禁止开启 `SKILLFORGE_PERF_SQL=1`、`SKILLFORGE_PERF_SQL_CALLERS=1` 或 `SKILLFORGE_PERF_SQL_ROLES=1`。
 
 容量验收需在运行前固定适用的延迟、吞吐、并发与资源预算，并在报告中记录环境及测量方法。功能通过不证明性能达标；真实模型延迟、平台处理延迟与业务渠道体验分别测量，未执行的范围不得宣称通过。

@@ -4,14 +4,14 @@ description: 为明确的接口或工具需求开发 Python MCP stdio 服务，�
 license: Apache-2.0
 compatibility: code_execute Python 3.12; mcp 1.26.0
 metadata:
-  version: 1.0.5
+  version: 1.0.6
   runtime: python-mcp-sdk
-allowed-tools: code_execute finalize_task_outputs
+allowed-tools: read_skill_resource code_execute finalize_task_outputs
 ---
 
 # MCP 服务开发
 
-先确定服务用途、工具名称、输入结构、授权边界、分页与错误语义。只使用用户已提供或实际查询到的接口资料和字段，不虚构服务能力、凭据或真实服务验证。开发方法参考 `references/upstream-mcp-builder.md`、`references/mcp-best-practices.md`；Python SDK 写法参考 `references/python-mcp-server.md`。这些资料已裁剪为平台适用的方法；执行仍只走本包受管入口，不增加安装、外部服务或模型评测流程。
+先确定服务用途、工具名称、输入结构、授权边界、分页与错误语义。只使用用户已提供或实际查询到的接口资料和字段，不虚构服务能力、凭据或真实服务验证。按需读取 `references/mcp-best-practices.md` 与 `references/python-mcp-server.md`；执行只走本包受管入口，不增加安装、外部服务或模型评测流程。
 
 当前可执行路径为 Python 3.12 + 固定 MCP SDK 1.26.0 的 stdio 服务。执行前用 `read_skill_resource` 读取 [输入契约](references/input-contract.md) 和 [manifest](manifest.json)。普通数值数组求和直接采用已支持的 `operation: "sum"` 模板，完整输入参考 [单工具求和示例](examples/mcp-sum.json)；echo、静态数据 lookup 也使用已有模板。没有模板不支持的功能时不填写 `source_files`，不自写 FastMCP 服务。专业需求才提供 `source_files`（`server.py` 及需要的 Python 模块），并仍走同一受管验证入口。HTTP 部署、真实第三方 API、凭据绑定及生产连接器接入需要各自验收，生成源码和本地协议通过不代表已经接通 SaaS。
 
