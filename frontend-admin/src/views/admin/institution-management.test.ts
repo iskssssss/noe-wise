@@ -165,6 +165,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.saveReceipt.mockReset()
   mocks.fenceSave.mockReset()
+  mocks.previewSaved.mockReset()
   sessionStorage.clear()
   mocks.session = 'test-session'
   mocks.auth.user.authorization_version = 1
@@ -575,9 +576,14 @@ describe('机构管理实际页面交互', () => {
   })
   it('保存并校验使用实际保存修订，不自动发布', async () => {
     const saved = { ...structuredClone(definition), draft_revision: 8, name: '新的共享定义' }
-    mocks.detail.mockResolvedValueOnce(definition).mockResolvedValueOnce(saved)
-    mocks.update.mockReset().mockResolvedValueOnce(saved)
+    saved.definition.capabilities[0]!.capability_version_id = '300'
+    saved.definition.capabilities[0]!.skill_config!.activation_mode = 'ON_DEMAND'
+    mocks.update
+      .mockReset()
+      .mockResolvedValueOnce(saved)
+      .mockRejectedValueOnce(Error('停止第二次测试写入'))
     mocks.previewSaved.mockReset().mockResolvedValueOnce({
+      draft: saved,
       validation: { valid: true, issues: [] },
       impact: {
         definition_id: definition.definition_id,
@@ -601,17 +607,25 @@ describe('机构管理实际页面交互', () => {
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledTimes(1)
     expect(mocks.previewSaved).toHaveBeenCalledWith(definition.definition_id, 8, expect.any(Object))
+    expect(mocks.detail).toHaveBeenCalledTimes(1)
     expect(button(w, '发布此修订').props('disabled')).toBe(false)
     expect(mocks.publish).not.toHaveBeenCalled()
+    await input(w, '定义名称', '再次编辑')
+    await button(w, '保存草稿').trigger('click')
+    await flushPromises()
+    expect(mocks.update.mock.calls[1]?.[2].definition.capabilities[0]).toMatchObject({
+      capability_version_id: '300',
+      skill_config: { activation_mode: 'ON_DEMAND', token_budget: 500 }
+    })
   })
   it('保存后校验失败保留已保存草稿，只需重新校验', async () => {
     const saved = { ...structuredClone(definition), draft_revision: 8, name: '已保存的定义' }
-    mocks.detail.mockResolvedValueOnce(definition).mockResolvedValue(saved)
     mocks.update.mockReset().mockResolvedValueOnce(saved)
     mocks.previewSaved
       .mockReset()
       .mockRejectedValueOnce(Error('读取失败'))
       .mockResolvedValueOnce({
+        draft: saved,
         validation: { valid: true, issues: [] },
         impact: {
           definition_id: definition.definition_id,
@@ -634,10 +648,13 @@ describe('机构管理实际页面交互', () => {
     await button(w, '保存并校验').trigger('click')
     await flushPromises()
     expect(button(w, '发布此修订').props('disabled')).toBe(true)
+    expect(button(w, '保存草稿').props('disabled')).toBe(true)
     expect(button(w, '校验并预览影响').props('disabled')).toBe(false)
     await button(w, '校验并预览影响').trigger('click')
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.detail).toHaveBeenCalledTimes(1)
+    expect(mocks.previewSaved.mock.calls.map((call) => call[1])).toEqual([8, 8])
     expect(button(w, '发布此修订').props('disabled')).toBe(false)
   })
   it('无校验权限仍可单独保存，不能触发组合操作', async () => {
@@ -650,12 +667,20 @@ describe('机构管理实际页面交互', () => {
     expect(button(w, '保存草稿')).toBeDefined()
     expect(mocks.previewSaved).not.toHaveBeenCalled()
   })
-  it('保存后读到其他修订时不校验错误版本', async () => {
+  it.each(['修订', '定义'])('预览返回其他%s时不解锁发布或采用错误草稿', async (changed) => {
     const saved = { ...structuredClone(definition), draft_revision: 8, name: '本次保存' }
-    const newer = { ...structuredClone(definition), draft_revision: 9, name: '其他人修改' }
-    mocks.detail.mockResolvedValueOnce(definition).mockResolvedValueOnce(newer)
+    const newer = {
+      ...structuredClone(definition),
+      definition_id: changed === '定义' ? 'other-definition' : definition.definition_id,
+      draft_revision: changed === '修订' ? 9 : 8,
+      name: '其他人修改'
+    }
     mocks.update.mockReset().mockResolvedValueOnce(saved)
-    mocks.previewSaved.mockReset()
+    mocks.previewSaved.mockResolvedValueOnce({
+      draft: newer,
+      validation: { valid: true, issues: [] },
+      impact: { definition_id: newer.definition_id, draft_revision: newer.draft_revision }
+    })
     const w = await open(InstitutionDefinitionsPage)
     await button(w, '查看与维护').trigger('click')
     await flushPromises()
@@ -663,8 +688,9 @@ describe('机构管理实际页面交互', () => {
     await button(w, '保存并校验').trigger('click')
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledTimes(1)
-    expect(mocks.previewSaved).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('草稿已保存，需重新读取保存结果')
+    expect(mocks.previewSaved).toHaveBeenCalledWith(definition.definition_id, 8, expect.any(Object))
+    expect(mocks.detail).toHaveBeenCalledTimes(1)
+    expect(field(w, '定义名称').getComponent(ElInput).props('modelValue')).toBe('本次保存')
     expect(button(w, '发布此修订').props('disabled')).toBe(true)
   })
   it('原写入未知后只读核对同一键，不重新提交或自动校验', async () => {
@@ -675,6 +701,7 @@ describe('机构管理实际页面交互', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ state: 'COMMITTED', receipt: saved })
     mocks.previewSaved.mockReset().mockResolvedValue({
+      draft: saved,
       validation: { valid: true, issues: [] },
       impact: {
         definition_id: definition.definition_id,
@@ -725,7 +752,7 @@ describe('机构管理实际页面交互', () => {
     await flushPromises()
     expect(document.body.textContent).toContain('草稿已保存，需重新读取保存结果')
     expect(button(w, '保存草稿').props('disabled')).toBe(true)
-    expect(button(w, '校验并预览影响').props('disabled')).toBe(true)
+    expect(button(w, '校验并预览影响').props('disabled')).toBe(false)
     await button(w, '重新读取草稿').trigger('click')
     await flushPromises()
     expect(document.body.textContent).not.toContain('草稿已保存，需重新读取保存结果')
@@ -770,6 +797,7 @@ describe('机构管理实际页面交互', () => {
       deployments: []
     })
     mocks.previewSaved.mockResolvedValueOnce({
+      draft: definition,
       validation: { valid: true, issues: [] },
       impact: await mocks.impact()
     })

@@ -1114,6 +1114,17 @@ export const api = {
   institutionManagement: createInstitutionManagementApi({ get, post }),
   agentDefinitions: {
     ...createAgentDefinitionsApi({ get, post, put }, '/tenant/agent-definitions'),
+    previewSaved: (id: string, revision: number, options?: RequestOptions) =>
+      post<{
+        draft: import('@skillforge/shared/integration/agentDefinitions').AgentTemplateDetail
+        validation: import('@skillforge/shared/integration/agentDefinitions').AgentTemplateValidation
+        impact:
+          import('@skillforge/shared/integration/agentDefinitions').AgentDefinitionImpact | null
+      }>(
+        '/tenant/agent-definitions/preview',
+        { definition_id: id, expected_revision: revision },
+        options
+      ),
     previewContent: (
       id: string,
       revision: number,

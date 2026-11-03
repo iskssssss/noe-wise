@@ -10,6 +10,7 @@ import com.skillforge.core.agent.deployment.AgentBindingDeclarations.BindingShap
 import com.skillforge.core.agent.dto.response.AgentDefinitionImpactResponse;
 import com.skillforge.core.agent.dto.response.AgentDefinitionImpactResponse.DeploymentImpact;
 import com.skillforge.core.agent.dto.response.AgentTemplateValidationResponse;
+import com.skillforge.core.agent.dto.response.AdminAgentTemplateDetailResponse;
 import com.skillforge.core.agent.model.AgentTemplateDefinition;
 import com.skillforge.core.agent.mapper.AgentDeploymentMapper;
 import com.skillforge.core.capability.CapabilityCatalogDatabaseContext;
@@ -52,13 +53,15 @@ public class TenantAgentDefinitionImpactService {
     }
     /** 在同一只读快照校验已保存草稿并计算影响。 */
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
-    public CandidatePreview previewSaved(Long id, long expected) {
+    public SavedPreview previewSaved(Long id, long expected) {
         lifecycle.requireTenantOwner();
         var draft=lifecycle.detail(id);
         var validation=lifecycle.validateSaved(id,expected);
-        return new CandidatePreview(validation,validation.valid()?impact(id,expected,draft.definition()):null);
+        return new SavedPreview(draft,validation,validation.valid()?impact(id,expected,draft.definition()):null);
     }
     public record CandidatePreview(AgentTemplateValidationResponse validation, AgentDefinitionImpactResponse impact) { }
+    public record SavedPreview(AdminAgentTemplateDetailResponse draft, AgentTemplateValidationResponse validation,
+            AgentDefinitionImpactResponse impact) { }
 
     private AgentDefinitionImpactResponse impact(Long id,long expected,AgentTemplateDefinition candidate) {
         lifecycle.requireTenantOwner();var draft=lifecycle.detail(id);

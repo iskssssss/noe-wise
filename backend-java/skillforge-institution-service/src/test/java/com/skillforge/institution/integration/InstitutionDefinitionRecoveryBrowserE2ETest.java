@@ -47,16 +47,18 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
     @Autowired AgentRuntimeProperties properties;
 
     @Test void originalSaveReceiptSurvivesLostBrowserResponseAndDrivesDeployedRuntime() throws Exception {
-        verifyScenario("refresh");
+        verifyScenario(System.getenv("E2E_DEFINITION_PREVIEW") == null ? "refresh" : "save-and-preview");
     }
 
     @Test void originalSaveCanBeCheckedInOpenDrawerWithoutResending() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse("baseline".equals(System.getenv("E2E_DEFINITION_RECOVERY_MODE")));
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("E2E_DEFINITION_PREVIEW") == null);
         verifyScenario("in-page");
     }
 
     @Test void rejectedOriginalSaveCanBeFencedBeforeLateOriginalRequestArrives() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse("baseline".equals(System.getenv("E2E_DEFINITION_RECOVERY_MODE")));
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("E2E_DEFINITION_PREVIEW") == null);
         verifyScenario("fence");
     }
 
@@ -82,7 +84,7 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
         Path evidence=Path.of("build","runtime-e2e","institution-definition-recovery-"+SnowflakeIds.nextId()).toAbsolutePath();
         Files.createDirectories(evidence);Path browser=evidence.resolve("browser");Files.createDirectories(browser);
         Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");FRONTEND.bindBackend(baseUrl());
-        var selector=switch(scenario){case "refresh"->"刷新后核对原操作";case "in-page"->"抽屉内核对原保存";case "fence"->"原保存被服务端拒绝后封存原键";case "budget-a11y"->"预算控件的可访问性状态随保存同步";default->throw new IllegalArgumentException("unknown_browser_scenario");};
+        var selector=switch(scenario){case "save-and-preview"->"保存校验直接读取同修订预览";case "refresh"->"刷新后核对原操作";case "in-page"->"抽屉内核对原保存";case "fence"->"原保存被服务端拒绝后封存原键";case "budget-a11y"->"预算控件的可访问性状态随保存同步";default->throw new IllegalArgumentException("unknown_browser_scenario");};
         var command=new ProcessBuilder("node",admin.resolve("node_modules/@playwright/test/cli.js").toString(),"test","--config=playwright.institution-definition-recovery.config.ts","--grep",selector);
         command.directory(admin.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("playwright.log").toFile());
         var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());
@@ -117,6 +119,27 @@ class InstitutionDefinitionRecoveryBrowserE2ETest extends ChatExecutionChainE2ET
             while(process.isAlive()&&System.nanoTime()<deadline){owned.capture();process.waitFor(200,TimeUnit.MILLISECONDS);}
             owned.capture();assertFalse(process.isAlive(),"浏览器验收超时："+evidence);
             assertEquals(0,process.exitValue(),()->"浏览器验收失败："+evidence+"\n"+readLog(evidence));
+        }
+        if ("save-and-preview".equals(scenario)) {
+            var facts = objectMapper.readTree(Files.readString(browser.resolve("save-preview.json")));
+            String mode = System.getenv("E2E_DEFINITION_PREVIEW");
+            assertEquals(mode, facts.path("mode").asText());
+            assertEquals(1, facts.path("updates").asInt());
+            assertEquals("baseline".equals(mode) ? 1 : 0, facts.path("initialDetailReads").asInt());
+            assertEquals("baseline".equals(mode) ? 0 : 1, facts.path("initialPreviews").asInt());
+            assertEquals("candidate".equals(mode), facts.path("initialPublishEnabled").asBoolean());
+            assertEquals(original.path("key").asText(), facts.path("originalKey").asText());
+            long revision = original.path("receipt").path("draft_revision").asLong();
+            assertEquals(revision, facts.path("revision").asLong());
+            assertTrue(facts.path("preview").path("validation").path("valid").asBoolean());
+            assertEquals(revision, facts.path("preview").path("impact").path("draft_revision").asLong());
+            if ("candidate".equals(mode)) {
+                assertEquals(definitionId, facts.path("preview").path("draft").path("definition_id").asText());
+                assertEquals(revision, facts.path("preview").path("draft").path("draft_revision").asLong());
+                assertEquals(marker, facts.path("preview").path("draft").path("definition").path("system_prompt").asText());
+            }
+            exerciseOriginalRevision(sourceTenant, sourceToken, definitionId, revision, model, marker, evidence);
+            return;
         }
         if("budget-a11y".equals(scenario)) {
             var facts=objectMapper.readTree(Files.readString(browser.resolve("budget-a11y.json")));

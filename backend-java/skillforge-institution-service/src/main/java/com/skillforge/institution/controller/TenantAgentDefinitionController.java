@@ -39,7 +39,7 @@ public class TenantAgentDefinitionController {
     @GetMapping("/impact") public ApiResponse<AgentDefinitionImpactResponse> impact(@RequestParam("definition_id")Long id,@RequestParam("draft_revision")long revision){scope();return ApiResponses.wrap(impacts.impact(id,revision));}
     /** 当前编辑内容只读预览；不保存也不发布。 */
     @PostMapping("/preview-content") public ApiResponse<TenantAgentDefinitionImpactService.CandidatePreview> previewContent(@Valid @RequestBody PreviewContent request){scope();return ApiResponses.wrap(impacts.preview(request.definitionId(),request.expectedRevision(),request.definition()));}
-    @PostMapping("/preview") public ApiResponse<TenantAgentDefinitionImpactService.CandidatePreview> preview(@Valid @RequestBody DefinitionCommand request){scope();return ApiResponses.wrap(impacts.previewSaved(request.definitionId(),request.expectedRevision()));}
+    @PostMapping("/preview") public ApiResponse<TenantAgentDefinitionImpactService.SavedPreview> preview(@Valid @RequestBody DefinitionCommand request){scope();return ApiResponses.wrap(impacts.previewSaved(request.definitionId(),request.expectedRevision()));}
     /** 仅创建独立共享定义，不从普通Agent发布自动复制。 */
     @PostMapping public ApiResponse<AdminAgentTemplateItemResponse> create(@Valid @RequestBody CreateAgentTemplateRequest request,@RequestHeader("Idempotency-Key")String key){scope();return ApiResponses.wrap(definitions.create(request,key));}
     /** 精确修订编辑。 */

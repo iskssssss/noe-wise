@@ -462,24 +462,6 @@ function save(validateAfterSave = false) {
         refreshRequired.value = true
         if (!validateAfterSave) message.success('共享定义草稿已保存')
         void list.reload()
-        if (!identity.allowed('tenant.agent_definitions.read')) {
-          message.warning('草稿已保存，请有查看权限的管理员重新读取后继续维护')
-          return
-        }
-        try {
-          const saved = await api.agentDefinitions.detail(result.definition_id, { silent: true })
-          identity.requirePermission('tenant.agent_definitions.read')
-          if (
-            saved.definition_id !== result.definition_id ||
-            saved.draft_revision !== result.draft_revision
-          )
-            throw Error('草稿已被其他操作更新')
-          accept(saved)
-        } catch {
-          if (identity.current())
-            message.warning('草稿已保存，但未能读取保存结果；请重新读取，不要重复保存')
-          return
-        }
         if (validateAfterSave) {
           if (
             !identity.allowed('tenant.agent_definitions.validate') ||
@@ -497,6 +479,25 @@ function save(validateAfterSave = false) {
             if (reason instanceof HttpClientError) reason.claimFeedback()
             if (identity.current()) message.warning('草稿已保存，但校验未完成，请重新校验。')
           }
+          return
+        }
+        if (!identity.allowed('tenant.agent_definitions.read')) {
+          message.warning('草稿已保存，请有查看权限的管理员重新读取后继续维护')
+          return
+        }
+        try {
+          const saved = await api.agentDefinitions.detail(result.definition_id, { silent: true })
+          identity.requirePermission('tenant.agent_definitions.read')
+          if (
+            saved.definition_id !== result.definition_id ||
+            saved.draft_revision !== result.draft_revision
+          )
+            throw Error('草稿已被其他操作更新')
+          accept(saved)
+        } catch {
+          if (identity.current())
+            message.warning('草稿已保存，但未能读取保存结果；请重新读取，不要重复保存')
+          return
         }
       },
       permission
@@ -524,7 +525,7 @@ function reload() {
   })
 }
 function preview() {
-  if (refreshRequired.value) return
+  if (commandPending.value) return
   void action.run(performPreview)
 }
 async function performPreview() {
@@ -533,16 +534,19 @@ async function performPreview() {
     frozen = snapshot(),
     candidate = JSON.parse(JSON.stringify(definition.value)) as AgentTemplateDefinition
   identity.requirePermission('tenant.agent_definitions.validate')
-  const result = dirty.value
+  const savedPreview = dirty.value
+    ? undefined
+    : await api.agentDefinitions.previewSaved(target.definition_id, target.draft_revision, {
+        silent: true
+      })
+  const result = !savedPreview
     ? await api.agentDefinitions.previewContent(
         target.definition_id,
         target.draft_revision,
         candidate,
         { silent: true }
       )
-    : await api.agentDefinitions.previewSaved(target.definition_id, target.draft_revision, {
-        silent: true
-      })
+    : savedPreview
   identity.requirePermission('tenant.agent_definitions.validate')
   if (result.impact) identity.requirePermission('tenant.agent_definitions.read')
   if (
@@ -551,9 +555,17 @@ async function performPreview() {
     item.value.draft_revision !== target.draft_revision
   )
     return
+  if (savedPreview) {
+    if (
+      savedPreview.draft.definition_id !== target.definition_id ||
+      savedPreview.draft.draft_revision !== target.draft_revision
+    )
+      throw Error('预览结果不属于本次保存修订，请重新读取')
+    accept(savedPreview.draft)
+  }
   validation.value = result.validation
   impact.value = result.impact ?? undefined
-  previewSnapshot.value = frozen
+  previewSnapshot.value = snapshot()
 }
 function publish() {
   void action.run(async () => {
@@ -989,7 +1001,7 @@ onMounted(() => {
         <h3>校验与发布影响</h3>
         <ElButton
           v-if="identity.allowed('tenant.agent_definitions.validate')"
-          :disabled="action.busy.value || commandPending || refreshRequired"
+          :disabled="action.busy.value || commandPending"
           @click="preview"
           >校验并预览影响</ElButton
         ><ElAlert

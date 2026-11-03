@@ -361,3 +361,157 @@ async function verifyRecovery(page: Page, scenario: 'refresh' | 'in-page') {
     })
   )
 }
+
+test('机构共享定义保存校验直接读取同修订预览', async ({ page }) => {
+  test.setTimeout(150_000)
+  const mode = required('E2E_DEFINITION_PREVIEW')
+  expect(['baseline', 'candidate']).toContain(mode)
+  const evidence = required('E2E_ARTIFACT_DIR')
+  const definitionId = required('E2E_DEFINITION_ID')
+  const prompt = required('E2E_DEFINITION_PROMPT')
+  let updates = 0,
+    previews = 0,
+    detailReads = 0,
+    originalKey = '',
+    revision = 0
+  let saved = false,
+    blockDetail = true
+  const previewResults: unknown[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'PUT' && path === '/api/v1/tenant/agent-definitions/update') updates++
+    if (request.method() === 'POST' && path === '/api/v1/tenant/agent-definitions/preview')
+      previews++
+    if (saved && request.method() === 'GET' && path === '/api/v1/tenant/agent-definitions/detail')
+      detailReads++
+  })
+  await page.goto(`/login?redirect=${encodeURIComponent('/admin/agent-definitions')}`)
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page
+    .getByRole('row')
+    .filter({ hasText: definitionId })
+    .getByRole('button', { name: '查看与维护', exact: true })
+    .click()
+  const drawer = page.getByRole('dialog', { name: '维护机构共享定义' })
+  await drawer.getByLabel('系统提示词').fill(prompt)
+  await page.route('**/api/v1/tenant/agent-definitions/detail?*', (route) =>
+    saved && blockDetail
+      ? route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'UNAVAILABLE',
+            message: '隔离读取不可用',
+            trace_id: 'save-preview-fixture'
+          })
+        })
+      : route.continue()
+  )
+  await page.route(
+    '**/api/v1/tenant/agent-definitions/update',
+    async (route) => {
+      originalKey = (await route.request().allHeaders())['idempotency-key']!
+      expect(originalKey).toBeTruthy()
+      const command = route.request().postDataJSON()
+      const upstream = await route.fetch({ maxRetries: 0 })
+      expect(upstream.status()).toBe(200)
+      const receipt = (await upstream.json()).data
+      revision = Number(receipt.draft_revision)
+      expect(String(receipt.definition_id)).toBe(definitionId)
+      await writeFile(
+        join(evidence, 'upstream.tmp'),
+        JSON.stringify({ key: originalKey, command, receipt })
+      )
+      await rename(join(evidence, 'upstream.tmp'), join(evidence, 'upstream.json'))
+      await expect
+        .poll(() => existsSync(join(evidence, 'original-confirmed')), { timeout: 45_000 })
+        .toBe(true)
+      saved = true
+      await route.fulfill({ response: upstream })
+    },
+    { times: 1 }
+  )
+  const previewResponse =
+    mode === 'candidate'
+      ? page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === '/api/v1/tenant/agent-definitions/preview' &&
+            response.request().method() === 'POST'
+        )
+      : undefined
+  await drawer.getByRole('button', { name: '保存并校验', exact: true }).click()
+  const publish = drawer.getByRole('button', { name: '发布此修订', exact: true })
+  if (mode === 'baseline') {
+    await expect(
+      drawer.getByText('草稿已保存，需重新读取保存结果后继续维护。', { exact: true })
+    ).toBeVisible()
+    await expect(publish).toBeDisabled()
+    expect(previews).toBe(0)
+    expect(detailReads).toBe(1)
+  } else {
+    const response = await previewResponse!
+    expect(response.status()).toBe(200)
+    const envelope = await response.json()
+    expect(envelope.code).toBe('OK')
+    expect(response.request().postDataJSON().expected_revision).toBe(revision)
+    expect(envelope.data.draft.draft_revision).toBe(revision)
+    expect(String(envelope.data.draft.definition_id)).toBe(definitionId)
+    expect(envelope.data.draft.definition.system_prompt).toBe(prompt)
+    expect(envelope.data.validation.valid).toBe(true)
+    previewResults.push(envelope.data)
+    await expect(publish).toBeEnabled()
+    expect(detailReads).toBe(0)
+    expect(previews).toBe(1)
+  }
+  const initial = {
+    initialDetailReads: detailReads,
+    initialPreviews: previews,
+    initialPublishEnabled: await publish.isEnabled()
+  }
+  await page.screenshot({ path: join(evidence, 'save-preview-initial.png'), fullPage: true })
+  if (mode === 'baseline') {
+    blockDetail = false
+    const reread = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/tenant/agent-definitions/detail' &&
+        response.status() === 200
+    )
+    await drawer.getByRole('button', { name: '重新读取草稿', exact: true }).click()
+    expect((await (await reread).json()).data.draft_revision).toBe(revision)
+    const checked = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/tenant/agent-definitions/preview' &&
+        response.request().method() === 'POST'
+    )
+    await drawer.getByRole('button', { name: '校验并预览影响', exact: true }).click()
+    const response = await checked
+    expect(response.status()).toBe(200)
+    expect(response.request().postDataJSON().expected_revision).toBe(revision)
+    const envelope = await response.json()
+    expect(envelope.code).toBe('OK')
+    expect(envelope.data.validation.valid).toBe(true)
+    previewResults.push(envelope.data)
+    await expect(publish).toBeEnabled()
+  }
+  expect(updates).toBe(1)
+  await writeFile(
+    join(evidence, 'save-preview.json'),
+    JSON.stringify(
+      {
+        mode,
+        updates,
+        originalKey,
+        revision,
+        ...initial,
+        finalPreviews: previews,
+        preview: previewResults[0]
+      },
+      null,
+      2
+    )
+  )
+  await page.screenshot({ path: join(evidence, 'save-preview-ready.png'), fullPage: true })
+})

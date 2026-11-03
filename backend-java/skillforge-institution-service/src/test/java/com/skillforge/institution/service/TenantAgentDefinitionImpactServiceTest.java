@@ -42,6 +42,72 @@ class TenantAgentDefinitionImpactServiceTest {
         assertThat(result.impact()).isNull();
         verifyNoInteractions(templates,deployments,management,database);
     }
+    @Test void invalidSavedPreviewRetainsTheExactDraftAndValidationWithoutTargets() {
+        var definition = new com.skillforge.core.agent.model.AgentTemplateDefinition("saved prompt", "saved role", null, null,
+                java.util.List.of(), java.util.List.of(), java.util.List.of());
+        var draft = mock(AdminAgentTemplateDetailResponse.class);
+        when(draft.id()).thenReturn(7L);
+        when(draft.draftRevision()).thenReturn(3L);
+        when(draft.definition()).thenReturn(definition);
+        when(lifecycle.detail(7L)).thenReturn(draft);
+        var validation = new com.skillforge.core.agent.dto.response.AgentTemplateValidationResponse(false, java.util.List.of());
+        when(lifecycle.validateSaved(7L, 3)).thenReturn(validation);
+
+        var result = service.previewSaved(7L, 3);
+
+        assertThat(result.draft()).isSameAs(draft);
+        assertThat(result.draft().id()).isEqualTo(7L);
+        assertThat(result.draft().draftRevision()).isEqualTo(3L);
+        assertThat(result.draft().definition()).isEqualTo(definition);
+        assertThat(result.validation()).isSameAs(validation);
+        assertThat(result.impact()).isNull();
+        verify(lifecycle).validateSaved(7L, 3);
+        verifyNoInteractions(templates, deployments, management, database);
+    }
+    @Test void savedPreviewOwnerFailureDoesNotReadDraftOrTargets() {
+        doThrow(new ApiException(HttpStatus.FORBIDDEN, "无源维护权限")).when(lifecycle).requireTenantOwner();
+
+        assertThatThrownBy(() -> service.previewSaved(7L, 3)).isInstanceOfSatisfying(ApiException.class,
+                error -> assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+
+        verify(lifecycle, never()).detail(anyLong());
+        verify(lifecycle, never()).validateSaved(anyLong(), anyLong());
+        verifyNoInteractions(templates, deployments, management, database);
+    }
+    @Test void savedPreviewAssociatesReturnedContentRevisionAndValidatedImpact() {
+        var definition = new com.skillforge.core.agent.model.AgentTemplateDefinition("saved {{parameters.branch}}", "saved role", null, null,
+                java.util.List.of(), java.util.List.of(), java.util.List.of());
+        var draft = mock(AdminAgentTemplateDetailResponse.class);
+        when(draft.id()).thenReturn(7L);
+        when(draft.draftRevision()).thenReturn(3L);
+        when(draft.definition()).thenReturn(definition);
+        when(lifecycle.detail(7L)).thenReturn(draft);
+        var validation = new com.skillforge.core.agent.dto.response.AgentTemplateValidationResponse(true, java.util.List.of());
+        when(lifecycle.validateSaved(7L, 3)).thenReturn(validation);
+        when(management.authorizedTargets("tenant.agent_deployments.read")).thenReturn(java.util.Set.of());
+        when(deployments.impact(7L, 7L)).thenReturn(java.util.List.of());
+        com.skillforge.common.context.TenantContext.setTenantId("7");
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        org.springframework.transaction.support.TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            var result = service.previewSaved(7L, 3);
+            assertThat(result.draft()).isSameAs(draft);
+            assertThat(result.draft().id()).isEqualTo(7L);
+            assertThat(result.draft().definition()).isEqualTo(definition);
+            assertThat(result.validation()).isSameAs(validation);
+            assertThat(result.impact().draftRevision()).isEqualTo(result.draft().draftRevision());
+            assertThat(result.impact().changes().addedParameterKeys()).containsExactly("branch");
+            verify(lifecycle).validateSaved(7L, 3);
+        } finally {
+            for (var sync : org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations())
+                sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            com.skillforge.common.context.TenantContext.clear();
+        }
+    }
     @Test void validCandidatePreviewUsesCandidateInsteadOfSavedDraft() {
         var candidate=new com.skillforge.core.agent.model.AgentTemplateDefinition("new {{parameters.branch}}", "role", "model", null,
                 java.util.List.of(), java.util.List.of(new com.skillforge.core.agent.model.AgentTemplateDefinition.ResourceSlot(
