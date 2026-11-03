@@ -95,6 +95,47 @@ public class TeamPublishService {
         }
     }
 
+    /** 对已保存的精确修订发布；原请求与结果沿用团队发布回执。 */
+    public Receipt publishSaved(long tenant, SavedCommand command) {
+        if (command == null || command.requestId() == null || command.id() == null || command.id().isBlank()
+                || command.expectedRevision() < 1)
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "团队发布请求参数无效");
+        FoundationAccess.Subject subject;
+        try {
+            access.require("foundation.teams.publish");
+            subject = access.currentSubject();
+            if (subject.platform() || !Long.toString(tenant).equals(subject.tenantId()))
+                throw new ApiException(HttpStatus.FORBIDDEN, "机构身份与当前租户不匹配");
+        } catch (ApiException failure) {
+            if (failure.getStatus() != HttpStatus.UNAUTHORIZED && failure.getStatus() != HttpStatus.FORBIDDEN) throw failure;
+            throw new ApiException(failure.getStatus(), TeamPublishController.PRE_DISPATCH_REJECTED,
+                    String.valueOf(failure.getDetail()), false);
+        }
+        String actor=subject.memberId(), fingerprint=fingerprint(command);
+        Receipt previous=transactions.execute(status -> {
+            context.bindTenant(tenant);
+            if (receipts.claim(tenant,command.requestId().toString(),actor,fingerprint)==1) return null;
+            var row=receipts.find(tenant,command.requestId().toString());
+            if (row==null || !actor.equals(row.actorRef()) || !fingerprint.equals(row.fingerprint()))
+                throw new ApiException(HttpStatus.CONFLICT,"团队发布请求标识已用于不同参数或操作人");
+            return receipt(command.requestId(),row);
+        });
+        if (previous != null) return previous;
+        try {
+            return publication.execute(status -> {
+                context.bindTenant(tenant);
+                var published=teams.publish(Long.toString(tenant),command.id(),command.expectedRevision());
+                var result=new Receipt(command.requestId(),"SUCCEEDED",published,null);
+                complete(tenant,result);
+                return result;
+            });
+        } catch (ApiException failure) {
+            var result=new Receipt(command.requestId(),"REJECTED",null,String.valueOf(failure.getDetail()));
+            transactions.executeWithoutResult(status -> { context.bindTenant(tenant); complete(tenant,result); });
+            return result;
+        }
+    }
+
     @Transactional(readOnly = true)
     public Receipt result(long tenant, UUID requestId) {
         access.require("foundation.teams.read");
@@ -120,13 +161,15 @@ public class TeamPublishService {
         try { return json.writeValueAsString(value); }
         catch (JsonProcessingException failure) { throw new IllegalStateException("团队发布请求无法编码", failure); }
     }
-    private String fingerprint(Command command) {
+    private String fingerprint(Object command) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(json.writer().with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsBytes(command))); }
         catch (NoSuchAlgorithmException | JsonProcessingException failure) { throw new IllegalStateException("团队发布请求无法编码", failure); }
     }
 
     public record Command(@JsonProperty("request_id") UUID requestId, String id, TeamController.SaveRequest payload) { }
+    public record SavedCommand(@JsonProperty("request_id") UUID requestId, String id,
+            @JsonProperty("expected_revision") @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=com.skillforge.core.shared.web.StrictLongDeserializer.class) long expectedRevision) { }
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Receipt(@JsonProperty("request_id") UUID requestId, String status, TeamDefinition team,
             @JsonProperty("error_message") String errorMessage) { }

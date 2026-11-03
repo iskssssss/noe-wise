@@ -38,7 +38,11 @@ vi.mock('../../api', () => ({
       update: mocks.update,
       saveWithReceipt: mocks.saveWithReceipt,
       saveReceipt: mocks.saveReceipt,
-      publish: mocks.publish,
+      publishWithReceipt: async (requestId: string, id: string, revision: number) => ({
+        request_id: requestId,
+        status: 'SUCCEEDED',
+        team: await mocks.publish(id, revision)
+      }),
       saveAndPublish: mocks.saveAndPublish,
       saveAndPublishResult: mocks.saveAndPublishResult
     },
@@ -344,7 +348,7 @@ describe('团队保存配置后显式发布新修订', () => {
       expect.objectContaining({ title: '发布团队新修订', confirmText: '发布新修订' })
     )
     expect(mocks.confirm.mock.calls[0]![0].content).toContain('已经受理的执行保持原冻结配置')
-    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1')
+    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1', 5)
     expect(mocks.success).toHaveBeenCalledWith('团队已发布')
   })
   it('取消已发布团队的新修订确认不提交发布，也不读取成员目录', async () => {
@@ -355,15 +359,45 @@ describe('团队保存配置后显式发布新修订', () => {
     expect(mocks.agents).not.toHaveBeenCalled()
     expect(mocks.list).toHaveBeenCalledTimes(1)
   })
-  it('发布被拒绝后保留当前团队，不自动重放发布或伪造新状态', async () => {
-    mocks.publish.mockRejectedValueOnce(new Error('团队发布被拒绝'))
+  it('发布结果未知时锁定并只读核对，刷新后不重复发布', async () => {
+    mocks.publish.mockRejectedValueOnce(new Error('网络中断'))
     await open()
     await click('发布新修订')
-    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1')
-    expect(mocks.list).toHaveBeenCalledTimes(1)
-    expect(mocks.success).not.toHaveBeenCalled()
-    expect(button('发布新修订').props('disabled')).toBe(false)
+    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1', 4)
+    expect(button('发布新修订').props('disabled')).toBe(true)
+    const raw = sessionStorage.getItem(
+      'skillforge.team-publication.' + JSON.stringify(['tenant', 'user'])
+    )!
+    const operation = JSON.parse(raw)
+    wrapper.unmount()
+    await open()
+    expect(wrapper.text()).toContain('团队发布结果尚未确认')
+    mocks.saveAndPublishResult.mockResolvedValueOnce(undefined)
+    await click('核对原操作')
+    expect(mocks.saveAndPublishResult).toHaveBeenCalledWith(operation.requestId)
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(button('发布新修订').props('disabled')).toBe(true)
+    mocks.saveAndPublishResult.mockResolvedValueOnce({
+      request_id: operation.requestId,
+      status: 'SUCCEEDED',
+      team: { ...team, revision: 6 }
+    })
+    await click('核对原操作')
+    expect(button('发布新修订').props('disabled')).toBe(true)
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    mocks.saveAndPublishResult.mockResolvedValueOnce({
+      request_id: operation.requestId,
+      status: 'SUCCEEDED',
+      team: { ...team, revision: 5 }
+    })
+    await click('核对原操作')
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(
+      sessionStorage.getItem('skillforge.team-publication.' + JSON.stringify(['tenant', 'user']))
+    ).toBeNull()
+    expect(mocks.success).toHaveBeenCalledWith('团队已发布')
   })
+
   it('首次草稿发布仍沿原权限按钮和发布接口', async () => {
     mocks.list.mockResolvedValue([{ ...team, status: 'draft' }])
     mocks.publish.mockResolvedValue({ ...team, revision: 5 })
@@ -372,7 +406,7 @@ describe('团队保存配置后显式发布新修订', () => {
     expect(mocks.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ title: '发布团队', confirmText: '发布团队' })
     )
-    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1')
+    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('team-1', 4)
   })
 })
 

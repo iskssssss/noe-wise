@@ -25,7 +25,7 @@
     </section>
     <section v-if="uncertain && !open" class="admin-card" aria-label="保存并发布结果核对">
       <p role="status">
-        保存并发布结果尚未确认，写入已锁定。请求 ID：<code>{{ uncertain.requestId }}</code>
+        团队发布结果尚未确认，写入已锁定。请求 ID：<code>{{ uncertain.requestId }}</code>
       </p>
       <p>请记录请求 ID，核对原请求回执；尚未查到回执不代表操作失败。</p>
       <ElButton v-if="can('foundation.teams.read')" :loading="busy" @click="checkPublication"
@@ -90,7 +90,7 @@
           ><ElButton
             v-permission="['foundation.teams.publish']"
             link
-            :disabled="writeLocked"
+            :disabled="writeLocked || !can('foundation.teams.read') || row.status === 'disabled'"
             @click="publish(row as Team)"
             >{{ row.status === 'published' ? '发布新修订' : '发布' }}</ElButton
           ><ElButton
@@ -123,7 +123,7 @@
       </section>
       <section v-if="uncertain" class="admin-card" aria-label="保存并发布结果核对">
         <p role="status">
-          保存并发布结果尚未确认，写入已锁定。请求 ID：<code>{{ uncertain.requestId }}</code>
+          团队发布结果尚未确认，写入已锁定。请求 ID：<code>{{ uncertain.requestId }}</code>
         </p>
         <p>请记录请求 ID，核对原请求回执；尚未查到回执不代表操作失败。</p>
         <ElButton v-if="can('foundation.teams.read')" :loading="busy" @click="checkPublication"
@@ -343,7 +343,11 @@ const storageError = ref('')
 const refreshRequired = ref(false)
 const storageKey = (subject: string) => `skillforge.team-publication.${subject}`
 const operations = reactive<
-  Record<string, { requestId: string; teamId: string | null } | undefined>
+  Record<
+    string,
+    | { requestId: string; teamId: string | null; kind?: 'saved'; expectedRevision?: number }
+    | undefined
+  >
 >({})
 const uncertain = computed(() => operations[owner.value])
 const publicationReceipt = ref<TeamSaveAndPublishReceipt>()
@@ -413,10 +417,18 @@ watch(
         !(
           (pending as { teamId?: unknown }).teamId === null ||
           typeof (pending as { teamId?: unknown }).teamId === 'string'
-        )
+        ) ||
+        ((pending as { kind?: unknown }).kind === 'saved' &&
+          (!Number.isSafeInteger((pending as { expectedRevision?: unknown }).expectedRevision) ||
+            Number((pending as { expectedRevision: number }).expectedRevision) < 1))
       )
         throw Error('invalid pending operation')
-      operations[owner.value] = pending as { requestId: string; teamId: string | null }
+      operations[owner.value] = pending as {
+        requestId: string
+        teamId: string | null
+        kind?: 'saved'
+        expectedRevision?: number
+      }
     } catch {
       storageError.value = '无法读取原发布请求记录，请恢复浏览器存储后重新进入页面。'
     }
@@ -613,7 +625,7 @@ useUnsavedChanges({
   busy: () => busy.value,
   leaveMessage: () =>
     uncertain.value
-      ? `保存并发布结果未知，请记录请求 ID 并查询原回执：${uncertain.value.requestId}`
+      ? `团队发布结果未知，请记录请求 ID 并查询原回执：${uncertain.value.requestId}`
       : undefined
 })
 watch(members, (list) => {
@@ -771,8 +783,17 @@ async function checkDraft(automatic = false) {
   })
 }
 async function publish(row: Team) {
-  if (writeLocked.value) return
-  const identity = pageIdentity.value
+  if (
+    writeLocked.value ||
+    !can('foundation.teams.publish') ||
+    !can('foundation.teams.read') ||
+    row.status === 'disabled'
+  )
+    return
+  const identity = pageIdentity.value,
+    operationOwner = owner.value,
+    teamId = row.id,
+    revision = row.revision
   await run(async () => {
     if (
       !(await confirm({
@@ -782,21 +803,53 @@ async function publish(row: Team) {
       }))
     )
       return
-    if (identity !== pageIdentity.value) return
-    let result: Team
+    if (
+      disposed ||
+      identity !== pageIdentity.value ||
+      operationOwner !== owner.value ||
+      !can('foundation.teams.publish') ||
+      !can('foundation.teams.read') ||
+      uncertain.value ||
+      storageError.value ||
+      draftPending.value ||
+      draftStorageError.value ||
+      refreshRequired.value
+    )
+      return
+    if (!Number.isSafeInteger(revision) || revision < 1) throw Error('团队修订无效，请刷新列表')
+    const operation = {
+      requestId: crypto.randomUUID(),
+      teamId,
+      kind: 'saved' as const,
+      expectedRevision: revision
+    }
     try {
-      result = await api.teams.publish(row.id)
+      sessionStorage.setItem(storageKey(operationOwner), JSON.stringify(operation))
+    } catch {
+      storageError.value =
+        '无法保存原发布请求记录，未发送发布请求；请恢复浏览器存储后重新进入页面。'
+      return
+    }
+    operations[operationOwner] = operation
+    publicationReceipt.value = undefined
+    try {
+      const value = await api.teams.publishWithReceipt(operation.requestId, teamId, revision)
+      await acceptReceipt(value, operation.requestId, operationOwner, identity)
     } catch (cause) {
-      if (identity !== pageIdentity.value) {
+      if (disposed || pageIdentity.value !== identity || owner.value !== operationOwner) {
         if (cause instanceof HttpClientError) cause.claimFeedback()
-        return
+        throw 'cancel'
+      }
+      if (cause instanceof HttpClientError && cause.code === 'TEAM_PUBLISH_PRE_DISPATCH_REJECTED') {
+        try {
+          sessionStorage.removeItem(storageKey(operationOwner))
+          delete operations[operationOwner]
+        } catch {
+          storageError.value = '无法清除原发布请求记录，请恢复浏览器存储后重新核对。'
+        }
       }
       throw cause
     }
-    if (identity !== pageIdentity.value) return
-    Object.assign(row, result)
-    message.success('团队已发布')
-    await refreshAfterWrite()
   })
 }
 
@@ -820,7 +873,8 @@ async function acceptReceipt(
         value.team.status !== 'published' ||
         !Number.isSafeInteger(value.team.revision) ||
         value.team.revision < 1 ||
-        (operation?.teamId && operation.teamId !== value.team.id)))
+        (operation?.teamId && operation.teamId !== value.team.id) ||
+        (operation?.kind === 'saved' && value.team.revision !== operation.expectedRevision! + 1)))
   ) {
     if (!disposed && owner.value === operationOwner)
       message.warning('尚未查到完整匹配的原请求回执，结果仍未确认')
@@ -843,15 +897,17 @@ async function acceptReceipt(
   }
   receiptRequestId.value = ''
   if (value.status === 'REJECTED') {
-    message.error(`保存并发布未完成：${value.error_message}`)
+    message.error(`团队发布未完成：${value.error_message}`)
     return
   }
   publicationReceipt.value = value
-  if (operation?.requestId === requestId) {
+  if (operation?.requestId === requestId && operation.kind !== 'saved') {
     saved.value = snapshot()
     open.value = false
   }
-  message.success(`团队已保存并发布，修订 ${value.team!.revision}`)
+  message.success(
+    operation?.kind === 'saved' ? '团队已发布' : `团队已保存并发布，修订 ${value.team!.revision}`
+  )
   await refreshAfterWrite()
 }
 async function saveAndPublish() {

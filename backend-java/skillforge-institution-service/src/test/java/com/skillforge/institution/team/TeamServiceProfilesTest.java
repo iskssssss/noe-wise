@@ -76,6 +76,14 @@ class TeamServiceProfilesTest {
     }
 
     @Test
+    void savedPublicationRejectsStaleRevisionBeforeFreezingOrWriting() {
+        when(mapper.definition(7L,"team",true)).thenReturn(List.of(writeDraft()));
+        assertThrows(com.skillforge.core.shared.exception.ApiException.class, () -> service.publish("7", "team", 2L));
+        verify(mapper,never()).insertVersion(anyLong(),anyString(),anyLong(),anyString());
+        verifyNoInteractions(publications, agents, models, resolver);
+    }
+
+    @Test
     void nextRunUsesLatestPublishedAgentAndKeepsTeamHistoryUnchanged() throws Exception {
         var source=agent();
         when(agents.selectById(11L)).thenReturn(source);

@@ -1230,6 +1230,12 @@ export const api = {
     create: (data: TeamDraft) => post<Team>('/teams', data),
     update: (id: string, data: TeamDraft) => put<Team>('/teams/update', { id, payload: data }),
     publish: (id: string) => post<Team>('/teams/publish', { id }),
+    publishWithReceipt: (request_id: string, id: string, expected_revision: number) =>
+      post<TeamSaveAndPublishReceipt>(
+        '/teams/publish-with-receipt',
+        { request_id, id, expected_revision },
+        { retryOnUnauthorized: false }
+      ),
     saveWithReceipt: (request_id: string, id: string | null, payload: TeamDraft) =>
       post<{ request_id: string; team_id: string; revision: number }>(
         '/teams/save-with-receipt',

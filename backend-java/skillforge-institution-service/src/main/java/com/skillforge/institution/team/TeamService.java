@@ -216,6 +216,11 @@ public class TeamService implements com.skillforge.core.chat.ChatTeamGateway {
      */
     @Transactional(isolation = Isolation.REPEATABLE_READ)
     public TeamDefinition publish(String tenant, String id) {
+        return publish(tenant,id,null);
+    }
+
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
+    public TeamDefinition publish(String tenant, String id, Long expectedRevision) {
         final long databaseStarted = System.nanoTime();
         DATABASE_LOG.debug("数据库业务方法进入 component={} method={} tenant={}", "TeamService", "publish", TenantContext.getTenantId());
         String databasePreviousTenant = TenantContext.getTenantId();
@@ -225,6 +230,10 @@ public class TeamService implements com.skillforge.core.chat.ChatTeamGateway {
                 throw new SecurityException("database_tenant_scope_mismatch");
             TenantContext.setTenantId(databaseTenant);
             TeamDefinition draft = require(tenant, id, true);
+            if (expectedRevision != null && draft.revision() != expectedRevision)
+                throw new ApiException(HttpStatus.CONFLICT, "团队配置已更新，请刷新后再发布");
+            if (expectedRevision != null && "disabled".equals(draft.status()))
+                throw new ApiException(HttpStatus.CONFLICT, "停用团队不能发布");
             requireDelegationScope(tenant, draft);
             Map<String, FrozenMember> frozen = new LinkedHashMap<>();
             List<TeamDefinition.Member> members = new ArrayList<>();

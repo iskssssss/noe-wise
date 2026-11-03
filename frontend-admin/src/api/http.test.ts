@@ -358,6 +358,18 @@ it('工作流回执创建遇到 401 不自动重发', async () => {
   expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/builder/workflows/create-with-receipt')
 })
 
+it('团队已保存修订发布遇到 401 不自动重发', async () => {
+  localStorage.setItem('skillforge.access_token', 'expired-access-token')
+  localStorage.setItem('skillforge.refresh_token', 'refresh-token')
+  const fetchMock = vi.fn().mockResolvedValue(apiResponse({}, 401))
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(api.teams.publishWithReceipt('request-1', 'team-1', 4)).rejects.toBeInstanceOf(
+    HttpClientError
+  )
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/teams/publish-with-receipt')
+})
+
 it('团队组合发布遇到 401 不刷新令牌或重发原写请求', async () => {
   localStorage.setItem('skillforge.access_token', 'expired-access-token')
   localStorage.setItem('skillforge.refresh_token', 'refresh-token')
