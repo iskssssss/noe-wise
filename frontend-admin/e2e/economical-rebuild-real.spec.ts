@@ -31,15 +31,9 @@ test('经济索引不允许向量重建', async ({ page }) => {
   await expect(
     panel.getByText('当前为经济索引，仅支持全文检索，不支持更换向量模型或发起向量重建。')
   ).toBeVisible()
-  await panel
-    .locator('.el-form-item')
-    .filter({ hasText: '目标向量模型' })
-    .locator('.el-select__wrapper')
-    .click()
-  await page.getByRole('option', { name: required('E2E_MODEL_NAME'), exact: true }).click()
-  await expect(panel.locator('.el-form-item').filter({ hasText: '目标向量模型' })).toContainText(
-    required('E2E_MODEL_NAME')
-  )
+  const model = panel.locator('.el-form-item').filter({ hasText: '目标向量模型' })
+  await expect(model.getByRole('combobox')).toBeDisabled()
+  await expect(model.getByRole('button', { name: '刷新模型目录' })).toBeDisabled()
   const start = panel.getByRole('button', { name: '开始重建', exact: true })
   if (await start.count()) await expect(start).toBeDisabled()
   expect(createPosts).toBe(0)

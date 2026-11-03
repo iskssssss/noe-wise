@@ -563,12 +563,17 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     mocks.models.mockResolvedValue([{ id: 'model-1', name: '向量模型', kind: 'EMBEDDING' }])
     await open()
     await rebuildTab()
-    wrapper
+    const modelSelect = wrapper
       .findAllComponents(ElFormItem)
       .find((item) => item.props('label') === '目标向量模型')!
       .getComponent(ElSelect)
-      .vm.$emit('update:modelValue', 'model-1')
-    await flushPromises()
+    expect(modelSelect.props('disabled')).toBe(true)
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '刷新模型目录')!
+        .props('disabled')
+    ).toBe(true)
     const start = wrapper.findAllComponents(ElButton).find((item) => item.text() === '开始重建')!
     expect(start.props('disabled')).toBe(true)
     expect(wrapper.text()).toContain('当前为经济索引，仅支持全文检索')
@@ -644,11 +649,12 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     mocks.post.mockResolvedValue(job('QUEUED'))
     await open()
     await rebuildTab()
-    wrapper
+    const modelSelect = wrapper
       .findAllComponents(ElFormItem)
       .find((item) => item.props('label') === '目标向量模型')!
       .getComponent(ElSelect)
-      .vm.$emit('update:modelValue', 'model-1')
+    expect(modelSelect.props('disabled')).toBe(false)
+    modelSelect.vm.$emit('update:modelValue', 'model-1')
     await flushPromises()
     await click('开始重建')
     expect(mocks.post).toHaveBeenCalledOnce()

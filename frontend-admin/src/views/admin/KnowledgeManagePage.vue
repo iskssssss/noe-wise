@@ -580,14 +580,18 @@
               :aria-describedby="formTipId + '-field-2'"
               v-model="modelId"
               :loading="modelsLoading"
-              :disabled="modelsLoading"
+              :disabled="modelsLoading || effectiveIndexingMode !== 'high_quality'"
               ><ElOption
                 v-for="model in models"
                 :key="model.id"
                 :value="model.id"
                 :label="model.name"
             /></ElSelect>
-            <ElButton :loading="modelsLoading" :disabled="busy" @click="loadModels">
+            <ElButton
+              :loading="modelsLoading"
+              :disabled="busy || effectiveIndexingMode !== 'high_quality'"
+              @click="loadModels"
+            >
               刷新模型目录
             </ElButton>
             <FieldTip :id="formTipId + '-field-2'"
