@@ -1046,15 +1046,7 @@ public class KnowledgeService {
     private List<KnowledgeHit> keywordSearchVersions(
             String tenantId, String kbId, String query, int topK, List<String> versions) {
         if (versions.isEmpty()) return List.of();
-        List<KnowledgeChunkDO> rows = chunkMapper.selectList(new LambdaQueryWrapper<KnowledgeChunkDO>()
-                .select(KnowledgeChunkDO::getId, KnowledgeChunkDO::getContent,
-                        KnowledgeChunkDO::getDocumentId, KnowledgeChunkDO::getSourceVersion)
-                .eq(KnowledgeChunkDO::getTenantId, Long.parseLong(tenantId))
-                .eq(KnowledgeChunkDO::getKbId, Long.parseLong(kbId))
-                .in(KnowledgeChunkDO::getSourceVersion, versions)
-                .like(KnowledgeChunkDO::getContent, escapeLike(query))
-                .orderByAsc(KnowledgeChunkDO::getChunkIndex, KnowledgeChunkDO::getId)
-                .last("LIMIT " + topK));
+        List<KnowledgeChunkDO> rows = chunkMapper.searchKeyword(tenantId, kbId, query, topK, versions);
         return manifestHits(rows.stream().map(row -> new KnowledgeHit(kbId, String.valueOf(row.getDocumentId()),
                 String.valueOf(row.getId()), row.getSourceVersion(), row.getContent(), 1.0, null)).toList(), versions);
     }
@@ -1125,7 +1117,7 @@ public class KnowledgeService {
     }
 
     /**
-     * 全文检索：ES 可用走 ES，否则 SQL ILIKE。
+     * 全文检索：ES 可用走 ES，否则 SQL 字面子串检索。
      */
     private List<KnowledgeHit> fullTextSearch(
             String tenantId, String kbId, String query, int topK, String sourceVersion) {
@@ -1136,15 +1128,15 @@ public class KnowledgeService {
                 return esItems;
             }
         } catch (Exception e) {
-            // ES 不可用时回退 SQL ILIKE
-            log.warn("ES 检索不可用，回退 SQL ILIKE: {}", e.getMessage(), e);
+            // ES 不可用时回退 SQL 字面子串检索
+            log.warn("ES 检索不可用，回退 SQL 字面子串检索: {}", e.getMessage(), e);
         }
         return keywordSearch(tenantId, kbId, query, topK, sourceVersion);
     }
 
     /**
      * 混合检索：向量 + 关键词并行，向量分 min-max 归一化后加权融合。
-     * 向量腿优先 ES kNN 再退 pgvector，关键词腿优先 ES BM25 再退 SQL ILIKE。
+     * 向量腿优先 ES kNN 再退 pgvector，关键词腿优先 ES BM25 再退 SQL 字面子串检索。
      */
     private List<KnowledgeHit> hybridSearch(
             String tenantId, String kbId, String query, int topK,
@@ -1415,18 +1407,8 @@ public class KnowledgeService {
      */
     private List<KnowledgeHit> keywordSearch(
             String tenantId, String kbId, String query, int topK, String sourceVersion) {
-        LambdaQueryWrapper<KnowledgeChunkDO> wrapper = new LambdaQueryWrapper<KnowledgeChunkDO>()
-                .select(KnowledgeChunkDO::getId, KnowledgeChunkDO::getContent,
-                        KnowledgeChunkDO::getDocumentId, KnowledgeChunkDO::getSourceVersion)
-                .eq(KnowledgeChunkDO::getTenantId, Long.parseLong(tenantId))
-                .eq(KnowledgeChunkDO::getKbId, Long.parseLong(kbId))
-                .like(KnowledgeChunkDO::getContent, escapeLike(query))
-                .orderByAsc(KnowledgeChunkDO::getChunkIndex)
-                .last("LIMIT " + topK);
-        if (sourceVersion != null) {
-            wrapper.eq(KnowledgeChunkDO::getSourceVersion, sourceVersion);
-        }
-        List<KnowledgeChunkDO> rows = chunkMapper.selectList(wrapper);
+        List<KnowledgeChunkDO> rows = chunkMapper.searchKeyword(tenantId, kbId, query, topK,
+                sourceVersion == null ? null : List.of(sourceVersion));
         return rows.stream().map(row -> new KnowledgeHit(kbId, String.valueOf(row.getDocumentId()),
                 String.valueOf(row.getId()), row.getSourceVersion(), row.getContent(), 1.0, null)).toList();
     }
@@ -1439,21 +1421,6 @@ public class KnowledgeService {
         return items.stream()
                 .filter(item -> sourceVersion.equals(item.sourceVersion()))
                 .toList();
-    }
-
-    /**
-     * 转义 LIKE 通配符，防止注入。
-     *
-     * @param query 原始查询
-     * @return 转义后的查询
-     */
-    private String escapeLike(String query) {
-        if (query == null) {
-            return "";
-        }
-        return query.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
     }
 
     /** 原始 SQL/搜索 JSON 只在边界解码，后续来源过滤、融合与重排共享类型化候选。 */

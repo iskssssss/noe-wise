@@ -28,7 +28,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 /** 真实 pgvector/Mapper/RLS 验证关键词输出；禁止读取向量列作为投影的负控。 */
 class KnowledgeKeywordProjectionIntegrationTest {
-    private static final PostgreSQLContainer<?> DATABASE = new PostgreSQLContainer<>("pgvector/pgvector:pg16");
+    private static final PostgreSQLContainer<?> DATABASE = new PostgreSQLContainer<>("pgvector/pgvector:pg16")
+            .withUsername("skillforge");
     private static final boolean EXTERNAL=System.getenv().keySet().stream().anyMatch(key->key.startsWith("SKILLFORGE_S03_EXTERNAL_"));
     private static final String CI_ROLE="knowledge_projection_test";
     private static final String CI_PASSWORD="test-only-password";
@@ -42,7 +43,9 @@ class KnowledgeKeywordProjectionIntegrationTest {
     static void schema() throws Exception {
         if(EXTERNAL){assertEquals("external",external("MODE"));}
         else {
-            Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("CI")),"S03 requires a parent external fixture; only CI owns containers");
+            Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("CI"))
+                    || "true".equalsIgnoreCase(System.getenv("KNOWLEDGE_KEYWORD_ACCEPTANCE")),
+                    "需要 CI、显式隔离关键词验收或父进程提供的外部夹具");
             DATABASE.start();
             Flyway.configure().dataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword()).locations("classpath:db/migration").load().migrate();
         }
@@ -67,6 +70,12 @@ class KnowledgeKeywordProjectionIntegrationTest {
                 new org.mybatis.spring.transaction.SpringManagedTransactionFactory(), application));
         configuration.addInterceptor(new TenantRlsInterceptor());
         configuration.addMapper(KnowledgeChunkMapper.class);
+        String mapperPath = "mapper/KnowledgeChunkMapper.xml";
+        try (var input = KnowledgeKeywordProjectionIntegrationTest.class.getClassLoader().getResourceAsStream(mapperPath)) {
+            assertNotNull(input);
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration, mapperPath,
+                    configuration.getSqlFragments()).parse();
+        }
         // 来源版本 Mapper 仍由 fixture 提供，仅注册其 Lambda 元数据供参数边界解析。
         TableInfoHelper.initTableInfo(new org.apache.ibatis.builder.MapperBuilderAssistant(
                 configuration, "keyword-source-model-fixture"), KnowledgeDocumentVersionDO.class);
@@ -85,6 +94,7 @@ class KnowledgeKeywordProjectionIntegrationTest {
         insertChunk(35, 8, 80, 80, "v1", 0, "needle foreign tenant");
         insertChunk(36, 7, 11, 21, "v1", 0, "needle other base");
         insertChunk(37, 7, 10, 20, "v1", 3, "literal %_\\ needle");
+        insertChunk(38, 7, 10, 20, "v1", 4, "MixedCasePolicy");
         admin.execute("UPDATE nw_knowledge_document_versions v SET chunk_count=(SELECT count(*) FROM nw_knowledge_chunks c WHERE c.tenant_id=v.tenant_id AND c.chunk_set_id=v.chunk_set_id),status='ready'");
         admin.execute("UPDATE nw_knowledge_documents d SET current_source_version=(SELECT source_version FROM nw_knowledge_document_versions v WHERE v.tenant_id=d.tenant_id AND v.document_id=d.id ORDER BY v.source_version DESC LIMIT 1)");
         var base = new KnowledgeBaseDO();
@@ -137,8 +147,19 @@ class KnowledgeKeywordProjectionIntegrationTest {
     }
 
     @Test
-    void keywordFallbackStillEscapesLikeWildcardsAndBackslashes() {
+    void keywordFallbackTreatsWildcardsAndBackslashesAsLiteralText() {
         assertEquals(List.of(hit(37, 20, "literal %_\\ needle")), search("7", "%_\\", 10));
+        for (String literal : List.of("%", "_", "\\")) {
+            assertEquals(List.of(hit(37, 20, "literal %_\\ needle")), search("7", literal, 10));
+        }
+    }
+
+    @Test
+    void keywordFallbackMatchesMixedCaseWithoutChangingSourceIdentity() {
+        var expected = List.of(hit(38, 20, "MixedCasePolicy"));
+        assertEquals(expected, search("7", "mixedcasepolicy", 10));
+        assertEquals(expected, search("7", "MIXEDCASEPOLICY", 10));
+        assertEquals(expected, search("7", "CasePol", 10));
     }
 
     private List<com.skillforge.core.knowledge.KnowledgeHit> search(String tenant, String query, int limit) {
@@ -153,7 +174,7 @@ class KnowledgeKeywordProjectionIntegrationTest {
         var source = new KnowledgeDocumentVersionDO();
         source.setId(tenant * 100 + 1); source.setTenantId(tenant); source.setKbId(tenant==7L?10L:80L);
         source.setDocumentId(tenant == 7L ? 20L : 80L); source.setSourceVersion("v1");
-        source.setStatus("ready"); source.setChunkCount(tenant == 7L ? 4 : 1);
+        source.setStatus("ready"); source.setChunkCount(tenant == 7L ? 5 : 1);
         source.setEmbeddingModelConfigId(901L); source.setEmbeddingModelRevision(1L);
         source.setEmbeddingDimensions(2);
         return source;

@@ -21,11 +21,20 @@ import org.springframework.test.context.DynamicPropertySource;
 /** 唯一知识来源的真实页面挂载与同一 Agent 检索验收。 */
 class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
     private static final KnowledgeBrowserServer FRONTEND=KnowledgeBrowserServer.startIsolated("agent-knowledge-single-");
-    @DynamicPropertySource static void browserOrigin(DynamicPropertyRegistry registry) {registry.add("skillforge.web.allowed-origins",FRONTEND::baseUrl);}
+    @DynamicPropertySource static void browserOrigin(DynamicPropertyRegistry registry) {
+        registry.add("skillforge.web.allowed-origins", FRONTEND::baseUrl);
+        if (System.getenv("E2E_KNOWLEDGE_CASE") != null) {
+            registry.add("skillforge.elasticsearch-enabled", () -> true);
+            registry.add("skillforge.elasticsearch-uri", () -> "http://127.0.0.1:1");
+        }
+    }
     @AfterAll static void closeFrontend(){FRONTEND.close();}
 
     @Test void singlePublishedKnowledgeMountFeedsSameAgentRuntime() throws Exception {
-        login();String sentinel="singleknowledge"+SnowflakeIds.nextId();
+        login();
+        boolean caseSearch = System.getenv("E2E_KNOWLEDGE_CASE") != null;
+        String sentinel = (caseSearch ? "SingleKnowledgeMixedCase" : "singleknowledge") + SnowflakeIds.nextId();
+        String query = caseSearch ? sentinel.toLowerCase(java.util.Locale.ROOT) : sentinel;
         Path evidence=Path.of("build","runtime-e2e","agent-knowledge-single-"+SnowflakeIds.nextId()).toAbsolutePath();
         Path browser=evidence.resolve("playwright");Files.createDirectories(browser);
         try(var model=new RuntimeExecutionWorkloadProvider(objectMapper)) {
@@ -43,6 +52,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);
             env.put("E2E_AGENT_ID",agentId);env.put("E2E_KNOWLEDGE_ID",published.kbId());env.put("E2E_KNOWLEDGE_NAME","execution-knowledge-"+runId);
             env.put("E2E_KNOWLEDGE_REVISION",Long.toString(published.revisionId()));env.put("E2E_KNOWLEDGE_DEFINITION",Long.toString(published.definitionId()));env.put("E2E_KNOWLEDGE_VERSION",Long.toString(published.capabilityVersionId()));
+            env.put("E2E_KNOWLEDGE_QUERY", query); env.put("E2E_KNOWLEDGE_SENTINEL", sentinel); env.put("E2E_KNOWLEDGE_SOURCE_VERSION", published.sourceVersion());
             env.remove("SDK4_LIVE_MODEL_KEY");env.remove("E2E_LIVE_MODEL");
             Process process=command.start();
             try(var owned=new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -64,7 +74,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             assertEquals("baseline".equals(System.getenv("E2E_AGENT_KNOWLEDGE_MODE"))?2:0,facts.path("manualSelectionClicks").asInt());
             assertEquals(1,countRuntime("SELECT count(*) FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND capability_definition_id=? AND capability_version_id=?",tenantId,agentId,mountId,published.definitionId(),published.capabilityVersionId()));
             var script=model.register("knowledge-"+SnowflakeIds.nextId(),RuntimeExecutionWorkloadProvider.Workload.KNOWLEDGE);
-            script.requireKnowledge("knowledge:"+mountId,published.kbId(),published.sourceVersion(),sentinel);
+            script.requireKnowledge("knowledge:"+mountId,published.kbId(),published.sourceVersion(),query,sentinel);
             var agentPublication=send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken);assertEquals(200,agentPublication.statusCode(),agentPublication.body());
             var session=send("/api/v1/chat/sessions","POST",Map.of("agent_id",agentId,"end_user_id",endUserId),accessToken);
             assertEquals(200,session.statusCode(),session.body());sessionId=successData(session).path("session_id").asText();
@@ -79,6 +89,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
                 assertEquals(1,selected.size());var row=selected.getFirst();var properties=applicationContext.getBean(AgentRuntimeProperties.class);
                 var codec=new AgentExecutionCodec(new CodecLimits(properties.getMaxPayloadCodeUnits(),properties.getMaxPayloadNodes(),properties.getMaxPayloadDepth()));
                 var request=codec.decodeKnowledgeRequest(new TypedPayload(row.get("request_schema").toString(),row.get("request_json").toString()));
+                assertEquals(query, assertInstanceOf(com.skillforge.runtime.api.KnowledgeOperation.Search.class, request.request().operation()).query());
                 assertEquals("knowledge:"+mountId,request.target().handle().value());assertEquals(Long.toString(published.definitionId()),request.target().capability().capabilityId());
                 assertEquals(Long.toString(published.capabilityVersionId()),request.target().capability().versionId());
                 assertEquals(published.kbId(),request.target().descriptorId());

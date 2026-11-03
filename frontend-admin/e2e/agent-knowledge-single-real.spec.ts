@@ -111,6 +111,52 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
   expect(publishPosts).toBe(0)
   expect(chatPosts).toBe(0)
   await page.screenshot({ path: join(evidence, 'knowledge-mounted.png'), fullPage: true })
+  if (process.env.E2E_KNOWLEDGE_CASE) {
+    const mode = process.env.E2E_KNOWLEDGE_CASE
+    const searchQuery = required('E2E_KNOWLEDGE_QUERY')
+    const sentinel = required('E2E_KNOWLEDGE_SENTINEL')
+    const sourceVersion = required('E2E_KNOWLEDGE_SOURCE_VERSION')
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.getByRole('tab', { name: '检索验证', exact: true }).click()
+    await page.getByLabel('检索问题', { exact: true }).fill(searchQuery)
+    const searches: { payload: unknown; items: unknown[] }[] = []
+    for (const pinned of [false, true]) {
+      if (pinned) {
+        await page
+          .getByRole('switch', { name: '仅本次检索覆盖参数', exact: true })
+          .locator('..')
+          .click()
+        await page.getByRole('textbox', { name: '本次来源版本', exact: true }).fill(sourceVersion)
+      }
+      const searched = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/v1/knowledge/search'
+      )
+      await page.getByRole('button', { name: '检索', exact: true }).click()
+      const response = await searched
+      expect(response.status()).toBe(200)
+      const envelope = await response.json()
+      expect(envelope.code).toBe('OK')
+      const payload = response.request().postDataJSON()
+      expect(payload.query).toBe(searchQuery)
+      expect(payload.kb_id).toBe(kb)
+      expect(payload.source_version).toBe(pinned ? sourceVersion : undefined)
+      const items = envelope.data.items
+      expect(items).toHaveLength(mode === 'baseline' ? 0 : 1)
+      if (mode === 'candidate') {
+        expect(items[0].content).toContain(sentinel)
+        await expect(page.getByText(/本次召回 1 条结果/)).toBeVisible()
+      } else
+        await expect(page.getByText('本次没有召回结果，请检查文档状态或调整问题')).toBeVisible()
+      searches.push({ payload, items })
+    }
+    await page.screenshot({ path: join(evidence, 'knowledge-case-search.png'), fullPage: true })
+    await writeFile(
+      join(evidence, 'knowledge-case-search.json'),
+      JSON.stringify({ mode, searchQuery, sentinel, sourceVersion, searches }, null, 2)
+    )
+  }
   await writeFile(
     join(evidence, 'agent-knowledge-single.json'),
     JSON.stringify({

@@ -2,6 +2,33 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeChunkMapper">
 
+    <resultMap id="keywordChunk" type="com.skillforge.core.knowledge.model.KnowledgeChunkDO">
+        <id column="id" property="id"/>
+        <result column="document_id" property="documentId"/>
+        <result column="source_version" property="sourceVersion"/>
+        <result column="content" property="content" jdbcType="VARCHAR" typeHandler="org.apache.ibatis.type.StringTypeHandler"/>
+    </resultMap>
+
+    <!-- 与 Runtime KEYWORD 一致：忽略大小写，查询中的通配符按字面处理。 -->
+    <select id="searchKeyword" resultMap="keywordChunk">
+        SELECT k.id, k.document_id, k.source_version, k.content
+        FROM public.knowledge_chunk_values k
+        WHERE k.tenant_id = CAST(#{tenantId} AS bigint)
+          AND k.kb_id = CAST(#{kbId} AS bigint)
+          AND strpos(lower(k.content), lower(#{query})) &gt; 0
+          <if test="sourceVersions != null">
+              <choose>
+                  <when test="!sourceVersions.isEmpty()">
+                      AND k.source_version IN
+                      <foreach collection="sourceVersions" item="version" open="(" separator="," close=")">#{version}</foreach>
+                  </when>
+                  <otherwise>AND FALSE</otherwise>
+              </choose>
+          </if>
+        ORDER BY k.chunk_index, k.id
+        LIMIT #{topK}
+    </select>
+
     <resultMap id="baseCount" type="com.skillforge.core.knowledge.model.KnowledgeBaseCount">
         <constructor>
             <arg column="kb_id" javaType="_long"/>

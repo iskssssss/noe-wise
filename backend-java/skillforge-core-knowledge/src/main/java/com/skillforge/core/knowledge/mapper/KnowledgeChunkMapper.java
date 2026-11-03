@@ -11,10 +11,16 @@ import org.apache.ibatis.annotations.Param;
  * 知识分块 MyBatis-Plus 映射接口。
  *
  * <p>提供基于 pgvector 的余弦距离检索（V6 后 embedding 列无固定维度，
- * 检索按 vector_dims 过滤同维度向量）与 SQL ILIKE 全文检索；均按租户、
+ * 检索按 vector_dims 过滤同维度向量）与 SQL 字面子串检索；均按租户、
  * 活动知识库过滤。
  */
 public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
+
+    /** 按字面子串检索；null 来源集合表示不限版本，非空集合限制来源范围。 */
+    List<KnowledgeChunkDO> searchKeyword(
+            @Param("tenantId") String tenantId, @Param("kbId") String kbId,
+            @Param("query") String query, @Param("topK") int topK,
+            @Param("sourceVersions") List<String> sourceVersions);
 
     /** 仅在调用方已读取的非空知识库集合内统计未删除文档当前来源版本的分块。 */
     List<KnowledgeBaseCount> countCurrentByBase(@Param("tenantId") long tenantId, @Param("kbIds") List<Long> kbIds);

@@ -341,7 +341,7 @@ final class RuntimeExecutionWorkloadProvider implements AutoCloseable {
                 if (!citation.matches("k[0-9a-f]{16}") || !citations.add(citation)) throw new IOException("knowledge_citation_id_invalid");
                 if (id.isBlank() || !ids.add(id) || !expected.sourceId().equals(item.path("sourceId").asText())
                         || !expected.sourceVersion().equals(item.path("sourceVersion").asText())
-                        || !item.path("text").asText().contains(expected.query())) throw new IOException("knowledge_injected_item_mismatch");
+                        || !item.path("text").asText().contains(expected.expectedText())) throw new IOException("knowledge_injected_item_mismatch");
             }
         }
         if (paired != 1 || ids.isEmpty()) throw new IOException("knowledge_tool_pair_missing_or_duplicate");
@@ -512,10 +512,15 @@ final class RuntimeExecutionWorkloadProvider implements AutoCloseable {
 
         /** 期望值来自正式挂载与原文档回执，不能在模型请求开始后重置以掩盖错来源。 */
         synchronized void requireKnowledge(String handle, String sourceId, String sourceVersion, String query) {
+            requireKnowledge(handle, sourceId, sourceVersion, query, query);
+        }
+
+        /** 查询文字与原文断言独立冻结，允许验证大小写差异而不改写来源正文。 */
+        synchronized void requireKnowledge(String handle, String sourceId, String sourceVersion, String query, String expectedText) {
             if (workload != Workload.KNOWLEDGE || knowledge != null || requests.get() != 0
-                    || List.of(handle, sourceId, sourceVersion, query).stream().anyMatch(String::isBlank))
+                    || List.of(handle, sourceId, sourceVersion, query, expectedText).stream().anyMatch(String::isBlank))
                 throw new IllegalArgumentException("invalid_knowledge_fixture");
-            knowledge = new KnowledgeExpected(handle, sourceId, sourceVersion, query);
+            knowledge = new KnowledgeExpected(handle, sourceId, sourceVersion, query, expectedText);
         }
 
         /** 快照可在请求运行中读取；结束后应同时确认请求数与完成计时数一致。 */
@@ -545,7 +550,7 @@ final class RuntimeExecutionWorkloadProvider implements AutoCloseable {
                           List<String> verifiedKnowledgeItemIds,
                           List<RequestTiming> requests) { }
 
-    private record KnowledgeExpected(String handle, String sourceId, String sourceVersion, String query) { }
+    private record KnowledgeExpected(String handle, String sourceId, String sourceVersion, String query, String expectedText) { }
 
     /**
      * 每个 HTTP 请求的原始测量；失败不从样本移除，handler 时间不可全部作为外部耗时扣除。

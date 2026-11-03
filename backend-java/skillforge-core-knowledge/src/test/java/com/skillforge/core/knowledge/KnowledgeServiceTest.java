@@ -497,11 +497,12 @@ class KnowledgeServiceTest {
     }
 
     @Test
-    void allKeywordFallbacksProjectOnlyOutputColumnsAndKeepThePinnedFilter() {
+    void allKeywordFallbacksUseOneQueryWithThePinnedFilterAndCandidateLimit() {
         when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
         KnowledgeChunkDO row = chunk();
         row.setSourceVersion("v1");
-        when(chunkMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(row));
+        when(chunkMapper.searchKeyword(eq("7"), eq("10"), eq("q"), anyInt(), eq(List.of("v1"))))
+                .thenReturn(List.of(row));
         for (String mode : List.of("semantic", "full_text", "hybrid")) {
             org.mockito.Mockito.clearInvocations(chunkMapper);
             var request = new KnowledgeSearchRequest("10", "q", 2, mode,
@@ -511,14 +512,9 @@ class KnowledgeServiceTest {
 
             assertEquals(List.of(new KnowledgeHit("10", String.valueOf(row.getDocumentId()), String.valueOf(row.getId()),
                     "v1", row.getContent(), 1.0, null)), items);
-            ArgumentCaptor<LambdaQueryWrapper<KnowledgeChunkDO>> query =
-                    ArgumentCaptor.forClass(LambdaQueryWrapper.class);
-            verify(chunkMapper).selectList(query.capture());
-            assertEquals("id,content,document_id,source_version", query.getValue().getSqlSelect());
-            String sql = query.getValue().getSqlSegment();
-            assertTrue(sql.contains("tenant_id") && sql.contains("kb_id")
-                    && sql.contains("source_version") && sql.contains("ORDER BY chunk_index ASC"));
-            assertTrue(sql.endsWith(mode.equals("hybrid") ? "LIMIT 10" : "LIMIT 2"));
+            verify(chunkMapper).searchKeyword("7", "10", "q", mode.equals("hybrid") ? 10 : 2,
+                    List.of("v1"));
+            verify(chunkMapper, never()).selectList(any(LambdaQueryWrapper.class));
         }
     }
 
@@ -535,7 +531,7 @@ class KnowledgeServiceTest {
                 .thenReturn(List.of());
         when(chunkMapper.vectorSearchVersions(eq("7"), eq("10"), anyString(), eq(2), any(), eq(List.of("v1"))))
                 .thenThrow(new IllegalStateException("vector unavailable"));
-        when(chunkMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(row));
+        when(chunkMapper.searchKeyword("7", "10", "q", 2, List.of("v1"))).thenReturn(List.of(row));
         var fallback = service.search("7", "10", "q", 2,
                 new KnowledgeSearchRequest("10", "q", 2, "semantic", false, null, null, false));
         assertEquals(1, fallback.size());
@@ -689,15 +685,13 @@ class KnowledgeServiceTest {
     void failedQueryVectorFallsBackAcrossWholeManifestWithoutPerVersionRetries() {
         activeBase("v1", "v2", "v3", "v4");
         KnowledgeChunkDO keyword = chunk();
-        when(chunkMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(keyword));
+        when(chunkMapper.searchKeyword("7", "10", "q", 4, List.of("v1", "v2", "v3", "v4")))
+                .thenReturn(List.of(keyword));
         var items = service.search("7", "10", "q", 4, null);
         assertEquals(List.of("30"), items.stream().map(KnowledgeHit::chunkId).toList());
         verify(embeddingProvider).embed("7", "81", 3L, "q");
         verify(searchIndexer, never()).searchKnnVersions(anyString(), anyString(), anyString(), anyInt(), any());
-        var wrapper = org.mockito.ArgumentCaptor.forClass(LambdaQueryWrapper.class);
-        verify(chunkMapper).selectList(wrapper.capture());
-        assertTrue(wrapper.getValue().getSqlSegment().contains("source_version IN"));
-        assertTrue(wrapper.getValue().getParamNameValuePairs().values().containsAll(List.of("v1", "v2", "v3", "v4")));
+        verify(chunkMapper).searchKeyword("7", "10", "q", 4, List.of("v1", "v2", "v3", "v4"));
     }
 
     @Test
@@ -775,18 +769,12 @@ class KnowledgeServiceTest {
                 row.setContent("例外比例50%_原始\\路径：以已发布政策为准"); rows.add(row);
             }
         }
-        when(chunkMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(rows);
+        when(chunkMapper.searchKeyword("7", "10", "50%_原始\\路径", 100, manifest)).thenReturn(rows);
         var actual = service.search("7", "10", "50%_原始\\路径", 100,
                 new KnowledgeSearchRequest("10", "50%_原始\\路径", 100, "full_text", false, null, null, false));
         assertEquals(java.util.stream.IntStream.rangeClosed(1, 6).mapToObj(i -> String.valueOf(1000L + i * 10 + 2)).toList(),
                 actual.stream().map(KnowledgeHit::chunkId).toList());
-        var captured = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
-        verify(chunkMapper).selectList(captured.capture());
-        String sql = captured.getValue().getSqlSegment();
-        assertTrue(sql.contains("tenant_id =") && sql.contains("kb_id =") && sql.contains("source_version IN") && sql.contains("LIMIT 100"));
-        assertTrue(captured.getValue().getParamNameValuePairs().values().containsAll(manifest));
-        assertTrue(captured.getValue().getSqlSelect().contains("source_version"));
-        assertTrue(!captured.getValue().getSqlSelect().contains("embedding"));
+        verify(chunkMapper).searchKeyword("7", "10", "50%_原始\\路径", 100, manifest);
     }
 
     @Test
