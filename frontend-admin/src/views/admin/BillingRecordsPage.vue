@@ -222,14 +222,23 @@
       scroll-to-error
       @keydown.capture="guardFormEnter"
       ><ElFormItem label="对账提供方"
-        ><ElInput
+        ><ElSelect
           v-described-by="formTipId + '-field-0'"
           :aria-describedby="formTipId + '-field-0'"
           v-model="provider.provider"
-        />
+          aria-label="对账提供方"
+          placeholder="选择对账提供方"
+        >
+          <ElOption label="使用默认配置" value="" />
+          <ElOption label="通用 HTTP（http）" value="http" />
+          <ElOption label="阿里云百炼（dashscope）" value="dashscope" />
+        </ElSelect>
         <FieldTip :id="formTipId + '-field-0'"
-          >填写用量对账服务的提供方标识。</FieldTip
-        > </ElFormItem
+          >选择受支持的对账提供方；使用默认配置时，需清空接口地址及其他覆盖配置。</FieldTip
+        >
+        <p v-if="!provider.provider" class="admin-field-help">
+          保存默认配置会清除机构对账覆盖配置及其已保存凭据。
+        </p> </ElFormItem
       ><ElFormItem label="对账接口 URL"
         ><ElInput
           v-described-by="formTipId + '-field-1'"
@@ -553,7 +562,7 @@ async function saveProvider() {
     await api.billing.reconciliationProvider.save({
       ...provider,
       api_key: provider.api_key || undefined,
-      response_schema: schema
+      response_schema: !provider.provider && !Object.keys(schema).length ? undefined : schema
     })
     provider.api_key = ''
     provider.clear_api_key = false

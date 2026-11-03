@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { ElDatePicker, ElPagination } from 'element-plus'
+import { ElDatePicker, ElOption, ElPagination, ElSelect } from 'element-plus'
 import { formatMonth } from '@skillforge/shared/utils/datetime'
 import ModelBillingDetails from '@skillforge/shared/components/ModelBillingDetails.vue'
 import type { ModelBillingMonthly } from '../../api'
 import BillingRecordsPage from './BillingRecordsPage.vue'
 
-const mocks = vi.hoisted(() => ({ records: vi.fn(), monthly: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  records: vi.fn(),
+  monthly: vi.fn(),
+  reconciliationProvider: { get: vi.fn(), save: vi.fn() }
+}))
 vi.mock('../../api', () => ({ api: { billing: mocks } }))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
 const result: ModelBillingMonthly = {
@@ -27,6 +31,14 @@ let wrapper: VueWrapper | undefined
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.records.mockResolvedValue({ items: [], total: 0 })
+  mocks.reconciliationProvider.get.mockResolvedValue({
+    provider: 'http',
+    endpoint: 'https://billing.example',
+    api_key_configured: true,
+    api_key_header: 'Authorization',
+    response_schema: {}
+  })
+  mocks.reconciliationProvider.save.mockResolvedValue({})
   mocks.monthly.mockImplementation(
     async (params: { month: string; page: number; page_size: number }) => ({ ...result, ...params })
   )
@@ -131,4 +143,64 @@ it('清空月份不会请求，也不将未配置数据展示为零费用', asyn
   mocks.monthly.mockClear()
   await query('')
   expect(mocks.monthly).not.toHaveBeenCalled()
+})
+
+it('对账提供方只提供当前支持的选项，切换选项保留输入', async () => {
+  wrapper = mount(BillingRecordsPage, { attachTo: document.body })
+  await flushPromises()
+  await wrapper
+    .findAll('[role="tab"]')
+    .find((tab) => tab.text() === '对账配置')!
+    .trigger('click')
+  await flushPromises()
+  expect(wrapper.findAllComponents(ElOption).map((item) => item.props('value'))).toEqual([
+    '',
+    'http',
+    'dashscope'
+  ])
+  const secret = wrapper.get('input[type="password"]')
+  await secret.setValue('synthetic-key')
+  wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'dashscope')
+  await flushPromises()
+  expect((secret.element as HTMLInputElement).value).toBe('synthetic-key')
+  await wrapper.get('form.billing-settings').trigger('submit')
+  await flushPromises()
+  expect(mocks.reconciliationProvider.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      provider: 'dashscope',
+      api_key: 'synthetic-key',
+      endpoint: 'https://billing.example'
+    })
+  )
+})
+
+it('清除覆盖配置前提示会移除凭据，并允许空映射提交', async () => {
+  wrapper = mount(BillingRecordsPage, { attachTo: document.body })
+  await flushPromises()
+  await wrapper
+    .findAll('[role="tab"]')
+    .find((tab) => tab.text() === '对账配置')!
+    .trigger('click')
+  await flushPromises()
+  wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', '')
+  await flushPromises()
+  expect(wrapper.text()).toContain('保存默认配置会清除机构对账覆盖配置及其已保存凭据')
+  const inputs = wrapper.findAll('form.billing-settings input')
+  await inputs
+    .find(
+      (item) =>
+        item.attributes('type') !== 'password' &&
+        (item.element as HTMLInputElement).value === 'https://billing.example'
+    )!
+    .setValue('')
+  await wrapper.get('form.billing-settings').trigger('submit')
+  await flushPromises()
+  expect(mocks.reconciliationProvider.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      provider: '',
+      endpoint: '',
+      api_key: undefined,
+      response_schema: undefined
+    })
+  )
 })

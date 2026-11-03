@@ -20,6 +20,7 @@ public class TenantUsageReconciliationConfigService {
             "facts_path", "next_cursor", "event_id", "original_event_id", "amount_status",
             "input_amount", "output_amount", "total_amount", "exchange_rate_to_cny",
             "pricing_snapshot_version", "currency", "metadata");
+    private static final Set<String> SUPPORTED_PROVIDERS = Set.of("http", "dashscope");
     private static final Pattern JSON_PATH = Pattern.compile("[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*");
 
     private final TenantBillingProfileService profiles;
@@ -57,6 +58,10 @@ public class TenantUsageReconciliationConfigService {
             if (!provider.matches("[a-z0-9][a-z0-9_-]{0,63}")) {
                 throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "账单 Provider ID 格式无效");
+            }
+            if (!SUPPORTED_PROVIDERS.contains(provider)) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "RECONCILIATION_PROVIDER_UNSUPPORTED", "不支持的对账提供方，请选择通用 HTTP 或阿里云百炼", false);
             }
             if (endpoint == null || !endpoint.startsWith("https://") && !endpoint.startsWith("http://")) {
                 throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "账单 endpoint 必须为 HTTP(S) URL");

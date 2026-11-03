@@ -139,9 +139,23 @@ tasks.named<Test>("test") {
     exclude("**/TeamMemberCrossTabBrowserE2ETest.class")
     exclude("**/ToolDeploymentRecoveryBrowserE2ETest.class")
     exclude("**/MemoryDirectoryLimitBrowserE2ETest.class")
+    exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
+}
+
+tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {
+    description = "验证对账配置保存结果恢复"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.BillingReconciliationRecoveryBrowserE2ETest.committedConfigurationWithLostResponseCannotBeAttributed")
+    }
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("memoryDirectoryLimitBrowserE2E") {

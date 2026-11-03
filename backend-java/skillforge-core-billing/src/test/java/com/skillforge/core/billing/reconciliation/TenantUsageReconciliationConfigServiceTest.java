@@ -17,6 +17,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.http.HttpStatus;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -79,6 +80,29 @@ class TenantUsageReconciliationConfigServiceTest {
                         "http", "https://billing.example", null, null,
                         Map.of("script", "javascript:evil"), false)));
         verify(profiles, never()).saveReconciliationProfile(org.mockito.ArgumentMatchers.anyLong(), any());
+    }
+
+    @Test
+    void unregisteredProviderIsRejectedBeforeChangingExistingConfig() {
+        service.save("7", new TenantUsageReconciliationConfigRequest(
+                "http", "https://billing.example", "secret", null, Map.of(), false));
+        var original = tenant.get();
+
+        ApiException failure = assertThrows(ApiException.class, () -> service.save("7",
+                new TenantUsageReconciliationConfigRequest(
+                        "isolated_provider", "https://billing.example", "replacement", null, Map.of(), false)));
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, failure.getStatus());
+        assertEquals("RECONCILIATION_PROVIDER_UNSUPPORTED", failure.getCode());
+        assertEquals(original, tenant.get());
+        verify(profiles, org.mockito.Mockito.times(1)).saveReconciliationProfile(org.mockito.ArgumentMatchers.eq(7L), any());
+    }
+
+    @Test
+    void registeredDashscopeProviderCanBeSaved() {
+        var saved = service.save("7", new TenantUsageReconciliationConfigRequest(
+                "dashscope", "https://billing.example", null, null, Map.of(), false));
+        assertEquals("dashscope", saved.provider());
     }
 
     @Test
