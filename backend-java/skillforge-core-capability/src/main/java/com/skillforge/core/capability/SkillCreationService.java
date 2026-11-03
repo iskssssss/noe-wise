@@ -44,7 +44,9 @@ public class SkillCreationService {
             return result(command.requestId(), row);
         }
         var payload = command.payload();
-        var draft = drafts.createSkill(scope, payload.capabilityKey(), payload.name(), payload.description());
+        String key = payload.capabilityKey() == null || payload.capabilityKey().isBlank()
+                ? "skill-" + command.requestId() : payload.capabilityKey();
+        var draft = drafts.createSkill(scope, key, payload.name(), payload.description());
         if (receipts.complete(requestId, draft.definitionId(), draft.id(), draft.revision()) != 1)
             throw new IllegalStateException("技能创建回执写入失败");
         return new Result(command.requestId(), draft.definitionId().toString(), draft.id().toString(), draft.revision());

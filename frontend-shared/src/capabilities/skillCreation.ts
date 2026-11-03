@@ -2,8 +2,8 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 import { HttpClientError } from '../utils/http'
 import type { SkillCreationReceipt } from './skillDrafts'
 
-type Metadata = { capabilityKey: string; name: string; description: string }
-type Pending = { requestId: string; capabilityKey: string; name: string }
+type Metadata = { capabilityKey?: string; name: string; description: string }
+type Pending = { requestId: string; capabilityKey?: string; name: string }
 type Api = {
   createWithReceipt: (requestId: string, payload: Metadata) => Promise<SkillCreationReceipt>
   creationReceipt: (requestId: string) => Promise<SkillCreationReceipt | undefined>
@@ -36,8 +36,8 @@ export function useSkillCreation(
         const value = JSON.parse(raw) as Pending
         if (
           !value ||
-          typeof value.capabilityKey !== 'string' ||
-          !value.capabilityKey ||
+          (value.capabilityKey !== undefined &&
+            (typeof value.capabilityKey !== 'string' || !value.capabilityKey)) ||
           typeof value.name !== 'string' ||
           !value.name ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)

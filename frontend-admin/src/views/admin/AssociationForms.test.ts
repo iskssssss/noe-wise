@@ -138,7 +138,7 @@ describe('关联表单校验', () => {
     expect(wrapper.findAll('a').some((link) => link.text() === '查看已发布技能')).toBe(false)
     expect(wrapper.findAll('button').some((item) => item.text() === '新建技能')).toBe(false)
   })
-  it('技能缺少标识与名称时在抽屉内显示字段错误且不提交', async () => {
+  it('技能名称为空时不提交，填写名称即可创建', async () => {
     const wrapper = mount(SkillWorkbenchListPage, {
       attachTo: document.body,
       global: { stubs: { RouterLink: true } }
@@ -151,17 +151,14 @@ describe('关联表单校验', () => {
     await drawer.findAllComponents(ElInput)[0]!.find('input').setValue('')
     await button(wrapper, '创建并进入工作草稿').trigger('click')
     await flushPromises()
-    await vi.waitFor(() => expect(document.body.textContent).toContain('请输入技能标识'))
-    expect(document.body.textContent).toContain('请输入名称')
+    await vi.waitFor(() => expect(document.body.textContent).toContain('请输入名称'))
     expect(mocks.createSkill).not.toHaveBeenCalled()
     const inputs = drawer.findAllComponents(ElInput)
-    await inputs[0]!.find('input').setValue('customer-service')
-    await inputs[1]!.find('input').setValue('客户服务')
+    await inputs[0]!.find('input').setValue('客户服务')
     await button(wrapper, '创建并进入工作草稿').trigger('click')
     await flushPromises()
     expect(mocks.createSkill).toHaveBeenCalledExactlyOnceWith({
       name: '客户服务',
-      capabilityKey: 'customer-service',
       description: ''
     })
     expect(mocks.push).toHaveBeenCalledWith('/admin/skills/10')

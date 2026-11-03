@@ -59,7 +59,7 @@ const receipt = {
   versionKey: '',
   files: {}
 }
-it('新建技能自动生成稳定标识，断连后保留原标识', async () => {
+it('新建技能不要求标识，断连后保留原请求', async () => {
   mocks.create.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '结果未知' }))
   wrapper = mount(SkillWorkbenchListPage, {
     attachTo: document.body,
@@ -69,16 +69,14 @@ it('新建技能自动生成稳定标识，断连后保留原标识', async () =
   await button('新建技能').trigger('click')
   await flushPromises()
   const inputs = wrapper.findComponent(ElDrawer).findAllComponents(ElInput)
-  const generated = inputs[0]!.get('input').element.value
-  expect(generated).toMatch(/^skill-[0-9a-f-]{36}$/)
-  await inputs[1]!.setValue('自动标识技能')
+  expect(wrapper.findComponent(ElDrawer).text()).not.toContain('技能标识')
+  await inputs[0]!.setValue('自动标识技能')
   await create()
   expect(mocks.create).toHaveBeenCalledExactlyOnceWith({
-    capabilityKey: generated,
     name: '自动标识技能',
     description: ''
   })
-  expect(wrapper.text()).toContain(generated)
+  expect(wrapper.text()).toContain('自动标识技能')
   expect(button('新建技能').props('disabled')).toBe(true)
 })
 it('刷新后未查到原回执仍锁定，不重新发送创建', async () => {
@@ -162,9 +160,8 @@ async function open() {
   await flushPromises()
   const drawer = wrapper.findComponent(ElDrawer)
   const inputs = drawer.findAllComponents(ElInput)
-  await inputs[0]!.setValue(' customer-service ')
-  await inputs[1]!.setValue(' 客服技能 ')
-  await inputs[2]!.setValue('处理客户咨询')
+  await inputs[0]!.setValue(' 客服技能 ')
+  await inputs[1]!.setValue('处理客户咨询')
   return drawer
 }
 async function create() {
@@ -228,7 +225,6 @@ it('creates a skill and draft with one command and navigates using the exact ret
   await open()
   await create()
   expect(mocks.create).toHaveBeenCalledExactlyOnceWith({
-    capabilityKey: 'customer-service',
     name: '客服技能',
     description: '处理客户咨询'
   })
@@ -271,7 +267,7 @@ it.each([
     await create()
     expect(drawer.props('modelValue')).toBe(true)
     expect(drawer.findComponent(ElForm).props('disabled')).toBe(true)
-    expect(drawer.findAllComponents(ElInput)[0]!.props('modelValue')).toBe(' customer-service ')
+    expect(drawer.findAllComponents(ElInput)[0]!.props('modelValue')).toBe(' 客服技能 ')
     expect(button('创建并进入工作草稿').props('disabled')).toBe(true)
     expect(wrapper!.text()).toContain('列表缺失不代表创建失败')
     await button('查看当前技能列表').trigger('click')
@@ -285,24 +281,22 @@ it.each([
     await flushPromises()
     await button('查看原创建输入').trigger('click')
     await flushPromises()
-    expect(drawer.findAllComponents(ElInput)[1]!.props('modelValue')).toBe(' 客服技能 ')
+    expect(drawer.findAllComponents(ElInput)[0]!.props('modelValue')).toBe(' 客服技能 ')
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.push).not.toHaveBeenCalled()
   }
 )
 it('a definite validation rejection keeps editable input and allows correcting the original form', async () => {
   mocks.create.mockRejectedValueOnce(
-    new HttpClientError({ status: 422, code: 'SKILL_CREATE_REJECTED', userMessage: '标识不合法' })
+    new HttpClientError({ status: 422, code: 'SKILL_CREATE_REJECTED', userMessage: '名称不合法' })
   )
   const drawer = await open()
   await create()
   expect(drawer.findComponent(ElForm).props('disabled')).toBe(false)
-  await drawer.findAllComponents(ElInput)[0]!.setValue('fixed-key')
+  await drawer.findAllComponents(ElInput)[0]!.setValue('修正名称')
   await create()
   expect(mocks.create).toHaveBeenCalledTimes(2)
-  expect(mocks.create).toHaveBeenLastCalledWith(
-    expect.objectContaining({ capabilityKey: 'fixed-key' })
-  )
+  expect(mocks.create).toHaveBeenLastCalledWith(expect.objectContaining({ name: '修正名称' }))
 })
 it('all new-skill buttons require both definition and draft creation permissions', async () => {
   const permissions = ref(['foundation.capabilities.create'])

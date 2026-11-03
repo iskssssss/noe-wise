@@ -2,10 +2,54 @@ import { effectScope, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useSkillCreation } from './skillCreation'
 import { HttpClientError } from '../utils/http'
+import { createSkillDraftApi } from './skillDrafts'
 
 afterEach(() => {
   sessionStorage.clear()
   vi.restoreAllMocks()
+})
+
+it('新建技能请求只发送名称与说明，不发送技能标识', async () => {
+  const http = { get: vi.fn(), post: vi.fn().mockResolvedValue({}), put: vi.fn() }
+  await createSkillDraftApi(http, '/capabilities').createWithReceipt('request-a', {
+    name: '客服技能',
+    description: '客服说明'
+  })
+  expect(http.post).toHaveBeenCalledWith(
+    '/capabilities/skill-drafts/create-with-receipt',
+    { request_id: 'request-a', payload: { name: '客服技能', description: '客服说明' } },
+    { retryOnUnauthorized: false }
+  )
+})
+
+it('旧待核对记录仍可读取原请求回执', async () => {
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  sessionStorage.setItem(
+    'skillforge.skill-create:platform:actor',
+    JSON.stringify({ requestId, capabilityKey: 'old-skill', name: '旧技能' })
+  )
+  const api = {
+    createWithReceipt: vi.fn(),
+    creationReceipt: vi.fn().mockResolvedValue({
+      request_id: requestId,
+      definition_id: '11',
+      draft_id: '12',
+      revision: 1
+    })
+  }
+  const scope = effectScope()
+  const creation = scope.run(() =>
+    useSkillCreation(
+      'platform',
+      () => 'actor',
+      () => 1,
+      api
+    )
+  )!
+  expect(creation.pending.value?.requestId).toBe(requestId)
+  expect((await creation.check())?.definition_id).toBe('11')
+  expect(api.createWithReceipt).not.toHaveBeenCalled()
+  scope.stop()
 })
 
 it('原请求按主体保存，切换主体不暴露回执且切回后继续核对', async () => {
@@ -24,9 +68,7 @@ it('原请求按主体保存，切换主体不暴露回执且切回后继续核�
       api
     )
   )!
-  await expect(
-    creation.create({ capabilityKey: 'skill-a', name: '技能', description: '' })
-  ).rejects.toThrow('断连')
+  await expect(creation.create({ name: '技能', description: '' })).rejects.toThrow('断连')
   const requestId = creation.pending.value!.requestId
   subject.value = 'tenant:actor-b'
   identity.value++

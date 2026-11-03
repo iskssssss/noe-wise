@@ -48,8 +48,7 @@ const router = useRouter()
 const createTask = useTask(),
   createOpen = ref(false),
   formRef = ref<FormInstance>()
-const key = ref(''),
-  name = ref(''),
+const name = ref(''),
   description = ref('')
 const auth = useAuthStore()
 const creation = useSkillCreation(
@@ -64,7 +63,6 @@ watch(
   creation.pending,
   (pending) => {
     if (pending && !createOpen.value) {
-      key.value = pending.capabilityKey
       name.value = pending.name
     }
   },
@@ -74,22 +72,18 @@ watch(
   () => auth.identityVersion,
   () => {
     createOpen.value = false
-    key.value = ''
     name.value = ''
     description.value = ''
     createdSkill.value = undefined
   },
   { flush: 'sync' }
 )
-const generatedKey = ref('')
 const pageError = computed(() =>
   [load.error.value, createTask.error.value].filter(Boolean).join('；')
 )
 function openCreate() {
   if (createTask.busy.value || creationUnknown.value || createdSkill.value) return
   createTask.error.value = ''
-  generatedKey.value = `skill-${crypto.randomUUID()}`
-  key.value = generatedKey.value
   name.value = ''
   description.value = ''
   formRef.value?.clearValidate()
@@ -100,7 +94,6 @@ async function create() {
   if (!(await formRef.value?.validate().catch(() => false))) return
   const created = await createTask.run(async () => {
     const draft = await creation.create({
-      capabilityKey: key.value.trim(),
       name: name.value.trim(),
       description: description.value
     })
@@ -154,7 +147,7 @@ const { requestClose: closeCreate } = useDrawerClose({
     createOpen.value &&
     !creationUnknown.value &&
     !createdSkill.value &&
-    !!(key.value !== generatedKey.value || name.value || description.value),
+    !!(name.value || description.value),
   close: () => {
     createOpen.value = false
   }
@@ -178,9 +171,7 @@ onMounted(reload)
       <ElButton :loading="load.busy.value" @click="reload">刷新</ElButton>
     </template>
     <section v-if="creation.pending.value" class="admin-card" role="status">
-      技能“{{ creation.pending.value?.name }}”创建结果尚未确认，原标识“{{
-        creation.pending.value?.capabilityKey
-      }}”，请求号：{{
+      技能“{{ creation.pending.value?.name }}”创建结果尚未确认，请求号：{{
         creation.pending.value?.requestId
       }}。列表缺失不代表创建失败，未查到回执仍需等待。
       <ElButton
@@ -288,26 +279,17 @@ onMounted(reload)
     >
       <p class="admin-field-help">新建后直接编辑工作草稿；ZIP 可随后导入，发布另行确认。</p>
       <p v-if="creationUnknown" role="status">
-        创建结果尚未确认，以下为原请求的技能标识和名称，仅供核对。
+        创建结果尚未确认，以下为原请求的技能名称，仅供核对。
       </p>
       <ElForm
         ref="formRef"
-        :model="{ key, name }"
+        :model="{ name }"
         label-position="top"
         :disabled="createTask.busy.value || creationUnknown || !!createdSkill"
         scroll-to-error
         @submit.prevent="create"
         @keydown.capture="guardFormEnter"
       >
-        <ElFormItem
-          label="技能标识"
-          prop="key"
-          :rules="[
-            { required: true, whitespace: true, message: '请输入技能标识', trigger: 'blur' }
-          ]"
-          ><ElInput v-model="key" placeholder="例如 customer-service" />
-          <p class="admin-field-help">已生成唯一标识；如有集成约定，可在创建前修改。</p></ElFormItem
-        >
         <ElFormItem
           label="名称"
           prop="name"

@@ -193,14 +193,14 @@ export function createSkillDraftApi(http: SkillDraftHttp, prefix: string) {
   return {
     createWithReceipt: (
       requestId: string,
-      payload: { capabilityKey: string; name: string; description: string }
+      payload: { capabilityKey?: string; name: string; description: string }
     ) =>
       http.post<SkillCreationReceipt>(
         `${root}/create-with-receipt`,
         {
           request_id: requestId,
           payload: {
-            capability_key: payload.capabilityKey,
+            ...(payload.capabilityKey ? { capability_key: payload.capabilityKey } : {}),
             name: payload.name,
             description: payload.description
           }

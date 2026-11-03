@@ -15,9 +15,7 @@
       type="error"
     />
     <section v-if="creation.pending.value" class="admin-card" role="status">
-      技能“{{ creation.pending.value?.name }}”创建结果尚未确认，原标识“{{
-        creation.pending.value?.capabilityKey
-      }}”，请求号：{{
+      技能“{{ creation.pending.value?.name }}”创建结果尚未确认，请求号：{{
         creation.pending.value?.requestId
       }}。列表缺失不代表创建失败，未查到回执仍需等待。
       <ElButton v-permission="['foundation.skills.read']" :disabled="busy" @click="checkCreation()"
@@ -121,31 +119,16 @@
       :show-close="!busy"
       class="admin-drawer"
       ><p v-if="creationUnknown" role="status">
-        创建结果尚未确认，以下为原请求的技能标识和名称，仅供核对。
+        创建结果尚未确认，以下为原请求的技能名称，仅供核对。
       </p>
       <ElForm
         ref="formRef"
-        :model="{ key, name }"
+        :model="{ name }"
         label-position="top"
         scroll-to-error
         @submit.prevent="create"
         :disabled="busy || creationUnknown || !!createdSkill"
         @keydown.capture="guardFormEnter"
-        ><ElFormItem
-          label="技能标识"
-          prop="key"
-          :rules="[
-            { required: true, whitespace: true, message: '请输入技能标识', trigger: 'blur' }
-          ]"
-          ><ElInput
-            v-described-by="formTipId + '-field-0'"
-            :aria-describedby="formTipId + '-field-0'"
-            v-model="key"
-            placeholder="例如 customer-service"
-          />
-          <FieldTip :id="formTipId + '-field-0'"
-            >已生成唯一标识；如有集成约定，可在创建前修改。</FieldTip
-          > </ElFormItem
         ><ElFormItem
           label="名称"
           prop="name"
@@ -243,7 +226,6 @@ const filtered = computed(() =>
 const { busy, error, run } = useTask(),
   open = ref(false),
   name = ref(''),
-  key = ref(''),
   description = ref('')
 const auth = useAuthStore()
 const creation = useSkillCreation(
@@ -261,7 +243,6 @@ watch(
   creation.pending,
   (pending) => {
     if (pending && !open.value) {
-      key.value = pending.capabilityKey
       name.value = pending.name
     }
   },
@@ -271,20 +252,16 @@ watch(
   () => auth.identityVersion,
   () => {
     open.value = false
-    key.value = ''
     name.value = ''
     description.value = ''
     createdSkill.value = undefined
   },
   { flush: 'sync' }
 )
-const generatedKey = ref('')
 function openCreate() {
   if (creationUnknown.value || createdSkill.value || busy.value) return
   error.value = ''
   name.value = ''
-  generatedKey.value = `skill-${crypto.randomUUID()}`
-  key.value = generatedKey.value
   description.value = ''
   formRef.value?.clearValidate()
   open.value = true
@@ -293,9 +270,8 @@ async function create() {
   if (creationUnknown.value || createdSkill.value || busy.value) return
   if (!(await formRef.value?.validate().catch(() => false))) return
   const created = await run(async () => {
-    if (!name.value.trim() || !key.value.trim()) throw Error('请输入技能名称和标识')
+    if (!name.value.trim()) throw Error('请输入技能名称')
     const draft = await creation.create({
-      capabilityKey: key.value.trim(),
       name: name.value.trim(),
       description: description.value
     })
@@ -350,7 +326,7 @@ const { requestClose: closeDrawer0 } = useDrawerClose({
     open.value &&
     !creationUnknown.value &&
     !createdSkill.value &&
-    (!!name.value || key.value !== generatedKey.value || !!description.value),
+    (!!name.value || !!description.value),
   close: () => {
     open.value = false
   }
