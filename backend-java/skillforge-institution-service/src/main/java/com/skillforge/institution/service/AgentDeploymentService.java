@@ -126,12 +126,27 @@ public class AgentDeploymentService implements AgentExecutionPublicationResolver
         requireExplicitTarget(tenant,command.tenantId());
         platform.requireTenant("platform.agent_deployments.read",tenant);
         platform.requireDefinition("platform.agent_deployments.read",command.definitionId());
+        return creationReceipt(tenant,command,requestKey,true);
+    }
+
+    /** 机构人员或固定执行身份只读核对原操作，跨机构须具备目标读取许可。 */
+    @Transactional(rollbackFor=Exception.class)
+    public Receipt<View> deployReceipt(Deploy command,String requestKey) {
+        long tenant=Long.parseLong(TenantIds.requireTenantId());
+        if(command.tenantId()!=null && command.tenantId()!=tenant)
+            return targetManagement.withTarget(command.tenantId().toString(),"tenant.agent_deployments.read",
+                    ()->creationReceipt(command.tenantId(),command,requestKey,false));
+        requireInstitution("read",tenant,command.integrationId());
+        return creationReceipt(tenant,command,requestKey,false);
+    }
+
+    private Receipt<View> creationReceipt(long tenant,Deploy command,String requestKey,boolean platformActor) {
         AgentTemplateGrantService.requireKey(requestKey);
-        Deploy requested=deploymentIdentity(tenant,command,requestKey,true);
+        Deploy requested=deploymentIdentity(tenant,command,requestKey,platformActor);
         return inTenant(tenant,()->{
             var row=mapper.findExternal(requested.integrationId(),tenant,requested.externalAgentRef());
             if(row==null)return new Receipt<>("NOT_FOUND",null);
-            var response=mapper.findCreateResponse(row.deploymentId(),tenant,actorRef(true),requestKey);
+            var response=mapper.findCreateResponse(row.deploymentId(),tenant,actorRef(platformActor),requestKey);
             if(response==null)return new Receipt<>("NOT_FOUND",null);
             if(!row.fingerprint().equals(fingerprint(requested)))throw conflict("外部Agent标识已用于不同部署参数");
             return new Receipt<>("FOUND",readResponse(response));

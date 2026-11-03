@@ -25,6 +25,7 @@ public class IdempotencyInterceptor extends HostIdempotencyInterceptor {
                 "/api/v1/platform/agent-deployments/bindings",
                 "/api/v1/platform/agent-deployments/authorization",
                 "/api/v1/tenant/agent-deployments",
+                "/api/v1/tenant/agent-deployments/receipt/query",
                 "/api/v1/tenant/agent-deployments/bindings",
                 "/api/v1/tenant/agent-deployments/authorization",
                 "/api/v1/open-platform/agent-deployments",

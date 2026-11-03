@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   grants: vi.fn(),
   detail: vi.fn(),
   create: vi.fn(),
+  receipt: vi.fn(),
   bindings: vi.fn(),
   authorization: vi.fn(),
   confirm: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   auth: {
     user: {
       tenant_id: '7',
+      sub: '70',
       permissions: [
         'tenant.agent_deployments.read',
         'tenant.agent_deployments.create',
@@ -75,7 +77,7 @@ const deployment = {
   integration_id: null,
   grant_id: 'grant-1',
   grant_revision: 1,
-  tenant_id: 'tenant-1',
+  tenant_id: '7',
   agent_id: 'agent-1',
   external_agent_ref: 'external-agent-1',
   definition_id: 't1',
@@ -98,6 +100,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 beforeEach(() => {
+  sessionStorage.clear()
   vi.clearAllMocks()
   mocks.auth.user.permissions = [
     'tenant.agent_deployments.read',
@@ -189,13 +192,75 @@ async function begin(wrapper: VueWrapper) {
   await choose(wrapper, '公共智能体模板', 't1')
   if (field(wrapper, '显式授权依据').findComponent(ElSelect).exists())
     await choose(wrapper, '显式授权依据', 'grant-1')
-  await field(wrapper, '外部智能体标识')
-    .getComponent(ElInput)
-    .get('input')
-    .setValue('external-agent-2')
 }
 
 describe('机构公共Agent部署交互', () => {
+  it('创建结果未知后重新进入，只读核对原请求且不重复部署', async () => {
+    mocks.create.mockRejectedValueOnce(Error('网络中断'))
+    const first = await open()
+    await begin(first)
+    expect(
+      first.findAllComponents(ElFormItem).some((item) => item.props('label') === '外部智能体标识')
+    ).toBe(false)
+    await button(first, '保存机构实例').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    const [input, key, options] = mocks.create.mock.calls[0]!
+    expect(input.external_agent_ref).toBeNull()
+    expect(options).toEqual({ retryOnUnauthorized: false })
+    first.unmount()
+    wrappers.splice(wrappers.indexOf(first), 1)
+    const restored = await open()
+    expect(restored.text()).toContain('结果尚未确认')
+    mocks.receipt.mockResolvedValueOnce({ status: 'NOT_FOUND', result: null })
+    await button(restored, '核对原请求').trigger('click')
+    await flushPromises()
+    expect(mocks.receipt).toHaveBeenCalledWith(input, key)
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(restored.text()).toContain('结果尚未确认')
+    mocks.receipt.mockResolvedValueOnce({ status: 'FOUND', result: deployment })
+    await button(restored, '核对原请求').trigger('click')
+    await flushPromises()
+    expect(restored.text()).not.toContain('结果尚未确认')
+    expect(mocks.create).toHaveBeenCalledOnce()
+  })
+
+  it('外部接入须填写对应系统的真实标识', async () => {
+    const wrapper = await open()
+    await begin(wrapper)
+    await field(wrapper, '接入标识').getComponent(ElInput).get('input').setValue('integration-1')
+    await button(wrapper, '保存机构实例').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    await field(wrapper, '外部智能体标识')
+      .getComponent(ElInput)
+      .get('input')
+      .setValue('external-real')
+    mocks.create.mockResolvedValueOnce({
+      ...deployment,
+      integration_id: 'integration-1',
+      external_agent_ref: 'external-real'
+    })
+    await button(wrapper, '保存机构实例').trigger('click')
+    await flushPromises()
+    expect(mocks.create.mock.calls[0]![0]).toMatchObject({
+      integration_id: 'integration-1',
+      external_agent_ref: 'external-real'
+    })
+  })
+
+  it('存储不可用时不发送部署请求', async () => {
+    const wrapper = await open()
+    await begin(wrapper)
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('存储不可用')
+    })
+    await button(wrapper, '保存机构实例').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    storage.mockRestore()
+  })
+
   it('唯一有效授权自动选择并随原模板提交', async () => {
     mocks.create.mockResolvedValue(deployment)
     const wrapper = await open()
@@ -231,7 +296,6 @@ describe('机构公共Agent部署交互', () => {
     await flushPromises()
     await choose(wrapper, '公共智能体模板', 't1')
     expect(field(wrapper, '显式授权依据').getComponent(ElSelect).props('modelValue')).toBe('')
-    await field(wrapper, '外部智能体标识').getComponent(ElInput).get('input').setValue('external')
     await button(wrapper, '保存机构实例').trigger('click')
     await flushPromises()
     expect(mocks.create).not.toHaveBeenCalled()
@@ -639,7 +703,7 @@ describe('机构公共Agent部署交互', () => {
     expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({
       integration_id: null,
       grant_id: 'grant-1',
-      external_agent_ref: 'external-agent-2',
+      external_agent_ref: null,
       definition_id: 't1',
       resource_bindings: [
         {

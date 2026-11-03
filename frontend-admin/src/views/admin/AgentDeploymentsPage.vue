@@ -8,12 +8,14 @@ import {
   guardFormEnter,
   useDrawerClose,
   useResource,
-  useTask
+  useTask,
+  useUnsavedChanges
 } from '@skillforge/shared/admin'
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 import { catalogDecimalIdentity } from '@skillforge/shared/integration/decimalIdentity'
 import { message, confirm } from '@skillforge/shared/feedback'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import { api } from '../../api'
 import { createInstitutionTargetOptions } from '../../api/institutionTargetOptions'
 import { useAuthStore } from '../../stores/auth'
@@ -21,6 +23,7 @@ import { useManagementCommand } from '../../composables/managementCommand'
 import type {
   AgentDeployment,
   DeploymentBindings,
+  DeploymentCreateInput,
   ResourceSlotBinding
 } from '../../api/agentDeployments'
 
@@ -86,6 +89,30 @@ const grants = useResource(async (signal) => {
 })
 const action = useTask(),
   write = useManagementCommand()
+const createStorageKey = auth.user?.sub
+  ? `noewise:institution-deployment-create:${encodeURIComponent(JSON.stringify([auth.user.tenant_id, auth.user.sub, targetTenant ?? auth.user.tenant_id]))}`
+  : ''
+const createPending = ref<{ key: string; input: DeploymentCreateInput }>()
+const createStorageFailed = ref(!createStorageKey)
+if (createStorageKey) {
+  try {
+    const raw = sessionStorage.getItem(createStorageKey)
+    if (raw) {
+      const saved = JSON.parse(raw) as { key: string; input: DeploymentCreateInput }
+      if (!saved.key || !saved.input?.definition_id || !saved.input.grant_id) throw Error('invalid')
+      createPending.value = saved
+    }
+  } catch {
+    createStorageFailed.value = true
+  }
+}
+const blocked = computed(
+  () => !!write.pending.value || !!createPending.value || createStorageFailed.value
+)
+useUnsavedChanges({
+  dirty: () => false,
+  busy: () => !!createPending.value || createStorageFailed.value
+})
 const open = ref(false)
 const editing = ref<AgentDeployment>()
 const automaticDefinitionId = ref('')
@@ -109,7 +136,7 @@ const availableGrants = computed(() =>
   )
 )
 watch([() => form.definition_id, availableGrants], ([definition, available], [previous, old]) => {
-  if (editing.value || write.pending.value) return
+  if (editing.value || blocked.value) return
   if (definition !== previous || (old.length === 1 && available.length > 1)) form.grant_id = ''
   if (!available.some((grant) => grant.grant_id === form.grant_id))
     form.grant_id = available.length === 1 ? available[0]!.grant_id : ''
@@ -215,7 +242,7 @@ const dirtySnapshot = () => {
 }
 const close = useDrawerClose({
   open: () => open.value,
-  busy: () => action.busy.value || !!write.pending.value,
+  busy: () => action.busy.value || blocked.value,
   dirty: () => dirtySnapshot() !== baseline.value,
   close: () => {
     open.value = false
@@ -301,7 +328,7 @@ async function loadTemplates() {
     open.value &&
     !editing.value &&
     !form.definition_id &&
-    !write.pending.value
+    !blocked.value
   ) {
     automaticDefinitionId.value = String(catalog.items[0]!.id)
     form.definition_id = automaticDefinitionId.value
@@ -310,7 +337,7 @@ async function loadTemplates() {
 
 /** 新建采用当前机构授权目录；编辑加载真实修订和全部绑定。 */
 function create() {
-  if (!canCreate.value || action.busy.value) return
+  if (!canCreate.value || action.busy.value || blocked.value) return
   editing.value = undefined
   automaticDefinitionId.value = ''
   automaticName.value = ''
@@ -318,7 +345,7 @@ function create() {
     integration_id: '',
     definition_id: '',
     grant_id: '',
-    external_agent_ref: crypto.randomUUID(),
+    external_agent_ref: '',
     name: ''
   })
   resources.value = []
@@ -498,8 +525,9 @@ function bindings(): DeploymentBindings {
 function save() {
   if (!canSave.value) return
   void action.run(async () => {
-    if (!form.grant_id || !form.definition_id || !form.external_agent_ref.trim())
-      throw Error('请选择公共定义、显式授权依据并填写外部智能体标识')
+    if (!form.grant_id || !form.definition_id) throw Error('请选择公共定义和授权依据')
+    if (!editing.value && form.integration_id.trim() && !form.external_agent_ref.trim())
+      throw Error('请填写外部智能体标识')
     if (
       !editing.value &&
       (grants.loading.value ||
@@ -530,29 +558,96 @@ function save() {
           ...snapshot,
           ...form,
           integration_id: form.integration_id.trim() || null,
-          external_agent_ref: form.external_agent_ref.trim(),
+          external_agent_ref: form.integration_id.trim() ? form.external_agent_ref.trim() : null,
           name: form.name.trim() || undefined,
           ...(targetTenant ? { tenant_id: targetTenant } : {})
         }
-    await write.execute(
-      (key) =>
-        'deployment_id' in input
-          ? api.agentDeployments.bindings(input, key)
-          : api.agentDeployments.create(input, key),
-      (result) => {
-        baseline.value = dirtySnapshot()
-        open.value = false
-        editing.value = undefined
-        message.success(
-          result.ready
-            ? '公共智能体实例已保存，可以开始新任务'
-            : '实例已保存，请根据就绪提示补齐绑定'
-        )
-        emit('changed')
-        void list.reload()
-      },
-      () => requireCurrentPermission(permission)
+    if ('deployment_id' in input) {
+      await write.execute(
+        (key) => api.agentDeployments.bindings(input, key),
+        acceptDeployment,
+        () => requireCurrentPermission(permission)
+      )
+      return
+    }
+    const operation = { key: crypto.randomUUID(), input }
+    try {
+      sessionStorage.setItem(createStorageKey, JSON.stringify(operation))
+    } catch {
+      createStorageFailed.value = true
+      throw Error('无法保存原请求，未发送部署；请恢复浏览器会话存储')
+    }
+    createPending.value = operation
+    try {
+      const result = await api.agentDeployments.create(input, operation.key, {
+        retryOnUnauthorized: false
+      })
+      requireCurrentPermission(permission)
+      acceptCreatedDeployment(operation, result)
+    } catch (reason) {
+      if (reason instanceof HttpClientError && [400, 401, 403, 422].includes(reason.status)) {
+        try {
+          sessionStorage.removeItem(createStorageKey)
+          createPending.value = undefined
+        } catch {
+          createStorageFailed.value = true
+        }
+      }
+      throw reason
+    }
+  })
+}
+function acceptDeployment(result: AgentDeployment) {
+  baseline.value = dirtySnapshot()
+  open.value = false
+  editing.value = undefined
+  message.success(
+    result.ready ? '公共智能体实例已保存，可以开始新任务' : '实例已保存，请根据就绪提示补齐绑定'
+  )
+  emit('changed')
+  void list.reload()
+}
+function acceptCreatedDeployment(
+  operation: { key: string; input: DeploymentCreateInput },
+  result: AgentDeployment
+) {
+  const input = operation.input
+  if (
+    !result?.deployment_id ||
+    !result.agent_id ||
+    result.tenant_id !== (input.tenant_id ?? auth.user?.tenant_id) ||
+    result.definition_id !== input.definition_id ||
+    result.grant_id !== input.grant_id ||
+    result.integration_id !== input.integration_id ||
+    !result.external_agent_ref ||
+    (input.external_agent_ref !== null && result.external_agent_ref !== input.external_agent_ref)
+  )
+    throw Error('原部署回执身份无法核实')
+  try {
+    sessionStorage.removeItem(createStorageKey)
+  } catch {
+    createStorageFailed.value = true
+    throw Error('部署已确认，但无法清除原请求记录；请恢复浏览器会话存储')
+  }
+  createStorageFailed.value = false
+  createPending.value = undefined
+  acceptDeployment(result)
+}
+function reconcileWrite() {
+  if (!createPending.value) return action.run(write.reconcile)
+  const operation = createPending.value
+  return action.run(async () => {
+    requireCurrentPermission('tenant.agent_deployments.read')
+    if (
+      (operation.input.tenant_id ?? auth.user?.tenant_id) !== (targetTenant ?? auth.user?.tenant_id)
     )
+      throw Error('请返回原机构核对部署请求')
+    const receipt = await api.agentDeployments.receipt(operation.input, operation.key)
+    requireCurrentPermission('tenant.agent_deployments.read')
+    if (operation !== createPending.value) throw Error('原请求已变化，请重新核对')
+    if (receipt.status === 'NOT_FOUND') throw Error('尚未查到原请求回执，请稍后继续核对')
+    if (!receipt.result) throw Error('原部署回执身份无法核实')
+    acceptCreatedDeployment(operation, receipt.result)
   })
 }
 const authorizationOpen = ref(false),
@@ -561,7 +656,7 @@ const authorizationOpen = ref(false),
   authorizationBaseline = ref('')
 const authorizationClose = useDrawerClose({
   open: () => authorizationOpen.value,
-  busy: () => action.busy.value || !!write.pending.value,
+  busy: () => action.busy.value || blocked.value,
   dirty: () => nextGrant.value !== authorizationBaseline.value,
   close: () => {
     authorizationOpen.value = false
@@ -676,7 +771,7 @@ onMounted(() => {
       ><ElButton
         v-if="canCreate"
         type="primary"
-        :disabled="action.busy.value || !!write.pending.value"
+        :disabled="action.busy.value || blocked"
         @click="create"
         >部署公共智能体</ElButton
       ></template
@@ -688,14 +783,18 @@ onMounted(() => {
       :closable="false"
     />
     <ElAlert
-      v-if="write.pending.value"
-      title="本次部署操作的结果尚未确认，原内容已保留，后续写入已暂停。请点击“核对原请求”确认结果，避免重复部署。"
+      v-if="blocked"
+      :title="
+        createStorageFailed
+          ? '无法读取或保存原请求，请恢复浏览器会话存储。'
+          : '本次部署操作的结果尚未确认，请核对原请求，避免重复部署。'
+      "
       type="warning"
       :closable="false"
     /><ElButton
-      v-if="write.pending.value"
+      v-if="write.pending.value || createPending"
       :loading="action.busy.value"
-      @click="action.run(write.reconcile)"
+      @click="reconcileWrite"
       >核对原请求</ElButton
     >
     <div class="admin-toolbar admin-card">
@@ -707,7 +806,7 @@ onMounted(() => {
           :clearable="false"
           aria-label="管理机构"
           placeholder="搜索当前可管理的机构名称"
-          :disabled="action.busy.value || !!write.pending.value"
+          :disabled="action.busy.value || blocked"
           @update:model-value="selectTarget"
         />
       </div>
@@ -777,12 +876,12 @@ onMounted(() => {
           ><ElButton
             v-if="canUpdate"
             link
-            :disabled="action.busy.value || !!write.pending.value"
+            :disabled="action.busy.value || blocked"
             @click="edit(row as AgentDeployment)"
             >配置机构绑定</ElButton
           ><ElButton
             link
-            :disabled="action.busy.value || !!write.pending.value"
+            :disabled="action.busy.value || blocked"
             @click="authorization(row as AgentDeployment)"
             >授权链{{ canSwitch ? '与切换' : '' }}</ElButton
           ></template
@@ -797,18 +896,18 @@ onMounted(() => {
       append-to-body
       :before-close="close.requestClose"
       :close-on-click-modal="false"
-      :close-on-press-escape="!action.busy.value && !write.pending.value"
-      :show-close="!action.busy.value && !write.pending.value"
+      :close-on-press-escape="!action.busy.value && !blocked"
+      :show-close="!action.busy.value && !blocked"
     >
       <ElAlert
-        v-if="write.pending.value"
+        v-if="blocked"
         title="请求结果尚未确认，请核对原请求。"
         type="warning"
         :closable="false"
       /><ElButton
-        v-if="write.pending.value"
+        v-if="write.pending.value || createPending"
         :loading="action.busy.value"
-        @click="action.run(write.reconcile)"
+        @click="reconcileWrite"
         >核对原请求</ElButton
       ><FeedbackNotice
         v-if="action.error.value"
@@ -816,10 +915,7 @@ onMounted(() => {
         type="error"
         :closable="false"
       />
-      <ElButton
-        v-if="editing"
-        :disabled="action.busy.value || !!write.pending.value"
-        @click="reloadEditing"
+      <ElButton v-if="editing" :disabled="action.busy.value || blocked" @click="reloadEditing"
         >重新读取机构绑定</ElButton
       >
       <FeedbackNotice
@@ -836,7 +932,7 @@ onMounted(() => {
       /><ElButton v-if="options.error.value" @click="options.reload">重试机构资源目录</ElButton>
       <ElForm
         :model="form"
-        :disabled="action.busy.value || !!write.pending.value"
+        :disabled="action.busy.value || blocked"
         label-position="top"
         @submit.prevent="save"
         @keydown.capture="guardFormEnter"
@@ -852,7 +948,7 @@ onMounted(() => {
                 >原生机构部署留空；接入域在创建后保持稳定。</FieldTip
               ></ElFormItem
             >
-            <ElFormItem label="外部智能体标识" required
+            <ElFormItem v-if="form.integration_id" label="外部智能体标识" required
               ><ElInput
                 v-model="form.external_agent_ref"
                 :readonly="!!editing"
@@ -860,8 +956,7 @@ onMounted(() => {
                 v-described-by="help + '-ref'"
                 :aria-describedby="help + '-ref'"
               /><FieldTip :id="help + '-ref'"
-                >已自动生成稳定身份，通常无需修改；需映射外部业务系统时可在创建前改为实际标识，最多
-                128 位。创建后保持不变。</FieldTip
+                >填写外部系统中的真实标识，最多 128 位；创建后保持不变。</FieldTip
               ></ElFormItem
             >
           </ElCollapseItem></ElCollapse
@@ -1123,16 +1218,14 @@ onMounted(() => {
           >
         </div></ElForm
       ><template #footer
-        ><ElButton
-          @click="close.requestClose"
-          :disabled="action.busy.value || !!write.pending.value"
+        ><ElButton @click="close.requestClose" :disabled="action.busy.value || blocked"
           >取消</ElButton
         ><ElButton
           v-if="canSave"
           type="primary"
           :loading="action.busy.value"
           :disabled="
-            !!write.pending.value ||
+            blocked ||
             options.loading.value ||
             selectedTemplate.loading.value ||
             !form.definition_id
@@ -1149,18 +1242,18 @@ onMounted(() => {
       class="admin-drawer"
       :before-close="authorizationClose.requestClose"
       :close-on-click-modal="false"
-      :show-close="!action.busy.value && !write.pending.value"
-      :close-on-press-escape="!action.busy.value && !write.pending.value"
+      :show-close="!action.busy.value && !blocked"
+      :close-on-press-escape="!action.busy.value && !blocked"
     >
       <ElAlert
-        v-if="write.pending.value"
+        v-if="blocked"
         title="请求结果尚未确认，请核对原请求。"
         type="warning"
         :closable="false"
       /><ElButton
-        v-if="write.pending.value"
+        v-if="write.pending.value || createPending"
         :loading="action.busy.value"
-        @click="action.run(write.reconcile)"
+        @click="reconcileWrite"
         >核对原请求</ElButton
       ><FeedbackNotice
         v-if="action.error.value"
@@ -1205,9 +1298,7 @@ onMounted(() => {
           type="info"
           :closable="false"
         />
-        <ElButton
-          :disabled="action.busy.value || !!write.pending.value"
-          @click="reloadAuthorization"
+        <ElButton :disabled="action.busy.value || blocked" @click="reloadAuthorization"
           >重新读取授权依据</ElButton
         >
         <FeedbackNotice
@@ -1219,7 +1310,7 @@ onMounted(() => {
         <ElForm
           v-if="canSwitch"
           label-position="top"
-          :disabled="action.busy.value || !!write.pending.value"
+          :disabled="action.busy.value || blocked"
           @submit.prevent="switchAuthorization"
           @keydown.capture="guardFormEnter"
           ><ElFormItem label="新的同源授权依据" required
@@ -1242,17 +1333,13 @@ onMounted(() => {
         ></ElForm>
       </template>
       <template #footer
-        ><ElButton
-          :disabled="action.busy.value || !!write.pending.value"
-          @click="authorizationClose.requestClose"
+        ><ElButton :disabled="action.busy.value || blocked" @click="authorizationClose.requestClose"
           >关闭</ElButton
         ><ElButton
           v-if="canSwitch"
           type="primary"
           :loading="action.busy.value"
-          :disabled="
-            !!write.pending.value || !nextGrant || grants.loading.value || !!grants.error.value
-          "
+          :disabled="blocked || !nextGrant || grants.loading.value || !!grants.error.value"
           @click="switchAuthorization"
           >切换授权依据</ElButton
         ></template

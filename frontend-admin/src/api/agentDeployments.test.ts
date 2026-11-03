@@ -43,6 +43,11 @@ describe('机构公共Agent部署契约', () => {
     expect(http.post).toHaveBeenLastCalledWith('/tenant/agent-deployments', deploy, {
       headers: { 'Idempotency-Key': expect.any(String) }
     })
+    await api.receipt(deploy, 'original-key')
+    expect(http.post).toHaveBeenLastCalledWith('/tenant/agent-deployments/receipt/query', deploy, {
+      headers: { 'Idempotency-Key': 'original-key' },
+      silent: true
+    })
     const bind = {
       tenant_id: tenant,
       deployment_id: '9223372036854775804',

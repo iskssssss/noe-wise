@@ -251,6 +251,35 @@ class AgentDeploymentServiceTest {
         verifyNoInteractions(agents,publications);assertNull(TenantContext.getTenantId());
     }
 
+    @Test void institutionCreationReceiptRequiresReadAndOriginalActorWithoutWriting() throws Exception {
+        TenantContext.setTenantId("7");
+        var command=new Deploy(31L,41L,"integration","doctor",null,List.of(),List.of(),Map.of());
+        String fingerprint=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(json.copy().enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsBytes(command)));
+        var row=new AgentDeploymentMapper.Row(11L,"integration",7L,12L,31L,41L,1L,"doctor",fingerprint,"{}",1,Instant.EPOCH,json.writeValueAsString(chain(41,7)));
+        when(mapper.findExternal("integration",7L,"doctor")).thenReturn(row);
+        var original=new View(11L,7L,"integration",12L,"doctor",31L,41L,1,"定义","1","FOLLOW_PUBLISHED",1,true,List.of(),List.of(),List.of(),List.of(),List.of(),Map.of(),chain(41,7));
+        when(mapper.findCreateResponse(11L,7L,"tenant:7:member:70","request")).thenReturn(json.writeValueAsString(original));
+        assertEquals(original,service.deployReceipt(command,"request").result());
+        assertEquals("NOT_FOUND",service.deployReceipt(command,"other").status());
+        assertThrows(ApiException.class,()->service.deployReceipt(new Deploy(31L,41L,"integration","doctor","different",null,null,null),"request"));
+        verify(foundation,atLeastOnce()).require("tenant.agent_deployments.read");
+        verify(mapper,never()).insert(any());verify(mapper,never()).lockExternal(any(),anyLong(),anyString());
+        verifyNoInteractions(agents,publications);
+    }
+
+    @Test void institutionReceiptForAnotherTenantRequiresExactTargetReadPermission() {
+        TenantContext.setTenantId("7");
+        var command=new Deploy(31L,41L,null,null,null,List.of(),List.of(),Map.of(),8L);
+        when(targetManagement.withTarget(eq("8"),eq("tenant.agent_deployments.read"),any())).thenAnswer(call -> {
+            java.util.function.Supplier<?> action=call.getArgument(2);
+            TenantContext.setTenantId("8");
+            try { return action.get(); } finally { TenantContext.setTenantId("7"); }
+        });
+        assertEquals("NOT_FOUND",service.deployReceipt(command,"request").status());
+        verify(targetManagement).withTarget(eq("8"),eq("tenant.agent_deployments.read"),any());
+        verify(mapper,never()).insert(any());
+    }
+
     /** 保存的资源仍需统一授权校验，跨机构资源失败不会写入绑定或发布。 */
     @Test void foreignResourceCannotBeSavedAndLocalRevisionUsesCas() throws Exception {
         row(7,11,new LocalBindings(List.of(),List.of(),Map.of()));

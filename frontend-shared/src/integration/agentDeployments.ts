@@ -1,5 +1,14 @@
 import type { RequestOptions } from '../utils/http'
 
+export type DeploymentCreateInput = DeploymentBindings & {
+  tenant_id?: string | null
+  integration_id: string | null
+  definition_id: string
+  grant_id: string
+  external_agent_ref: string | null
+  name?: string
+}
+
 /** 部署响应保留服务端实例身份、当前跟随版本与绑定修订。 */
 export interface AgentDeployment {
   deployment_id: string
@@ -149,14 +158,7 @@ export function createAgentDeploymentsApi(
         options
       ),
     create: (
-      input: DeploymentBindings & {
-        tenant_id?: string | null
-        integration_id: string | null
-        definition_id: string
-        grant_id: string
-        external_agent_ref: string | null
-        name?: string
-      },
+      input: DeploymentCreateInput,
       key: string = crypto.randomUUID(),
       options?: RequestOptions
     ) => {
@@ -166,6 +168,12 @@ export function createAgentDeploymentsApi(
         ...options
       })
     },
+    receipt: (input: DeploymentCreateInput, key: string) =>
+      http.post<{ status: 'FOUND' | 'NOT_FOUND'; result: AgentDeployment | null }>(
+        `${base}/receipt/query`,
+        input,
+        { headers: { 'Idempotency-Key': key }, silent: true }
+      ),
     bindings: (
       input: DeploymentBindings & {
         deployment_id: string
