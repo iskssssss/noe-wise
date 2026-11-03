@@ -73,7 +73,6 @@ const budget = ref<WorkflowTestBudget>(),
 const replies = reactive<Record<string, string>>({}),
   replyUnknown = reactive<Record<string, boolean>>({})
 const replyReceiptBusy = ref(false)
-const replyReceiptOutcome = ref('')
 let replyReceiptOwner = 0
 let replySubmitOwner = 0
 const recovery = ref<Recovery>()
@@ -1144,7 +1143,6 @@ async function checkReply(operation: ReplyOperation, automatic = false) {
       readError.value = '原回复已受理，但本地记录无法更新，请恢复浏览器存储后核对。'
       return
     }
-    replyReceiptOutcome.value = '原待办回复已受理，后续运行状态请以测试结果为准。'
     readError.value = ''
   } catch (reason) {
     claim(reason)
@@ -1349,7 +1347,6 @@ watch(
       receipt.value = undefined
       history.value = undefined
       trace.value = undefined
-      replyReceiptOutcome.value = ''
       replyReceiptOwner++
       replySubmitOwner++
       replyReceiptBusy.value = false
@@ -1693,9 +1690,6 @@ onBeforeUnmount(() => {
         <p v-if="receipt?.blockingReason" class="test-warning" role="status">
           {{ receipt.blockingReason }}
         </p>
-        <p v-if="replyReceiptOutcome" class="admin-field-help" role="status">
-          {{ replyReceiptOutcome }}
-        </p>
         <div v-if="recovery.replyAttempts?.length" class="test-warning" role="status">
           部分待办回复未记录可核对的原输入身份，请联系管理员核实，不要重复提交。
         </div>
@@ -1704,7 +1698,7 @@ onBeforeUnmount(() => {
           :key="operation.inputId"
           role="status"
         >
-          <p v-if="operation.accepted">原待办回复已受理，正在更新待办状态。</p>
+          <p v-if="operation.accepted">原待办回复已受理，后续运行状态请以测试结果为准。</p>
           <template v-else>
             <p>原待办回复结果尚未确认，请核对原回复；不会重复提交。</p>
             <ElButton

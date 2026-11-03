@@ -172,6 +172,12 @@ test('工作流待办回复受理后断连，刷新核对原输入', async ({ pa
     path: join(evidence, 'workflow-hitl-reply-after-reload.png'),
     fullPage: true
   })
+  await expect(panel.locator('.test-target')).toContainText('已完成', { timeout: 30_000 })
+  await expect(
+    panel.getByText('原待办回复已受理，正在更新待办状态。', { exact: true })
+  ).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: '查询测试状态', exact: true })).toBeEnabled()
+  await page.screenshot({ path: join(evidence, 'workflow-hitl-reply-settled.png'), fullPage: true })
   await writeFile(
     join(evidence, 'workflow-hitl-reply-candidate.json'),
     JSON.stringify(
