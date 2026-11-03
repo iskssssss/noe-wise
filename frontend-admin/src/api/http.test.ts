@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient, HttpClientError } from '@skillforge/shared/utils/http'
 import { createWorkflowDraftApi } from './workflowDrafts'
+import { createConversationTaskApi, type ConversationTask } from './conversationTasks'
 import { api } from './index'
 
 function client(onError = vi.fn()) {
@@ -79,6 +80,22 @@ it('会话图片回执按原会话和上传标识只读查询', async () => {
 })
 
 describe('登录请求认证边界', () => {
+  it.each(['select', 'update'] as const)('任务%s遇到401时不刷新令牌或重发', async (action) => {
+    localStorage.setItem('test.access', 'expired-token')
+    localStorage.setItem('test.refresh', 'refresh-token')
+    const fetchMock = vi.fn().mockResolvedValue(apiResponse(null, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const { http } = client()
+    const tasks = createConversationTaskApi(http)
+    const task = { taskId: 'task-1', revision: 1 } as ConversationTask
+    const result =
+      action === 'select'
+        ? tasks.select('session-1', task, 'operation-1')
+        : tasks.update('session-1', task, 'complete', 'operation-1')
+    await expect(result).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]![0]).toBe(`/api/v1/conversation-tasks/${action}`)
+  })
   it('知识文档上传遇到 401 不自动重发文件', async () => {
     localStorage.setItem('skillforge.access_token', 'expired-token')
     localStorage.setItem('skillforge.refresh_token', 'refresh-token')

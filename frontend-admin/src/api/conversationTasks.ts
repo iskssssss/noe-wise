@@ -72,12 +72,16 @@ export function createConversationTaskApi(http: {
         .then((result) => ({ ...result, task: result.task ? fromWire(result.task) : null })),
     select: (sessionId: string, task: ConversationTask, operationId: string) =>
       http
-        .post<ConversationTaskWire>(`${root}/select`, {
-          session_id: sessionId,
-          task_id: task.taskId,
-          expected_revision: task.revision,
-          operation_id: operationId
-        })
+        .post<ConversationTaskWire>(
+          `${root}/select`,
+          {
+            session_id: sessionId,
+            task_id: task.taskId,
+            expected_revision: task.revision,
+            operation_id: operationId
+          },
+          { retryOnUnauthorized: false }
+        )
         .then(fromWire),
     update: (
       sessionId: string,
@@ -87,14 +91,18 @@ export function createConversationTaskApi(http: {
       text?: string
     ) =>
       http
-        .post<ConversationTaskWire>(`${root}/update`, {
-          session_id: sessionId,
-          task_id: task.taskId,
-          expected_revision: task.revision,
-          operation,
-          operation_id: operationId,
-          ...(text === undefined ? {} : { text })
-        })
+        .post<ConversationTaskWire>(
+          `${root}/update`,
+          {
+            session_id: sessionId,
+            task_id: task.taskId,
+            expected_revision: task.revision,
+            operation,
+            operation_id: operationId,
+            ...(text === undefined ? {} : { text })
+          },
+          { retryOnUnauthorized: false }
+        )
         .then(fromWire)
   }
 }

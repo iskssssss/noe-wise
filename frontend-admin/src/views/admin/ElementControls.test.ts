@@ -70,6 +70,7 @@ const mocks = vi.hoisted(() => ({
   channels: vi.fn()
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'browser-session',
   api: {
     knowledge: {
       getDocument: mocks.getDocument,

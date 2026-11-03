@@ -200,7 +200,7 @@ import {
   useDrawerClose,
   useUnsavedChanges
 } from '@skillforge/shared/admin'
-import { api } from '../../api'
+import { api, getSessionId } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { ConversationTask, TaskOperation } from '../../api/conversationTasks'
@@ -248,6 +248,9 @@ const owner = computed(() =>
 )
 type PendingTaskOperation = { sessionId: string; taskId: string; operationId: string }
 const pending = ref<PendingTaskOperation>()
+let automaticReceipt:
+  | { operation: PendingTaskOperation; subject: string; identity: number; session: string | null }
+  | undefined
 const storageError = ref('')
 const storageKey = (subject: string) => `skillforge.task-operation.${subject}`
 let active = true
@@ -327,6 +330,8 @@ async function performOperation(
   write: (operation: PendingTaskOperation) => Promise<unknown>
 ) {
   const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId(),
     operation = beginOperation(task)
   try {
     await write(operation)
@@ -334,24 +339,82 @@ async function performOperation(
     if (
       cause instanceof HttpClientError &&
       cause.code === 'TASK_OPERATION_REJECTED_BEFORE_MUTATION'
-    )
+    ) {
       finishOperation(subject, operation)
+    } else if (
+      active &&
+      owner.value === subject &&
+      auth.identityVersion === identity &&
+      getSessionId() === session &&
+      !!session &&
+      auth.user?.permissions.includes('foundation.sessions.read')
+    ) {
+      automaticReceipt = { operation, subject, identity, session }
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      return false
+    }
     throw cause
   }
   return finishOperation(subject, operation)
 }
-function checkReceipt() {
+async function runWrite(write: () => Promise<void>) {
+  if (busy.value) return
+  automaticReceipt = undefined
+  await run(write)
+  const saved = takeAutomaticReceipt()
+  if (
+    saved &&
+    active &&
+    owner.value === saved.subject &&
+    auth.identityVersion === saved.identity &&
+    getSessionId() === saved.session &&
+    sessionId.value === saved.operation.sessionId &&
+    pending.value?.operationId === saved.operation.operationId &&
+    auth.user?.permissions.includes('foundation.sessions.read')
+  )
+    await checkReceipt()
+}
+function takeAutomaticReceipt() {
+  const saved = automaticReceipt
+  automaticReceipt = undefined
+  return saved
+}
+async function checkReceipt() {
   const operation = pending.value,
-    subject = owner.value
-  if (!operation || !subject) return
-  void run(async () => {
-    const receipt = await api.conversationTasks.receipt(
-      operation.sessionId,
-      operation.taskId,
-      operation.operationId
-    )
-    if (!active || owner.value !== subject || pending.value?.operationId !== operation.operationId)
-      return
+    subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  if (
+    !operation ||
+    !subject ||
+    !session ||
+    !auth.user?.permissions.includes('foundation.sessions.read')
+  )
+    return
+  const current = () =>
+    active &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    !!auth.user?.permissions.includes('foundation.sessions.read') &&
+    sessionId.value === operation.sessionId &&
+    pending.value?.operationId === operation.operationId
+  await run(async () => {
+    let receipt: Awaited<ReturnType<typeof api.conversationTasks.receipt>>
+    try {
+      receipt = await api.conversationTasks.receipt(
+        operation.sessionId,
+        operation.taskId,
+        operation.operationId
+      )
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
+    if (!current()) return
     if (receipt.status !== 'SUCCEEDED' || receipt.task?.taskId !== operation.taskId) {
       message.warning('尚未找到原操作的成功回执，结果仍未确认。')
       return
@@ -395,7 +458,7 @@ const open = ref(false),
   })
 async function select(row: ConversationTask) {
   if (refreshRequired.value || pending.value || storageError.value) return
-  await run(async () => {
+  await runWrite(async () => {
     requireCurrentSession()
     if (
       !(await performOperation(row, (operation) =>
@@ -418,7 +481,7 @@ async function update(row: ConversationTask, operation: TaskOperation) {
     }))
   )
     return
-  await run(async () => {
+  await runWrite(async () => {
     requireCurrentSession()
     if (
       !(await performOperation(row, (command) =>
@@ -444,7 +507,7 @@ function correct(row: ConversationTask) {
 }
 async function save() {
   if (refreshRequired.value || pending.value || storageError.value) return
-  await run(async () => {
+  await runWrite(async () => {
     requireCurrentSession()
     if (!text.value.trim()) throw Error('请输入纠正说明')
     const task = selected.value!

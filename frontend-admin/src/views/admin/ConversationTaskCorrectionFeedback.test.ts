@@ -13,13 +13,17 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn()
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'browser-session',
   api: {
     chat: { sessions: mocks.sessions },
     conversationTasks: { list: mocks.list, update: mocks.update, receipt: mocks.receipt }
   }
 }))
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({ user: { tenant_id: 'tenant-1', sub: 'user-1' } })
+  useAuthStore: () => ({
+    identityVersion: 1,
+    user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
+  })
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { sessionId: 'session-1' } }),
@@ -102,14 +106,15 @@ describe('任务纠正失败反馈与显式重试', () => {
       false
     )
   })
-  it('命令失败只展示一次顶部错误，保留原草稿且不自动重发', async () => {
+  it('自动核对失败只展示一次顶部错误，保留原草稿且不自动重发', async () => {
     mocks.update.mockRejectedValueOnce(new Error('当前修订已过期'))
+    mocks.receipt.mockRejectedValueOnce(new Error('回执暂不可用'))
     const drawer = await openCorrection()
     await submit(drawer)
     expect(mocks.showMessage).toHaveBeenCalledTimes(1)
     expect(mocks.showMessage).toHaveBeenCalledWith(
       'error',
-      '当前修订已过期',
+      '回执暂不可用',
       expect.anything(),
       expect.anything()
     )
@@ -122,6 +127,7 @@ describe('任务纠正失败反馈与显式重试', () => {
   it('结果未知时只读核对原请求，未找到不重发，确认后刷新', async () => {
     mocks.update.mockRejectedValueOnce(new Error('连接断开'))
     mocks.receipt
+      .mockResolvedValueOnce({ status: 'UNKNOWN', task: null })
       .mockResolvedValueOnce({ status: 'UNKNOWN', task: null })
       .mockResolvedValueOnce({ status: 'SUCCEEDED', task })
     const drawer = await openCorrection()
@@ -139,10 +145,11 @@ describe('任务纠正失败反馈与显式重试', () => {
     await flushPromises()
     expect(mocks.receipt).toHaveBeenNthCalledWith(1, 'session-1', 'task-1', operation)
     expect(mocks.receipt).toHaveBeenNthCalledWith(2, 'session-1', 'task-1', operation)
+    expect(mocks.receipt).toHaveBeenNthCalledWith(3, 'session-1', 'task-1', operation)
     expect(mocks.list).toHaveBeenCalledTimes(2)
     expect(drawer.props('modelValue')).toBe(false)
     expect(mocks.success).toHaveBeenCalledExactlyOnceWith('原任务操作已确认')
-    expect(mocks.showMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.showMessage).not.toHaveBeenCalled()
   })
   it('纠正成功但读取失败时保留已完成状态，只允许刷新列表', async () => {
     mocks.update.mockResolvedValueOnce(task)

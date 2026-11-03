@@ -135,9 +135,23 @@ tasks.named<Test>("test") {
     exclude("**/KnowledgeRebuild401BrowserE2ETest.class")
     exclude("**/KnowledgeRebuildProgressBrowserE2ETest.class")
     exclude("**/KnowledgeRebuildFenceBrowserE2ETest.class")
+    exclude("**/ConversationTaskRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
+}
+
+tasks.register<Test>("conversationTaskRecoveryBrowserE2E") {
+    description = "验证会话任务原操作回执的浏览器恢复路径"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.ConversationTaskRecoveryBrowserE2ETest.realTaskOperationResponseLossUsesOriginalReceipt")
+    }
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("connectorCreationBrowserE2E") {

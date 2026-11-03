@@ -55,7 +55,8 @@ describe('任务续接 API', () => {
           task_id: 'task/a',
           expected_revision: 7,
           operation_id: 'select-operation'
-        }
+        },
+        { retryOnUnauthorized: false }
       ],
       [
         '/conversation-tasks/update',
@@ -66,7 +67,8 @@ describe('任务续接 API', () => {
           operation: 'correct',
           operation_id: 'correct-operation',
           text: '改为周五'
-        }
+        },
+        { retryOnUnauthorized: false }
       ]
     ])
   })

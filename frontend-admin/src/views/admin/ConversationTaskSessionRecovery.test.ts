@@ -10,10 +10,15 @@ const calls = vi.hoisted(() => ({
   select: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
-  auth: undefined as unknown as { user: { tenant_id: string; sub: string } },
+  auth: undefined as unknown as {
+    identityVersion: number
+    user: { tenant_id: string; sub: string; permissions: string[] }
+  },
+  session: 'browser-session',
   routeQuery: {} as Record<string, string>
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => calls.session,
   api: {
     chat: { sessions: calls.sessions },
     conversationTasks: {
@@ -40,7 +45,11 @@ function button(label: string) {
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
-  calls.auth = reactive({ user: { tenant_id: 'tenant-1', sub: 'user-1' } })
+  calls.session = 'browser-session'
+  calls.auth = reactive({
+    identityVersion: 1,
+    user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
+  })
   calls.routeQuery = {}
   calls.sessions.mockResolvedValue([session, { session_id: 'session-2', summary: '另一会话' }])
   calls.list.mockResolvedValue([])
@@ -124,7 +133,11 @@ it('切换机构后清除旧任务和会话，忽略旧机构迟到的列表', a
   wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'session-1')
   wrapper.findComponent(ElSelect).vm.$emit('change', 'session-1')
   await flushPromises()
-  calls.auth.user = { tenant_id: 'tenant-2', sub: 'user-2' }
+  calls.auth.user = {
+    tenant_id: 'tenant-2',
+    sub: 'user-2',
+    permissions: ['foundation.sessions.read']
+  }
   await flushPromises()
   finish([{ taskId: 'old', title: '旧机构任务', summary: '', status: 'OPEN', revision: 1 }])
   await flushPromises()
@@ -143,7 +156,11 @@ it('切换主体时仅恢复新主体自己的待核对操作', async () => {
   )
   wrapper = mount(ConversationTasksPage, { attachTo: document.body })
   await flushPromises()
-  calls.auth.user = { tenant_id: 'tenant-2', sub: 'user-2' }
+  calls.auth.user = {
+    tenant_id: 'tenant-2',
+    sub: 'user-2',
+    permissions: ['foundation.sessions.read']
+  }
   await flushPromises()
   expect(wrapper.text()).toContain(operationId)
   expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('new-session')
@@ -167,6 +184,7 @@ it('任务操作断连后重新进入仍保存原标识，只有成功回执解�
   calls.select.mockRejectedValueOnce(new Error('连接断开'))
   calls.receipt
     .mockResolvedValueOnce({ status: 'UNKNOWN', task: null })
+    .mockResolvedValueOnce({ status: 'UNKNOWN', task: null })
     .mockResolvedValueOnce({ status: 'SUCCEEDED', task })
   wrapper = mount(ConversationTasksPage, { attachTo: document.body })
   await flushPromises()
@@ -183,13 +201,14 @@ it('任务操作断连后重新进入仍保存原标识，只有成功回执解�
   expect(wrapper.text()).toContain(operationId)
   expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
   expect(button('设为当前任务').props('disabled')).toBe(true)
-  expect(calls.receipt).toHaveBeenCalledTimes(1)
+  expect(calls.receipt).toHaveBeenCalledTimes(2)
   await button('核对原操作').trigger('click')
   await flushPromises()
   expect(wrapper.text()).not.toContain(operationId)
   expect(button('设为当前任务').props('disabled')).toBe(false)
   expect(calls.receipt).toHaveBeenNthCalledWith(1, 'session-1', 'task-1', operationId)
   expect(calls.receipt).toHaveBeenNthCalledWith(2, 'session-1', 'task-1', operationId)
+  expect(calls.receipt).toHaveBeenNthCalledWith(3, 'session-1', 'task-1', operationId)
   expect(calls.select).toHaveBeenCalledTimes(1)
 })
 
@@ -212,6 +231,49 @@ it('重新进入后自动确认原任务操作并刷新，不重复写入', asyn
   expect(calls.list).toHaveBeenCalledTimes(2)
   expect(calls.select).not.toHaveBeenCalled()
   expect(calls.update).not.toHaveBeenCalled()
+})
+
+it('任务写入响应中断后自动查询原回执一次，确认成功后解除锁定', async () => {
+  const task = { taskId: 'task-1', title: '核对资料', summary: '', status: 'OPEN', revision: 1 }
+  calls.list.mockResolvedValue([task])
+  calls.select.mockRejectedValueOnce(new Error('连接断开'))
+  calls.receipt.mockResolvedValueOnce({ status: 'SUCCEEDED', task })
+  calls.sessions.mockResolvedValue([session])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  await button('设为当前任务').trigger('click')
+  await flushPromises()
+  const id = calls.select.mock.calls[0]![2]
+  expect(calls.receipt).toHaveBeenCalledExactlyOnceWith('session-1', 'task-1', id)
+  expect(
+    sessionStorage.getItem(`skillforge.task-operation.${JSON.stringify(['tenant-1', 'user-1'])}`)
+  ).toBeNull()
+  expect(button('设为当前任务').props('disabled')).toBe(false)
+  expect(calls.select).toHaveBeenCalledTimes(1)
+})
+
+it('自动核对在途时浏览器会话变化，丢弃迟到的成功结果', async () => {
+  const task = { taskId: 'task-1', title: '核对资料', summary: '', status: 'OPEN', revision: 1 }
+  let finish!: (value: unknown) => void
+  calls.list.mockResolvedValue([task])
+  calls.select.mockRejectedValueOnce(new Error('连接断开'))
+  calls.receipt.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  calls.sessions.mockResolvedValue([session])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  await button('设为当前任务').trigger('click')
+  await flushPromises()
+  const id = calls.select.mock.calls[0]![2]
+  calls.session = 'new-browser-session'
+  finish({ status: 'SUCCEEDED', task })
+  await flushPromises()
+  expect(wrapper.text()).toContain(id)
+  expect(calls.select).toHaveBeenCalledTimes(1)
+  expect(calls.receipt).toHaveBeenCalledTimes(1)
 })
 
 it('自动核对失败时保留原操作与手动核对入口', async () => {
