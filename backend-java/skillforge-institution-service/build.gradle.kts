@@ -369,6 +369,8 @@ tasks.register<Test>("nativeStreamBrowserE2E") {
 
 tasks.register<Test>("chatProcessBrowserE2E") {
     description = "运行真实 Chat SSE 执行过程与历史恢复的浏览器验收"
+    inputs.property("inputRecovery", providers.environmentVariable("E2E_CHAT_INPUT_RECOVERY").orElse("0"))
+    inputs.property("inputRecoveryBaseline", providers.environmentVariable("E2E_CHAT_INPUT_RECOVERY_BASELINE").orElse("0"))
     group = "verification"
     val ordinaryTests = sourceSets.named("test").get()
     testClassesDirs = ordinaryTests.output.classesDirs

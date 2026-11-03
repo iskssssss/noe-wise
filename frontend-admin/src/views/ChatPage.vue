@@ -961,6 +961,7 @@ const creationActor = computed(() =>
 )
 const creationKey = (actor: string) => `skillforge.chat-session-create:${actor}`
 const uploadKey = (actor: string) => `skillforge.chat-upload:${actor}`
+const inputKey = (actor: string) => `skillforge.chat-input:${actor}`
 let pageDisposed = false
 onScopeDispose(() => {
   pageDisposed = true
@@ -1064,12 +1065,34 @@ watch(() => auth.identityVersion, cancelSessionRestore, { flush: 'sync' })
 watch(
   () => auth.identityVersion,
   () => {
+    pendingInput.value = undefined
     pendingSession.value = undefined
     pendingUploads.value = []
     deferredUpload.value = undefined
     sessionStorageError.value = ''
     if (!creationActor.value) return
     try {
+      const frozen = sessionStorage.getItem(inputKey(creationActor.value))
+      if (frozen) {
+        const sent = JSON.parse(frozen) as FrozenMessage
+        if (
+          !sent?.body?.session_id ||
+          !/^[0-9a-f-]{36}$/i.test(sent.body.client_message_id) ||
+          typeof sent.draft !== 'string' ||
+          !sent.body.context?.end_user_id ||
+          (!sent.body.agent_id && !sent.body.team_id)
+        )
+          throw Error('invalid input')
+        sent.unknown = true
+        pendingInput.value = sent
+        sessionId.value = sent.body.session_id
+        selectedSession.value = sent.body.session_id
+        endUserId.value = String(sent.body.context.end_user_id)
+        targetKey.value = sent.body.team_id
+          ? `team:${sent.body.team_id}`
+          : `agent:${sent.body.agent_id}`
+        if (!sent.body.hitl_response) input.value = sent.draft
+      }
       const upload = sessionStorage.getItem(uploadKey(creationActor.value))
       if (upload) {
         const values = JSON.parse(upload) as PendingUpload[]
@@ -1101,7 +1124,7 @@ watch(
       endUserId.value = operation.endUserId
       targetKey.value = operation.targetKey
     } catch {
-      sessionStorageError.value = '无法读取会话创建或上传记录，请恢复浏览器存储后重新进入。'
+      sessionStorageError.value = '无法读取原消息、会话创建或上传记录，请恢复浏览器存储后重新进入。'
     }
   },
   { immediate: true, flush: 'sync' }
@@ -1309,6 +1332,10 @@ const pageFeedback = computed(() =>
 onMounted(() => {
   if (can('foundation.sessions.read')) {
     if (pendingSession.value) void inspectSessionCreation(true)
+    if (pendingInput.value) {
+      void inspectInput()
+      observe()
+    }
     void loadUsers()
     void loadSessions()
     void restoreRecentSession()
@@ -1561,6 +1588,7 @@ async function inspectSessionCreation(automatic = false) {
 /** 仅清理已确认的原消息快照；恢复期间的其他草稿资源不属于此回执。 */
 function acceptInput(sent: FrozenMessage) {
   if (pendingInput.value !== sent) return
+  sessionStorage.removeItem(inputKey(creationActor.value))
   pendingInput.value = undefined
   const response = sent.body.hitl_response
   if (response) {
@@ -1583,26 +1611,44 @@ function acceptInput(sent: FrozenMessage) {
   mediaIds.value = mediaIds.value.filter((id) => !images.has(id))
 }
 async function dispatchInput(sent: FrozenMessage) {
+  const actor = creationActor.value,
+    identity = auth.identityVersion
+  if (!actor || pageDisposed) throw Error('当前身份不可用，请重新登录')
+  // 在派发前保存；页面重建不能把在途请求变成一次新消息。
+  try {
+    sessionStorage.setItem(inputKey(actor), JSON.stringify({ ...sent, unknown: true }))
+  } catch {
+    throw Error('无法保存原消息记录，消息尚未发送；请恢复浏览器存储后重试。')
+  }
   pendingInput.value = sent
+  const current = () =>
+    !pageDisposed &&
+    actor === creationActor.value &&
+    identity === auth.identityVersion &&
+    pendingInput.value === sent
   let result: Awaited<ReturnType<typeof api.chat.submit>>
   try {
     result = await api.chat.submit(sent.body)
   } catch (cause) {
     // 与现有会话关闭入口一致，仅首次正式派发前拒绝释放输入；重试拒绝不证明首写未受理。
-    if (pendingInput.value !== sent) return
+    if (!current()) return
     if (
       !sent.unknown &&
       cause instanceof HttpClientError &&
       [400, 401, 403, 404, 422].includes(cause.status) &&
       ['UNAUTHORIZED', 'FORBIDDEN', 'NOT_FOUND', 'VALIDATION_ERROR'].includes(cause.code ?? '')
-    )
+    ) {
+      sessionStorage.removeItem(inputKey(actor))
       pendingInput.value = undefined
-    else sent.unknown = true
+    } else sent.unknown = true
     throw cause
   }
-  if (pendingInput.value !== sent) return
+  if (!current()) return
   if (result.status === 'quota_exhausted') {
-    if (!sent.unknown) pendingInput.value = undefined
+    if (!sent.unknown) {
+      sessionStorage.removeItem(inputKey(actor))
+      pendingInput.value = undefined
+    }
     message.warning(result.message || '本月额度已用尽。')
     return
   }
@@ -1640,12 +1686,21 @@ async function retryInput() {
   if (sent) await run(() => dispatchInput(sent))
 }
 async function inspectInput() {
-  const sent = pendingInput.value
+  const sent = pendingInput.value,
+    actor = creationActor.value,
+    identity = auth.identityVersion
   if (!sent) return
   await run(async () => {
     const value = await api.chat.history(sent.body.session_id)
     if (value.session_id !== sent.body.session_id) throw Error('读取结果不属于原会话，请重新核对')
-    if (pendingInput.value !== sent || sessionId.value !== sent.body.session_id) return
+    if (
+      pageDisposed ||
+      actor !== creationActor.value ||
+      identity !== auth.identityVersion ||
+      pendingInput.value !== sent ||
+      sessionId.value !== sent.body.session_id
+    )
+      return
     applyHistory(value)
     if (pendingInput.value === sent)
       message.warning(

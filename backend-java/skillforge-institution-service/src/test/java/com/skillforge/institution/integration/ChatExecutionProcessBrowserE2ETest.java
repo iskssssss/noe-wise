@@ -229,6 +229,10 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         assertEquals(1, countRuntime("SELECT count(*) FROM agent_runtime_execution_events "
                 + "WHERE tenant_id=? AND run_id=? AND type='execution.completed' AND canonical_json LIKE ?",
                 tenantId, run, "%" + expected + "%"));
+        Files.writeString(evidence.resolve("runtime-evidence.json"), objectMapper.writerWithDefaultPrettyPrinter()
+                .writeValueAsString(Map.of("sessionId", session, "runId", run, "inputId", input,
+                        "runs", queryRows(jdbc, tenantId, "SELECT run_id,input_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=?", tenantId, run),
+                        "modelActions", models, "attempts", attempts, "liveProvider", live)), StandardCharsets.UTF_8);
         if (!live) return;
         assertEquals(0, provider.requestCount(), "真实模型验收不得调用本地模型夹具");
         var usage = queryRows(jdbc, tenantId, "SELECT provider,model,usage_source,prompt_tokens,completion_tokens "

@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Response } from '@playwright/test'
+import { test, expect, type APIResponse, type Page, type Response } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
@@ -35,7 +35,7 @@ function responseAfterReload(page: Page, path: string) {
     })
 }
 /** 传输成功必须同时满足HTTP和公共信封，错误输出只记录非敏感路径。 */
-async function dataOf(response: Response) {
+async function dataOf(response: Response | APIResponse) {
   expect(response.ok(), `HTTP ${response.status()}：${new URL(response.url()).pathname}`).toBe(true)
   const result = await response.json()
   expect(result.code).toBe('OK')
@@ -45,6 +45,15 @@ async function dataOf(response: Response) {
 
 // 本lane可能接真实模型；单次运行失败交由Java记录，浏览器层禁止自动重发输入。
 test.describe.configure({ retries: 0 })
+const inputRecovery = process.env.E2E_CHAT_INPUT_RECOVERY === '1'
+// Playwright 要求夹具参数采用对象解构；此筛选仅依赖用例元数据。
+// eslint-disable-next-line no-empty-pattern
+test.beforeEach(({}, info) => {
+  test.skip(
+    inputRecovery && info.title !== '真实机构登录发送一次并恢复持久公开回复，不展示内部推理',
+    '本轮仅验证原消息恢复'
+  )
+})
 
 test('真实机构登录发送一次并恢复持久公开回复，不展示内部推理', async ({ page }) => {
   test.setTimeout(180_000)
@@ -93,12 +102,39 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   const input = page.getByPlaceholder('输入消息', { exact: true })
   await input.fill(message)
   const created = responseAt(page, '/api/v1/chat/sessions/create-with-receipt', 'POST')
-  const accepted = responseAt(page, '/api/v1/chat', 'POST')
+  const evidence = required('E2E_ARTIFACT_DIR')
+  await mkdir(evidence, { recursive: true })
+  let blockHistory = false
+  let interruptedInput: ReturnType<import('@playwright/test').Request['postDataJSON']>
+  let interruptedResponse!: (response: APIResponse) => void
+  const accepted = inputRecovery
+    ? new Promise<APIResponse>((resolve) => {
+        interruptedResponse = resolve
+      })
+    : responseAt(page, '/api/v1/chat', 'POST')
+  if (inputRecovery) {
+    // 首次建会话仍读取真实历史；正式消息派发后才阻断观察，隔离受理回执丢失。
+    await page.route('**/api/v1/chat/history?*', (route) =>
+      blockHistory ? route.abort('failed') : route.continue()
+    )
+    await page.route('**/api/v1/chat/events?*', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+    )
+    await page.route('**/api/v1/chat', async (route) => {
+      blockHistory = true
+      interruptedInput = route.request().postDataJSON()
+      const upstream = await route.fetch()
+      await route.abort('failed')
+      interruptedResponse(upstream)
+    })
+  }
   await page.getByRole('button', { name: '发送', exact: true }).click()
   const session = await dataOf(await created)
   const receiptResponse = await accepted
   const receipt = await dataOf(receiptResponse)
-  const submitted = receiptResponse.request().postDataJSON()
+  const submitted = inputRecovery
+    ? interruptedInput
+    : (receiptResponse as Response).request().postDataJSON()
   const sessionId = String(session.session_id)
   const runId = String(receipt.execution_id ?? '')
   const inputId = String(submitted.client_message_id)
@@ -107,6 +143,57 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   expect(submitted.content[0].text).toBe(message)
   expect(inputId).toBeTruthy()
   expect(runId).toBeTruthy()
+  if (inputRecovery) {
+    const pending = page.getByRole('button', { name: '核对原消息受理', exact: true })
+    await expect(pending).toBeVisible()
+    await page.screenshot({
+      path: join(evidence, 'input-unknown-before-reload.png'),
+      fullPage: true
+    })
+    const loaded = responseAfterReload(page, '/api/v1/chat/sessions')
+    await page.reload()
+    await dataOf(await loaded)
+    const baseline = process.env.E2E_CHAT_INPUT_RECOVERY_BASELINE === '1'
+    if (baseline) {
+      await expect(
+        page.getByRole('button', { name: '重新读取上次会话', exact: true })
+      ).toBeVisible()
+      await expect(pending).toHaveCount(0)
+    } else await expect(pending).toBeVisible()
+    const retainedIdentity = await page.evaluate(
+      (id) => Object.entries(sessionStorage).some(([, value]) => value.includes(id)),
+      inputId
+    )
+    expect(retainedIdentity).toBe(!baseline)
+    await page.screenshot({
+      path: join(evidence, 'input-unknown-after-reload.png'),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, 'input-unknown-reload.json'),
+      JSON.stringify(
+        {
+          sessionId,
+          runId,
+          inputId,
+          submissions,
+          baseline,
+          pendingVisible: await pending.isVisible(),
+          retainedIdentity,
+          upstreamStatus: receiptResponse.status()
+        },
+        null,
+        2
+      )
+    )
+    expect(submissions).toBe(1)
+    blockHistory = false
+    await page.unroute('**/api/v1/chat/events?*')
+    await page.unroute('**/api/v1/chat')
+    if (baseline) await page.getByRole('button', { name: '重新读取上次会话', exact: true }).click()
+    else await pending.click()
+    await expect(pending).toHaveCount(0)
+  }
   await expect(page.locator('.debug-messages')).toContainText(expectedReply, { timeout: 120_000 })
   await expect(page.locator('.debug-message').filter({ hasText: expectedReply })).toHaveCount(1)
   await expect(page.locator('body')).not.toContainText(required('E2E_INTERNAL_REASONING'))
@@ -119,8 +206,6 @@ test('真实机构登录发送一次并恢复持久公开回复，不展示内�
   const sessions = await dataOf(await historyReady)
   const selected = sessions.find((item: { session_id: string }) => item.session_id === sessionId)
   expect(selected).toBeTruthy()
-  const evidence = required('E2E_ARTIFACT_DIR')
-  await mkdir(evidence, { recursive: true })
   const history = await dataOf(await restored)
   expect(history.session_id).toBe(sessionId)
   expect(history.messages.filter((item: { role: string }) => item.role === 'user')).toHaveLength(1)

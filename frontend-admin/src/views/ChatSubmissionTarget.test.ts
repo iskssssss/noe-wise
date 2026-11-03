@@ -1085,3 +1085,123 @@ it('自动核对失败后保留原请求，用户可再次只读查询', async (
   expect(mocks.createSession).not.toHaveBeenCalled()
   expect(mocks.submit).not.toHaveBeenCalled()
 })
+
+describe('未确认消息刷新恢复', () => {
+  const key = 'skillforge.chat-input:1:member-1'
+  const composer = () =>
+    wrapper!.findAllComponents(ElInput).find((field) => field.props('placeholder') === '输入消息')!
+  const action = async (name: string) => {
+    await wrapper!
+      .findAll('button')
+      .find((button) => button.text() === name)!
+      .trigger('click')
+    await flushPromises()
+  }
+  async function unknownMessage() {
+    mocks.submit.mockRejectedValueOnce(new TypeError('受理响应丢失'))
+    await open()
+    await choose('终端用户', '目标回归用户')
+    await choose('选择智能体或团队', '已发布智能体')
+    await send('原正文 Unicode🙂')
+    expect(wrapper!.text()).toContain('受理结果尚未确认')
+    return mocks.submit.mock.calls[0]![0]
+  }
+  async function rebuild() {
+    wrapper!.unmount()
+    wrapper = undefined
+    await open()
+  }
+  it('重建保留原正文和UUID，只读失败后仍可显式重试同一请求', async () => {
+    const original = await unknownMessage()
+    expect(JSON.parse(sessionStorage.getItem(key)!).body).toEqual(original)
+    mocks.history.mockRejectedValueOnce(new Error('暂时不能读取历史'))
+    await rebuild()
+    expect(wrapper!.text()).toContain('受理结果尚未确认')
+    expect(composer().props('modelValue')).toBe('原正文 Unicode🙂')
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(mocks.createSession).toHaveBeenCalledOnce()
+    expect(mocks.history).toHaveBeenLastCalledWith(original.session_id)
+    expect(JSON.parse(sessionStorage.getItem(key)!).body).toEqual(original)
+    await action('重试原消息')
+    expect(mocks.submit.mock.calls[1]![0]).toEqual(original)
+    expect(wrapper!.text()).not.toContain('受理结果尚未确认')
+    expect(sessionStorage.getItem(key)).toBeNull()
+  })
+  it('重建后的同文历史不解除，精确受理历史只读清理原请求', async () => {
+    const original = await unknownMessage()
+    mocks.history.mockResolvedValue({
+      session_id: original.session_id,
+      messages: [
+        { role: 'user', message_id: 'another', content: '原正文 Unicode🙂', metadata: {} }
+      ],
+      pending_interactions: [],
+      processes: [],
+      has_more: false
+    })
+    await rebuild()
+    expect(wrapper!.text()).toContain('受理结果尚未确认')
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    mocks.history.mockResolvedValueOnce({
+      session_id: original.session_id,
+      messages: [
+        {
+          role: 'user',
+          message_id: 'archive',
+          content: '原正文 Unicode🙂',
+          metadata: { client_message_id: original.client_message_id }
+        }
+      ],
+      pending_interactions: [],
+      processes: [],
+      has_more: false
+    })
+    await action('核对原消息受理')
+    expect(wrapper!.text()).not.toContain('受理结果尚未确认')
+    expect(composer().props('modelValue')).toBe('')
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+  })
+  it('其他机构或操作人的原请求不被恢复或读取', async () => {
+    const original = await unknownMessage()
+    const frozen = sessionStorage.getItem(key)!
+    wrapper!.unmount()
+    wrapper = undefined
+    sessionStorage.clear()
+    sessionStorage.setItem('skillforge.chat-input:other-tenant:member-1', frozen)
+    sessionStorage.setItem('skillforge.chat-input:1:other-member', frozen)
+    mocks.history.mockClear()
+    await open()
+    expect(wrapper!.text()).not.toContain('受理结果尚未确认')
+    expect(composer().props('modelValue')).toBe('')
+    expect(mocks.history).not.toHaveBeenCalledWith(original.session_id)
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem('skillforge.chat-input:1:other-member')).toBe(frozen)
+  })
+  it('原消息无法持久保存时不派发，保留草稿供恢复存储后发送', async () => {
+    await open()
+    await choose('终端用户', '目标回归用户')
+    await choose('选择智能体或团队', '已发布智能体')
+    const originalSet = Storage.prototype.setItem
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      name,
+      value
+    ) {
+      if (name.startsWith('skillforge.chat-input:')) throw Error('存储不可用')
+      return originalSet.call(this, name, value)
+    })
+    try {
+      await send('不能丢失的草稿')
+      expect(mocks.submit).not.toHaveBeenCalled()
+      expect(composer().props('modelValue')).toBe('不能丢失的草稿')
+    } finally {
+      storage.mockRestore()
+    }
+    await action('发送')
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(mocks.submit.mock.calls[0]![0].content).toEqual([
+      { type: 'text', text: '不能丢失的草稿' }
+    ])
+  })
+})
