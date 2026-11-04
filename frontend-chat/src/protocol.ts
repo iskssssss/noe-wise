@@ -163,6 +163,7 @@ export interface Collaboration {
   selected_active: boolean
 }
 export interface History {
+  closed: boolean
   history_retention?: HistoryRetention | null
   session_id: string
   messages: Message[]

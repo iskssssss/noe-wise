@@ -201,7 +201,8 @@ public class ChatSessionService {
         return new ChatHistoryResponse(sessionId,page,runtime.pendingInteractions(),runtime.activities(),runtime.processes(),
                 runtime.collaboration(),hasMore,hasMore?page.getFirst().messageId():null,eventCursor,runtime.historyRetention()).withWorkPlans(runtimeHistory.workPlans(session,page.stream()
                         .flatMap(message -> java.util.stream.Stream.of(message.messageId(),message.metadata()==null?null:message.metadata().get("root_input_id"),message.metadata()==null?null:message.metadata().get("input_id")))
-                        .filter(java.util.Objects::nonNull).map(Object::toString).collect(java.util.stream.Collectors.toSet())));
+                        .filter(java.util.Objects::nonNull).map(Object::toString).collect(java.util.stream.Collectors.toSet())))
+                .withClosed(sessionService.isOpenPlatformClosed(session));
     }
     /** 按租户及可选终端用户、Agent 查询会话列表。 */
     public List<SessionItemResponse> sessions(String tenantId, Long agentId, Long endUserId) {

@@ -19,6 +19,7 @@ import com.skillforge.core.chat.contract.ProcessPresentation;
  *                    前端按 message_id 精确还原历史卡渲染
  * @param processes   按 Session 持久顺序排列的聊天公开过程项
  * @param collaboration Plan 模式选择与当前 Todo 清单的会话投影
+ * @param closed 当前会话已关闭，不接受新输入
  */
 public record ChatHistoryResponse(
         String sessionId,
@@ -32,7 +33,8 @@ public record ChatHistoryResponse(
         String eventCursor,
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
         HistoryRetention historyRetention,
-        @com.fasterxml.jackson.annotation.JsonProperty("work_plans") List<Map<String,Object>> workPlans) {
+        @com.fasterxml.jackson.annotation.JsonProperty("work_plans") List<Map<String,Object>> workPlans,
+        boolean closed) {
 
     public ChatHistoryResponse {
         workPlans = workPlans == null ? List.of() : List.copyOf(workPlans);
@@ -43,10 +45,16 @@ public record ChatHistoryResponse(
     public ChatHistoryResponse(String sessionId,List<ChatMessageRecord> messages,List<Map<String,Object>> pendingInteractions,
             List<ActivityItem> activities,List<ProcessItem> processes,Collaboration collaboration,
             boolean hasMore,String nextBeforeMessageId,String eventCursor,HistoryRetention historyRetention) {
-        this(sessionId,messages,pendingInteractions,activities,processes,collaboration,hasMore,nextBeforeMessageId,eventCursor,historyRetention,List.of());
+        this(sessionId,messages,pendingInteractions,activities,processes,collaboration,hasMore,nextBeforeMessageId,eventCursor,historyRetention,List.of(),false);
     }
     public ChatHistoryResponse withWorkPlans(List<Map<String,Object>> plans) {
-        return new ChatHistoryResponse(sessionId,messages,pendingInteractions,activities,processes,collaboration,hasMore,nextBeforeMessageId,eventCursor,historyRetention,plans);
+        return new ChatHistoryResponse(sessionId,messages,pendingInteractions,activities,processes,collaboration,hasMore,nextBeforeMessageId,eventCursor,historyRetention,plans,closed);
+    }
+
+    /** 查询边界使用已授权会话的关闭事实，不从消息或 Run 终态推断。 */
+    public ChatHistoryResponse withClosed(boolean value) {
+        return new ChatHistoryResponse(sessionId,messages,pendingInteractions,activities,processes,collaboration,
+                hasMore,nextBeforeMessageId,eventCursor,historyRetention,workPlans,value);
     }
 
     /** 非Runtime历史没有退休事实；分页等重建操作应显式保留已有historyRetention。 */
@@ -59,7 +67,7 @@ public record ChatHistoryResponse(
     /** 将明确历史退休状态附加到原公开投影，不制造完整推理或改写任何原消息版本。 */
     public ChatHistoryResponse withHistoryRetention(HistoryRetention value) {
         return new ChatHistoryResponse(sessionId,messages,pendingInteractions,activities,processes,collaboration,
-                hasMore,nextBeforeMessageId,eventCursor,value,workPlans);
+                hasMore,nextBeforeMessageId,eventCursor,value,workPlans,closed);
     }
 
     /** 普通展示历史退休的公开状态；完整恢复、幂等、采用及最终输出仍按原事实提供。 */

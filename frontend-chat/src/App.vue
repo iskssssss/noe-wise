@@ -496,7 +496,7 @@ watch(
   }
 )
 const showCommands = computed(() =>
-  Boolean(commandMatches.value.length && !commandDismissed.value && !c.locked && !c.active)
+  Boolean(commandMatches.value.length && !commandDismissed.value && !c.composerLocked && !c.active)
 )
 function pickCommand(index: number) {
   const item = commandMatches.value[index]
@@ -504,7 +504,7 @@ function pickCommand(index: number) {
   commandDismissed.value = true
 }
 async function insertCommand() {
-  if (c.draft.trim() || c.active || c.locked) return
+  if (c.draft.trim() || c.active || c.composerLocked) return
   c.draft = '/'
   commandDismissed.value = false
   await nextTick()
@@ -623,7 +623,7 @@ async function files(batch: File[]) {
 }
 /** 短文本保持原生粘贴；长文本转换成功才拦截，保留已有正文和选区。 */
 function pasteMessage(event: ClipboardEvent) {
-  if (c.inputMode !== 'message' || c.locked || commandBusy.value) return
+  if (c.inputMode !== 'message' || c.composerLocked || commandBusy.value) return
   const clipboard = event.clipboardData
   if (!clipboard) return
   const selectedFiles = Array.from(clipboard.files)
@@ -644,7 +644,7 @@ function pasteMessage(event: ClipboardEvent) {
 }
 /** 按粘贴时记录的选区还原原文，textarea 更新完成后恢复插入末尾的光标。 */
 async function restoreText(id: string, confirmed: boolean) {
-  if (c.locked || commandBusy.value || c.inputMode !== 'message') return
+  if (c.composerLocked || commandBusy.value || c.inputMode !== 'message') return
   const position = confirmed ? c.restoreAttachmentText(id) : c.restorePastedText(id)
   if (position === undefined) return
   // textarea 会统一 CRLF/CR 为 LF，同步草稿和光标坐标；附件预览与上传原文保持不变。
@@ -669,14 +669,14 @@ async function send() {
   }
   if (
     commandBusy.value ||
-    c.locked ||
+    c.composerLocked ||
     c.historyReadFailed ||
     c.active ||
     (targetDisabled.value && !c.sessionId) ||
     !(await validateForm(composerRef.value))
   )
     return
-  if (commandBusy.value || c.locked || c.historyReadFailed || c.active) return
+  if (commandBusy.value || c.composerLocked || c.historyReadFailed || c.active) return
   let parsed
   try {
     parsed = command(c.draft)
@@ -1170,11 +1170,13 @@ const formTipId = useId()
         {{ item.kind === 'media' ? '图片' : '附件' }} {{ item.name }} 已上传。
         <ChatButton
           text
-          :disabled="c.locked || c.inputMode !== 'message'"
+          :disabled="c.composerLocked || c.inputMode !== 'message'"
           @click="c.claimConfirmedUpload(item.uploadId)"
           >加入草稿</ChatButton
         >
-        <span v-if="c.locked || c.inputMode !== 'message'">请在普通消息可编辑时加入草稿。</span>
+        <span v-if="c.composerLocked || c.inputMode !== 'message'"
+          >请在普通消息可编辑时加入草稿。</span
+        >
       </div>
       <div v-if="c.uploadStorageUnavailable" role="status" class="banner">
         浏览器存储异常，暂不能上传新文件；请恢复存储并刷新页面，未确认记录仍需核对。
@@ -1228,7 +1230,7 @@ const formTipId = useId()
             :client="c.client!"
             :session="c.sessionId"
             :target-name="c.targetName"
-            :locked="c.locked"
+            :locked="c.composerLocked"
             :run-states="c.runStates"
             :connection="c.connection"
             :artifacts="c.artifacts"
@@ -1257,14 +1259,14 @@ const formTipId = useId()
               :client="c.client"
               :client-ref="c.clientRef"
               :pending="pending"
-              :disabled="c.historyReadFailed"
+              :disabled="c.historyReadFailed || c.sessionClosed"
             />
             <PendingForm
               v-else
               ref="pendingRef"
               :pending="pending"
               :busy="c.sending || Boolean(c.pendingInput) || c.cancelling"
-              :disabled="c.historyReadFailed"
+              :disabled="c.historyReadFailed || c.sessionClosed"
               :cancel-disabled="c.locked"
               :question-displayed="pendingQuestionDisplayed(pending)"
               @submit="c.submit($event)"
@@ -1343,7 +1345,7 @@ const formTipId = useId()
             :closable="false"
             ><ChatButton text :disabled="c.loading" @click="c.reconnect()">恢复观察</ChatButton
             ><ChatButton
-              :disabled="c.loading || c.historyReadFailed"
+              :disabled="c.loading || c.historyReadFailed || c.sessionClosed"
               @click="c.submit(undefined, true)"
               >重试原请求</ChatButton
             ></ChatAlert
@@ -1353,12 +1355,18 @@ const formTipId = useId()
           class="composer"
           :class="{ 'is-running': c.active, 'is-expanded': composerExpanded }"
         >
+          <ChatAlert
+            v-if="c.sessionClosed"
+            title="会话已关闭，可查看历史；请新建对话继续。"
+            type="info"
+            :closable="false"
+          />
           <ChatForm
             ref="composerRef"
             class="composer-form"
             :model="c"
             :rules="composerRules"
-            :disabled="c.locked || commandBusy || c.steeringSending"
+            :disabled="c.composerLocked || commandBusy || c.steeringSending"
             @submit.prevent="send"
           >
             <ComposerAttachments
@@ -1371,7 +1379,7 @@ const formTipId = useId()
               :attachment-texts="c.attachmentTexts"
               :client="c.client!"
               :session="c.sessionId"
-              :locked="c.locked || commandBusy"
+              :locked="c.composerLocked || commandBusy"
               @remove-pasted="c.removePastedText"
               @remove-attachment="c.removeAttachment"
               @remove-image="c.images.splice($event, 1)"
@@ -1441,7 +1449,7 @@ const formTipId = useId()
                   :aria-describedby="formTipId + '-upload'"
                   v-if="c.inputMode === 'message'"
                   class="composer-upload"
-                  :disabled="c.locked || commandBusy"
+                  :disabled="c.composerLocked || commandBusy"
                   multiple
                   @files="files"
                   ><ChatButton
@@ -1449,6 +1457,7 @@ const formTipId = useId()
                     class="composer-attach"
                     aria-label="添加文件或图片"
                     title="添加文件或图片"
+                    :disabled="c.composerLocked || commandBusy"
                     ><IconPlus class="ui-icon" aria-hidden="true" /><span
                       class="composer-attach-label"
                       >添加文件</span
@@ -1546,7 +1555,7 @@ const formTipId = useId()
       :session="c.sessionId"
       :selected-id="selectedWork"
       :work-plans="c.history.work_plans"
-      :locked="c.locked"
+      :locked="c.composerLocked"
       @selected="selectedWork = $event"
       @updated="c.updateWork"
       @update:model-value="panelChanged('tasks', $event)"

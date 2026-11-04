@@ -57,7 +57,16 @@ beforeEach(() => {
       if (path.endsWith('/chat')) return chat()
       if (path.endsWith('/chat/runs/status')) return status()
       if (path.endsWith('/chat/sessions/deliverables')) return response([])
-      if (path.endsWith('/chat/limits')) return response({})
+      if (path.endsWith('/chat/limits'))
+        return response({
+          attachments: {
+            max_file_bytes: 1000,
+            max_files: 3,
+            max_total_bytes: 2000,
+            extensions: ['txt']
+          },
+          references: { max_items: 64, max_file_selectors: 20 }
+        })
       if (path.endsWith('/chat/events'))
         return new Response(
           new ReadableStream({
@@ -85,6 +94,80 @@ afterEach(() => {
 })
 const connect = () =>
   state.connect('http://localhost:8000', { mode: 'token', token: 'history-test-token' }, '访客')
+
+describe('关闭会话只读恢复', () => {
+  it('历史关闭状态锁定写入，保留导航与新会话入口', async () => {
+    await connect()
+    history = async (id) => response({ ...emptyHistory(), session_id: id, closed: id === 'closed' })
+    await state.openSession('closed')
+    expect(state.sessionClosed.value).toBe(true)
+    expect(state.composerLocked.value).toBe(true)
+    expect(state.locked.value).toBe(false)
+    state.draft.value = '保留在关闭会话的草稿'
+    state.supplementDraft.value = '关闭后的补充'
+    state.pendingSteering.value = {
+      session_id: 'closed',
+      run_id: 'run',
+      command_id: 'original-command',
+      text: '原补充'
+    }
+    const before = calls.length
+    await state.submit()
+    await state.submitSupplement(true)
+    await state.upload([new File(['data'], 'closed.txt', { type: 'text/plain' })])
+    state.reference({ label: '关闭后引用', source: { kind: 'message' } })
+    expect(state.stagePastedText('关闭后的粘贴')).toBe(false)
+    expect(calls.slice(before)).toEqual([])
+    expect(state.references.value).toEqual([])
+    expect(state.draft.value).toBe('保留在关闭会话的草稿')
+    await state.openSession('other')
+    expect(state.sessionId.value).toBe('other')
+    expect(state.sessionClosed.value).toBe(false)
+    expect(state.composerLocked.value).toBe(false)
+    await state.openSession('closed')
+    state.newSession()
+    expect(state.sessionId.value).toBe('')
+    expect(state.sessionClosed.value).toBe(false)
+    expect(state.composerLocked.value).toBe(false)
+  })
+
+  it('同会话迟到的未关闭快照不复活编辑，较早分页也不能覆盖关闭事实', async () => {
+    await connect()
+    history = async (id) =>
+      response({
+        ...emptyHistory(),
+        session_id: id,
+        closed: true,
+        has_more: true,
+        next_before_message_id: 'earliest'
+      })
+    await state.openSession('closed')
+    history = async (id) => response({ ...emptyHistory(), session_id: id, closed: false })
+    await state.reconnect()
+    expect(state.sessionClosed.value).toBe(true)
+    expect(state.composerLocked.value).toBe(true)
+    await state.loadEarlier()
+    expect(state.sessionClosed.value).toBe(true)
+    expect(state.locked.value).toBe(false)
+    expect(calls.filter((call) => call.path.endsWith('/chat/sessions/detail'))).toEqual([])
+  })
+
+  it('发送后读取的最新历史能够收敛关闭状态，不额外查询会话详情', async () => {
+    await connect()
+    await state.openSession('existing')
+    expect(state.sessionClosed.value).toBe(false)
+    history = async (id) => response({ ...emptyHistory(), session_id: id, closed: true })
+    state.draft.value = '关闭前已受理的消息'
+    await state.submit()
+    expect(
+      calls.filter((call) => call.path.endsWith('/chat') && call.method === 'POST')
+    ).toHaveLength(1)
+    expect(state.sessionClosed.value).toBe(true)
+    expect(state.composerLocked.value).toBe(true)
+    expect(state.locked.value).toBe(false)
+    expect(calls.filter((call) => call.path.endsWith('/chat/sessions/detail'))).toEqual([])
+  })
+})
 
 describe('历史列表与消息读取的失败恢复', () => {
   it('列表初次读取有独立加载与失败状态，显式重读只发GET并清除原读取错误', async () => {

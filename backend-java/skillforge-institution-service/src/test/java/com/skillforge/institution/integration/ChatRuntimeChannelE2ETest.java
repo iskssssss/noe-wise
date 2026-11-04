@@ -745,6 +745,67 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         assertEquals(0, provider.requestCount(), "目录验收不得调用模型");
     }
 
+    /** 真实执行后正式关闭会话，验证独立会话端恢复后的只读边界。 */
+    @Test
+    @Tag("session-directory-browser")
+    void standaloneBrowserRestoresClosedSessionAsReadOnly() throws Exception {
+        String channelToken = "closed-test-" + java.util.UUID.randomUUID();
+        String clientRef = java.util.UUID.randomUUID().toString();
+        TenantContext.setTenantId(tenantId);
+        long channel;
+        try { channel = createNativeBrowserChannel(channelToken, null, null); }
+        finally { TenantContext.clear(); }
+        var profileRequest = HttpRequest.newBuilder(URI.create(baseUrl() + "/api/v1/chat/client-profile"))
+                .header("X-Channel-Token", channelToken).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(
+                        Map.of("client_ref", clientRef, "display_name", "目录验收")))).build();
+        var profileResponse = httpClient.send(profileRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, profileResponse.statusCode(), profileResponse.body());
+        var profile = objectMapper.readTree(profileResponse.body()).path("data");
+        String user = profile.path("end_user_id").asText();
+        String identity = profile.path("identity_token").asText();
+        assertFalse(user.isBlank()); assertFalse(identity.isBlank());
+        var sessionRequest = HttpRequest.newBuilder(URI.create(baseUrl() + "/api/v1/chat/sessions"))
+                .header("X-Channel-Token", channelToken).header("X-Chat-User-Token", identity)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(
+                        Map.of("agent_id", agentId, "end_user_id", user)))).build();
+        var created = httpClient.send(sessionRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode(), created.body());
+        String directorySession = objectMapper.readTree(created.body()).path("data").path("session_id").asText();
+        assertFalse(directorySession.isBlank());
+        Path root = KnowledgeBrowserServer.repoRoot();
+        Path evidence = Path.of("build", "runtime-e2e", "closed-session-browser-" + runId).toAbsolutePath();
+        Files.createDirectories(evidence);
+        ProcessBuilder command = new ProcessBuilder(KnowledgeBrowserServer.nodeExecutable(),
+                root.resolve("frontend-chat/e2e/closed-session-browser.mjs").toString());
+        command.directory(root.toFile()); command.redirectErrorStream(true);
+        Path log = evidence.resolve("browser.log"); command.redirectOutput(log.toFile());
+        var fixture = new java.util.LinkedHashMap<String,Object>();
+        fixture.put("backend", baseUrl()); fixture.put("token", channelToken); fixture.put("identity", identity);
+        fixture.put("clientRef", clientRef); fixture.put("channel", Long.toString(channel)); fixture.put("session", directorySession);
+        fixture.put("agent", agentId); fixture.put("adminToken", accessToken); fixture.put("reply", "fixture-answer-" + runId);
+        fixture.put("evidence", evidence.toString()); fixture.put("baseline", "baseline".equals(System.getenv("E2E_CLOSED_SESSION")));
+        command.environment().put("CLOSED_FIXTURE", objectMapper.writeValueAsString(fixture));
+        Process process = command.start();
+        try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
+            long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(3);
+            while (process.isAlive() && System.nanoTime() < deadline) {
+                owned.capture(); process.waitFor(200, TimeUnit.MILLISECONDS);
+            }
+            assertFalse(process.isAlive(), "closed_browser_timeout: " + evidence);
+            assertEquals(0, process.exitValue(), "closed_browser_failed: " + evidence + "\n" + Files.readString(log));
+        }
+        var receipt = objectMapper.readTree(Files.readString(evidence.resolve("receipt.json")));
+        String actualRun = receipt.path("runId").asText();
+        var runs = queryRows(jdbc, tenantId, "SELECT run_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=?", tenantId, directorySession);
+        assertEquals(1, runs.size()); assertEquals(actualRun, runs.getFirst().get("run_id"));
+        assertEquals("COMPLETED", runs.getFirst().get("status")); assertEquals("FINISHED", runs.getFirst().get("phase"));
+        assertEquals(1, provider.requestCount());
+        Files.writeString(evidence.resolve("runtime-evidence.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(
+                Map.of("runs", runs, "providerCalls", provider.requestCount(), "sessionId", directorySession)));
+    }
+
     /** 只创建隔离渠道前置资源；浏览器必须真实认证、登记访问者和创建渠道Session。 */
     private long createNativeBrowserChannel(String token, String apiKey, String apiSecret) {
         var channel = new ChannelDO();

@@ -704,7 +704,8 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
 
     public com.skillforge.core.chat.dto.response.ChatHistoryResponse openPlatformHistory(
             com.skillforge.common.context.ServicePrincipalContext.Identity principal,SessionView session) {
-        authorizeExternal(principal,session,null,"runtime.session.query");return history.read(session);
+        authorizeExternal(principal,session,null,"runtime.session.query");
+        return history.read(session).withClosed(productSessions.isOpenPlatformClosed(session));
     }
 
     public com.skillforge.core.chat.dto.openplatform.OpenPlatformInboundReceiptResponse cancelExecution(

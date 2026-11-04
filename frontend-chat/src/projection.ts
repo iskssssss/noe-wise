@@ -9,6 +9,7 @@ import {
 export { provisionalMessage } from './protocol'
 
 export const emptyHistory = (): History => ({
+  closed: false,
   session_id: '',
   messages: [],
   processes: [],

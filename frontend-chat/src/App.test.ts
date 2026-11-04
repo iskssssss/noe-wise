@@ -92,6 +92,7 @@ function createState() {
     runId: '',
     runStatus: '',
     history: {
+      closed: false,
       messages: [] as Message[],
       processes: [] as Process[],
       work_plans: [] as Work[],
@@ -138,6 +139,12 @@ function createState() {
     error: '',
     notice: '',
     locked: false,
+    get sessionClosed(): boolean {
+      return this.history.closed
+    },
+    get composerLocked(): boolean {
+      return this.locked || this.sessionClosed
+    },
     active: false,
     uploading: false,
     sending: false,
@@ -180,6 +187,50 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it('关闭会话显示只读提示并禁用输入上传发送，新建会话仍可使用', async () => {
+    holder.state.target = 'agent:a'
+    holder.state.sessionId = 'closed'
+    holder.state.history.closed = true
+    holder.state.draft = '关闭前的草稿'
+    holder.state.newSession.mockImplementation(() => {
+      holder.state.sessionId = ''
+      holder.state.history.closed = false
+      holder.state.draft = ''
+    })
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          TeamManager: true,
+          ArtifactPanel: true,
+          BrowserDevices: true,
+          WorkspaceStatus: true
+        }
+      }
+    })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('会话已关闭')
+      expect(wrapper.get('#message-input').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('input[aria-label="选择文件"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('button[aria-label="发送消息"]').attributes('disabled')).toBeDefined()
+      const create = wrapper.get('button[aria-label="新建会话"]')
+      expect(create.attributes('disabled')).toBeUndefined()
+      expect(holder.state.locked).toBe(false)
+      holder.state.draft = ''
+      await flushPromises()
+      await create.trigger('click')
+      await flushPromises()
+      expect(holder.state.newSession).toHaveBeenCalledOnce()
+      expect(wrapper.get('#message-input').attributes('disabled')).toBeUndefined()
+      expect(wrapper.get('input[aria-label="选择文件"]').attributes('disabled')).toBeUndefined()
+      expect(holder.state.submit).not.toHaveBeenCalled()
+      expect(holder.state.upload).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('取消关闭当前侧栏后不提前更改成果选择', async () => {
     holder.state.target = 'agent:a'
     holder.state.sessionId = 's'

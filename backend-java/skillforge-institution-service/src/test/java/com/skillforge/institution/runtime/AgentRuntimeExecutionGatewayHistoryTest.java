@@ -23,6 +23,32 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class AgentRuntimeExecutionGatewayHistoryTest {
+    @Test void openPlatformHistoryReturnsAuthorizedSessionClosedFactWithoutAnotherSessionLookup() {
+        for (boolean closed : List.of(false, true)) {
+            var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
+            when(f.iam.authorize(any(IdentityPolicyPort.AuthorizationRequest.class)))
+                    .thenReturn(new IdentityPolicyPort.AuthorizationResult.Allowed(1, new ResultRef("read-audit")));
+            var projection = (AgentRuntimeExecutionProjection) ReflectionTestUtils.getField(f.gateway, "history");
+            var message = new ChatMessageRecord("reply", "assistant", "历史回复", Instant.EPOCH, Map.of());
+            when(projection.read(f.session)).thenReturn(new ChatHistoryResponse("session", List.of(message), null,
+                    List.of(), List.of(), ChatHistoryResponse.Collaboration.empty()));
+            when(f.product.isOpenPlatformClosed(f.session)).thenReturn(closed);
+            var principal = new com.skillforge.common.context.ServicePrincipalContext.Identity(
+                    "principal", "1", "integration", 1, Set.of("sessions.read"));
+            TenantContext.setTenantId("1");
+            try {
+                var result = f.gateway.openPlatformHistory(principal, f.session);
+                assertEquals(closed, result.closed());
+                assertEquals(List.of(message), result.messages());
+            } finally {
+                TenantContext.clear();
+            }
+            verify(f.product).isOpenPlatformClosed(f.session);
+            verifyNoMoreInteractions(f.product);
+            verify(projection).read(f.session);
+        }
+    }
+
     @Test void completeHistoryRetainsMoreThanOneHundredMessagesAndDeduplicatesByIdentityOnly() {
         var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
         var memory = (MemoryService) ReflectionTestUtils.getField(f.gateway, "memory");

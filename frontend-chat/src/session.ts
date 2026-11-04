@@ -193,7 +193,7 @@ export function useConversation() {
       steeringRun.value &&
       steering.value?.run_id === steeringRun.value &&
       steering.value.accepting &&
-      !locked.value &&
+      !composerLocked.value &&
       !historyReadFailed.value &&
       !steeringSending.value &&
       !pendingSteering.value
@@ -218,6 +218,8 @@ export function useConversation() {
       cancelling.value ||
       Boolean(pendingInput.value)
   )
+  const sessionClosed = computed(() => Boolean(history.value.closed))
+  const composerLocked = computed(() => locked.value || sessionClosed.value)
   const fail = (cause: unknown) => {
     error.value =
       cause instanceof Error ? cause.message : '未能确认操作结果，请先核对当前会话状态。'
@@ -243,7 +245,7 @@ export function useConversation() {
   function stagePastedText(text: string, selectionStart?: number, selectionEnd?: number): boolean {
     if (text.length < 2000 && (text.length < 800 || text.split(/\r\n|\r|\n/).length < 30))
       return false
-    if (inputMode.value !== 'message' || locked.value) {
+    if (inputMode.value !== 'message' || composerLocked.value) {
       notice.value = '请在可编辑的消息草稿中添加文本附件。'
       return false
     }
@@ -284,7 +286,7 @@ export function useConversation() {
     record.pastedWithdrawn = true
   }
   function removePastedText(id: string): boolean {
-    if (inputMode.value !== 'message' || locked.value) return false
+    if (inputMode.value !== 'message' || composerLocked.value) return false
     const item = pastedTexts.value.find((value) => value.id === id)
     if (!item) return false
     withdrawPastedUpload(id)
@@ -319,7 +321,7 @@ export function useConversation() {
   }
   /** 本地粘贴附件还原进当前消息选区后移除，原文从不进入补充草稿。 */
   function restorePastedText(id: string): number | undefined {
-    if (inputMode.value !== 'message' || locked.value) return
+    if (inputMode.value !== 'message' || composerLocked.value) return
     const item = pastedTexts.value.find((value) => value.id === id)
     if (!item) return
     const caret = insertDraftText(
@@ -335,7 +337,7 @@ export function useConversation() {
   }
   /** 移除已上传草稿资源及本地预览缓存，不删除任何服务端历史或成果。 */
   function removeAttachment(id: string): boolean {
-    if (inputMode.value !== 'message' || locked.value) return false
+    if (inputMode.value !== 'message' || composerLocked.value) return false
     if (!attachments.value.some((item) => item.id === id)) return false
     attachments.value = attachments.value.filter((item) => item.id !== id)
     const { [id]: _file, ...remainingFiles } = attachmentFiles.value,
@@ -347,7 +349,7 @@ export function useConversation() {
   }
   /** 已确认上传的粘贴原文可还原，随后移除对应附件 ID 和缓存，防止再次随消息发送。 */
   function restoreAttachmentText(id: string): number | undefined {
-    if (inputMode.value !== 'message' || locked.value) return
+    if (inputMode.value !== 'message' || composerLocked.value) return
     if (!Object.hasOwn(attachmentTexts.value, id)) return
     const text = attachmentTexts.value[id]
     if (text === undefined || !attachments.value.some((item) => item.id === id)) return
@@ -421,6 +423,7 @@ export function useConversation() {
       version = selection
     if (
       !api ||
+      sessionClosed.value ||
       historyReadFailed.value ||
       steeringSending.value ||
       cancelling.value ||
@@ -983,6 +986,9 @@ export function useConversation() {
   function applyHistory(value: History, merge = false) {
     const normalized = {
       ...value,
+      closed: Boolean(
+        value.closed || (history.value.session_id === value.session_id && history.value.closed)
+      ),
       processes: value.processes ?? [],
       messages: (value.messages ?? []).map((message) => ({
         ...message,
@@ -1184,6 +1190,7 @@ export function useConversation() {
       sessionAbort.signal
     )
     if (version !== selection) return
+    history.value.closed = Boolean(history.value.closed || fresh.closed)
     history.value.messages = mergeMessages(history.value.messages, fresh.messages)
     history.value.processes = mergeProcesses(history.value.processes, fresh.processes ?? [])
     history.value.work_plans = mergeWorkPlans(
@@ -1194,6 +1201,7 @@ export function useConversation() {
   }
   async function submit(hitl?: Record<string, unknown>, retry = false) {
     if (
+      sessionClosed.value ||
       historyReadFailed.value ||
       loading.value ||
       sending.value ||
@@ -1423,7 +1431,7 @@ export function useConversation() {
   }
   /** 上传只准备下一条消息草稿；运行中仍可添加资料，不会自动发送。 */
   async function upload(files: File[]): Promise<ConfirmedUpload[]> {
-    if (locked.value || inputMode.value !== 'message') return []
+    if (composerLocked.value || inputMode.value !== 'message') return []
     return uploadFiles(files, selection)
   }
   /** 按批次校验并逐项上传，首个失败即停止；已确认项转入草稿。 */
@@ -1621,7 +1629,7 @@ export function useConversation() {
     return confirmed
   }
   async function claimConfirmedUpload(uploadId: string) {
-    if (locked.value || inputMode.value !== 'message') return
+    if (composerLocked.value || inputMode.value !== 'message') return
     const record = currentConfirmedUploads.value.find((item) => item.uploadId === uploadId)
     const api = client.value,
       id = sessionId.value,
@@ -1635,7 +1643,7 @@ export function useConversation() {
         const items = await api.json<Attachment[]>(
           `/chat/sessions/attachments?${query({ session_id: id })}`
         )
-        if (version !== selection || locked.value || inputMode.value !== 'message') return
+        if (version !== selection || composerLocked.value || inputMode.value !== 'message') return
         const attachment = items.find((item) => item.id === uploadId)
         if (!attachment) {
           notice.value = `附件 ${record.name} 已不可用，无法加入草稿。`
@@ -1696,7 +1704,8 @@ export function useConversation() {
           return
         }
         pending.receipt = receipt.media
-        if (!locked.value && inputMode.value === 'message') await claimConfirmedUpload(uploadId)
+        if (!composerLocked.value && inputMode.value === 'message')
+          await claimConfirmedUpload(uploadId)
         else notice.value = `已确认图片 ${pending.name}，可加入当前草稿。`
         return
       }
@@ -1714,7 +1723,7 @@ export function useConversation() {
         notice.value = `已确认附件 ${found.name}；原粘贴项已移除，未自动加入草稿。`
         return
       }
-      if (locked.value || inputMode.value !== 'message') {
+      if (composerLocked.value || inputMode.value !== 'message') {
         pending.receipt = found
         notice.value = `已确认附件 ${found.name}，可加入当前草稿。`
         return
@@ -1748,6 +1757,10 @@ export function useConversation() {
     }
   }
   function reference(value: Reference) {
+    if (sessionClosed.value) {
+      notice.value = '会话已关闭，请新建对话后添加引用。'
+      return
+    }
     if (pendingInput.value) {
       notice.value = '请先恢复观察或重试原请求，再添加引用。'
       return
@@ -1829,6 +1842,8 @@ export function useConversation() {
     pendingInput,
     active,
     locked,
+    sessionClosed,
+    composerLocked,
     targetName,
     selectedTarget,
     connect,

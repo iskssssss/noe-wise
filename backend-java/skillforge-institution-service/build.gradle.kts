@@ -346,9 +346,13 @@ tasks.register<Test>("sessionDirectoryBrowserE2E") {
     testClassesDirs = ordinaryTests.output.classesDirs
     classpath = ordinaryTests.runtimeClasspath
     useJUnitPlatform { includeTags("session-directory-browser") }
-    filter { includeTestsMatching("*ChatRuntimeChannelE2ETest.standaloneBrowserFindsFirstUserMessageWithoutCallingModel") }
+    filter {
+        includeTestsMatching("*ChatRuntimeChannelE2ETest.standaloneBrowserFindsFirstUserMessageWithoutCallingModel")
+        includeTestsMatching("*ChatRuntimeChannelE2ETest.standaloneBrowserRestoresClosedSessionAsReadOnly")
+    }
+    inputs.property("closedSession", providers.environmentVariable("E2E_CLOSED_SESSION").orElse("0"))
     setFinalizedBy(emptyList<Any>())
-    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/session-directory-browser.mjs", "e2e/history-scroll-browser.mjs", "e2e/mixed-upload-browser.mjs", "vite.config.*", "package*.json", "index.html") })
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/session-directory-browser.mjs", "e2e/closed-session-browser.mjs", "e2e/history-scroll-browser.mjs", "e2e/mixed-upload-browser.mjs", "vite.config.*", "package*.json", "index.html") })
         .withPropertyName("sessionDirectoryFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 

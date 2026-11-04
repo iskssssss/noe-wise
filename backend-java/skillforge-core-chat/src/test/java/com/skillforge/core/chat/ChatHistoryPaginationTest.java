@@ -36,6 +36,36 @@ class ChatHistoryPaginationTest {
                 "s",List.of(),null,List.of(),List.of(), ChatHistoryResponse.Collaboration.empty()));
     }
     private ChatMessageRecord message(int id){return new ChatMessageRecord(String.format("m%03d",id),"user","content",Instant.EPOCH,Map.of());}
+    @Test void currentSessionClosedFactIsIncludedInLatestAndOlderPagesWithoutReloadingSession() {
+        when(memory.listAll("7","s")).thenReturn(List.of(message(0),message(1),message(2)));
+        when(sessions.isOpenPlatformClosed(session)).thenCallRealMethod();
+        assertFalse(service.history("7","s",2,null).closed());
+        for (String marker : List.of("closed_at", "open_platform_closed_at")) {
+            when(session.getMetadata()).thenReturn(Map.of(marker, "2026-11-04T00:00:00Z"));
+            var latest = service.history("7","s",2,null);
+            var older = service.history("7","s",2,latest.nextBeforeMessageId());
+            assertTrue(latest.closed()); assertTrue(older.closed());
+            assertEquals(List.of(message(1),message(2)), latest.messages());
+            assertEquals(List.of(message(0)), older.messages());
+        }
+        verify(sessions,times(5)).require("7","s");
+    }
+    @Test void historyDecoratorsKeepClosedStateAlongsideRetentionAndWorkPlans() {
+        var retention = new ChatHistoryResponse.HistoryRetention(3, Instant.EPOCH, 2, 2, List.of("message.delta"), true);
+        var plan = Map.<String,Object>of("work_id", "plan-1");
+        var original = new ChatHistoryResponse("s",List.of(message(0)),null,List.of(),List.of(),ChatHistoryResponse.Collaboration.empty())
+                .withClosed(true);
+        var result = original.withWorkPlans(List.of(plan)).withHistoryRetention(retention);
+        assertTrue(result.closed());
+        assertEquals(original.messages(),result.messages());
+        assertEquals(List.of(plan),result.workPlans());
+        assertEquals(retention,result.historyRetention());
+        var reopened = result.withClosed(false);
+        assertFalse(reopened.closed());
+        assertEquals(result.messages(),reopened.messages());
+        assertEquals(result.workPlans(),reopened.workPlans());
+        assertEquals(retention,reopened.historyRetention());
+    }
     @Test void planSnapshotsFollowOnlyTheCurrentPageInputIds() {
         var old=new ChatMessageRecord("old-user","user","旧轮次",Instant.EPOCH,Map.of("root_input_id","old-input"));
         var latest=new ChatMessageRecord("new-user","user","新轮次",Instant.EPOCH.plusSeconds(1),Map.of("root_input_id","new-input"));
