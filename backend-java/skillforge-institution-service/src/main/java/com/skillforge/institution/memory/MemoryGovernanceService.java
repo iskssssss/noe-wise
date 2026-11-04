@@ -36,9 +36,13 @@ import com.skillforge.institution.memory.MemoryGovernanceMapper.Owner;
 import com.skillforge.institution.memory.MemoryGovernanceMapper.PageOwner;
 import com.skillforge.institution.memory.MemoryGovernanceRequest.Operation;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
@@ -58,14 +62,16 @@ public class MemoryGovernanceService {
     private final JdbcMemoryPort memories;
     private final MemoryRuntime runtime;
     private final MemoryGovernanceRequests requests;
+    private final ObjectMapper json;
 
     public MemoryGovernanceService(
             MemoryGovernanceMapper mapper, JdbcMemoryPort memories, MemoryRuntime runtime,
-            MemoryGovernanceRequests requests) {
+            MemoryGovernanceRequests requests, ObjectMapper json) {
         this.mapper = mapper;
         this.memories = memories;
         this.runtime = runtime;
         this.requests = requests;
+        this.json = json;
     }
 
     @Transactional(readOnly = true)
@@ -140,8 +146,7 @@ public class MemoryGovernanceService {
                     MemoryFact fact = withDecay(value.get(), row.decayScore());
                     // 权威内容由独立连接读取；若并发治理已改变状态，不把它放入旧状态筛选结果。
                     if ((status == null || status.equals(fact.status().name()))
-                            && (keyword == null || (fact.subject() + fact.predicate() + fact.object().canonicalJson())
-                            .toLowerCase(Locale.ROOT).contains(keyword))) items.add(fact);
+                            && matchesSearch(fact, keyword)) items.add(fact);
                 }
                 if (items.size() == limit)
                     return new Page(List.copyOf(items), index + 1 < rows.size() ? encodeCursor(position) : null);
@@ -149,6 +154,26 @@ public class MemoryGovernanceService {
             if (rows.size() <= count) return new Page(List.copyOf(items), null);
         }
         return new Page(List.copyOf(items), encodeCursor(position));
+    }
+
+    private boolean matchesSearch(MemoryFact fact, String keyword) {
+        if (keyword == null || (fact.subject() + fact.predicate() + fact.object().canonicalJson())
+                .toLowerCase(Locale.ROOT).contains(keyword)) return true;
+        JsonNode content;
+        try {
+            content = json.readTree(fact.object().canonicalJson());
+        } catch (JsonProcessingException invalid) {
+            // 不透明正文仍可按原文检索；无法解码时不附加 JSON 字符串值匹配。
+            return false;
+        }
+        var nodes = new ArrayDeque<JsonNode>();
+        if (content != null) nodes.add(content);
+        while (!nodes.isEmpty()) {
+            JsonNode node = nodes.removeFirst();
+            if (node.isTextual() && node.textValue().toLowerCase(Locale.ROOT).contains(keyword)) return true;
+            node.forEach(nodes::addLast);
+        }
+        return false;
     }
 
     public record Page(List<MemoryFact> items, @JsonProperty("next_cursor") String nextCursor) { }

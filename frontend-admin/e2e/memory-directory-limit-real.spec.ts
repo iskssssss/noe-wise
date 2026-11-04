@@ -2,6 +2,58 @@ import { expect, test } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+test('原文路径可定位同一条记忆事实', async ({ page }) => {
+  test.skip(!process.env.E2E_MEMORY_LITERAL, '仅运行原文搜索场景')
+  const target = fixture('E2E_TARGET_TEXT')
+  const factId = fixture('E2E_TARGET_FACT')
+  const mode = fixture('E2E_MEMORY_LITERAL')
+  const evidence = fixture('E2E_ARTIFACT_DIR')
+  await page.goto('/login?redirect=/admin/memory')
+  await page.locator('input[autocomplete="organization"]').fill(fixture('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill('runtime-e2e-admin')
+  await page.locator('input[autocomplete="current-password"]').fill(fixture('E2E_PASSWORD'))
+  const initial = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/v1/memories/page'
+  )
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  expect((await initial).status()).toBe(200)
+  const search = page.getByRole('textbox', { name: '搜索记忆', exact: true })
+  const requests: { query: string; response: unknown }[] = []
+  for (const query of ['agent', target]) {
+    await search.fill(query)
+    const read = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/v1/memories/page' && url.searchParams.get('q') === query
+    })
+    await page.getByRole('button', { name: '查询', exact: true }).click()
+    const response = await read
+    expect(response.status()).toBe(200)
+    const body = await response.json()
+    expect(body.code).toBe('OK')
+    requests.push({ query: new URL(response.url()).searchParams.get('q')!, response: body })
+    const expected = query === 'agent' || mode === 'candidate' ? 1 : 0
+    expect(
+      body.data.items.filter((item: { ref: { fact_id: string } }) => item.ref.fact_id === factId)
+    ).toHaveLength(expected)
+    if (query === 'agent') {
+      const row = page.getByRole('row').filter({ hasText: 'workspace' })
+      await row.getByRole('button', { name: '纠正', exact: true }).click()
+      const editor = page.getByRole('dialog', { name: '纠正记忆' })
+      await expect(editor.getByRole('textbox', { name: '记忆内容', exact: true })).toHaveValue(
+        target
+      )
+      await page.screenshot({ path: join(evidence, 'literal-editor.png'), fullPage: true })
+      await page.keyboard.press('Escape')
+      await expect(editor).toBeHidden()
+    }
+  }
+  await page.screenshot({ path: join(evidence, 'literal-search.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'literal-search.json'),
+    JSON.stringify({ mode, factId, target, requests }, null, 2)
+  )
+})
+
 function fixture(name: string): string {
   const value = process.env[name]
   if (!value) throw new Error(`Missing isolated fixture: ${name}`)

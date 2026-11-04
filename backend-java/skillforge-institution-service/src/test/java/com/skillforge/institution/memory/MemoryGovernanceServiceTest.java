@@ -99,6 +99,59 @@ class MemoryGovernanceServiceTest {
         assertEquals(null, page.nextCursor());
     }
 
+    @Test
+    void pageSearchesDecodedTextIncludingPathsQuotesAndNestedValues() throws Exception {
+        String path = "D:\\workspace\\notes";
+        String quoted = "say \"hello\"";
+        String json = new ObjectMapper().writeValueAsString(java.util.Map.of(
+                "value", java.util.Map.of("text", path),
+                "nested", List.of(java.util.Map.of("text", quoted), "MiXeD value")));
+        Fixture fixture = new Fixture(searchFact(json));
+        for (String query : List.of(path, quoted, "mixed VALUE")) {
+            assertEquals(List.of(fixture.current), fixture.page(query).items(), query);
+        }
+    }
+
+    @Test
+    void pagePreservesRawKeysNumbersSubjectAndPredicateSearch() {
+        Fixture fixture = new Fixture(searchFact("{\"rawKey\":12345,\"value\":\"text\"}"));
+        for (String query : List.of("rawkey", "12345", "user:7", "theme")) {
+            assertEquals(List.of(fixture.current), fixture.page(query).items(), query);
+        }
+    }
+
+    @Test
+    void pageDoesNotJoinSeparateTextLeaves() {
+        Fixture fixture = new Fixture(searchFact("{\"values\":[\"alpha\",\"beta\"]}"));
+        assertEquals(List.of(), fixture.page("alpha beta").items());
+    }
+
+    @Test
+    void pageKeepsMalformedPayloadListableAndRawSearchable() {
+        Fixture fixture = new Fixture(searchFact("plain payload \\u0041"));
+        assertEquals(List.of(fixture.current), fixture.page(null).items());
+        assertEquals(List.of(fixture.current), fixture.page("plain payload").items());
+        assertEquals(List.of(), fixture.page("decoded-only-A").items());
+    }
+
+    @Test
+    void pageWithoutQueryDoesNotDecodePayload() throws Exception {
+        ObjectMapper json = mock(ObjectMapper.class);
+        Fixture fixture = new Fixture(searchFact("{\"value\":\"text\"}"), json);
+        assertEquals(List.of(fixture.current), fixture.page(null).items());
+        verify(json, never()).readTree(any(String.class));
+    }
+
+    private static MemoryFact searchFact(String json) {
+        MemoryFact base = fact(REF, USER, MemoryScope.USER_AGENT, TYPE, FactStatus.ACTIVE);
+        return new MemoryFact(base.ref(), base.owner(), base.type(), base.retentionClass(), base.schemaVersion(),
+                base.subject(), base.predicate(), new TypedPayload("search.fixture", json),
+                base.sourceEventIds(), base.sourceSessionRef(), base.sourceExecutionRef(), base.exportPath(),
+                base.extractorVersion(), base.revision(), base.createdAt(), base.validFrom(), base.validTo(),
+                base.expiresAt(), base.confidence(), base.importance(), base.reviewRequired(), base.derivedFrom(),
+                base.supersededBy(), base.decayScore(), base.status());
+    }
+
     /** 对已被遗忘的事实使用旧 revision 纠正，保留原草稿命令并采用 Port 的真实冲突类型。 */
     @Test
     void staleCorrectionPreservesDraftAndCurrentFactAndMapsConflictTo409() {
@@ -588,6 +641,10 @@ class MemoryGovernanceServiceTest {
         private final MemoryGovernanceService service;
 
         private Fixture(MemoryFact current) {
+            this(current, new ObjectMapper());
+        }
+
+        private Fixture(MemoryFact current, ObjectMapper json) {
             this.current = current;
             when(mapper.owner(TENANT.value(), REF.factId())).thenReturn(new MemoryGovernanceMapper.Owner(
                     REF.factId(), USER.value(), AGENT.value(), SESSION.sessionId(), 0));
@@ -609,7 +666,18 @@ class MemoryGovernanceServiceTest {
                 MemoryGovernanceRequest request = call.getArgument(0);
                 return new MemoryGovernanceRequests.Receipt(request.key(), request.fingerprint(), CREATED);
             });
-            service = new MemoryGovernanceService(mapper, memories, runtime, requests);
+            service = new MemoryGovernanceService(mapper, memories, runtime, requests, json);
+        }
+
+        private MemoryGovernanceService.Page page(String query) {
+            when(mapper.pageOwners(eq(TENANT.value()), eq("ACTIVE"), isNull(), isNull(), isNull(),
+                    isNull(), isNull(), isNull(), isNull(), eq(201))).thenReturn(List.of(
+                    new MemoryGovernanceMapper.PageOwner(REF.factId(), USER.value(), AGENT.value(),
+                            SESSION.sessionId(), 0, CREATED.getEpochSecond(), CREATED.getNano())));
+            when(memories.findCurrent(any(CurrentFactReadBatch.class)))
+                    .thenReturn(List.of(Optional.of(current)));
+            return service.page(TENANT.value(),
+                    new MemoryGovernanceService.ListQuery("ACTIVE", null, null, null, null, 100), query, null);
         }
 
         private void conflict() {

@@ -32,6 +32,7 @@ class MemoryDirectoryLimitBrowserE2ETest extends ChatExecutionChainE2ETest {
     @Autowired DataSource dataSource;
 
     @Test void oldestFactOutsideFirstHundredRemainsRuntimeSearchable() throws Exception {
+        if (System.getenv("E2E_MEMORY_LITERAL") != null) { literalMemorySearch(); return; }
         if (System.getenv("E2E_MEMORY_RESTORE") != null) { decayedFactGovernanceAndRuntime(); return; }
         var owner = SessionOwner.user(new SessionRef(new TenantId(tenantId), sessionId),
                 new AgentId(agentId), new EndUserId(endUserId));
@@ -147,11 +148,56 @@ class MemoryDirectoryLimitBrowserE2ETest extends ChatExecutionChainE2ETest {
         } finally { TenantContext.clear(); }
     }
 
+    private void literalMemorySearch() throws Exception {
+        var owner = SessionOwner.user(new SessionRef(new TenantId(tenantId), sessionId), new AgentId(agentId), new EndUserId(endUserId));
+        String text = "目录 C:\\work\\agent " + SnowflakeIds.nextId();
+        Path evidence = Path.of("build", "runtime-e2e", "memory-literal-search-" + SnowflakeIds.nextId()).toAbsolutePath();
+        Path browser = evidence.resolve("playwright"); Files.createDirectories(browser);
+        TenantContext.setTenantId(tenantId);
+        try {
+            MemoryFact fact = createFact(owner, "workspace", FactStatus.ACTIVE, false,
+                    objectMapper.createObjectNode().put("text", text));
+            Files.writeString(evidence.resolve("fact.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(fact));
+            Path admin = KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");
+            Path cli = admin.resolve("node_modules/.bin").resolve(System.getProperty("os.name", "").toLowerCase().contains("win") ? "playwright.cmd" : "playwright");
+            FRONTEND.bindBackend(baseUrl());
+            var command = new ProcessBuilder(cli.toString(), "test", "e2e/memory-directory-limit-real.spec.ts", "--grep", "原文路径");
+            command.directory(admin.toFile()); command.redirectErrorStream(true); command.redirectOutput(evidence.resolve("playwright.log").toFile());
+            var env = command.environment();
+            env.put("E2E_BASE_URL", FRONTEND.baseUrl()); env.put("E2E_ARTIFACT_DIR", browser.toString());
+            env.put("E2E_TENANT_SLUG", fixtureTenantSlug()); env.put("E2E_PASSWORD", PASSWORD);
+            env.put("E2E_TARGET_TEXT", text); env.put("E2E_TARGET_FACT", fact.ref().factId());
+            env.remove("SDK4_LIVE_MODEL_KEY"); env.remove("E2E_LIVE_MODEL");
+            Process process = command.start();
+            try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
+                long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(4);
+                while (process.isAlive() && System.nanoTime() < deadline) { owned.capture(); process.waitFor(200, TimeUnit.MILLISECONDS); }
+                owned.capture(); assertFalse(process.isAlive(), "browser_timeout: " + evidence);
+                assertEquals(0, process.exitValue(), "browser_failed: " + evidence + "\n" + Files.readString(evidence.resolve("playwright.log")));
+            }
+            var execution = new MemoryInjectionProgramFixture(dataSource, memoryRuntime, memoryStore, groups, owner, "agent");
+            execution.drive();
+            assertEquals(RunStatus.COMPLETED, execution.store().load(execution.identity.runRef()).orElseThrow().status());
+            assertEquals(1, execution.toolCalls()); assertEquals(2, execution.modelCalls());
+            assertTrue(objectMapper.writeValueAsString(execution.toolResult()).contains(fact.ref().factId()));
+            String modelInput = objectMapper.writeValueAsString(execution.nextModelRequest());
+            assertTrue(modelInput.contains(fact.ref().factId()));
+            Files.writeString(evidence.resolve("runtime.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                    "factId", fact.ref().factId(), "runId", execution.identity.runRef().runId(), "toolCalls", execution.toolCalls(),
+                    "modelCalls", execution.modelCalls(), "status", "COMPLETED", "toolResult", execution.toolResult(), "nextModelRequest", execution.nextModelRequest())));
+        } finally { TenantContext.clear(); }
+    }
+
     private MemoryFact createFact(SessionOwner owner, String predicate) {
         return createFact(owner, predicate, FactStatus.ACTIVE, false);
     }
 
     private MemoryFact createFact(SessionOwner owner, String predicate, FactStatus status, boolean reviewRequired) {
+        return createFact(owner, predicate, status, reviewRequired, objectMapper.createObjectNode().put("value", predicate));
+    }
+
+    private MemoryFact createFact(SessionOwner owner, String predicate, FactStatus status, boolean reviewRequired,
+            com.fasterxml.jackson.databind.JsonNode value) {
         String suffix=Long.toString(SnowflakeIds.nextId()), eventId="memory-limit-source-"+suffix;
         InputId input=new InputId("memory-limit-input-"+suffix); Instant now=Instant.now();
         var trace=new TraceEnvelope("memory-limit-trace-"+suffix,"memory-limit-span-"+suffix,input,Optional.empty());
@@ -162,7 +208,7 @@ class MemoryDirectoryLimitBrowserE2ETest extends ChatExecutionChainE2ETest {
         var draft=new MemoryPort.MemoryFactDraft(new MemoryOwner.UserAgent(owner.sessionRef().tenantId(),owner.requireUser(),owner.target().requireAgent()),
                 new MemoryTypeRef("preference"),new RetentionClassRef("standard"),"v2","user:"+owner.requireUser().value(),predicate,
                 new TypedPayload("skillforge.memory.preference.v2",com.skillforge.core.agent.memory.MemoryContent.explicit(
-                        objectMapper.createObjectNode().put("value",predicate),"preference").toString()),
+                        value,"preference").toString()),
                 List.of(new EventId(eventId)),owner.sessionRef(),Optional.empty(),Optional.empty(),"memory-limit-fixture-v1",
                 now,Optional.empty(),Optional.empty(),0.95,0.6,reviewRequired,Optional.empty(),status);
         var runRef=new RunRef(owner.sessionRef().tenantId(),"memory-limit-run-"+suffix);
