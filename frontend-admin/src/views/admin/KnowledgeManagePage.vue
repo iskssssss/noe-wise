@@ -268,7 +268,11 @@
             label="来源"
           ></ElTableColumn
           ><ElTableColumn width="128" show-overflow-tooltip label="状态"
-            ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
+            ><template #default="{ row }">{{
+              needsDocumentContent(row as KnowledgeDocumentItem)
+                ? '无可检索正文'
+                : statusLabel(row.status)
+            }}</template></ElTableColumn
           ><ElTableColumn width="96" prop="chunk_count" label="分块"></ElTableColumn
           ><ElTableColumn width="240" class-name="admin-table-actions" prop="actions" label="操作"
             ><template #default="{ row }"
@@ -276,8 +280,11 @@
                 link
                 @click="editDocument((row as KnowledgeDocumentItem).id)"
                 :disabled="busy || documentMutationRefresh"
-                >编辑 / 分块</ElButton
+                >{{
+                  needsDocumentContent(row as KnowledgeDocumentItem) ? '补充正文' : '编辑 / 分块'
+                }}</ElButton
               ><ElButton
+                v-if="!needsDocumentContent(row as KnowledgeDocumentItem)"
                 v-permission="['foundation.knowledge.run']"
                 link
                 :disabled="
@@ -825,6 +832,13 @@
             "
           />
           <p class="muted">来源版本：{{ document?.source_version }}</p>
+          <p
+            v-if="document?.status === 'failed' && !document.content.trim()"
+            class="admin-field-help"
+            role="status"
+          >
+            当前文档没有可检索分块，请补充正文后保存。
+          </p>
           <FieldTip :id="formTipId + '-group-0'"
             >标题用于识别文档；正文使用 Markdown
             编辑。保存后按当前知识库配置更新内容，索引重建锁定时不可修改。</FieldTip
@@ -1506,7 +1520,9 @@ async function acceptUploadReceipt(
     message.error(`文件上传未完成：${receipt.error_message}`)
     return false
   }
-  message.success('文件上传已提交')
+  if (receipt.document?.chunks === 0)
+    message.warning('文档已创建，但没有可索引正文；请点击“补充正文”填写文本后保存。')
+  else message.success('文件上传已提交')
   activeTab.value = 'documents'
   uploadRefresh.value = true
   await readUploadedDocuments()
@@ -1684,6 +1700,9 @@ async function saveDocument() {
 }
 async function refreshDocumentList() {
   if ((await loadDocuments()) !== undefined) documentMutationRefresh.value = false
+}
+function needsDocumentContent(value?: KnowledgeDocumentItem) {
+  return value?.status === 'failed' && value.chunk_count === 0
 }
 async function reindex(row: KnowledgeDocumentItem) {
   if (documentMutationRefresh.value || rebuildPublicationLocked.value) return

@@ -24,7 +24,9 @@ const mocks = vi.hoisted(() => ({
     'foundation.knowledge.update',
     'foundation.knowledge.publish'
   ],
-  confirm: vi.fn()
+  confirm: vi.fn(),
+  warning: vi.fn(),
+  success: vi.fn()
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'test-session',
@@ -61,10 +63,24 @@ vi.mock('vue-router', () => ({
 vi.mock('@skillforge/shared/components/CodeEditor.vue', () => ({
   default: { template: '<div />' }
 }))
-vi.mock('@skillforge/shared/feedback', async (load) => ({
-  ...(await load<typeof import('@skillforge/shared/feedback')>()),
-  confirm: mocks.confirm
-}))
+vi.mock('@skillforge/shared/feedback', async (load) => {
+  const actual = await load<typeof import('@skillforge/shared/feedback')>()
+  return {
+    ...actual,
+    confirm: mocks.confirm,
+    message: {
+      ...actual.message,
+      warning: (...args: Parameters<typeof actual.message.warning>) => {
+        mocks.warning(...args)
+        return actual.message.warning(...args)
+      },
+      success: (...args: Parameters<typeof actual.message.success>) => {
+        mocks.success(...args)
+        return actual.message.success(...args)
+      }
+    }
+  }
+})
 let wrapper: VueWrapper | undefined
 const doc = (index: number) => ({
   id: 'doc-' + index,
@@ -384,6 +400,32 @@ it('an existing draft enters the same explicit scope flow', async () => {
   await flushPromises()
   expect(mocks.prepare).toHaveBeenCalledTimes(1)
 })
+it.each([0, 1])('上传回执分块数为 %s 时给出准确反馈且不重复上传', async (chunks) => {
+  mocks.upload.mockImplementation(async (_kb: string, _file: FormData, requestId: string) => ({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    document: { document_id: 'new-doc', chunks, source_version: 'new-v' }
+  }))
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  const file = new File([chunks ? '正文' : ' '], '文档.txt', { type: 'text/plain' })
+  wrapper.findComponent(ElUpload).props('onChange')!(
+    { name: file.name, status: 'ready', uid: 1, raw: Object.assign(file, { uid: 1 }) },
+    []
+  )
+  await flushPromises()
+  expect(mocks.upload).toHaveBeenCalledTimes(1)
+  if (chunks === 0) {
+    expect(mocks.warning).toHaveBeenCalledExactlyOnceWith(
+      '文档已创建，但没有可索引正文；请点击“补充正文”填写文本后保存。'
+    )
+    expect(mocks.success).not.toHaveBeenCalled()
+  } else {
+    expect(mocks.success).toHaveBeenCalledTimes(1)
+    expect(mocks.warning).not.toHaveBeenCalled()
+  }
+})
+
 it('upload success returns to documents page one; failed GET preserves old rows/page and retry never uploads again', async () => {
   wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
   await flushPromises()

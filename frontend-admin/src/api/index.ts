@@ -436,7 +436,7 @@ export interface KnowledgeDocumentItem {
   source_version?: string | null
   created_at: string
 }
-export interface KnowledgeDocumentDetail extends KnowledgeDocumentItem {
+export interface KnowledgeDocumentDetail extends Omit<KnowledgeDocumentItem, 'chunk_count'> {
   content: string
   original_filename?: string | null
   extension?: string | null

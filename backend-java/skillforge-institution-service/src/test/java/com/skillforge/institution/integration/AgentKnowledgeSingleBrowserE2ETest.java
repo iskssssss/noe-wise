@@ -99,6 +99,19 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             assertEquals(1,facts.path("mountPosts").asInt());assertEquals(0,facts.path("publishPosts").asInt());assertEquals(0,facts.path("chatPosts").asInt());
             assertEquals("baseline".equals(System.getenv("E2E_AGENT_KNOWLEDGE_MODE"))?2:0,facts.path("manualSelectionClicks").asInt());
             assertEquals(1,countRuntime("SELECT count(*) FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND capability_definition_id=? AND capability_version_id=?",tenantId,agentId,mountId,published.definitionId(),published.capabilityVersionId()));
+            if (System.getenv("E2E_KNOWLEDGE_EMPTY") != null) {
+                var repaired = facts.path("emptyJourney");
+                assertEquals(1, repaired.path("uploads").asInt());
+                var revision = repaired.path("publication").path("data").path("revision");
+                String documentId = repaired.path("documentId").asText();
+                String sourceVersion = repaired.path("sourceVersion").asText();
+                assertFalse(documentId.isBlank()); assertFalse(sourceVersion.isBlank());
+                assertEquals(1, countRuntime("SELECT count(*) FROM nw_knowledge_documents WHERE tenant_id=CAST(? AS bigint) AND kb_id=CAST(? AS bigint) AND id=CAST(? AS bigint)", tenantId, published.kbId(), documentId));
+                assertTrue(countRuntime("SELECT count(*) FROM knowledge_chunk_values WHERE tenant_id=CAST(? AS bigint) AND source_version=?", tenantId, sourceVersion) > 0);
+                published = new RuntimeExecutionKnowledgeFixture.Published(published.kbId(), documentId, sourceVersion,
+                        revision.path("id").asLong(), published.definitionId(), revision.path("capability_version_id").asLong(),
+                        sentinel, repaired.path("content").asText());
+            }
             var script=model.register("knowledge-"+SnowflakeIds.nextId(),RuntimeExecutionWorkloadProvider.Workload.KNOWLEDGE);
             script.requireKnowledge("knowledge:"+mountId,published.kbId(),published.sourceVersion(),query,sentinel);
             var agentPublication=send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken);assertEquals(200,agentPublication.statusCode(),agentPublication.body());

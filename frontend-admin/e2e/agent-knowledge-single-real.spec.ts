@@ -111,6 +111,163 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
   expect(publishPosts).toBe(0)
   expect(chatPosts).toBe(0)
   await page.screenshot({ path: join(evidence, 'knowledge-mounted.png'), fullPage: true })
+  let emptyJourney: unknown
+  if (process.env.E2E_KNOWLEDGE_EMPTY) {
+    const mode = process.env.E2E_KNOWLEDGE_EMPTY
+    const initialDocuments = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/v1/knowledge/bases/documents'
+    )
+    await page.goto(`/admin/knowledge/${kb}`)
+    expect((await initialDocuments).status()).toBe(200)
+    let uploads = 0
+    let reindexPosts = 0
+    page.on('request', (request) => {
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/v1/knowledge/bases/documents/upload'
+      )
+        uploads++
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/v1/knowledge/documents/reindex'
+      )
+        reindexPosts++
+    })
+    const uploaded = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/knowledge/bases/documents/upload' &&
+        response.request().method() === 'POST'
+    )
+    const listed = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/v1/knowledge/bases/documents'
+    )
+    await page.locator('input[type="file"]').setInputFiles({
+      name: '空白正文验收.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('  \n\t\n ')
+    })
+    const uploadResponse = await uploaded
+    expect(uploadResponse.status()).toBe(200)
+    const upload = await uploadResponse.json()
+    expect(upload.data.status).toBe('SUCCEEDED')
+    const docId = String(upload.data.document.document_id)
+    const firstList = await (await listed).json()
+    const failed = firstList.data.items.find((item: { id: string }) => String(item.id) === docId)
+    expect(failed.status).toBe('failed')
+    expect(failed.chunk_count).toBe(0)
+    const row = page.getByRole('row').filter({ hasText: failed.title })
+    await expect(row).toContainText(/failed|失败|无可检索正文/)
+    const emptyNotice = page.getByText(/没有可索引正文/)
+    await expect(emptyNotice).toHaveCount(mode === 'baseline' ? 0 : 1)
+    await page.screenshot({ path: join(evidence, 'knowledge-empty-upload.png'), fullPage: true })
+    const reread = await page.evaluate(
+      async ({ kb, requestId }) => {
+        const response = await fetch(
+          `/api/v1/knowledge/bases/documents/upload/result?${new URLSearchParams({ kb_id: kb, request_id: requestId })}`,
+          {
+            headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+          }
+        )
+        return { status: response.status, body: await response.json() }
+      },
+      { kb, requestId: upload.data.request_id }
+    )
+    expect(reread.status).toBe(200)
+    expect(reread.body.data.document.document_id).toBe(docId)
+    let retried = failed
+    if (mode === 'baseline') {
+      const reindexed = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/knowledge/documents/reindex' &&
+          response.request().method() === 'POST'
+      )
+      const retryList = page.waitForResponse(
+        (response) => new URL(response.url()).pathname === '/api/v1/knowledge/bases/documents'
+      )
+      await row.getByRole('button', { name: '重试索引', exact: true }).click()
+      expect((await reindexed).status()).toBe(200)
+      retried = (await (await retryList).json()).data.items.find(
+        (item: { id: string }) => String(item.id) === docId
+      )
+      expect(retried.status).toBe('failed')
+      expect(retried.chunk_count).toBe(0)
+    } else {
+      await expect(row).toContainText('无可检索正文')
+      await expect(row.getByRole('button', { name: '重试索引', exact: true })).toHaveCount(0)
+    }
+    await row
+      .getByRole('button', { name: mode === 'baseline' ? '编辑 / 分块' : '补充正文', exact: true })
+      .click()
+    const editor = page.getByRole('dialog', { name: failed.title, exact: true })
+    if (mode === 'candidate')
+      await expect(editor).toContainText('当前文档没有可检索分块，请补充正文后保存。')
+    const content = required('E2E_KNOWLEDGE_SENTINEL') + ' 补充有效知识正文以完成索引。'
+    await editor.locator('.cm-content').fill(content)
+    const saved = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/knowledge/documents/update' &&
+        response.request().method() === 'PATCH'
+    )
+    await editor.getByRole('button', { name: '保存原文', exact: true }).click()
+    const savedResponse = await saved
+    expect(savedResponse.status()).toBe(200)
+    const repaired = (await savedResponse.json()).data
+    expect(repaired.status).toBe('ready')
+    const sourceVersion = repaired.source_version
+    expect(sourceVersion).toBeTruthy()
+    await editor.getByRole('button', { name: '关闭', exact: true }).click()
+    await page.getByRole('button', { name: '更新知识发布', exact: true }).click()
+    const preparation = page.getByRole('dialog', { name: '准备知识发布', exact: true })
+    const repairedScope = preparation.getByRole('checkbox', {
+      name: '包含文档 ' + failed.title,
+      exact: true
+    })
+    await expect(preparation.getByRole('row').filter({ hasText: failed.title })).toBeVisible()
+    for (const checkbox of await preparation.getByRole('checkbox').all()) {
+      if (await checkbox.isChecked()) await checkbox.locator('..').click()
+    }
+    await expect(preparation.getByRole('checkbox', { checked: true })).toHaveCount(0)
+    await repairedScope.locator('..').click()
+    await expect(repairedScope).toBeChecked()
+    await expect(preparation.getByRole('checkbox', { checked: true })).toHaveCount(1)
+    const published = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          '/api/v1/knowledge/bases/revisions/prepare-and-publish' &&
+        response.request().method() === 'POST'
+    )
+    await preparation.getByRole('button', { name: '确认范围并发布', exact: true }).click()
+    await page.getByRole('button', { name: '确认发布', exact: true }).click()
+    const publishResponse = await published
+    expect(publishResponse.status()).toBe(200)
+    const publication = await publishResponse.json()
+    expect(publication.data.status).toBe('SUCCEEDED')
+    expect(publication.data.revision.source_versions).toEqual([sourceVersion])
+    expect(uploads).toBe(1)
+    expect(reindexPosts).toBe(mode === 'baseline' ? 1 : 0)
+    emptyJourney = {
+      mode,
+      upload,
+      reread,
+      failed,
+      retried,
+      repaired,
+      content,
+      publication,
+      uploads,
+      reindexPosts,
+      documentId: docId,
+      sourceVersion
+    }
+    await page.screenshot({
+      path: join(evidence, 'knowledge-empty-repaired-published.png'),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, 'knowledge-empty-journey.json'),
+      JSON.stringify(emptyJourney, null, 2)
+    )
+  }
   if (process.env.E2E_KNOWLEDGE_CASE) {
     const mode = process.env.E2E_KNOWLEDGE_CASE
     const searchQuery = required('E2E_KNOWLEDGE_QUERY')
@@ -216,7 +373,8 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
       publishPosts,
       chatPosts,
       manualSelectionClicks,
-      lookups
+      lookups,
+      emptyJourney
     })
   )
 })

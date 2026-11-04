@@ -145,6 +145,33 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('失败且无分块时引导补充正文并在详情持续解释，不提供无效索引重试', async () => {
+    const emptyDocument = { ...documentFixture, content: ' ', status: 'failed', chunk_count: 0 }
+    mocks.documents.mockResolvedValue({ items: [emptyDocument], total: 1 })
+    mocks.document.mockResolvedValue({ ...documentFixture, content: ' ', status: 'failed' })
+    await open()
+    expect(wrapper.text()).toContain('无可检索正文')
+    expect(wrapper.findAllComponents(ElButton).some((button) => button.text() === '重试索引')).toBe(
+      false
+    )
+    await click('补充正文')
+    expect(document.body.textContent).toContain('当前文档没有可检索分块，请补充正文后保存。')
+    expect(mocks.document).toHaveBeenCalledExactlyOnceWith('doc-1')
+    expect(mocks.reindex).not.toHaveBeenCalled()
+  })
+
+  it('有分块的失败文档保留编辑和重试索引入口', async () => {
+    mocks.documents.mockResolvedValue({
+      items: [{ ...documentFixture, status: 'failed', chunk_count: 1 }],
+      total: 1
+    })
+    await open()
+    const buttons = wrapper.findAllComponents(ElButton).map((button) => button.text())
+    expect(buttons).toContain('编辑 / 分块')
+    expect(buttons).toContain('重试索引')
+    expect(buttons).not.toContain('补充正文')
+  })
+
   it('浏览器会话更换后手动刷新成功，重新恢复自动观察', async () => {
     mocks.rebuild.mockResolvedValue(job('RUNNING'))
     await open()
