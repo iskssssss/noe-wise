@@ -120,6 +120,9 @@ public class HttpRequestToolHandler implements PlatformToolHandler {
                     return fail("不允许跟随重定向", status, contentType(response), "", false);
                 }
                 Body body = readBody(input, policy.maxResponseBytes());
+                if (status < 200 || status >= 300)
+                    return fail("HTTP 请求返回非成功状态码：" + status, status,
+                            contentType(response), body.text(), body.truncated());
                 return success(status, contentType(response), body.text(), body.truncated());
             } finally {
                 closeBody(activeBody.getAndSet(null));

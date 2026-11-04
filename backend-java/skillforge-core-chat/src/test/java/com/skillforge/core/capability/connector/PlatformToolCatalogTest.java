@@ -490,13 +490,27 @@ class PlatformToolCatalogTest {
     }
 
     @Test
+    void httpRequestDescribesBusinessSuccessAndPreservesFailureEvidence() {
+        var http = entry("http_request");
+        assertTrue(http.description().contains("仅 2xx 响应为成功"));
+        assertTrue(http.description().contains("保留状态码和正文"));
+        assertTrue(http.description().contains("失败不表示可安全重试"));
+        var output = new ObjectMapper().valueToTree(http.outputSchema());
+        assertEquals("boolean", output.at("/properties/success/type").asText());
+        String success = output.at("/properties/success/description").asText();
+        assertTrue(success.contains("仅 HTTP 2xx 响应为 true"));
+        assertTrue(success.contains("非成功响应为 false"));
+        assertTrue(success.contains("不表示可安全重试"));
+    }
+
+    @Test
     void carriesExactGovernanceAndExplicitOutputSchemas() {
         for (String name : List.of(
                 "get_current_time", "calculate_expression", "convert_datetime", "json_query",
                 "json_schema_validate", "template_render")) {
             assertGovernance(name, "READ_ONLY", true, "NEVER", 5_000, true, true, true, Set.of());
         }
-        assertEquals("builtin:6", entry("http_request").publishedVersionKey());
+        assertEquals("builtin:7", entry("http_request").publishedVersionKey());
         assertGovernance("http_request", "NON_IDEMPOTENT_WRITE", false, "NEVER", OperationalSettingsDefaults.HTTP_MAX_TIMEOUT_SECONDS * 1000L, true, true, false,
                 Set.of("headers"));
         assertGovernance("code_execute", "NON_IDEMPOTENT_WRITE", false, "NEVER", com.skillforge.execution.ExecutionLimits.MAX_TIMEOUT_SECONDS*1000L, true, true, false,

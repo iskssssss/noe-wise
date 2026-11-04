@@ -376,6 +376,7 @@ tasks.register<Test>("chatProcessBrowserE2E") {
     inputs.property("inputRecovery", providers.environmentVariable("E2E_CHAT_INPUT_RECOVERY").orElse("0"))
     inputs.property("inputRecoveryBaseline", providers.environmentVariable("E2E_CHAT_INPUT_RECOVERY_BASELINE").orElse("0"))
     inputs.property("historyPages", providers.environmentVariable("E2E_CHAT_HISTORY_PAGES").orElse("0"))
+    inputs.property("httpStatus", providers.environmentVariable("E2E_HTTP_STATUS").orElse("0"))
     group = "verification"
     val ordinaryTests = sourceSets.named("test").get()
     testClassesDirs = ordinaryTests.output.classesDirs

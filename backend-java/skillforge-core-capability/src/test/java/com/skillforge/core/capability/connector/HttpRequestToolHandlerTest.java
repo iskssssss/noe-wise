@@ -137,6 +137,58 @@ class HttpRequestToolHandlerTest {
         assertEquals(true, result.get("truncated"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {404, 500})
+    void nonSuccessfulHttpResponseRetainsKnownStatusAndBodyWithoutResending(int status) throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        String responseBody = "upstream-error-" + status;
+        server.createContext("/failed", exchange -> {
+            calls.incrementAndGet();
+            assertEquals("POST", exchange.getRequestMethod());
+            byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=utf-8");
+            exchange.sendResponseHeaders(status, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+
+        Map<String, Object> result = handler(64).execute(Map.of(
+                "method", "POST", "url", baseUrl + "/failed", "body", Map.of("request", "one")),
+                PlatformToolTestContext.create());
+
+        assertEquals(false, result.get("success"));
+        assertEquals(status, result.get("status"));
+        assertEquals(responseBody, result.get("body"));
+        assertEquals("text/plain; charset=utf-8", result.get("content_type"));
+        assertEquals(false, result.get("truncated"));
+        assertTrue(result.get("error").toString().contains(Integer.toString(status)));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void truncatedErrorBodyDoesNotTurnKnownFailureIntoSuccess() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server.createContext("/large-error", exchange -> {
+            calls.incrementAndGet();
+            byte[] body = "0123456789".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/plain");
+            exchange.sendResponseHeaders(404, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+
+        Map<String, Object> result = handler(4).execute(Map.of(
+                "method", "GET", "url", baseUrl + "/large-error"), PlatformToolTestContext.create());
+
+        assertEquals(false, result.get("success"));
+        assertEquals(404, result.get("status"));
+        assertEquals("0123", result.get("body"));
+        assertEquals("text/plain", result.get("content_type"));
+        assertEquals(true, result.get("truncated"));
+        assertTrue(result.get("error").toString().contains("404"));
+        assertEquals(1, calls.get());
+    }
+
     @Test
     void rejectsRedirectsWithoutFollowing() throws Exception {
         AtomicInteger targetCalls = new AtomicInteger();

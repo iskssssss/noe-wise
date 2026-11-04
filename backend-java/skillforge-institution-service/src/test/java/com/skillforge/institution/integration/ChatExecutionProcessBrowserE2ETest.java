@@ -36,6 +36,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     private com.skillforge.core.foundation.settings.OperationalSettingsService.Snapshot originalRate;
     private long fixtureRateRevision;
     private long fixtureRateActor;
+    private HttpErrorModel httpErrorModel;
     @org.springframework.beans.factory.annotation.Autowired
     private com.skillforge.core.chat.session.SessionMailboxService historyMailbox;
 
@@ -53,6 +54,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
 
     @AfterEach
     void restoreBrowserRatePolicy() {
+        if (httpErrorModel != null) httpErrorModel.close();
         if (fixtureRateRevision != 0) {
             operationalSettings.update("rate_limits", fixtureRateRevision, originalRate.values(), fixtureRateActor);
             assertEquals(originalRate.values(), operationalSettings.read("rate_limits").values());
@@ -62,6 +64,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     @DynamicPropertySource
     static void allowIsolatedBrowserOrigin(DynamicPropertyRegistry registry) {
         registry.add("skillforge.web.allowed-origins", FRONTEND::baseUrl);
+        if (System.getenv("E2E_HTTP_STATUS") != null) registry.add("skillforge.debug", () -> "true");
     }
 
     @AfterAll
@@ -85,6 +88,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
 
     private void runBrowser(boolean live) throws Exception {
         createWebhookOnlyMember();
+        if (System.getenv("E2E_HTTP_STATUS") != null) prepareHttpError();
         Path repoRoot = findRepoRoot();
         Path adminRoot = repoRoot.resolve("frontend-admin");
         Path playwright = adminRoot.resolve("node_modules/.bin")
@@ -159,6 +163,10 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             environment.put("E2E_HISTORY_SENTINEL", sentinel);
             command.command().addAll(List.of("--grep", "已加载历史分页"));
         }
+        if (System.getenv("E2E_HTTP_STATUS") != null) {
+            environment.put("E2E_CHAT_INPUT_RECOVERY", "0");
+            command.command().addAll(List.of("--grep", "\u771f\u5b9e\u673a\u6784\u767b\u5f55\u53d1\u9001\u4e00\u6b21"));
+        }
         Process process = command.start();
         Set<ProcessHandle> owned = new LinkedHashSet<>();
         owned.add(process.toHandle());
@@ -228,6 +236,24 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         assertEquals(1, countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? "
                 + "AND session_id=? AND agent_id=? AND end_user_id=? AND input_id=? AND status='COMPLETED' AND phase='FINISHED'",
                 tenantId, run, session, agentId, endUserId, input));
+        if (httpErrorModel != null) {
+            var tools = queryRows(jdbc, tenantId, "SELECT a.action_id,a.status,t.result_kind,t.adopted,res.canonical_json AS result FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id LEFT JOIN agent_runtime_execution_materials res ON res.tenant_id=t.tenant_id AND res.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='TOOL'", tenantId, run);
+            Files.writeString(evidence.resolve("http-tool-results.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(tools));
+            assertEquals(1, tools.size()); assertEquals("SUCCEEDED", tools.getFirst().get("result_kind"));
+            assertEquals(1, httpErrorModel.httpCalls.get()); assertEquals(2, httpErrorModel.calls.get());
+            assertTrue(httpErrorModel.verifiedHttpResult.get());
+            var material = objectMapper.readTree(tools.getFirst().get("result").toString());
+            assertEquals("KNOWN_RESULT", material.path("resolution").asText());
+            var outcome = objectMapper.readTree(material.path("outcome").path("canonicalJson").asText());
+            var observation = objectMapper.readTree(outcome.path("observation").path("canonicalJson").asText());
+            var response = observation.path("structuredContent");
+            assertEquals(500, response.path("status").asInt());
+            assertEquals("fixture-http-500", response.path("body").asText());
+            assertEquals("baseline".equals(System.getenv("E2E_HTTP_STATUS")), response.path("success").asBoolean());
+            assertEquals(true, tools.getFirst().get("adopted"));
+            Files.writeString(evidence.resolve("http-runtime.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("runId",run,"httpCalls",httpErrorModel.httpCalls.get(),"modelCalls",httpErrorModel.calls.get(),"resultReturnedToModel",httpErrorModel.verifiedHttpResult.get(),"httpResult",response,"modelToolDescription",httpErrorModel.toolDescription)));
+            return;
+        }
         long models = countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? "
                 + "AND kind='MODEL' AND status='SUCCEEDED'", tenantId, run);
         assertEquals(1, models, "必须只有一次成功模型动作");
@@ -306,4 +332,113 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 
+    private void prepareHttpError() throws Exception {
+        login();
+        var revised=send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken);
+        assertEquals(200,revised.statusCode(),revised.body());
+        agentId=successData(revised).path("id").asText();
+        var definitions=successData(send("/api/v1/capabilities/definitions?capability_type=TOOL&status=PUBLISHED","GET",null,accessToken));
+        String definition="",version="";
+        for(var item:definitions) if("tool:http_request".equals(item.path("capability_key").asText())) {definition=item.path("id").asText();version=item.path("default_version_id").asText();}
+        assertTrue(!definition.isBlank()&&!version.isBlank());
+        String key="http-status-"+fixtureRunId();
+        var deployment=send("/api/v1/capabilities/deployments","POST",Map.of("deployment_key",key,"tool_version_id",version,"provider_type","PLATFORM","provider_ref","http_request","environment","DEVELOPMENT","status","ACTIVE"),accessToken);
+        assertEquals(201,deployment.statusCode(),deployment.body());
+        long revision=successData(deployment).path("revision").asLong();
+        var mount=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of("capability_type","TOOL","capability_definition_id",definition,"capability_version_id",version,"priority",0,"tool_config",Map.of("tool_deployment_id",key,"tool_deployment_revision",revision))),accessToken);
+        assertEquals(201,mount.statusCode(),mount.body());
+        assertEquals(200,send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken).statusCode());
+        httpErrorModel=new HttpErrorModel(objectMapper); httpErrorModel.start();
+        com.skillforge.common.context.TenantContext.setTenantId(tenantId);
+        try {configureTenantModel(httpErrorModel.endpoint());} finally {com.skillforge.common.context.TenantContext.clear();}
+    }
+
+    /** 单次工具决策，收到真实 HTTP 结果后再给出一次公开回答。 */
+    private final class HttpErrorModel implements AutoCloseable {
+        final com.fasterxml.jackson.databind.ObjectMapper json;
+        final com.sun.net.httpserver.HttpServer server;
+        final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger httpCalls = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicBoolean verifiedHttpResult = new java.util.concurrent.atomic.AtomicBoolean();
+        volatile String toolDescription;
+
+        HttpErrorModel(com.fasterxml.jackson.databind.ObjectMapper json) throws Exception {
+            this.json = json;
+            server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/chat/completions", this::respond);
+            server.createContext("/http-error", exchange -> {
+                httpCalls.incrementAndGet();
+                byte[] body = "fixture-http-500".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(500, body.length);
+                try (var out = exchange.getResponseBody()) { out.write(body); }
+            });
+        }
+
+        void start() { server.start(); }
+        String endpoint() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
+
+        void respond(com.sun.net.httpserver.HttpExchange exchange) throws java.io.IOException {
+            var request = json.readTree(exchange.getRequestBody());
+            int ordinal = calls.incrementAndGet();
+            if (ordinal > 2) throw new java.io.IOException("unexpected_model_call");
+            if (ordinal == 2) {
+                for (var input : request.path("messages")) {
+                    if ("tool".equals(input.path("role").asText())
+                            && input.path("content").toString().contains("500")
+                            && input.path("content").toString().contains("fixture-http-500"))
+                        verifiedHttpResult.set(true);
+                }
+                if (!verifiedHttpResult.get()) throw new java.io.IOException("http_result_not_returned_to_model");
+            }
+            String function = null;
+            for (var tool : request.path("tools")) {
+                if (tool.path("function").path("parameters").path("properties").has("url")) {
+                    function = tool.path("function").path("name").asText();
+                    if (ordinal == 1) {
+                        toolDescription = tool.path("function").path("description").asText();
+                        if ("candidate".equals(System.getenv("E2E_HTTP_STATUS"))
+                                && (!toolDescription.contains("2xx") || !toolDescription.contains("重试")))
+                            throw new java.io.IOException("http_result_contract_not_visible_to_model");
+                    }
+                }
+            }
+            if (function == null) throw new java.io.IOException("http_tool_missing");
+            String arguments = json.writeValueAsString(Map.of("method", "GET", "url", endpoint() + "/http-error"));
+            var invocation = Map.of("name", function, "arguments", arguments);
+            Object message = ordinal == 1
+                    ? Map.of("role", "assistant", "tool_calls", List.of(Map.of(
+                            "id", "http-call", "type", "function", "function", invocation)))
+                    : Map.of("role", "assistant", "content",
+                            "fixture-answer-" + fixtureRunId() + " HTTP status 500; fixture-http-500");
+            String finish = ordinal == 1 ? "tool_calls" : "stop";
+            String model = request.path("model").asText();
+            var usage = Map.of("prompt_tokens", 11, "completion_tokens", 7, "total_tokens", 18);
+            String body, type;
+            if (!request.path("stream").asBoolean()) {
+                type = "application/json";
+                body = json.writeValueAsString(Map.of("id", "http-model", "object", "chat.completion",
+                        "model", model, "choices", List.of(Map.of(
+                                "index", 0, "message", message, "finish_reason", finish)), "usage", usage));
+            } else {
+                type = "text/event-stream";
+                Object delta = ordinal == 1
+                        ? Map.of("role", "assistant", "tool_calls", List.of(Map.of(
+                                "index", 0, "id", "http-call", "type", "function", "function", invocation)))
+                        : message;
+                String first = json.writeValueAsString(Map.of("id", "http-model", "object", "chat.completion.chunk",
+                        "model", model, "choices", List.of(Map.of("index", 0, "delta", delta))));
+                String last = json.writeValueAsString(Map.of("id", "http-model", "object", "chat.completion.chunk",
+                        "model", model, "choices", List.of(Map.of(
+                                "index", 0, "delta", Map.of(), "finish_reason", finish)), "usage", usage));
+                body = "data: " + first + "\n\ndata: " + last + "\n\ndata: [DONE]\n\n";
+            }
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", type);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var out = exchange.getResponseBody()) { out.write(bytes); }
+        }
+
+        @Override public void close() { server.stop(0); }
+    }
 }

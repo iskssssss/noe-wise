@@ -231,8 +231,8 @@ final class BasicToolDefinitions {
         return PlatformToolCatalog.Entry.builder()
                 .name("http_request")
                 .title("请求外部服务")
-                .publishedVersionKey("builtin:6")
-                .description("向已授权的 HTTPS 地址发起 GET 或 POST 请求")
+                .publishedVersionKey("builtin:7")
+                .description("向已授权的 HTTPS 地址发起 GET 或 POST 请求；仅 2xx 响应为成功，非成功响应仍保留状态码和正文，失败不表示可安全重试")
                 .parametersSchema(httpRequestInput())
                 .outputSchema(httpRequestOutput())
                 .effect(ToolEffect.NON_IDEMPOTENT_WRITE)
@@ -264,7 +264,7 @@ final class BasicToolDefinitions {
     private static Map<String, Object> httpRequestOutput() {
         return objectSchema(
                 Map.of(
-                    "success", property("boolean"),
+                    "success", Map.of("type", "boolean", "description", "仅 HTTP 2xx 响应为 true；非成功响应为 false，不表示可安全重试"),
                     "status", property("integer"),
                     "content_type", property("string"),
                     "body", property("string"),
