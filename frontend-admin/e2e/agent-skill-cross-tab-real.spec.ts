@@ -35,6 +35,9 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
     mountPosts = 0,
     manualRefreshClicks = 0,
     skillPublishes = 0
+  let mountUpdates = 0,
+    agentPublishes = 0,
+    chatPosts = 0
   page.on('request', (request) => {
     const url = new URL(request.url())
     if (
@@ -45,6 +48,10 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
       catalogReads++
     if (request.method() === 'POST' && url.pathname === '/api/v1/agents/capability-mounts')
       mountPosts++
+    if (request.method() === 'PUT' && url.pathname === '/api/v1/agents/capability-mounts/update')
+      mountUpdates++
+    if (request.method() === 'POST' && url.pathname === '/api/v1/agents/publish') agentPublishes++
+    if (request.method() === 'POST' && url.pathname === '/api/v1/chat') chatPosts++
   })
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/agents/' + agent)}`)
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
@@ -93,6 +100,14 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
     .fill(
       `---\nname: cross-tab-skill\ndescription: Isolated skill for actual runtime verification\n---\n${marker}\n`
     )
+  if (process.env.E2E_SKILL_RESOURCE_BUDGET) {
+    await skill.getByRole('button', { name: '新建文件', exact: true }).first().click()
+    await skill.getByPlaceholder('scripts/main.py').fill('references/guide.md')
+    await skill.getByRole('button', { name: '创建文件', exact: true }).click()
+    await skill
+      .getByRole('textbox', { name: '文件 references/guide.md' })
+      .fill('RESOURCE_' + marker + '\n' + '详细资料内容 '.repeat(400))
+  }
   await skill.getByRole('tab', { name: '发布设置' }).click()
   await skill.locator('.el-form-item').filter({ hasText: '版本号' }).locator('input').fill('v1')
   await skill
@@ -100,7 +115,12 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
     .filter({ hasText: '激活方式' })
     .locator('.el-select__wrapper')
     .click()
-  await skill.getByRole('option', { name: '始终激活', exact: true }).click()
+  await skill
+    .getByRole('option', {
+      name: process.env.E2E_SKILL_RESOURCE_BUDGET ? '按需激活' : '始终激活',
+      exact: true
+    })
+    .click()
   const validated = skill.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -140,6 +160,8 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   await expect(drawer.getByRole('combobox', { name: '激活方式' })).toHaveCount(0)
   expect(mountPosts).toBe(0)
   await page.screenshot({ path: join(evidence, 'skill-before-mount.png'), fullPage: true })
+  if (process.env.E2E_SKILL_RESOURCE_BUDGET)
+    await drawer.getByLabel('Token 预算', { exact: true }).fill('64')
   if (budgetExperiment) {
     await drawer.getByLabel('Token 预算', { exact: true }).fill('1')
     if (budgetMode === 'candidate') {
@@ -184,10 +206,11 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   let trialSession = '',
     trialRun = '',
     userBudgetExplanationVisible = false
-  if (budgetExperiment) {
-    expect(command.payload.skill_config.token_budget).toBe(
-      budgetMode === 'baseline' ? 1 : skillEstimate
-    )
+  if (budgetExperiment || process.env.E2E_SKILL_RESOURCE_BUDGET) {
+    if (budgetExperiment)
+      expect(command.payload.skill_config.token_budget).toBe(
+        budgetMode === 'baseline' ? 1 : skillEstimate
+      )
     const published = page.waitForResponse(
       (result) =>
         new URL(result.url()).pathname === '/api/v1/agents/publish' &&
@@ -251,4 +274,118 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
       userBudgetExplanationVisible
     })
   )
+  if (process.env.E2E_SKILL_RESOURCE_BUDGET) {
+    expect(command.payload.skill_config.token_budget).toBe(64)
+    const reread = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/v1/agents/detail'
+    )
+    await page.goto(`/admin/agents/${agent}`)
+    const current = (await (await reread).json()).data
+    const persisted = current.mounts.find(
+      (item: { mount_id: string }) => String(item.mount_id) === String(mount.mount_id)
+    )
+    expect(persisted.skill_config.token_budget).toBe(64)
+    await page.getByRole('tab', { name: /能力挂载/ }).click()
+    const mountedRow = page.getByRole('row').filter({ hasText: definition })
+    await expect(mountedRow).toBeVisible()
+    const actions = await mountedRow.getByRole('button').allTextContents()
+    const text = await mountedRow.innerText()
+    let recovery: unknown
+    if (process.env.E2E_SKILL_RESOURCE_BUDGET === 'candidate') {
+      await expect(mountedRow).toContainText(/Token\s*预算[：:]\s*64/)
+      await mountedRow.getByRole('button', { name: '调整预算', exact: true }).click()
+      const budgetDialog = page.getByRole('dialog', { name: '调整技能预算', exact: true })
+      await expect(budgetDialog.getByLabel('Token 预算', { exact: true })).toHaveValue('64')
+      await budgetDialog.getByLabel('Token 预算', { exact: true }).fill('2048')
+      const changed = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/agents/capability-mounts/update' &&
+          response.request().method() === 'PUT'
+      )
+      await budgetDialog.getByRole('button', { name: '保存预算', exact: true }).click()
+      const changedResponse = await changed
+      expect(changedResponse.status()).toBe(200)
+      const changedCommand = changedResponse.request().postDataJSON()
+      const expectedRevision = Number(changedResponse.request().headers()['if-match'])
+      const changedSet = (await changedResponse.json()).data
+      expect(changedCommand.mount_id).toBe(mount.mount_id)
+      const updated = changedSet.mounts.find(
+        (item: { mount_id: string }) => String(item.mount_id) === String(mount.mount_id)
+      )
+      expect(expectedRevision).toBe(persisted.revision)
+      expect(updated.revision).toBe(expectedRevision + 1)
+      expect(updated.skill_config.token_budget).toBe(2048)
+      expect(updated.priority).toBe(persisted.priority)
+      expect(updated.status).toBe(persisted.status)
+      expect(updated.capability_definition_id).toBe(persisted.capability_definition_id)
+      expect(updated.capability_version_id).toBe(persisted.capability_version_id)
+      await expect(budgetDialog).toBeHidden()
+      const publishedAgain = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/agents/publish' &&
+          response.request().method() === 'POST'
+      )
+      const reloaded = page.waitForResponse(
+        (response) => new URL(response.url()).pathname === '/api/v1/agents/detail'
+      )
+      await page.getByRole('button', { name: '发布', exact: true }).click()
+      await page
+        .getByRole('dialog', { name: '发布智能体', exact: true })
+        .getByRole('button', { name: '发布', exact: true })
+        .click()
+      expect((await publishedAgain).status()).toBe(200)
+      const nextAgent = (await (await reloaded).json()).data
+      expect(nextAgent.published_revision).toBe(current.published_revision + 1)
+      await page.getByRole('button', { name: '试用当前发布版本', exact: true }).click()
+      await expect(page).toHaveURL(/\/admin\/chat\?agent_id=/)
+      const user = page.locator('.el-select').filter({ hasText: '终端用户' })
+      if (await user.count()) {
+        await user.getByRole('combobox').click()
+        await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
+      }
+      await page.getByPlaceholder('输入消息', { exact: true }).fill('修复资源预算后读取同一资源。')
+      const acceptedAgain = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/chat' &&
+          response.request().method() === 'POST'
+      )
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      const acceptedResponse = await acceptedAgain
+      expect(acceptedResponse.status()).toBe(202)
+      const nextRun = (await acceptedResponse.json()).data
+      expect(nextRun.execution_id).not.toBe(trialRun)
+      expect(nextRun.session_id).not.toBe(trialSession)
+      await expect(
+        page.locator('.debug-message').filter({ hasText: required('E2E_RECOVERED_REPLY') })
+      ).toHaveCount(1, { timeout: 120_000 })
+      expect(mountPosts).toBe(1)
+      expect(mountUpdates).toBe(1)
+      expect(agentPublishes).toBe(2)
+      expect(chatPosts).toBe(2)
+      recovery = {
+        changedCommand,
+        changedSet,
+        expectedRevision,
+        nextAgent,
+        firstAgent: current,
+        nextRun,
+        mountPosts,
+        mountUpdates,
+        agentPublishes,
+        chatPosts
+      }
+    } else expect(actions.map((value) => value.trim())).toEqual(['移除'])
+    await page.screenshot({
+      path: join(evidence, 'resource-budget-recovery-options.png'),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, 'resource-budget-recovery-options.json'),
+      JSON.stringify(
+        { agent, mount: persisted, rowText: text, actions, trialSession, trialRun, recovery },
+        null,
+        2
+      )
+    )
+  }
 })

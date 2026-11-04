@@ -60,7 +60,11 @@
     </div>
     <ElAlert
       v-if="refreshRequired"
-      title="操作已完成，当前显示内容尚未更新。请点击“重新读取”核对最新状态后继续配置或发布，避免重复提交。"
+      :title="
+        skillBudgetNeedsRefresh
+          ? '技能预算更新结果尚未确认，请重新读取并核对最新状态后继续。'
+          : '操作已完成，当前显示内容尚未更新。请点击“重新读取”核对最新状态后继续配置或发布，避免重复提交。'
+      "
       type="warning"
       :closable="false"
     />
@@ -212,13 +216,23 @@
             ><ElTableColumn min-width="200" show-overflow-tooltip label="能力（跟随当前发布）"
               ><template #default="{ row }"
                 ><div>{{ mountVersionNames[row.capabilityVersionId] || '版本信息不可用' }}</div>
-                <small class="muted">资源标识 {{ row.capabilityDefinitionId }}</small></template
+                <small class="muted">资源标识 {{ row.capabilityDefinitionId }}</small>
+                <div v-if="row.capabilityType === 'SKILL'" class="admin-field-help">
+                  Token 预算：{{ row.skillConfig.tokenBudget }}
+                </div></template
               ></ElTableColumn
             ><ElTableColumn width="96" prop="priority" label="优先级"></ElTableColumn
             ><ElTableColumn width="128" show-overflow-tooltip label="状态"
               ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
-            ><ElTableColumn width="80" class-name="admin-table-actions" prop="actions" label="操作"
+            ><ElTableColumn width="150" class-name="admin-table-actions" prop="actions" label="操作"
               ><template #default="{ row }"
+                ><ElButton
+                  v-if="row.capabilityType === 'SKILL'"
+                  v-permission="['foundation.agents.update']"
+                  link
+                  :disabled="editingBlocked || refreshRequired"
+                  @click="openSkillBudget(row as CapabilityMount)"
+                  >调整预算</ElButton
                 ><ElButton
                   v-permission="['foundation.agents.delete']"
                   type="danger"
@@ -797,6 +811,39 @@
         @confirmed="workflowConfirmed"
       />
     </ElDrawer>
+    <ElDialog
+      v-model="skillBudgetOpen"
+      title="调整技能预算"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!busy"
+      :show-close="!busy"
+    >
+      <ElForm label-position="top" @submit.prevent="saveSkillBudget">
+        <ElFormItem label="Token 预算" required :error="skillBudgetError">
+          <ElInputNumber v-model="skillBudget" :min="1" :precision="0" />
+          <p class="admin-field-help">
+            限制每次加载技能入口或资源的估算大小。保存时使用技能当前发布版本，智能体发布后在后续运行生效。
+          </p>
+        </ElFormItem>
+        <p v-if="skillBudgetNeedsRefresh" role="status">
+          更新结果尚未确认，请先读取最新挂载并核对预算，再决定是否保存。
+        </p>
+      </ElForm>
+      <template #footer>
+        <ElButton v-if="skillBudgetNeedsRefresh" :loading="loading" @click="refreshSkillBudget">
+          重新读取挂载
+        </ElButton>
+        <ElButton :disabled="busy" @click="skillBudgetOpen = false">取消</ElButton>
+        <ElButton
+          type="primary"
+          :loading="busy"
+          :disabled="skillBudgetNeedsRefresh"
+          @click="saveSkillBudget"
+        >
+          保存预算
+        </ElButton>
+      </template>
+    </ElDialog>
   </AdminPage>
   <ElDrawer
     v-model="publicationOpen"
@@ -1074,6 +1121,66 @@ const editingBlocked = computed(
   () => busy.value || !!publicationOperation.value || !!publicationStorageError.value
 )
 const mountVersionNames = ref<Record<string, string>>({})
+const skillBudgetOpen = ref(false)
+const skillBudgetMount = shallowRef<Extract<CapabilityMount, { capabilityType: 'SKILL' }>>()
+const skillBudget = ref(1)
+const skillBudgetError = ref('')
+const skillBudgetNeedsRefresh = ref(false)
+function openSkillBudget(mount: CapabilityMount) {
+  if (mount.capabilityType !== 'SKILL') return
+  skillBudgetMount.value = mount
+  skillBudget.value = mount.skillConfig.tokenBudget
+  skillBudgetError.value = ''
+  skillBudgetNeedsRefresh.value = false
+  skillBudgetOpen.value = true
+}
+async function refreshSkillBudget() {
+  const mount = skillBudgetMount.value
+  if (!mount) return
+  const next = await reload()
+  if (!next) return
+  const current = next.mounts.find((item) => item.mountId === mount.mountId)
+  skillBudgetNeedsRefresh.value = false
+  refreshRequired.value = false
+  if (!current || current.capabilityType !== 'SKILL') {
+    skillBudgetOpen.value = false
+    message.warning('该技能挂载已变化，请查看最新能力列表。')
+    return
+  }
+  skillBudgetMount.value = current
+  message.info(`当前挂载预算为 ${current.skillConfig.tokenBudget}，请核对后再保存。`)
+}
+async function saveSkillBudget() {
+  const mount = skillBudgetMount.value
+  if (!mount || skillBudgetNeedsRefresh.value || refreshRequired.value) return
+  skillBudgetError.value =
+    Number.isSafeInteger(skillBudget.value) && skillBudget.value > 0
+      ? ''
+      : '请输入正整数 Token 预算'
+  if (skillBudgetError.value) return
+  await run(async () => {
+    let confirmed = false
+    try {
+      await api.agents.capabilityMounts.update(id.value, mount.mountId, mount.revision, {
+        capabilityType: 'SKILL',
+        capabilityDefinitionId: mount.capabilityDefinitionId,
+        priority: mount.priority,
+        status: mount.status,
+        skillConfig: { tokenBudget: skillBudget.value }
+      })
+      confirmed = true
+    } finally {
+      if (!confirmed) {
+        skillBudgetNeedsRefresh.value = true
+        refreshRequired.value = true
+      }
+    }
+    skillBudgetOpen.value = false
+    refreshRequired.value = true
+    message.success('技能预算已保存，发布后生效')
+    if (await reload()) refreshRequired.value = false
+  })
+}
 const mountNames = useResource(async () => {
   const ids = [...new Set((agent.value?.mounts ?? []).map((mount) => mount.capabilityVersionId))]
   const versions = await Promise.all(ids.map((versionId) => api.capabilities.getVersion(versionId)))
@@ -1112,6 +1219,8 @@ watch(
   publicationOwner,
   () => {
     invalidateAgent()
+    skillBudgetOpen.value = false
+    skillBudgetMount.value = undefined
     mountNames.invalidate()
     mountNames.error.value = ''
     mountVersionNames.value = {}
@@ -1124,6 +1233,7 @@ watch(
 )
 function fill(value: AgentDetail) {
   refreshRequired.value = false
+  skillBudgetNeedsRefresh.value = false
   Object.assign(form, {
     name: value.name,
     role_description: value.role_description ?? '',

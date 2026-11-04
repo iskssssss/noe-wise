@@ -4,6 +4,7 @@ import {
   ElButton,
   ElCheckbox,
   ElDrawer,
+  ElDialog,
   ElSelect,
   ElOption,
   ElInput,
@@ -23,6 +24,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import { EntitySelect } from '@skillforge/shared/admin'
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
+  mountUpdate: vi.fn(),
   get: vi.fn(),
   versions: vi.fn(),
   getVersion: vi.fn(),
@@ -89,7 +91,11 @@ vi.mock('../../api', () => ({
       templates: mocks.templates,
       templateDetail: mocks.templateDetail,
       installTemplate: mocks.installTemplate,
-      capabilityMounts: { create: mocks.create, workflowOptions: mocks.workflowOptions }
+      capabilityMounts: {
+        create: mocks.create,
+        update: mocks.mountUpdate,
+        workflowOptions: mocks.workflowOptions
+      }
     },
     settings: { availableModels: mocks.models },
     capabilities: {
@@ -306,6 +312,105 @@ afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   document.body.innerHTML = ''
 })
+describe('已挂载技能预算调整', () => {
+  const skill = {
+    mountId: 'mount-1',
+    capabilityType: 'SKILL',
+    capabilityDefinitionId: '10',
+    capabilityVersionId: '21',
+    priority: 3,
+    revision: 7,
+    status: 'ACTIVE',
+    skillConfig: { activationMode: 'ON_DEMAND', tokenBudget: 64 },
+    toolConfig: null,
+    workflowConfig: null,
+    knowledgeConfig: null
+  }
+  async function mountedSkill() {
+    const original = await mocks.get('agent-1')
+    mocks.get.mockClear()
+    mocks.get.mockResolvedValue({ ...original, mounts: [skill] })
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    return { wrapper, original }
+  }
+  async function editBudget(wrapper: VueWrapper) {
+    await button(wrapper, '调整预算').trigger('click')
+    await flushPromises()
+    const dialog = wrapper
+      .findAllComponents(ElDialog)
+      .find((item) => item.props('title') === '调整技能预算')!
+    expect(dialog).toBeDefined()
+    const budget = dialog
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === 'Token 预算')!
+      .getComponent(ElInputNumber)
+    return { dialog, budget }
+  }
+  it('展示技能预算并携带原挂载修订保存，成功后重读智能体', async () => {
+    const { wrapper, original } = await mountedSkill()
+    expect(wrapper.text()).toContain('Token 预算：64')
+    const { dialog, budget } = await editBudget(wrapper)
+    expect(budget.props('modelValue')).toBe(64)
+    expect(budget.props('min')).toBe(1)
+    expect(budget.props('precision')).toBe(0)
+    budget.vm.$emit('update:modelValue', 256)
+    await flushPromises()
+    mocks.mountUpdate.mockResolvedValue({ generation: 2, mounts: [] })
+    mocks.get.mockResolvedValue({
+      ...original,
+      mounts: [{ ...skill, revision: 8, skillConfig: { ...skill.skillConfig, tokenBudget: 256 } }]
+    })
+    await button(dialog, '保存预算').trigger('click')
+    await flushPromises()
+    expect(mocks.mountUpdate).toHaveBeenCalledExactlyOnceWith('agent-1', 'mount-1', 7, {
+      capabilityType: 'SKILL',
+      capabilityDefinitionId: '10',
+      priority: 3,
+      status: 'ACTIVE',
+      skillConfig: { tokenBudget: 256 }
+    })
+    expect(mocks.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Token 预算：256')
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+  it('写入失败保留预算输入并禁止重发，先只读核对挂载状态', async () => {
+    const { wrapper } = await mountedSkill()
+    const { dialog, budget } = await editBudget(wrapper)
+    budget.vm.$emit('update:modelValue', 256)
+    await flushPromises()
+    mocks.mountUpdate.mockRejectedValueOnce(
+      new HttpClientError({ status: 0, userMessage: '结果尚未确认' })
+    )
+    await button(dialog, '保存预算').trigger('click')
+    await flushPromises()
+    expect(budget.props('modelValue')).toBe(256)
+    expect(button(dialog, '保存预算').props('disabled')).toBe(true)
+    await button(dialog, '重新读取挂载').trigger('click')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledTimes(2)
+    expect(mocks.mountUpdate).toHaveBeenCalledTimes(1)
+  })
+  it.each(['TOOL', 'WORKFLOW', 'KNOWLEDGE_SOURCE'])(
+    '%s 挂载不展示技能预算编辑入口',
+    async (capabilityType) => {
+      const original = await mocks.get('agent-1')
+      mocks.get.mockResolvedValue({
+        ...original,
+        mounts: [{ ...skill, capabilityType, skillConfig: null }]
+      })
+      const wrapper = mount(AgentManagePage, { attachTo: document.body })
+      wrappers.push(wrapper)
+      await flushPromises()
+      expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '调整预算')).toBe(
+        false
+      )
+      expect(wrapper.text()).not.toContain('Token 预算：')
+    }
+  )
+})
+
 describe('智能体主对象与辅助选项的读取归属', () => {
   it('从其他页签保存无效配置时切回基本配置并定位错误字段', async () => {
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
@@ -1927,6 +2032,8 @@ describe('能力挂载关联一致性', () => {
           {
             mountId: 'm1',
             capabilityType: type,
+            skillConfig:
+              type === 'SKILL' ? { activationMode: 'ON_DEMAND', tokenBudget: 2000 } : null,
             capabilityDefinitionId: '10',
             capabilityVersionId: '21',
             priority: 0,
