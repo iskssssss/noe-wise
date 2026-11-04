@@ -111,6 +111,12 @@
       @click="loadDelegationAgents"
     >
       重新读取委派选项 </ElButton
+    ><ElButton
+      v-if="mountNames.error.value"
+      :disabled="mountNames.loading.value"
+      @click="loadMountNames"
+    >
+      重新读取能力名称 </ElButton
     ><ElSkeleton v-if="loading" :rows="8" animated /><template v-else-if="agent"
       ><ElTabs v-model="activeTab" @tab-change="loadPublications"
         ><ElTabPane label="基本配置" name="config"
@@ -968,7 +974,8 @@ const pageError = computed(() =>
         ? `保存并发布已确认，但配置未刷新：${loadError.value}。请重新读取，不必重复提交。`
         : loadError.value),
     modelOptions.error.value && `模型选项读取失败：${modelOptions.error.value}`,
-    delegationOptions.error.value && `委派选项读取失败：${delegationOptions.error.value}`
+    delegationOptions.error.value && `委派选项读取失败：${delegationOptions.error.value}`,
+    mountNames.error.value && `能力版本名称读取失败：${mountNames.error.value}`
   ]
     .filter(Boolean)
     .join('；')
@@ -1067,6 +1074,18 @@ const editingBlocked = computed(
   () => busy.value || !!publicationOperation.value || !!publicationStorageError.value
 )
 const mountVersionNames = ref<Record<string, string>>({})
+const mountNames = useResource(async () => {
+  const ids = [...new Set((agent.value?.mounts ?? []).map((mount) => mount.capabilityVersionId))]
+  const versions = await Promise.all(ids.map((versionId) => api.capabilities.getVersion(versionId)))
+  return Object.fromEntries(
+    versions.map((version) => [version.id, `${version.name} / ${version.versionKey}`])
+  )
+})
+async function loadMountNames() {
+  if (!can('foundation.capabilities.read')) return
+  const names = await mountNames.reload()
+  if (names) mountVersionNames.value = names
+}
 const saved = ref(''),
   models = ref<ModelSummary[]>([]),
   otherAgents = ref<AgentItem[]>([]),
@@ -1093,6 +1112,9 @@ watch(
   publicationOwner,
   () => {
     invalidateAgent()
+    mountNames.invalidate()
+    mountNames.error.value = ''
+    mountVersionNames.value = {}
     loadPublicationOperation()
     publicationReceipt.value = undefined
     publicationCheck.value = ''
@@ -1123,19 +1145,9 @@ watch(
     if (!value) return
     // 主对象先完整回填；模型与委派选项失败不能留下可提交的空表单。
     fill(value)
-    await Promise.all([
-      loadModels(),
-      loadDelegationAgents(),
-      run(async () => {
-        const ids = [...new Set(value.mounts.map((mount) => mount.capabilityVersionId))]
-        const result = await Promise.all(
-          ids.map((versionId) => api.capabilities.getVersion(versionId))
-        )
-        mountVersionNames.value = Object.fromEntries(
-          result.map((version) => [version.id, `${version.name} / ${version.versionKey}`])
-        )
-      })
-    ])
+    void loadModels()
+    void loadDelegationAgents()
+    void loadMountNames()
     if (
       !publicationDisposed &&
       owner === publicationOwner.value &&

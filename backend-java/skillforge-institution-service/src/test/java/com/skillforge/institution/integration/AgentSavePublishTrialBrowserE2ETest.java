@@ -25,6 +25,26 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
 
     @Test void editedAgentPublicationIsUsedByRealTrial() throws Exception {
         login();
+        String decorationVersion = null;
+        if (System.getenv("E2E_AGENT_DECORATION") != null) {
+            var revised = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
+            assertEquals(200, revised.statusCode(), revised.body()); agentId = successData(revised).path("id").asText();
+            var definitions = successData(get("/api/v1/capabilities/definitions?capability_type=TOOL&status=PUBLISHED"));
+            String definition = "";
+            for (var item : definitions) if ("tool:get_current_time".equals(item.path("capability_key").asText())) {
+                definition = item.path("id").asText(); decorationVersion = item.path("default_version_id").asText();
+            }
+            assertFalse(definition.isBlank()); assertNotNull(decorationVersion);
+            String key = "decoration-clock-" + SnowflakeIds.nextId();
+            var deployment = send("/api/v1/capabilities/deployments", "POST", Map.of("deployment_key", key,
+                    "tool_version_id", decorationVersion, "provider_type", "PLATFORM", "provider_ref", "get_current_time",
+                    "environment", "DEVELOPMENT", "status", "ACTIVE"), accessToken);
+            assertEquals(201, deployment.statusCode(), deployment.body());
+            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+                    "capability_type", "TOOL", "capability_definition_id", definition, "capability_version_id", decorationVersion,
+                    "priority", 0, "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", successData(deployment).path("revision").asLong()))), accessToken);
+            assertEquals(201, mounted.statusCode(), mounted.body());
+        }
         String marker="TRIAL_CONFIG_"+SnowflakeIds.nextId();
         String roleMarker = "TRIAL_ROLE_" + SnowflakeIds.nextId();
         String descriptionMarker = "TRIAL_UNUSED_DESCRIPTION_" + SnowflakeIds.nextId();
@@ -36,11 +56,13 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
         boolean unauthorized="401".equals(System.getenv("E2E_AGENT_TRIAL_SCENARIO"));
         var command=new ProcessBuilder(playwright.toString(),"test","e2e/agent-save-publish-trial-real.spec.ts",
                 "--grep",unauthorized?"发布响应 401 后核对原发布且不重发":"编辑后发布并试用同一智能体的新配置");
+        if (decorationVersion != null) command.command().set(command.command().size() - 1, "版本装饰读取失败不阻断原发布恢复");
         command.directory(admin.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("playwright.log").toFile());
         var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());
         env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);
         env.put("E2E_AGENT_ID",agentId);env.put("E2E_TRIAL_PROMPT_MARKER",marker);env.put("E2E_EXPECTED_REPLY","fixture-answer-"+runId);
         env.put("E2E_TRIAL_ROLE_MARKER", roleMarker); env.put("E2E_TRIAL_DESCRIPTION_MARKER", descriptionMarker);
+        if (decorationVersion != null) env.put("E2E_DECORATION_VERSION", decorationVersion);
         env.remove("SDK4_LIVE_MODEL_KEY");env.remove("E2E_LIVE_MODEL");
         Process process=command.start();
         try(var owned=new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -77,7 +99,7 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
         long revision=receipt.path("revision").asLong();assertFalse(publishedId.isBlank());assertFalse(run.isBlank());assertTrue(revision>0);
         assertEquals(agentId,facts.path("agentId").asText());assertEquals(1,facts.path("publications").asInt());
         assertEquals(1,facts.path("sessionWrites").asInt());assertEquals(1,facts.path("chatWrites").asInt());
-        assertEquals("baseline".equals(System.getenv("E2E_AGENT_TRIAL_MODE"))?2:1,facts.path("primaryActions").asInt());
+        assertEquals(System.getenv("E2E_AGENT_DECORATION") != null || "baseline".equals(System.getenv("E2E_AGENT_TRIAL_MODE"))?2:1,facts.path("primaryActions").asInt());
         assertEquals(1,countRuntime("SELECT count(*) FROM nw_agent_publications p JOIN nw_agents a ON a.tenant_id=p.tenant_id AND a.id=p.agent_id AND a.published_revision_id=p.id WHERE p.tenant_id=CAST(? AS bigint) AND p.agent_id=CAST(? AS bigint) AND p.id=CAST(? AS bigint) AND p.revision=? AND p.snapshot::text LIKE ?",tenantId,agentId,publishedId,revision,"%"+marker+"%"));
         assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND agent_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenantId,run,agentId,facts.path("sessionId").asText()));
         assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? AND kind='MODEL' AND status='SUCCEEDED'",tenantId,run));

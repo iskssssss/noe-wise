@@ -201,15 +201,79 @@ it('自动核对失败后仍保留请求并允许手动核对', async () => {
   expect(wrapper.text()).toContain('保存并发布已确认')
   expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
 })
-it('能力读取失败时保留原错误，不自动核对覆盖提示', async () => {
+it('挂载名称读取失败仍自动核对原发布且保留独立反馈，不重复提交', async () => {
   await startUnknown()
+  const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand
   wrapper.unmount()
+  useAuthStore().user!.permissions.push('foundation.capabilities.read')
   mocks.get.mockResolvedValue({ ...detail(), mounts: [{ capabilityVersionId: 'version-1' }] })
   vi.mocked(api.capabilities.getVersion).mockRejectedValueOnce(new Error('能力版本读取失败'))
+  mocks.result.mockResolvedValueOnce(receipt(command))
   await render()
-  expect(wrapper.findComponent(FeedbackNotice).props('title')).toContain('能力版本读取失败')
-  expect(mocks.result).not.toHaveBeenCalled()
-  expect(button('保存草稿').attributes('disabled')).toBeDefined()
+  expect(wrapper.findComponent(FeedbackNotice).props('title')).toContain(
+    '能力版本名称读取失败：能力版本读取失败'
+  )
+  expect(wrapper.text()).toContain('保存并发布已确认')
+  expect(mocks.result).toHaveBeenCalledExactlyOnceWith(command.agent_id, command.request_id)
+  expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
+  expect(sessionStorage.length).toBe(0)
+  vi.mocked(api.capabilities.getVersion).mockResolvedValueOnce({
+    id: 'version-1',
+    name: '服务流程',
+    versionKey: '2'
+  } as Awaited<ReturnType<typeof api.capabilities.getVersion>>)
+  const detailReads = mocks.get.mock.calls.length
+  await button('重新读取能力名称').trigger('click')
+  await flushPromises()
+  expect(api.capabilities.getVersion).toHaveBeenCalledTimes(2)
+  expect(api.capabilities.getVersion).toHaveBeenLastCalledWith('version-1')
+  expect(mocks.get).toHaveBeenCalledTimes(detailReads)
+  expect(mocks.result).toHaveBeenCalledTimes(1)
+  expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).toContain('服务流程 / 2')
+  expect(wrapper.findComponent(FeedbackNotice).exists()).toBe(false)
+})
+it('切换智能体后不采纳旧挂载名称读取结果', async () => {
+  useAuthStore().user!.permissions.push('foundation.capabilities.read')
+  mocks.get.mockImplementation(async (id: string) => ({
+    ...detail(id),
+    mounts: [{ capabilityVersionId: id === 'agent-1' ? 'version-1' : 'version-2' }]
+  }))
+  let resolveOld!: (value: Awaited<ReturnType<typeof api.capabilities.getVersion>>) => void
+  vi.mocked(api.capabilities.getVersion)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve
+        })
+    )
+    .mockResolvedValueOnce({
+      id: 'version-2',
+      name: '当前能力',
+      versionKey: '2'
+    } as Awaited<ReturnType<typeof api.capabilities.getVersion>>)
+  await render()
+  useRoute().params.id = 'agent-2'
+  await flushPromises()
+  expect(wrapper.text()).toContain('当前能力 / 2')
+  resolveOld({ id: 'version-1', name: '旧能力', versionKey: '1' } as Awaited<
+    ReturnType<typeof api.capabilities.getVersion>
+  >)
+  await flushPromises()
+  expect(wrapper.text()).toContain('当前能力 / 2')
+  expect(wrapper.text()).not.toContain('旧能力 / 1')
+})
+it('没有能力读取权限时不读取挂载名称，仍自动核对原发布', async () => {
+  await startUnknown()
+  const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand
+  wrapper.unmount()
+  mocks.get.mockResolvedValue({ ...detail(), mounts: [{ capabilityVersionId: 'version-1' }] })
+  mocks.result.mockResolvedValueOnce(receipt(command))
+  await render()
+  expect(api.capabilities.getVersion).not.toHaveBeenCalled()
+  expect(mocks.result).toHaveBeenCalledExactlyOnceWith(command.agent_id, command.request_id)
+  expect(mocks.saveAndPublish).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).toContain('保存并发布已确认')
 })
 async function render() {
   wrapper = mount(AgentManagePage, { attachTo: document.body })

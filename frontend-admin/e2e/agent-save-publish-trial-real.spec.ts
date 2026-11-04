@@ -10,6 +10,173 @@ function required(name: string): string {
 
 test.describe.configure({ retries: 0 })
 
+test('版本装饰读取失败不阻断原发布恢复', async ({ page }) => {
+  test.skip(!process.env.E2E_AGENT_DECORATION, '仅验证装饰读取与原发布恢复')
+  test.setTimeout(180_000)
+  const agent = required('E2E_AGENT_ID'),
+    evidence = required('E2E_ARTIFACT_DIR')
+  const mode = required('E2E_AGENT_DECORATION')
+  const versionId = required('E2E_DECORATION_VERSION')
+  let publications = 0,
+    sessionWrites = 0,
+    chatWrites = 0
+  const reads: string[] = [],
+    versions: { status: number; id: string }[] = []
+  const readResponses: { status: number; body: { data: unknown } }[] = []
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/api/v1/agents/save-and-publish/result')
+      readResponses.push({ status: response.status(), body: await response.json() })
+  })
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (request.method() === 'POST' && url.pathname === '/api/v1/agents/save-and-publish')
+      publications++
+    if (request.method() === 'POST' && url.pathname === '/api/v1/chat/sessions/create-with-receipt')
+      sessionWrites++
+    if (request.method() === 'POST' && url.pathname === '/api/v1/chat') chatWrites++
+    if (request.method() === 'GET' && url.pathname === '/api/v1/agents/save-and-publish/result')
+      reads.push(url.searchParams.get('requestId')!)
+  })
+  await page.goto(`/login?redirect=${encodeURIComponent('/admin/agents/' + agent)}`)
+  await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
+  await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
+  await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page
+    .getByLabel('系统提示词', { exact: true })
+    .fill(`你是测试智能体。${required('E2E_TRIAL_PROMPT_MARKER')}`)
+  let command!: { request_id: string }
+  let receipt!: { publication_id: string; revision: number; request_id: string }
+  let completeOriginal!: () => void
+  const originalCompleted = new Promise<void>((resolve) => {
+    completeOriginal = resolve
+  })
+  await page.route('**/api/v1/agents/save-and-publish', async (route) => {
+    command = route.request().postDataJSON()
+    const upstream = await route.fetch({ maxRetries: 0 })
+    expect(upstream.status()).toBe(200)
+    receipt = (await upstream.json()).data
+    await route.abort('failed')
+    completeOriginal()
+  })
+  await page.getByRole('button', { name: '保存并发布', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '保存并发布智能体', exact: true })
+    .getByRole('button', { name: '保存并发布', exact: true })
+    .click()
+  await originalCompleted
+  await expect(page.getByText('保存并发布结果尚未确认', { exact: false })).toBeVisible()
+  expect(receipt.request_id).toBe(command.request_id)
+  await page.route('**/api/v1/capabilities/versions/detail?**', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('versionId') !== versionId)
+      return route.continue()
+    const real = await route.fetch({ maxRetries: 0 })
+    expect(real.status()).toBe(200)
+    expect(String((await real.json()).data.id)).toBe(versionId)
+    versions.push({ status: real.status(), id: versionId })
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 'SERVICE_UNAVAILABLE',
+        message: '隔离版本详情读取失败',
+        trace_id: 'decoration-fixture',
+        retryable: true
+      })
+    })
+  })
+  const failedVersion = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/capabilities/versions/detail' &&
+      response.status() === 503
+  )
+  await page.reload()
+  await failedVersion
+  await expect(
+    page.getByText('暂时无法读取最新内容，请稍后重新加载', { exact: false }).first()
+  ).toBeVisible()
+  let automaticReads: number
+  if (mode === 'baseline') {
+    await expect(page.getByRole('button', { name: '核对原操作', exact: true })).toBeEnabled()
+    automaticReads = reads.length
+    expect(automaticReads).toBe(0)
+    await page.screenshot({ path: join(evidence, 'decoration-pending.png'), fullPage: true })
+    await page.getByRole('button', { name: '核对原操作', exact: true }).click()
+  } else {
+    await expect.poll(() => reads.length).toBe(1)
+    automaticReads = reads.length
+  }
+  await expect(page.getByText('保存并发布已确认', { exact: false })).toBeVisible()
+  await expect(page.getByText('保存并发布结果尚未确认', { exact: false })).toHaveCount(0)
+  expect(reads).toEqual([command.request_id])
+  await expect.poll(() => readResponses.length).toBe(1)
+  expect(readResponses[0]!.status).toBe(200)
+  expect(readResponses[0]!.body.data).toEqual(receipt)
+  let independentFeedback: string | undefined
+  if (mode === 'candidate') {
+    const feedback = page.getByText('能力版本名称读取失败：', { exact: false })
+    await expect(feedback).toContainText('暂时无法读取最新内容，请稍后重新加载')
+    await expect(page.getByRole('button', { name: '重新读取能力名称', exact: true })).toBeEnabled()
+    independentFeedback = await feedback.innerText()
+  }
+  await page.screenshot({ path: join(evidence, 'decoration-recovered.png'), fullPage: true })
+  await page.unroute('**/api/v1/capabilities/versions/detail?**')
+  await page.getByRole('button', { name: '试用当前发布版本', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/chat\?agent_id=/)
+  await page.locator('.el-select').filter({ hasText: '终端用户' }).getByRole('combobox').click()
+  await page.getByRole('option', { name: 'Runtime E2E User', exact: true }).click()
+  await page.getByPlaceholder('输入消息', { exact: true }).fill('验证原发布恢复后的配置。')
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/chat/sessions/create-with-receipt' &&
+      response.request().method() === 'POST'
+  )
+  const accepted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/chat' && response.request().method() === 'POST'
+  )
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  const createdResponse = await created,
+    acceptedResponse = await accepted
+  expect(createdResponse.status()).toBe(200)
+  expect(acceptedResponse.status()).toBe(202)
+  const session = (await createdResponse.json()).data,
+    chat = (await acceptedResponse.json()).data
+  await expect(
+    page.locator('.debug-message').filter({ hasText: required('E2E_EXPECTED_REPLY') })
+  ).toHaveCount(1, { timeout: 120_000 })
+  expect(publications).toBe(1)
+  expect(sessionWrites).toBe(1)
+  expect(chatWrites).toBe(1)
+  await page.screenshot({ path: join(evidence, 'decoration-runtime-result.png'), fullPage: true })
+  await writeFile(
+    join(evidence, 'agent-trial.json'),
+    JSON.stringify(
+      {
+        agentId: agent,
+        receipt,
+        sessionId: session.session_id,
+        runId: chat.execution_id,
+        primaryActions: 2,
+        publications,
+        sessionWrites,
+        chatWrites,
+        decoration: {
+          mode,
+          automaticReads,
+          reads,
+          readResponses,
+          versions,
+          command,
+          independentFeedback
+        }
+      },
+      null,
+      2
+    )
+  )
+})
+
 test('编辑后发布并试用同一智能体的新配置', async ({ page }) => {
   test.setTimeout(180_000)
   const agent = required('E2E_AGENT_ID')
