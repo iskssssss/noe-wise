@@ -196,6 +196,7 @@ tasks.register<Test>("toolDeploymentRecoveryBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostCreateResponseLeavesOriginalResultUnknownAndRuntimeUsesDeployment")
+        includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostStopResponseKeepsOldPageWhileRuntimeRejectsDeployment")
     }
     outputs.upToDateWhen { false }
 }

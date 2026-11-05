@@ -12,6 +12,8 @@ const calls = vi.hoisted(() => ({
   version: vi.fn(),
   startDeployment: vi.fn(),
   stopDeployment: vi.fn(),
+  setDeploymentActiveWithReceipt: vi.fn(),
+  deploymentStateReceipt: vi.fn(),
   definitions: vi.fn(),
   platformTools: vi.fn(),
   instances: vi.fn(),
@@ -35,6 +37,8 @@ vi.mock('../../api', () => ({
       getVersion: calls.version,
       startDeployment: calls.startDeployment,
       stopDeployment: calls.stopDeployment,
+      setDeploymentActiveWithReceipt: calls.setDeploymentActiveWithReceipt,
+      deploymentStateReceipt: calls.deploymentStateReceipt,
       definitions: calls.definitions,
       platformTools: calls.platformTools,
       createDeploymentWithReceipt: calls.createDeployment,
@@ -85,6 +89,21 @@ beforeEach(() => {
     deployment_key: 'new-one'
   }))
   calls.deploymentCreateReceipt.mockResolvedValue(undefined)
+  calls.deploymentStateReceipt.mockResolvedValue(undefined)
+  calls.setDeploymentActiveWithReceipt.mockImplementation(
+    async (requestId: string, key: string, revision: number, active: boolean) => {
+      const result = await (active ? calls.startDeployment : calls.stopDeployment)(key, revision)
+      return {
+        request_id: requestId,
+        status: 'SUCCEEDED',
+        deployment_key: key,
+        deployment_status: active ? 'ACTIVE' : 'DISABLED',
+        revision: result.revision,
+        error_code: null,
+        error_message: null
+      }
+    }
+  )
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -181,7 +200,7 @@ it('停用成功后刷新失败保留正式状态和修订，只在明确点击�
   expect(action('停用')).toBeUndefined()
   expect(action('启用')).toBeDefined()
   expect(calls.warning).toHaveBeenCalledWith(
-    '工具部署已停止，新调用不可使用；列表刷新失败。请点击“刷新”，不必重复操作。'
+    '原停用请求已确认（修订 2）；当前状态以列表为准；列表刷新失败。请点击“刷新”，不必重复操作。'
   )
   calls.startDeployment.mockResolvedValue({ ...deployment('original', '1'), revision: 3 })
   calls.deployments.mockResolvedValue([{ ...deployment('original', '1'), revision: 3 }])
@@ -738,4 +757,308 @@ it('平台部署切换工具后更新处理器绑定，不沿用上一工具或�
       providerRef: 'template_render'
     })
   )
+})
+
+it('停用响应丢失后锁定原部署，刷新和高修订状态不能代替原回执', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('响应丢失'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  expect(action('停用')!.props('disabled')).toBe(true)
+  expect(wrapper!.text()).toContain(requestId)
+  calls.deployments.mockResolvedValue([
+    { ...deployment('original', '1'), status: 'DISABLED', revision: 3 }
+  ])
+  await refresh()
+  expect(wrapper!.text()).toContain('结果尚未确认')
+  expect(calls.deploymentStateReceipt).toHaveBeenCalledWith(requestId)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+  calls.deploymentStateReceipt.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  await action('核对原启停结果')!.trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('结果尚未确认')
+  expect(localStorage.length).toBe(0)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+})
+it('刷新页面按持久原请求只读核对，未匹配或读取失败保留UNKNOWN', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('响应丢失'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  wrapper!.unmount()
+  calls.deploymentStateReceipt.mockRejectedValueOnce(new Error('回执不可读'))
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  expect(calls.deploymentStateReceipt).toHaveBeenCalledWith(requestId)
+  expect(wrapper!.text()).toContain(requestId)
+  expect(action('停用')!.props('disabled')).toBe(true)
+  calls.deploymentStateReceipt.mockResolvedValueOnce({
+    request_id: 'wrong',
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2
+  })
+  await action('核对原启停结果')!.trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain(requestId)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+})
+it('派发前保存失败不发送启停请求', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  const store = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+    throw Error('unavailable')
+  })
+  try {
+    await action('停用')!.trigger('click')
+    await flushPromises()
+    expect(calls.setDeploymentActiveWithReceipt).not.toHaveBeenCalled()
+    expect(wrapper!.text()).toContain('尚未发送请求')
+  } finally {
+    store.mockRestore()
+  }
+})
+
+it('原启停被明确拒绝后清除UNKNOWN，不提交新的启停', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockImplementationOnce(async (requestId: string) => ({
+    request_id: requestId,
+    status: 'REJECTED',
+    deployment_key: 'original',
+    deployment_status: null,
+    revision: null,
+    error_code: 'STATE_REJECTED',
+    error_message: '原修订已变化'
+  }))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  expect(calls.error).toHaveBeenCalledWith('原修订已变化')
+  expect(action('核对原启停结果')).toBeUndefined()
+  expect(localStorage.length).toBe(0)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+})
+it('切换身份隐藏原启停记录，切回后仍保留原请求，迟到回执不跨身份回填', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  let finish!: (value: unknown) => void
+  calls.setDeploymentActiveWithReceipt.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  authState.user.sub = 'another'
+  authState.identityVersion++
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain(requestId)
+  finish({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  await flushPromises()
+  expect(calls.success).not.toHaveBeenCalled()
+  expect(localStorage.length).toBe(1)
+  authState.user.sub = '8'
+  authState.identityVersion++
+  await flushPromises()
+  expect(wrapper!.text()).toContain(requestId)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+})
+it('清除启停原记录失败仍锁定，失去读取权限后不核对', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('响应丢失'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  calls.deploymentStateReceipt.mockResolvedValue({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+    throw Error('unavailable')
+  })
+  try {
+    await action('核对原启停结果')!.trigger('click')
+    await flushPromises()
+    expect(wrapper!.text()).toContain('无法清除本地请求记录')
+    expect(action('停用')!.props('disabled')).toBe(true)
+  } finally {
+    remove.mockRestore()
+  }
+  authState.user.permissions = ['foundation.capabilities.cancel']
+  await flushPromises()
+  expect(action('核对原启停结果')!.props('disabled')).toBe(true)
+  expect(calls.deploymentStateReceipt).toHaveBeenCalledTimes(1)
+})
+
+it('原成功回执不回退更高修订的当前状态，后续列表失败仍保留当前事实', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('响应丢失'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  calls.deployments.mockResolvedValueOnce([
+    { ...deployment('original', '1'), status: 'ACTIVE', revision: 3 }
+  ])
+  await refresh()
+  calls.deploymentStateReceipt.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  calls.deployments.mockRejectedValueOnce(new Error('当前列表不可读'))
+  await action('核对原启停结果')!.trigger('click')
+  await flushPromises()
+  expect(action('停用')).toBeDefined()
+  expect(action('启用')).toBeUndefined()
+  expect(wrapper!.text()).toContain('此回执不代表当前状态')
+  expect(wrapper!.text()).toContain('原启停回执')
+  expect(wrapper!.text()).not.toContain('结果尚未确认')
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('第二次响应丢失'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  expect(calls.setDeploymentActiveWithReceipt.mock.calls[1]!.slice(1)).toEqual([
+    'original',
+    3,
+    false
+  ])
+})
+
+it('跨标签新增原启停身份及时锁定，删除或清空事件不抹去本页UNKNOWN', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  const requestId = '12345678-1234-4234-8234-123456789012'
+  const key = `skillforge.tool-deployment-state:${JSON.stringify(['7', '8'])}:${requestId}`
+  const record = JSON.stringify({
+    requestId,
+    deploymentKey: 'original',
+    revision: 1,
+    active: false
+  })
+  localStorage.setItem(key, record)
+  window.dispatchEvent(
+    new StorageEvent('storage', { key, newValue: record, storageArea: localStorage })
+  )
+  await flushPromises()
+  expect(wrapper!.text()).toContain(requestId)
+  expect(action('停用')!.props('disabled')).toBe(true)
+  expect(calls.setDeploymentActiveWithReceipt).not.toHaveBeenCalled()
+  localStorage.removeItem(key)
+  window.dispatchEvent(
+    new StorageEvent('storage', { key, oldValue: record, storageArea: localStorage })
+  )
+  await flushPromises()
+  expect(wrapper!.text()).toContain(requestId)
+  expect(action('停用')!.props('disabled')).toBe(true)
+  window.dispatchEvent(new StorageEvent('storage', { key: null, storageArea: localStorage }))
+  await flushPromises()
+  expect(wrapper!.text()).toContain(requestId)
+  calls.deploymentStateReceipt.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  await action('核对原启停结果')!.trigger('click')
+  await flushPromises()
+  expect(action('核对原启停结果')).toBeUndefined()
+  expect(calls.setDeploymentActiveWithReceipt).not.toHaveBeenCalled()
+})
+it('其他主体的启停storage事件不污染当前页面', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  const requestId = '12345678-1234-4234-8234-123456789012'
+  const key = `skillforge.tool-deployment-state:${JSON.stringify(['7', 'another'])}:${requestId}`
+  const record = JSON.stringify({
+    requestId,
+    deploymentKey: 'original',
+    revision: 1,
+    active: false
+  })
+  localStorage.setItem(key, record)
+  window.dispatchEvent(
+    new StorageEvent('storage', { key, newValue: record, storageArea: localStorage })
+  )
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain(requestId)
+  expect(action('停用')!.props('disabled')).toBe(false)
+})
+
+it('首次启停未到达后原回执为空仍锁定，显式继续沿用同一请求和原参数', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('请求未到达'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  const original = calls.setDeploymentActiveWithReceipt.mock.calls[0]!
+  await action('核对原启停结果')!.trigger('click')
+  await flushPromises()
+  expect(action('停用')!.props('disabled')).toBe(true)
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+  calls.setDeploymentActiveWithReceipt.mockResolvedValueOnce({
+    request_id: original[0],
+    status: 'SUCCEEDED',
+    deployment_key: 'original',
+    deployment_status: 'DISABLED',
+    revision: 2,
+    error_code: null,
+    error_message: null
+  })
+  calls.deployments.mockResolvedValueOnce([
+    { ...deployment('original', '1'), status: 'DISABLED', revision: 2 }
+  ])
+  await action('继续原启停操作')!.trigger('click')
+  await flushPromises()
+  expect(calls.setDeploymentActiveWithReceipt.mock.calls).toEqual([original, original])
+  expect(action('核对原启停结果')).toBeUndefined()
+  expect(wrapper!.text()).toContain('原停用请求已确认（修订 2）；当前状态以列表为准')
+  expect(localStorage.length).toBe(0)
+})
+it('继续原启停操作重验原动作权限，不因当前状态变化改为另一动作', async () => {
+  mountWithPermissions(['foundation.capabilities.cancel'])
+  await flushPromises()
+  calls.setDeploymentActiveWithReceipt.mockRejectedValueOnce(new Error('请求未到达'))
+  await action('停用')!.trigger('click')
+  await flushPromises()
+  authState.user.permissions = ['foundation.capabilities.read', 'foundation.capabilities.run']
+  permissions.value = [...authState.user.permissions]
+  await flushPromises()
+  expect(action('继续原启停操作')).toBeUndefined()
+  expect(calls.setDeploymentActiveWithReceipt).toHaveBeenCalledTimes(1)
+  expect(action('核对原启停结果')).toBeDefined()
 })

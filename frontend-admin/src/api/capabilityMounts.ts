@@ -184,6 +184,16 @@ export interface CapabilityDeployment {
   updatedAt?: string | null
 }
 
+export interface DeploymentStateReceipt {
+  request_id: string
+  status: 'SUCCEEDED' | 'REJECTED'
+  deployment_key: string
+  deployment_status: string | null
+  revision: number | null
+  error_code: string | null
+  error_message: string | null
+}
+
 export interface DeploymentCreateReceipt {
   request_id: string
   status: 'SUCCEEDED' | 'REJECTED'
@@ -1226,6 +1236,27 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
     createDeployment,
     createDeploymentWithReceipt,
     deploymentCreateReceipt,
+    setDeploymentActiveWithReceipt: (
+      requestId: string,
+      deploymentKey: string,
+      revision: number,
+      active: boolean
+    ) =>
+      http.post<DeploymentStateReceipt>(
+        '/capabilities/deployments/state-with-receipt',
+        {
+          request_id: requestId,
+          deployment_key: deploymentKey,
+          expected_revision: revision,
+          active
+        },
+        { retryOnUnauthorized: false }
+      ),
+    deploymentStateReceipt: (requestId: string) =>
+      http.get<DeploymentStateReceipt | undefined>(
+        `/capabilities/deployments/state-with-receipt/result?request_id=${encodeURIComponent(requestId)}`,
+        { silent: true }
+      ),
     startDeployment: (deploymentKey: string, revision: number, opts?: RequestOptions) =>
       setDeploymentActive(deploymentKey, revision, true, opts),
     stopDeployment: (deploymentKey: string, revision: number, opts?: RequestOptions) =>

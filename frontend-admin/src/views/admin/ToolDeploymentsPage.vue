@@ -40,8 +40,38 @@
         {{ checkedDeployment.revision }}
       </p>
     </section>
+    <section
+      v-for="operation in stateOperations"
+      :key="operation.requestId"
+      class="admin-card"
+      role="status"
+    >
+      部署“{{ operation.deploymentKey }}”的{{
+        operation.active ? '启用' : '停用'
+      }}结果尚未确认，原修订 {{ operation.revision }}，请求号：{{ operation.requestId }}。
+      当前部署状态不能代替原请求回执，请勿重复提交。
+      <ElButton :disabled="busy || !canRead" @click="checkState(operation)"
+        >核对原启停结果</ElButton
+      >
+      <ElButton
+        v-if="canContinueState(operation)"
+        :disabled="busy || !!stateStorageError"
+        @click="continueState(operation)"
+        >继续原启停操作</ElButton
+      >
+    </section>
+    <p v-if="stateStorageError" role="status">{{ stateStorageError }}</p>
+    <p v-if="confirmedStateReceipt" role="status">
+      原启停回执：请求 {{ confirmedStateReceipt.request_id }} · 部署
+      {{ confirmedStateReceipt.deployment_key }} · 提交时状态
+      {{ statusLabel(confirmedStateReceipt.deployment_status || '') }} · 修订
+      {{ confirmedStateReceipt.revision }}。 此回执不代表当前状态，当前部署以列表为准。
+    </p>
     <p v-if="creationStorageError" role="status">{{ creationStorageError }}</p>
     <p v-if="confirmedChange" role="status">{{ confirmedChange }}</p>
+    <p v-if="loadError" role="status">
+      当前列表刷新失败，显示的是上次确认的部署状态，可能已过时；请刷新核对。原启停回执仅说明原请求结果。
+    </p>
     <div class="admin-toolbar admin-filters">
       <ElInput
         v-model="query"
@@ -110,7 +140,11 @@
                 : 'foundation.capabilities.run'
             ]"
             link
-            :disabled="busy"
+            :disabled="
+              busy ||
+              !!stateStorageError ||
+              stateOperations.some((operation) => operation.deploymentKey === row.deploymentKey)
+            "
             @click="toggle(row as CapabilityDeployment)"
             >{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</ElButton
           ></template
@@ -346,6 +380,180 @@ async function refresh() {
       }
       throw cause
     }
+  })
+  for (const operation of [...stateOperations.value]) {
+    if (!current()) break
+    await checkState(operation, true)
+  }
+}
+type StateOperation = {
+  requestId: string
+  deploymentKey: string
+  revision: number
+  active: boolean
+}
+const stateOperations = ref<StateOperation[]>([])
+const stateStorageError = ref('')
+const confirmedStateReceipt =
+  ref<Awaited<ReturnType<typeof api.capabilities.deploymentStateReceipt>>>()
+const statePrefix = (subject: string) => `skillforge.tool-deployment-state:${subject}:`
+const stateKey = (subject: string, requestId: string) => statePrefix(subject) + requestId
+function syncStateOperations(subject: string, preserveExisting = false) {
+  const operations: StateOperation[] = []
+  stateStorageError.value = ''
+  if (!subject) {
+    stateOperations.value = []
+    return
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key?.startsWith(statePrefix(subject))) continue
+      const operation = JSON.parse(localStorage.getItem(key)!) as StateOperation
+      if (
+        !operation ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          operation.requestId
+        ) ||
+        typeof operation.deploymentKey !== 'string' ||
+        !operation.deploymentKey ||
+        !Number.isSafeInteger(operation.revision) ||
+        operation.revision < 1 ||
+        typeof operation.active !== 'boolean' ||
+        key !== stateKey(subject, operation.requestId)
+      )
+        throw Error('invalid')
+      operations.push(operation)
+    }
+  } catch {
+    stateStorageError.value = '无法读取原启停请求记录，请恢复浏览器存储后重新进入。'
+  }
+  if (preserveExisting) {
+    for (const existing of stateOperations.value) {
+      if (!operations.some((operation) => operation.requestId === existing.requestId))
+        operations.push(existing)
+    }
+  }
+  stateOperations.value = operations
+}
+watch(
+  owner,
+  (subject) => {
+    confirmedStateReceipt.value = undefined
+    syncStateOperations(subject)
+  },
+  { immediate: true, flush: 'sync' }
+)
+function onStateStorage(event: StorageEvent) {
+  if (
+    event.storageArea === localStorage &&
+    (!event.key || event.key.startsWith(statePrefix(owner.value)))
+  )
+    syncStateOperations(owner.value, true)
+}
+window.addEventListener('storage', onStateStorage)
+onScopeDispose(() => window.removeEventListener('storage', onStateStorage))
+async function acceptStateReceipt(
+  receipt: Awaited<ReturnType<typeof api.capabilities.deploymentStateReceipt>>,
+  operation: StateOperation,
+  subject: string,
+  current: () => boolean
+) {
+  if (
+    !current() ||
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    receipt.deployment_key !== operation.deploymentKey ||
+    !['SUCCEEDED', 'REJECTED'].includes(receipt.status) ||
+    (receipt.status === 'SUCCEEDED' &&
+      (!Number.isSafeInteger(receipt.revision) ||
+        receipt.revision! <= operation.revision ||
+        receipt.deployment_status !== (operation.active ? 'ACTIVE' : 'DISABLED'))) ||
+    (receipt.status === 'REJECTED' && !receipt.error_code)
+  )
+    return false
+  try {
+    localStorage.removeItem(stateKey(subject, operation.requestId))
+  } catch {
+    stateStorageError.value = '启停回执已确认，但无法清除本地请求记录，请恢复存储后重新核对。'
+    return false
+  }
+  stateOperations.value = stateOperations.value.filter(
+    (item) => item.requestId !== operation.requestId
+  )
+  stateStorageError.value = ''
+  if (receipt.status === 'REJECTED') {
+    message.error(receipt.error_message || '原启停请求已拒绝，请核对当前部署后决定下一步。')
+    return true
+  }
+  confirmedStateReceipt.value = receipt
+  data.value = data.value?.map((item) =>
+    item.deploymentKey === operation.deploymentKey && item.revision < receipt.revision!
+      ? {
+          ...item,
+          status: receipt.deployment_status as CapabilityDeployment['status'],
+          revision: receipt.revision!
+        }
+      : item
+  )
+  confirmedChange.value = `原${operation.active ? '启用' : '停用'}请求已确认（修订 ${receipt.revision}）；当前状态以列表为准`
+  if (!canRead.value) message.success(confirmedChange.value)
+  else if ((await reload()) !== undefined && current()) {
+    directoryLoaded.value = true
+    message.success(confirmedChange.value)
+  }
+  return true
+}
+async function checkState(operation: StateOperation, automatic = false) {
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  if (!subject || !session || !canRead.value) return
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canRead.value
+  await run(async () => {
+    const receipt = await api.capabilities.deploymentStateReceipt(operation.requestId)
+    if (!current()) return
+    if (!(await acceptStateReceipt(receipt, operation, subject, current)) && !automatic)
+      message.warning('尚未查到匹配的原启停回执，结果仍未确认。')
+  })
+}
+function canContinueState(operation: StateOperation) {
+  return (
+    auth.user?.permissions.includes(
+      operation.active ? 'foundation.capabilities.run' : 'foundation.capabilities.cancel'
+    ) === true
+  )
+}
+async function continueState(operation: StateOperation) {
+  if (
+    busy.value ||
+    stateStorageError.value ||
+    !canContinueState(operation) ||
+    !stateOperations.value.some((item) => item.requestId === operation.requestId)
+  )
+    return
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  if (!subject || !session) return
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
+  await run(async () => {
+    const receipt = await api.capabilities.setDeploymentActiveWithReceipt(
+      operation.requestId,
+      operation.deploymentKey,
+      operation.revision,
+      operation.active
+    )
+    await acceptStateReceipt(receipt, operation, subject, current)
   })
 }
 type CreationOperation = { requestId: string; deploymentKey?: string }
@@ -736,20 +944,46 @@ async function checkDeployment(operation: CreationOperation) {
   })
 }
 async function toggle(row: CapabilityDeployment) {
+  const active = row.status !== 'ACTIVE'
+  if (
+    stateStorageError.value ||
+    stateOperations.value.some((operation) => operation.deploymentKey === row.deploymentKey) ||
+    !auth.user?.permissions.includes(
+      active ? 'foundation.capabilities.run' : 'foundation.capabilities.cancel'
+    )
+  )
+    return
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  if (!subject || !session) return
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
   await run(async () => {
     confirmedChange.value = ''
-    const wasActive = row.status === 'ACTIVE'
-    const updated = await (
-      wasActive ? api.capabilities.stopDeployment : api.capabilities.startDeployment
-    )(row.deploymentKey, row.revision)
-    data.value = data.value?.map((item) =>
-      item.deploymentKey === updated.deploymentKey ? updated : item
-    )
-    confirmedChange.value = wasActive ? '工具部署已停止，新调用不可使用' : '工具部署已启动'
-    if ((await reload()) !== undefined) {
-      directoryLoaded.value = true
-      message.success(confirmedChange.value)
+    const operation = {
+      requestId: crypto.randomUUID(),
+      deploymentKey: row.deploymentKey,
+      revision: row.revision,
+      active
     }
+    try {
+      localStorage.setItem(stateKey(subject, operation.requestId), JSON.stringify(operation))
+    } catch {
+      stateStorageError.value = '无法保存原启停请求记录，尚未发送请求。'
+      return
+    }
+    stateOperations.value.push(operation)
+    const receipt = await api.capabilities.setDeploymentActiveWithReceipt(
+      operation.requestId,
+      operation.deploymentKey,
+      operation.revision,
+      active
+    )
+    await acceptStateReceipt(receipt, operation, subject, current)
   })
 }
 
