@@ -280,6 +280,9 @@ watch(
       .map((item) => `${item.message_id}:${item.message_version}:${item.content.length}`)
       .join('|'),
     c.history.processes.map((item) => `${item.process_id}:${item.updated_sequence}`).join('|'),
+    Object.values(c.previews ?? {})
+      .map((item) => `${item.run_id}:${item.attempt_id}:${item.preview_sequence}:${item.state}`)
+      .join('|'),
     c.artifactsRevision
   ],
   () => void followLatestAfterRender()
@@ -1234,6 +1237,7 @@ const formTipId = useId()
           </section>
           <ConversationTimeline
             :history="c.history"
+            :previews="c.previews"
             :client="c.client!"
             :session="c.sessionId"
             :target-name="c.targetName"

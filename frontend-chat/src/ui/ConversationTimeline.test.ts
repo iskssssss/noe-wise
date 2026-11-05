@@ -1357,3 +1357,67 @@ describe('公开回答复制', () => {
     }
   })
 })
+
+it('按输入归属展示非最终预览，不提供复制引用，正式结果替换后只有一份正文', async () => {
+  const history = {
+    ...emptyHistory(),
+    messages: [{ message_id: 'input', message_version: 1, role: 'user', content: '用户问题' }]
+  }
+  const preview: import('../protocol').MessagePreview = {
+    preview_message_id: 'preview-r',
+    session_id: 's',
+    run_id: 'r',
+    root_input_id: 'input',
+    input_id: 'input',
+    attempt_id: 'a',
+    ordinal: 1,
+    preview_sequence: 1,
+    role: 'assistant',
+    content: '<script>安全纯文本</script>',
+    state: 'streaming',
+    authoritative: false
+  }
+  const wrapper = mount(ConversationTimeline, {
+    props: {
+      history,
+      previews: { r: preview },
+      client: {} as Client,
+      session: 's',
+      locked: false,
+      runStates: { r: 'running' },
+      artifacts: []
+    }
+  })
+  try {
+    const candidate = wrapper.get('.preview-message')
+    expect(candidate.attributes('data-authoritative')).toBe('false')
+    expect(candidate.text()).toContain('生成中预览 · 非最终答复')
+    expect(candidate.text()).toContain('<script>安全纯文本</script>')
+    expect(candidate.find('script').exists()).toBe(false)
+    expect(candidate.find('button').exists()).toBe(false)
+    expect(candidate.element.closest('.conversation-turn')!.getAttribute('data-turn')).toBe('input')
+    await wrapper.setProps({
+      previews: {},
+      history: {
+        ...history,
+        messages: [
+          ...history.messages,
+          {
+            message_id: 'formal',
+            message_version: 1,
+            role: 'assistant',
+            content: '正式唯一正文',
+            run_id: 'r',
+            root_input_id: 'input',
+            phase: 'final',
+            state: 'completed'
+          }
+        ]
+      }
+    })
+    expect(wrapper.find('.preview-message').exists()).toBe(false)
+    expect(wrapper.text().split('正式唯一正文')).toHaveLength(2)
+  } finally {
+    wrapper.unmount()
+  }
+})

@@ -9,7 +9,14 @@ import {
 import { computed, ref, watch } from 'vue'
 import { ChatButton, ChatMessage } from './controls'
 import type { Client } from '../client'
-import type { Deliverable, History, Message, MessageState, Reference } from '../protocol'
+import type {
+  Deliverable,
+  History,
+  Message,
+  MessagePreview,
+  MessageState,
+  Reference
+} from '../protocol'
 import Markdown from './Markdown.vue'
 import MessageBody from './MessageBody.vue'
 import MediaImage from './MediaImage.vue'
@@ -33,15 +40,51 @@ const props = defineProps<{
   runStates: Record<string, string>
   connection?: string
   artifacts: Deliverable[]
+  previews?: Record<string, MessagePreview>
 }>()
 const emit = defineEmits<{
   reference: [value: Reference]
   artifact: [id: string]
   task: [id: string]
 }>()
-const turns = computed(() =>
-  conversationTurns(props.history).map((turn) => ({ turn, entries: conversationEntries(turn) }))
-)
+const turns = computed(() => {
+  const turns = conversationTurns(props.history)
+  const candidates = Object.values(props.previews ?? {}).filter(
+    (preview) => preview.state === 'streaming' && preview.content
+  )
+  for (const preview of candidates) {
+    if (
+      !turns.some(
+        (turn) =>
+          turn.runIds.includes(preview.run_id) ||
+          turn.messages.some(
+            (message) =>
+              message.message_id === preview.root_input_id ||
+              (message.root_input_id || message.metadata?.root_input_id) === preview.root_input_id
+          )
+      )
+    )
+      turns.push({
+        id: `preview:${preview.run_id}`,
+        runIds: [preview.run_id],
+        messages: [],
+        processes: []
+      })
+  }
+  return turns.map((turn) => ({
+    turn,
+    entries: conversationEntries(turn),
+    previews: candidates.filter(
+      (preview) =>
+        turn.runIds.includes(preview.run_id) ||
+        turn.messages.some(
+          (message) =>
+            message.message_id === preview.root_input_id ||
+            (message.root_input_id || message.metadata?.root_input_id) === preview.root_input_id
+        )
+    )
+  }))
+})
 const traceModes = ref<Record<string, boolean>>({})
 watch(
   () => props.session,
@@ -145,7 +188,7 @@ function pending(turn: ConversationTurn) {
     部分较早的推理过程已按保留策略回收。已保留的回复与执行记录仍可查看。
   </p>
   <section
-    v-for="{ turn, entries } in turns"
+    v-for="{ turn, entries, previews: turnPreviews } in turns"
     :key="turn.id"
     class="conversation-turn"
     :data-turn="turn.id"
@@ -313,6 +356,16 @@ function pending(turn: ConversationTurn) {
         </template>
       </template>
     </template>
+    <article
+      v-for="preview in turnPreviews"
+      :key="preview.run_id"
+      class="preview-message"
+      :data-preview-run="preview.run_id"
+      data-authoritative="false"
+    >
+      <p class="message-output-status" role="status">生成中预览 · 非最终答复</p>
+      <p class="preview-content">{{ preview.content }}</p>
+    </article>
     <p v-if="stopReason(turn)" class="message-output-status" role="status">
       停止原因：{{ stopReason(turn) }}
     </p>
@@ -321,6 +374,17 @@ function pending(turn: ConversationTurn) {
 </template>
 
 <style scoped>
+.preview-message {
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  margin-block: var(--space-3);
+}
+.preview-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .history-retention {
   margin: 0 0 var(--space-4);
   color: var(--muted);

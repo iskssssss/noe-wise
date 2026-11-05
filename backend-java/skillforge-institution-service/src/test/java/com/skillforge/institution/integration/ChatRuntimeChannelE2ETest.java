@@ -751,7 +751,8 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
     void standaloneBrowserRestoresClosedSessionAsReadOnly() throws Exception {
         boolean unknownSteering = System.getenv("E2E_UNKNOWN_STEERING") != null;
         boolean cursorRecovery = System.getenv("E2E_CURSOR_RECOVERY") != null;
-        if (unknownSteering || cursorRecovery) provider.holdStreamCompletion();
+        boolean previewStream = System.getenv("E2E_PREVIEW_STREAM") != null;
+        if (unknownSteering || cursorRecovery || previewStream) provider.holdStreamCompletion();
         String channelToken = "closed-test-" + java.util.UUID.randomUUID();
         String clientRef = java.util.UUID.randomUUID().toString();
         TenantContext.setTenantId(tenantId);
@@ -791,6 +792,7 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         fixture.put("evidence", evidence.toString()); fixture.put("baseline", "baseline".equals(System.getenv("E2E_CLOSED_SESSION")));
         fixture.put("unknownSteering", unknownSteering);
         fixture.put("cursorRecovery", System.getenv().getOrDefault("E2E_CURSOR_RECOVERY", ""));
+        fixture.put("previewStream", System.getenv().getOrDefault("E2E_PREVIEW_STREAM", ""));
         fixture.put("steeringCandidate", System.getenv("E2E_UNKNOWN_STEERING") != null && System.getenv("E2E_UNKNOWN_STEERING").startsWith("candidate"));
         fixture.put("automaticSteeringRead", "candidate-auto".equals(System.getenv("E2E_UNKNOWN_STEERING")));
         fixture.put("steeringRejected", System.getenv("E2E_UNKNOWN_STEERING") != null && System.getenv("E2E_UNKNOWN_STEERING").startsWith("rejected"));
@@ -800,7 +802,7 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
             long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(3);
             while (process.isAlive() && System.nanoTime() < deadline) {
-                if ((unknownSteering || cursorRecovery) && Files.exists(evidence.resolve("release-model"))) { provider.advanceHeldStream(); provider.finishHeldStream(); }
+                if ((unknownSteering || cursorRecovery || previewStream) && Files.exists(evidence.resolve("release-model"))) { provider.advanceHeldStream(); provider.finishHeldStream(); }
                 owned.capture(); process.waitFor(200, TimeUnit.MILLISECONDS);
             }
             assertFalse(process.isAlive(), "closed_browser_timeout: " + evidence);

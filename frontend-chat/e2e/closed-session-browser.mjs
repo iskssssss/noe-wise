@@ -81,7 +81,124 @@ try {
 
   const input = page.getByRole('textbox', { name: '消息', exact: true })
   await expect(input).toBeEnabled()
-  if (f.cursorRecovery) {
+  if (f.previewStream) {
+    await input.fill('公开安全正文预览应在模型完成前可见')
+    const accepted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/chat' &&
+        response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    const acceptedResponse = await accepted
+    assert.equal(acceptedResponse.status(), 202)
+    const receipt = (await acceptedResponse.json()).data
+    const preview = await page.evaluate(async (input) => {
+      const controller = new AbortController(),
+        timeout = setTimeout(() => controller.abort(), 30000)
+      const response = await fetch(
+        '/api/v1/chat/events?session_id=' + encodeURIComponent(input.session),
+        {
+          headers: {
+            'X-Channel-Token': input.token,
+            'X-Chat-User-Token': input.identity,
+            Accept: 'text/event-stream'
+          },
+          signal: controller.signal
+        }
+      )
+      const reader = response.body.getReader(),
+        decoder = new TextDecoder()
+      let raw = ''
+      try {
+        while (true) {
+          const chunk = await reader.read()
+          raw += decoder.decode(chunk.value, { stream: !chunk.done })
+          for (const block of raw.replace(/\r/g, '').split('\n\n').slice(0, -1)) {
+            if (
+              !block
+                .split('\n')
+                .some(
+                  (line) => line.startsWith('event:') && line.slice(6).trim() === 'message.preview'
+                )
+            )
+              continue
+            const data = block
+              .split('\n')
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trim())
+              .join('\n')
+            if (!data) continue
+            const event = JSON.parse(data)
+            if (event.state === 'streaming' && event.content)
+              return { status: response.status, event, raw }
+          }
+          if (chunk.done) throw new Error('preview_missing_before_stream_end')
+        }
+      } finally {
+        clearTimeout(timeout)
+        await reader.cancel()
+        controller.abort()
+      }
+    }, f)
+    assert.equal(preview.status, 200)
+    assert.equal(preview.event.run_id, receipt.execution_id)
+    assert.equal(preview.event.authoritative, false)
+    assert.ok(preview.event.content.includes('FIRST_STREAM_VISIBLE'))
+    const status = await page.request.get(
+      origin +
+        '/api/v1/chat/runs/status?session_id=' +
+        encodeURIComponent(f.session) +
+        '&run_id=' +
+        encodeURIComponent(receipt.execution_id),
+      { headers: { Authorization: `Bearer ${f.adminToken}` } }
+    )
+    assert.equal(status.status(), 200)
+    const runStatus = await status.json()
+    assert.equal(runStatus.data.status, 'running')
+    if (f.previewStream === 'baseline')
+      await expect(page.getByText(/FIRST_STREAM_VISIBLE/)).toHaveCount(0)
+    else {
+      const previewCard = page.locator(
+        `article.preview-message[data-preview-run="${receipt.execution_id}"][data-authoritative="false"]`
+      )
+      await expect(previewCard).toHaveCount(1)
+      await expect(previewCard.getByText('生成中预览 · 非最终答复', { exact: true })).toBeVisible()
+      await expect(previewCard.locator('p.preview-content')).toContainText('FIRST_STREAM_VISIBLE')
+      await expect(previewCard.locator('button, a')).toHaveCount(0)
+    }
+    const visibleBeforeFinal = await page.locator('body').innerText()
+    assert.ok(!visibleBeforeFinal.includes('fixture-reasoning-'))
+    await page.screenshot({ path: join(f.evidence, 'preview-before-final.png'), fullPage: true })
+    await writeFile(
+      join(f.evidence, 'preview-before-final.json'),
+      JSON.stringify({ preview, runStatus, visibleBeforeFinal }, null, 2)
+    )
+    await writeFile(join(f.evidence, 'release-model'), 'release')
+    await expect(page.getByText(/STREAM_FINISHED/)).toBeVisible({ timeout: 40000 })
+    await expect(page.locator('article.preview-message')).toHaveCount(0)
+    await expect(
+      page.locator('.message.assistant').filter({ hasText: 'STREAM_FINISHED' })
+    ).toHaveCount(1)
+    await expect(page.getByText(/FIRST_STREAM_VISIBLE/)).toHaveCount(1)
+    await expect(page.getByRole('button', { name: '停止运行', exact: true })).toHaveCount(0)
+    assert.ok(!(await page.locator('body').innerText()).includes('fixture-reasoning-'))
+    assert.equal(chats.length, 1)
+    await writeFile(
+      join(f.evidence, 'receipt.json'),
+      JSON.stringify(
+        {
+          runId: receipt.execution_id,
+          submissions: chats.length,
+          preview,
+          runStatus,
+          visibleBeforeFinal,
+          visibleAfterFinal: await page.locator('body').innerText()
+        },
+        null,
+        2
+      )
+    )
+  } else if (f.cursorRecovery) {
     await input.fill('真实运行游标恢复失败后自动观察验收')
     const accepted = page.waitForResponse(
       (response) =>

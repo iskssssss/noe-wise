@@ -688,3 +688,193 @@ describe('计划持久事件', () => {
     expect(history.event_cursor).toBe('event:work')
   })
 })
+
+describe('非权威正文预览投影', () => {
+  const candidate = (overrides: Record<string, unknown> = {}) => ({
+    preview_message_id: 'preview-r',
+    session_id: 's',
+    run_id: 'r',
+    root_input_id: 'input',
+    input_id: 'input',
+    attempt_id: 'attempt-1',
+    ordinal: 1,
+    preview_sequence: 1,
+    role: 'assistant',
+    content: '安全前缀',
+    state: 'streaming',
+    authoritative: false,
+    ...overrides
+  })
+  function fixture() {
+    const history = emptyHistory()
+    const previews: Record<string, import('./protocol').MessagePreview> = {}
+    const receive = createProjection(
+      's',
+      history,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      previews
+    )
+    let sequence = 0
+    const emit = (event: string, data: Record<string, unknown>) =>
+      receive({ event, id: `event-${++sequence}`, data: { ...data, session_sequence: sequence } })
+    return { history, previews, emit }
+  }
+  it('累计快照整体替换，同ordinal新attempt退休旧身份，空快照不保留上一候选', () => {
+    const { history, previews, emit } = fixture()
+    emit('message.preview', candidate())
+    emit('message.preview', candidate({ preview_sequence: 2, content: '安全前缀继续' }))
+    expect(previews.r!.content).toBe('安全前缀继续')
+    expect(history.messages).toEqual([])
+    emit('message.preview', candidate({ preview_sequence: 1, content: '迟到' }))
+    expect(previews.r!.content).toBe('安全前缀继续')
+    emit('message.preview', candidate({ attempt_id: 'attempt-2', content: '' }))
+    expect(previews.r!.content).toBe('')
+    emit(
+      'message.preview',
+      candidate({ preview_sequence: 99, state: 'failed', content: '错误原文' })
+    )
+    expect(previews.r!.attempt_id).toBe('attempt-2')
+    emit(
+      'message.preview',
+      candidate({
+        attempt_id: 'attempt-2',
+        preview_sequence: 2,
+        state: 'rejected',
+        content: '不可展示'
+      })
+    )
+    expect(previews.r!.content).toBe('')
+    emit(
+      'message.preview',
+      candidate({ attempt_id: 'attempt-2', preview_sequence: 3, content: '不得复活' })
+    )
+    expect(previews.r!.state).toBe('rejected')
+    emit('message.preview', candidate({ attempt_id: 'attempt-3', ordinal: 2, content: '新轮次' }))
+    emit(
+      'message.preview',
+      candidate({ attempt_id: 'late-attempt', ordinal: 1, content: '旧轮次' })
+    )
+    expect(previews.r!.content).toBe('新轮次')
+  })
+  it.each(['rejected', 'unavailable', 'failed', 'unknown', 'cancelled'])(
+    '%s 清除候选正文但不生成正式消息',
+    (state) => {
+      const { history, previews, emit } = fixture()
+      emit('message.preview', candidate())
+      emit(
+        'message.preview',
+        candidate({ preview_sequence: 2, state, content: '错误与推理不可展示' })
+      )
+      expect(previews.r!.content).toBe('')
+      expect(history.messages).toEqual([])
+    }
+  )
+  it('正式delta精确关闭关联候选，不误清其他Run，终态后拒迟到', () => {
+    const { previews, emit } = fixture()
+    emit('message.preview', candidate())
+    emit('message.preview', candidate({ run_id: 'member', preview_message_id: 'preview-member' }))
+    emit('message.delta', {
+      session_id: 's',
+      run_id: 'r',
+      message_id: 'formal',
+      preview_message_id: 'preview-r',
+      content: '正式正文',
+      phase: 'commentary',
+      state: 'completed'
+    })
+    expect(previews.r).toBeUndefined()
+    expect(previews.member).toBeDefined()
+    emit('message.preview', candidate({ preview_sequence: 5 }))
+    expect(previews.r).toBeUndefined()
+    emit('execution.completed', { session_id: 's', run_id: 'member', status: 'failed' })
+    emit(
+      'message.preview',
+      candidate({ run_id: 'member', preview_message_id: 'preview-member', preview_sequence: 9 })
+    )
+    expect(previews.member).toBeUndefined()
+  })
+  it('历史merge后的metadata终态阻止迟到预览；等待确认不误终结', () => {
+    const { history, previews, emit } = fixture()
+    emit('execution.completed', { session_id: 's', run_id: 'r', status: 'waiting_hitl' })
+    emit('message.preview', candidate())
+    expect(previews.r).toBeDefined()
+    delete previews.r
+    history.messages.push({
+      message_id: 'formal',
+      message_version: 1,
+      role: 'assistant',
+      content: '正式结果',
+      metadata: { run_id: 'r', phase: 'final', state: 'cancelled' }
+    })
+    emit('message.preview', candidate({ preview_sequence: 10 }))
+    expect(previews.r).toBeUndefined()
+  })
+  it('只接收公开assistant非权威字段，不保留额外reasoning或错误字段', () => {
+    const { previews, emit } = fixture()
+    emit('message.preview', candidate({ authoritative: true }))
+    expect(previews.r).toBeUndefined()
+    emit('message.preview', candidate({ reasoning: '内部推理', error: '错误原文' }))
+    expect(JSON.stringify(previews)).not.toContain('内部推理')
+    expect(JSON.stringify(previews)).not.toContain('错误原文')
+  })
+})
+
+it('快照清显示后仍保留失败预览水位，不被新session序号的旧attempt复活', () => {
+  const history = emptyHistory()
+  const previews: Record<string, import('./protocol').MessagePreview> = {}
+  const receive = createProjection(
+    's',
+    history,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    previews
+  )
+  const data = {
+    preview_message_id: 'p',
+    session_id: 's',
+    run_id: 'r',
+    root_input_id: 'i',
+    input_id: 'i',
+    attempt_id: 'a',
+    ordinal: 2,
+    preview_sequence: 2,
+    role: 'assistant',
+    content: '',
+    state: 'failed',
+    authoritative: false
+  }
+  receive({ event: 'message.preview', id: 'first', data: { ...data, session_sequence: 1 } })
+  delete previews.r
+  receive({
+    event: 'message.preview',
+    id: 'late',
+    data: {
+      ...data,
+      state: 'streaming',
+      content: '不得复活',
+      preview_sequence: 3,
+      session_sequence: 2
+    }
+  })
+  expect(previews.r).toBeUndefined()
+  receive({
+    event: 'message.preview',
+    id: 'old-ordinal',
+    data: {
+      ...data,
+      attempt_id: 'old',
+      ordinal: 1,
+      state: 'streaming',
+      content: '旧轮次',
+      session_sequence: 3
+    }
+  })
+  expect(previews.r).toBeUndefined()
+})

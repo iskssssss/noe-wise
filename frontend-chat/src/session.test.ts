@@ -2857,3 +2857,76 @@ it('运行中手动上传的迟到回执不能进入新会话草稿', async () =
   expect(state.draft.value).toBe('新会话草稿')
   expect(posts).toHaveLength(1)
 })
+
+it('安全预览独立于正式历史，重连与切会话清除且旧会话迟到事件无效', async () => {
+  await connect()
+  state.draft.value = '开始任务'
+  await state.submit()
+  await flushPromises()
+  const preview = {
+    session_id: 's',
+    run_id: 'run',
+    root_input_id: 'input',
+    input_id: 'input',
+    preview_message_id: 'preview-run',
+    attempt_id: 'attempt',
+    ordinal: 1,
+    preview_sequence: 1,
+    role: 'assistant',
+    content: '安全正文候选',
+    state: 'streaming',
+    authoritative: false
+  }
+  publish({
+    id: 'preview-first',
+    event: 'message.preview',
+    data: { ...preview, session_sequence: 50 }
+  })
+  await flushPromises()
+  expect(state.previews.value.run?.content).toBe('安全正文候选')
+  expect(state.history.value.messages.some((message) => message.content === '安全正文候选')).toBe(
+    false
+  )
+  await state.reconnect()
+  await flushPromises()
+  expect(state.previews.value).toEqual({})
+  publish({
+    id: 'old-preview-new-session-sequence',
+    event: 'message.preview',
+    data: { ...preview, preview_sequence: 1, session_sequence: 60 }
+  })
+  await flushPromises()
+  expect(state.previews.value).toEqual({})
+  publish({
+    id: 'new-attempt',
+    event: 'message.preview',
+    data: {
+      ...preview,
+      attempt_id: 'new-attempt',
+      ordinal: 2,
+      session_sequence: 61,
+      content: '新执行候选'
+    }
+  })
+  await flushPromises()
+  expect(state.previews.value.run?.content).toBe('新执行候选')
+  await state.reconnect()
+  await flushPromises()
+  publish({
+    id: 'retired-attempt-late',
+    event: 'message.preview',
+    data: { ...preview, preview_sequence: 99, session_sequence: 70 }
+  })
+  await flushPromises()
+  expect(state.previews.value).toEqual({})
+  state.newSession()
+  await state.openSession('other')
+  await flushPromises()
+  publish({
+    id: 'preview-late',
+    event: 'message.preview',
+    data: { ...preview, preview_sequence: 2, session_sequence: 51 }
+  })
+  await flushPromises()
+  expect(state.previews.value).toEqual({})
+})

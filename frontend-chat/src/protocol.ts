@@ -58,6 +58,21 @@ export type MessageState = 'streaming' | 'completed' | 'failed' | 'cancelled' | 
 export type MessagePhase = 'pending' | 'commentary' | 'final'
 /** 标识仅存在于浏览器内的回执占位消息。 */
 export const provisionalMessage = Symbol('provisional-message')
+/** 仅用于当前页面的安全候选，不参与正式消息历史。 */
+export interface MessagePreview {
+  preview_message_id: string
+  session_id: string
+  run_id: string
+  root_input_id: string
+  input_id: string
+  attempt_id: string
+  ordinal: number
+  preview_sequence: number
+  role: 'assistant'
+  content: string
+  state: 'streaming' | 'rejected' | 'unavailable' | 'failed' | 'unknown' | 'cancelled'
+  authoritative: false
+}
 export interface Message {
   [provisionalMessage]?: true
   message_id: string

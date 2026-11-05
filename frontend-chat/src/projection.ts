@@ -1,7 +1,9 @@
+import { runIsTerminal } from './workPlans'
 import {
   provisionalMessage,
   type History,
   type Message,
+  type MessagePreview,
   type Pending,
   type Process,
   type StreamEvent
@@ -153,6 +155,15 @@ export function pendingIdentity(pending: Pending): Record<string, unknown> {
     fields.filter((key) => pending[key] !== undefined).map((key) => [key, pending[key]])
   )
 }
+/** 同一页面选择期间保留安全候选水位；重读快照只清显示，切会话才释放。 */
+export function createPreviewState() {
+  return {
+    latest: {} as Record<string, MessagePreview>,
+    terminalRuns: new Set<string>(),
+    closedPreviews: new Set<string>(),
+    retiredAttempts: new Set<string>()
+  }
+}
 /** 序号属于 Session；事件 ID 只作等值去重，从不解释不透明 cursor。 */
 export function createProjection(
   session: string,
@@ -161,9 +172,28 @@ export function createProjection(
   artifactsChanged: () => void = () => {},
   inputAccepted: (input: string, run: string) => void = () => {},
   workChanged: (work: string) => void = () => {},
-  runProgress: (run: string, sourceSequence: number, rootInput: string) => void = () => {}
+  runProgress: (run: string, sourceSequence: number, rootInput: string) => void = () => {},
+  previews: Record<string, MessagePreview> = {},
+  previewState = createPreviewState()
 ) {
   let sequence = 0
+  const { terminalRuns, closedPreviews, retiredAttempts } = previewState
+  const historyClosesRun = (run: string) =>
+    history.messages.some(
+      (message) =>
+        (message.run_id ||
+          message.metadata?.run_id ||
+          message.root_run_id ||
+          message.metadata?.root_run_id) === run &&
+        (message.phase || message.metadata?.phase) === 'final' &&
+        runIsTerminal(String(message.state || message.metadata?.state || ''))
+    ) ||
+    (history.activities ?? []).some(
+      (activity) =>
+        activity.node_id === run &&
+        activity.node_type === 'agent_runtime' &&
+        runIsTerminal(activity.status || '')
+    )
   const seen = new Set<string>(history.event_cursor ? [history.event_cursor] : [])
   return (event: StreamEvent) => {
     const data = event.data
@@ -214,6 +244,78 @@ export function createProjection(
       if (seen.size > 1024) seen.delete(seen.values().next().value!)
       sequence = Math.max(sequence, next)
       history.event_cursor = event.id
+    }
+    if (event.event === 'message.preview') {
+      const run = typeof data.run_id === 'string' ? data.run_id : ''
+      if (
+        !run ||
+        terminalRuns.has(run) ||
+        historyClosesRun(run) ||
+        data.role !== 'assistant' ||
+        data.authoritative !== false ||
+        !['preview_message_id', 'session_id', 'root_input_id', 'input_id', 'attempt_id'].every(
+          (key) => typeof data[key] === 'string' && !!data[key]
+        ) ||
+        !Number.isSafeInteger(data.ordinal) ||
+        Number(data.ordinal) < 1 ||
+        !Number.isSafeInteger(data.preview_sequence) ||
+        Number(data.preview_sequence) < 1 ||
+        typeof data.content !== 'string' ||
+        !['streaming', 'rejected', 'unavailable', 'failed', 'unknown', 'cancelled'].includes(
+          String(data.state)
+        ) ||
+        closedPreviews.has(String(data.preview_message_id)) ||
+        history.messages.some(
+          (message) =>
+            (message as Message & { preview_message_id?: string }).preview_message_id ===
+              data.preview_message_id ||
+            message.metadata?.preview_message_id === data.preview_message_id
+        ) ||
+        retiredAttempts.has(`${run}:${data.attempt_id}`)
+      )
+        return
+      const previous = previewState.latest[run]
+      if (
+        previous &&
+        (Number(data.ordinal) < previous.ordinal ||
+          (Number(data.ordinal) === previous.ordinal &&
+            data.attempt_id === previous.attempt_id &&
+            (Number(data.preview_sequence) <= previous.preview_sequence ||
+              previous.state !== 'streaming')))
+      )
+        return
+      if (previous && data.attempt_id !== previous.attempt_id)
+        retiredAttempts.add(`${run}:${previous.attempt_id}`)
+      const preview: MessagePreview = {
+        preview_message_id: String(data.preview_message_id),
+        session_id: session,
+        run_id: run,
+        root_input_id: String(data.root_input_id),
+        input_id: String(data.input_id),
+        attempt_id: String(data.attempt_id),
+        ordinal: Number(data.ordinal),
+        preview_sequence: Number(data.preview_sequence),
+        role: 'assistant',
+        content: data.state === 'streaming' ? data.content : '',
+        state: data.state as MessagePreview['state'],
+        authoritative: false
+      }
+      previewState.latest[run] = preview
+      previews[run] = preview
+      return
+    }
+    if (event.event === 'message.delta' && typeof data.preview_message_id === 'string') {
+      closedPreviews.add(data.preview_message_id)
+      for (const [run, preview] of Object.entries(previews))
+        if (preview.preview_message_id === data.preview_message_id) delete previews[run]
+    }
+    if (
+      event.event === 'execution.completed' &&
+      typeof data.run_id === 'string' &&
+      runIsTerminal(String(data.status))
+    ) {
+      terminalRuns.add(data.run_id)
+      delete previews[data.run_id]
     }
     if (
       event.event === 'message.delta' ||

@@ -10,6 +10,7 @@ import {
 } from './client'
 import {
   createProjection,
+  createPreviewState,
   emptyHistory,
   mergeMessages,
   mergeProcesses,
@@ -28,6 +29,7 @@ import type {
   History,
   Limits,
   Media,
+  MessagePreview,
   Reference,
   Session,
   SteeringInput,
@@ -53,6 +55,7 @@ export function useConversation() {
   const userId = ref(''),
     clientRef = ref(''),
     history = ref<History>(emptyHistory()),
+    previews = ref<Record<string, MessagePreview>>({}),
     error = ref(''),
     notice = ref(''),
     connection = ref('未连接')
@@ -525,7 +528,10 @@ export function useConversation() {
       void refreshSteering(run)
     } else if (previous && id === previousId) void refreshSteering(previous)
   })
+  let previewState = createPreviewState()
   function clearSession() {
+    previewState = createPreviewState()
+    previews.value = {}
     selection++
     ++submissionRequest
     sessionAbort.abort()
@@ -867,6 +873,7 @@ export function useConversation() {
       )
   }
   function startObservation(api: Client, id: string, version: number) {
+    previews.value = {}
     streamAbort.abort()
     streamAbort = new AbortController()
     const signal = streamAbort.signal
@@ -972,7 +979,9 @@ export function useConversation() {
       },
       (run, sourceSequence, rootInput) => {
         void checkProgress(run, sourceSequence, rootInput)
-      }
+      },
+      previews.value,
+      previewState
     )
     void observe(
       api,
@@ -1000,6 +1009,7 @@ export function useConversation() {
     })
   }
   function applyHistory(value: History, merge = false) {
+    Object.keys(previews.value).forEach((run) => delete previews.value[run])
     const normalized = {
       ...value,
       closed: Boolean(
@@ -1377,6 +1387,7 @@ export function useConversation() {
     error.value = ''
     loading.value = true
     streamAbort.abort()
+    previews.value = {}
     try {
       await readHistory(id, version, true)
     } catch (cause) {
@@ -1804,6 +1815,7 @@ export function useConversation() {
     userId,
     clientRef,
     history,
+    previews,
     error,
     notice,
     currentUnconfirmedUploads,
