@@ -120,12 +120,6 @@
     >
       重新读取模型选项 </ElButton
     ><ElButton
-      v-if="delegationOptions.error.value"
-      :disabled="busy || delegationOptions.loading.value"
-      @click="loadDelegationAgents"
-    >
-      重新读取委派选项 </ElButton
-    ><ElButton
       v-if="mountNames.error.value"
       :disabled="mountNames.loading.value"
       @click="loadMountNames"
@@ -316,7 +310,14 @@
                     :key="other.id"
                     :label="other.name"
                     :value="other.id" /></ElSelect
-              ></ElFormItem>
+                ><ElButton
+                  v-if="can('foundation.agents.read')"
+                  :loading="delegationOptions.loading.value"
+                  :disabled="delegationOptions.loading.value"
+                  @click="loadDelegationAgents"
+                  >刷新委派选项</ElButton
+                ></ElFormItem
+              >
               <FieldTip :id="formTipId + '-group-0'"
                 >启用委派后选择允许接收任务的智能体；授权范围会随 Agent
                 发布，委派任务共享任务根预算。</FieldTip

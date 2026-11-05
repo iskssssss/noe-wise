@@ -23,6 +23,55 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
     @DynamicPropertySource static void browserOrigin(DynamicPropertyRegistry registry) {registry.add("skillforge.web.allowed-origins",FRONTEND::baseUrl);}
     @AfterAll static void closeFrontend(){FRONTEND.close();}
 
+    @Test void crossTabDelegationCatalogReachesRuntime() throws Exception {
+        login();String marker="DELEGATION_DIRECTORY_"+SnowflakeIds.nextId(), childPrompt="CHILD_"+marker;
+        Path evidence=Path.of("build/runtime-e2e/agent-delegation-directory-"+SnowflakeIds.nextId()).toAbsolutePath(), browser=evidence.resolve("playwright");Files.createDirectories(browser);
+        try(var model=new DelegationDirectoryModel(childPrompt,marker)) {
+            model.server.start();com.skillforge.common.context.TenantContext.setTenantId(tenantId);
+            try{configureTenantModel("http://127.0.0.1:"+model.server.getAddress().getPort());}finally{com.skillforge.common.context.TenantContext.clear();}
+            assertEquals(200,send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken).statusCode());
+            var child=send("/api/v1/agents","POST",Map.of("name","Directory child "+marker,"system_prompt",childPrompt),accessToken);assertEquals(200,child.statusCode(),child.body());String childId=successData(child).path("id").asText();
+            model.expectedChild=childId;
+            String existingId="";
+            if("candidate".equals(System.getenv("E2E_DELEGATION_DIRECTORY"))) {
+                var existing=send("/api/v1/agents","POST",Map.of("name","Directory existing "+marker,"system_prompt","Uncalled existing member"),accessToken);assertEquals(200,existing.statusCode(),existing.body());existingId=successData(existing).path("id").asText();
+                assertEquals(200,send("/api/v1/agents/publish","POST",Map.of("agent_id",existingId),accessToken).statusCode());
+                assertEquals(200,send("/api/v1/agents/update","PATCH",Map.of("agent_id",agentId,"payload",Map.of("delegation_config",Map.of("enabled",true,"target_agent_ids",java.util.List.of(existingId)))),accessToken).statusCode());
+            }
+            FRONTEND.bindBackend(baseUrl());Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");
+            var command=new ProcessBuilder(admin.resolve("node_modules/.bin/playwright.cmd").toString(),"test","e2e/agent-delegation-directory-real.spec.ts");command.directory(admin.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("playwright.log").toFile());
+            var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);env.put("E2E_AGENT_ID",agentId);env.put("E2E_CHILD_AGENT",childId);env.put("E2E_DIRECTORY_MARKER",marker);
+            if(!existingId.isEmpty())env.put("E2E_EXISTING_TARGET",existingId);
+            Process process=command.start();try(var owned=new KnowledgeBrowserProcesses(process.toHandle())){long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(4);while(process.isAlive()&&System.nanoTime()<deadline){owned.capture();process.waitFor(200,TimeUnit.MILLISECONDS);}assertFalse(process.isAlive());assertEquals(0,process.exitValue(),evidence+"\n"+Files.readString(evidence.resolve("playwright.log")));}
+            var facts=objectMapper.readTree(Files.readString(browser.resolve("delegation-directory.json")));String run=facts.path("run").path("execution_id").asText();
+            assertEquals(2,model.parentCalls.get());assertEquals(1,model.childCalls.get());
+            assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND status='COMPLETED'",tenantId,run));
+            assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? AND kind='DELEGATION' AND status='SUCCEEDED'",tenantId,run));
+            var runs=queryRows(jdbc,tenantId,"SELECT run_id,agent_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND (run_id=? OR agent_id=?)",tenantId,run,childId);
+            assertEquals(2,runs.size());assertTrue(runs.stream().allMatch(row->"COMPLETED".equals(row.get("status"))));
+            Files.writeString(evidence.resolve("delegation-runtime.json"),objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("runs",runs,"requests",model.requests,"parentCalls",2,"childCalls",1)));
+        }
+    }
+    private final class DelegationDirectoryModel implements AutoCloseable {
+        final com.sun.net.httpserver.HttpServer server;
+        final java.util.concurrent.atomic.AtomicInteger parentCalls=new java.util.concurrent.atomic.AtomicInteger(),childCalls=new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.List<com.fasterxml.jackson.databind.JsonNode> requests=new java.util.concurrent.CopyOnWriteArrayList<>();
+        volatile String expectedChild;
+        DelegationDirectoryModel(String childPrompt,String marker)throws Exception {
+            server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
+            server.createContext("/chat/completions",exchange->{
+                var request=objectMapper.readTree(exchange.getRequestBody());requests.add(request.deepCopy());boolean child=request.path("messages").toString().contains(childPrompt);int ordinal=(child?childCalls:parentCalls).incrementAndGet();
+                Object delta;String finish;
+                if(!child&&ordinal==1){String handle="";for(var tool:request.path("tools"))if("delegate".equals(tool.path("function").path("name").asText()))for(var candidate:tool.path("function").path("parameters").path("properties").path("target_handle").path("enum"))if(candidate.asText().equals("member:"+expectedChild))handle=candidate.asText();if(handle.isBlank())throw new java.io.IOException("delegate_directory_missing");
+                    delta=Map.of("role","assistant","tool_calls",java.util.List.of(Map.of("index",0,"id","directory-delegate-1","type","function","function",Map.of("name","delegate","arguments",objectMapper.writeValueAsString(Map.of("target_handle",handle,"instruction","完成独立任务并返回标记","background",false))))));finish="tool_calls";
+                }else{if(!child&&!request.path("messages").toString().contains("CHILD_ANSWER_"+marker))throw new java.io.IOException("child_result_missing");delta=Map.of("role","assistant","content",(child?"CHILD_ANSWER_":"PARENT_ANSWER_")+marker);finish="stop";}
+                var chunk=Map.of("id","directory-model","object","chat.completion.chunk","model",request.path("model").asText(),"choices",java.util.List.of(Map.of("index",0,"delta",delta,"finish_reason",finish)),"usage",Map.of("prompt_tokens",10,"completion_tokens",5,"total_tokens",15));
+                byte[] body=("data: "+objectMapper.writeValueAsString(chunk)+"\n\ndata: [DONE]\n\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","text/event-stream");exchange.sendResponseHeaders(200,body.length);try(var output=exchange.getResponseBody()){output.write(body);}exchange.close();
+            });
+        }
+        public void close(){server.stop(0);}
+    }
+
     @Test void editedAgentPublicationIsUsedByRealTrial() throws Exception {
         login();
         String decorationVersion = null;

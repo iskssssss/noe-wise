@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   revisions: vi.fn(),
   update: vi.fn(),
   publish: vi.fn(),
+  publishWithReceipt: vi.fn(),
   publications: vi.fn(),
   revisionDetail: vi.fn(),
   restore: vi.fn(),
@@ -85,6 +86,7 @@ vi.mock('../../api', () => ({
       list: mocks.agents,
       update: mocks.update,
       publish: mocks.publish,
+      publishWithReceipt: mocks.publishWithReceipt,
       revisions: mocks.publications,
       revisionDetail: mocks.revisionDetail,
       restoreRevision: mocks.restore,
@@ -411,6 +413,84 @@ describe('已挂载技能预算调整', () => {
   )
 })
 
+describe('委派候选目录原位刷新', () => {
+  it('目录读取成功后仍可刷新，保留未保存表单及已选值，失败后可只读重试', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    const original = await mocks.get('agent-1')
+    mocks.get.mockClear()
+    mocks.get.mockResolvedValue({
+      ...original,
+      delegation_config: { enabled: true, target_agent_ids: ['existing'] }
+    })
+    mocks.agents.mockResolvedValue({
+      items: [{ id: 'existing', name: '原委派对象', status: 'published' }]
+    })
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const form = wrapper
+      .findAllComponents(ElForm)
+      .find((item) => item.props('model')?.system_prompt !== undefined)!
+    const name = wrapper
+      .findAllComponents(ElInput)
+      .find((item) => item.props('modelValue') === '客服')!
+    name.vm.$emit('update:modelValue', '未保存名称')
+    const selection = wrapper
+      .findAllComponents(ElSelect)
+      .find((item) => item.props('placeholder') === '选择允许委派的智能体')!
+    let resolve!: (value: unknown) => void
+    mocks.agents.mockReturnValueOnce(
+      new Promise((finish) => {
+        resolve = finish
+      })
+    )
+    await button(wrapper, '刷新委派选项').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '刷新委派选项').props('disabled')).toBe(true)
+    resolve({
+      items: [
+        { id: 'existing', name: '原委派对象', status: 'published' },
+        { id: 'new', name: '新发布委派对象', status: 'published' },
+        { id: 'draft', name: '未发布对象', status: 'draft' }
+      ]
+    })
+    await flushPromises()
+    expect(selection.findAllComponents(ElOption).map((item) => item.props('label'))).toEqual([
+      '原委派对象',
+      '新发布委派对象'
+    ])
+    expect(form.props('model')).toMatchObject({
+      name: '未保存名称',
+      delegation_config: { enabled: true, target_agent_ids: ['existing'] }
+    })
+    mocks.agents.mockRejectedValueOnce(new Error('委派目录暂不可读'))
+    await button(wrapper, '刷新委派选项').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('委派目录暂不可读')
+    expect(selection.props('modelValue')).toEqual(['existing'])
+    expect(selection.findAllComponents(ElOption)).toHaveLength(2)
+    await button(wrapper, '刷新委派选项').trigger('click')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledTimes(1)
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(form.props('model')!.name).toBe('未保存名称')
+  })
+  it('没有智能体读取权限时不展示委派刷新入口', async () => {
+    const original = await mocks.get('agent-1')
+    mocks.get.mockResolvedValue({
+      ...original,
+      delegation_config: { enabled: true, target_agent_ids: [] }
+    })
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '刷新委派选项')).toBe(
+      false
+    )
+  })
+})
+
 describe('智能体主对象与辅助选项的读取归属', () => {
   it('从其他页签保存无效配置时切回基本配置并定位错误字段', async () => {
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
@@ -532,6 +612,12 @@ describe('智能体主对象与辅助选项的读取归属', () => {
   })
 
   it('委派候选读取失败仍保留服务端原提示词与配置', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    const original = await mocks.get()
+    mocks.get.mockResolvedValue({
+      ...original,
+      delegation_config: { enabled: true, target_agent_ids: [] }
+    })
     mocks.agents.mockRejectedValueOnce(new Error('委派候选读取失败'))
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
     wrappers.push(wrapper)
@@ -545,7 +631,7 @@ describe('智能体主对象与辅助选项的读取归属', () => {
       model_config_id: 'model-1'
     })
     expect(document.body.textContent).toContain('委派候选读取失败')
-    expect(button(wrapper, '重新读取委派选项').exists()).toBe(true)
+    expect(button(wrapper, '刷新委派选项').exists()).toBe(true)
     expect(
       wrapper
         .findAllComponents(ElOption)
@@ -554,7 +640,7 @@ describe('智能体主对象与辅助选项的读取归属', () => {
             option.props('label') === '模型 · 标识 model-1' && option.props('value') === 'model-1'
         )
     ).toBe(true)
-    await button(wrapper, '重新读取委派选项').trigger('click')
+    await button(wrapper, '刷新委派选项').trigger('click')
     await flushPromises()
     expect(mocks.models).toHaveBeenCalledTimes(1)
     expect(mocks.agents).toHaveBeenCalledTimes(2)
@@ -609,6 +695,12 @@ describe('智能体主对象与辅助选项的读取归属', () => {
   })
 
   it('两个目录失败聚合为一条顶部反馈，分别保留重读入口', async () => {
+    mocks.permissions.push('foundation.agents.read')
+    const original = await mocks.get()
+    mocks.get.mockResolvedValue({
+      ...original,
+      delegation_config: { enabled: true, target_agent_ids: [] }
+    })
     mocks.models.mockRejectedValueOnce(new Error('模型服务不可用'))
     mocks.agents.mockRejectedValueOnce(new Error('委派目录不可用'))
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
@@ -619,7 +711,7 @@ describe('智能体主对象与辅助选项的读取归属', () => {
     expect(messages[0]!.textContent).toContain('模型选项读取失败：模型服务不可用')
     expect(messages[0]!.textContent).toContain('委派选项读取失败：委派目录不可用')
     expect(button(wrapper, '重新读取模型选项').exists()).toBe(true)
-    expect(button(wrapper, '重新读取委派选项').exists()).toBe(true)
+    expect(button(wrapper, '刷新委派选项').exists()).toBe(true)
   })
 })
 
@@ -3347,6 +3439,13 @@ it('尚未发布时明确说明发布后可试用并禁用入口', async () => {
 })
 
 it('配置页发布不读取历史，打开历史失败也不回退发布或重发POST', async () => {
+  mocks.permissions.push('foundation.agents.publish')
+  mocks.publishWithReceipt.mockImplementation(async (command) => ({
+    ...command,
+    publication_id: 'receipt-3',
+    revision: 3,
+    published_at: '2026-10-30T10:00:00Z'
+  }))
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
     'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
   )
@@ -3358,7 +3457,10 @@ it('配置页发布不读取历史，打开历史失败也不回退发布或重�
   mocks.publications.mockRejectedValue(Error('历史暂不可读'))
   await button(wrapper, '发布').trigger('click')
   await flushPromises()
-  expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('agent-1')
+  expect(mocks.publishWithReceipt).toHaveBeenCalledExactlyOnceWith({
+    agent_id: 'agent-1',
+    request_id: expect.any(String)
+  })
   expect(mocks.publications).not.toHaveBeenCalled()
   expect(wrapper.text()).toContain('发布修订 3')
   expect(button(wrapper, '试用当前发布版本').props('disabled')).toBe(false)
@@ -3368,7 +3470,7 @@ it('配置页发布不读取历史，打开历史失败也不回退发布或重�
     .trigger('click')
   await flushPromises()
   expect(mocks.publications).toHaveBeenCalledExactlyOnceWith('agent-1')
-  expect(mocks.publish).toHaveBeenCalledTimes(1)
+  expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).toContain('发布修订 3')
   expect(button(wrapper, '试用当前发布版本').props('disabled')).toBe(false)
   await button(wrapper, '试用当前发布版本').trigger('click')
@@ -3376,6 +3478,13 @@ it('配置页发布不读取历史，打开历史失败也不回退发布或重�
 })
 
 it('历史页签发布仍读取最新历史，精确详情和恢复保持原入口', async () => {
+  mocks.permissions.push('foundation.agents.publish')
+  mocks.publishWithReceipt.mockImplementation(async (command) => ({
+    ...command,
+    publication_id: 'receipt-3',
+    revision: 3,
+    published_at: '2026-10-30T10:00:00Z'
+  }))
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
     'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
   )
@@ -3409,6 +3518,13 @@ it('历史页签发布仍读取最新历史，精确详情和恢复保持原入�
   expect(mocks.restore).not.toHaveBeenCalled()
 })
 it('发布后当前详情刷新失败仍要求重新读取，不能因跳过历史而解除保护', async () => {
+  mocks.permissions.push('foundation.agents.publish')
+  mocks.publishWithReceipt.mockImplementation(async (command) => ({
+    ...command,
+    publication_id: 'receipt-3',
+    revision: 3,
+    published_at: '2026-10-30T10:00:00Z'
+  }))
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
     'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
   )
@@ -3418,7 +3534,10 @@ it('发布后当前详情刷新失败仍要求重新读取，不能因跳过历�
   mocks.get.mockRejectedValueOnce(Error('当前配置读取失败'))
   await button(wrapper, '发布').trigger('click')
   await flushPromises()
-  expect(mocks.publish).toHaveBeenCalledExactlyOnceWith('agent-1')
+  expect(mocks.publishWithReceipt).toHaveBeenCalledExactlyOnceWith({
+    agent_id: 'agent-1',
+    request_id: expect.any(String)
+  })
   expect(mocks.publications).not.toHaveBeenCalled()
   expect(wrapper.text()).toContain('操作已完成，当前显示内容尚未更新')
   expect(button(wrapper, '发布').props('disabled')).toBe(true)
@@ -3427,5 +3546,5 @@ it('发布后当前详情刷新失败仍要求重新读取，不能因跳过历�
   await button(wrapper, '重新读取').trigger('click')
   await flushPromises()
   expect(button(wrapper, '试用当前发布版本').props('disabled')).toBe(false)
-  expect(mocks.publish).toHaveBeenCalledTimes(1)
+  expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
 })

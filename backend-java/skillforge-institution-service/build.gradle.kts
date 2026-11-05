@@ -537,6 +537,7 @@ tasks.register<Test>("agentSavePublishTrialBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.editedAgentPublicationIsUsedByRealTrial")
+        includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.crossTabDelegationCatalogReachesRuntime")
     }
     outputs.upToDateWhen { false }
 }
