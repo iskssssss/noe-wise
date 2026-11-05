@@ -63,6 +63,48 @@ class AgentSaveAndPublishHttpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private Environment environment;
     @AfterEach void clear(){TenantContext.clear();}
 
+    @Test void publishOnlyReceiptPreservesSavedDraftAndOriginalResultAcrossLaterPublication() throws Exception {
+        var f = fixture();
+        var permissions = List.of("foundation.agents.read", "foundation.agents.publish",
+                "foundation.resource.agent.read", "foundation.resource.agent.manage");
+        String actor = member(f.admin(), f.slug(), "publisher-" + f.suffix(), permissions);
+        var key = UUID.randomUUID();
+        var body = Map.of("agent_id", f.agent(), "request_id", key);
+        String endpoint = AGENTS + "/publish-with-receipt";
+        var before = facts(f.tenant(), f.agent());
+        var receipt = call(actor, "POST", endpoint, body, 200);
+        assertReceipt(receipt, f.agent(), key, 1);
+        var published = facts(f.tenant(), f.agent());
+        assertEquals(before.get("name"), published.get("name"));
+        assertEquals(receipt, call(actor, "POST", endpoint, body, 200));
+        assertEquals(receipt, call(actor, "GET", result(f.agent(), key), null, 200));
+        assertEquals(published, facts(f.tenant(), f.agent()));
+        call(f.admin(), "GET", result(f.agent(), key), null, 404);
+        call(f.admin(), "POST", endpoint, body, 409);
+        call(f.admin(), "POST", SAVE, command(f.agent(), UUID.randomUUID(), Map.of("name", "后续保存发布")), 200);
+        var latest = facts(f.tenant(), f.agent());
+        assertEquals(receipt, call(actor, "POST", endpoint, body, 200));
+        assertEquals(latest, facts(f.tenant(), f.agent()));
+        call(actor, "POST", SAVE, command(f.agent(), UUID.randomUUID(), Map.of("name", "无更新权限")), 403);
+    }
+
+    @Test void publishReceiptRejectsCrossOperationKeysAndRequiresPublishAuthority() throws Exception {
+        var f = fixture();
+        String endpoint = AGENTS + "/publish-with-receipt";
+        var key = UUID.randomUUID();
+        var saved = call(f.admin(), "POST", SAVE, command(f.agent(), key, Map.of("name", "已保存发布")), 200);
+        call(f.admin(), "POST", endpoint, Map.of("agent_id", f.agent(), "request_id", key), 409);
+        var publishKey = UUID.randomUUID();
+        call(f.admin(), "POST", endpoint, Map.of("agent_id", f.agent(), "request_id", publishKey), 200);
+        call(f.admin(), "POST", SAVE, command(f.agent(), publishKey, Map.of("name", "跨操作复用")), 409);
+        assertEquals(saved, call(f.admin(), "GET", result(f.agent(), key), null, 200));
+        var before = facts(f.tenant(), f.agent());
+        String reader = member(f.admin(), f.slug(), "reader-" + f.suffix(), List.of(
+                "foundation.agents.read", "foundation.resource.agent.read", "foundation.resource.agent.manage"));
+        call(reader, "POST", endpoint, Map.of("agent_id", f.agent(), "request_id", UUID.randomUUID()), 403);
+        assertEquals(before, facts(f.tenant(), f.agent()));
+    }
+
     @Test void bothActionsAreRequiredAndValidationRollsBackDraftAndPublication() throws Exception {
         var f=fixture();var before=facts(f.tenant(),f.agent());
         for(var permissions:List.of(

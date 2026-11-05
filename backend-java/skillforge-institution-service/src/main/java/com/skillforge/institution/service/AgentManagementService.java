@@ -71,6 +71,10 @@ public class AgentManagementService {
                         request.delegationConfig(), request.iconUrl())));
     }
 
+    public AgentSaveAndPublishResponse publishWithReceipt(String agentId, UUID requestId) {
+        return saveAndPublishReceipt(agents.publishWithReceipt(caller(), agentId, requestId));
+    }
+
     public AgentSaveAndPublishResponse saveAndPublishResult(String agentId, UUID requestId) {
         var receipt = agents.saveAndPublishResult(caller(), agentId, requestId);
         return receipt == null ? null : saveAndPublishReceipt(receipt);

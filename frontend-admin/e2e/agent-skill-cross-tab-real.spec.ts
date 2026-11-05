@@ -50,7 +50,11 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
       mountPosts++
     if (request.method() === 'PUT' && url.pathname === '/api/v1/agents/capability-mounts/update')
       mountUpdates++
-    if (request.method() === 'POST' && url.pathname === '/api/v1/agents/publish') agentPublishes++
+    if (
+      request.method() === 'POST' &&
+      ['/api/v1/agents/publish', '/api/v1/agents/publish-with-receipt'].includes(url.pathname)
+    )
+      agentPublishes++
     if (request.method() === 'POST' && url.pathname === '/api/v1/chat') chatPosts++
   })
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/agents/' + agent)}`)
@@ -211,17 +215,187 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
       expect(command.payload.skill_config.token_budget).toBe(
         budgetMode === 'baseline' ? 1 : skillEstimate
       )
-    const published = page.waitForResponse(
-      (result) =>
-        new URL(result.url()).pathname === '/api/v1/agents/publish' &&
-        result.request().method() === 'POST'
-    )
-    await page.getByRole('button', { name: '发布', exact: true }).click()
-    await page
-      .getByRole('dialog', { name: '发布智能体', exact: true })
-      .getByRole('button', { name: '发布', exact: true })
-      .click()
-    expect((await published).status()).toBe(200)
+    if (process.env.E2E_AGENT_PUBLISH_LOSS === 'candidate') {
+      let originalCommand!: { agent_id: string; request_id: string }
+      let originalReceipt!: {
+        agent_id: string
+        request_id: string
+        publication_id: string
+        revision: number
+        published_at: string
+      }
+      let completed!: () => void
+      const originalCompleted = new Promise<void>((resolve) => {
+        completed = resolve
+      })
+      await page.route('**/api/v1/agents/publish-with-receipt', async (route) => {
+        originalCommand = route.request().postDataJSON()
+        const response = await route.fetch({ maxRetries: 0 })
+        expect(response.status()).toBe(200)
+        originalReceipt = (await response.json()).data
+        expect(originalReceipt.request_id).toBe(originalCommand.request_id)
+        expect(String(originalReceipt.agent_id)).toBe(agent)
+        await route.abort('failed')
+        completed()
+      })
+      await page.getByRole('button', { name: '发布', exact: true }).click()
+      await page
+        .getByRole('dialog', { name: '发布智能体', exact: true })
+        .getByRole('button', { name: '发布', exact: true })
+        .click()
+      await originalCompleted
+      await expect(page.getByRole('dialog', { name: '发布智能体', exact: true })).toBeHidden()
+      await expect(page.getByRole('button', { name: '发布', exact: true })).toBeDisabled()
+      await writeFile(
+        join(evidence, 'agent-publish-original-receipt.json'),
+        JSON.stringify(
+          { originalCommand, originalReceipt, visible: await page.locator('body').innerText() },
+          null,
+          2
+        )
+      )
+      const recovered = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return (
+          url.pathname === '/api/v1/agents/save-and-publish/result' &&
+          url.searchParams.get('requestId') === originalCommand.request_id
+        )
+      })
+      page.once('dialog', (dialog) => dialog.accept())
+      await page.reload()
+      const response = await recovered
+      expect(response.status()).toBe(200)
+      const recoveredReceipt = (await response.json()).data
+      expect(recoveredReceipt).toEqual(originalReceipt)
+      await expect(
+        page.getByRole('button', { name: '试用当前发布版本', exact: true })
+      ).toBeEnabled()
+      const current = await page.evaluate(async (agent) => {
+        const response = await fetch(`/api/v1/agents/detail?agentId=${agent}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+        })
+        return { status: response.status, body: await response.json() }
+      }, agent)
+      expect(current.status).toBe(200)
+      expect(current.body.data.published_revision).toBe(originalReceipt.revision)
+      expect(agentPublishes).toBe(1)
+      await writeFile(
+        join(evidence, 'agent-publish-recovered-receipt.json'),
+        JSON.stringify(
+          {
+            originalCommand,
+            originalReceipt,
+            recoveredReceipt,
+            currentState: current,
+            agentPublishes
+          },
+          null,
+          2
+        )
+      )
+      await page.screenshot({ path: join(evidence, 'agent-publish-recovered.png'), fullPage: true })
+    } else if (process.env.E2E_AGENT_PUBLISH_LOSS) {
+      let firstResponse: unknown
+      let firstCommand: unknown
+      let droppedResolve: () => void
+      const dropped = new Promise<void>((resolve) => {
+        droppedResolve = resolve
+      })
+      await page.route(
+        '**/api/v1/agents/publish',
+        async (route) => {
+          firstCommand = route.request().postDataJSON()
+          const response = await route.fetch()
+          expect(response.status()).toBe(200)
+          firstResponse = await response.json()
+          await route.abort()
+          droppedResolve()
+        },
+        { times: 1 }
+      )
+      await page.getByRole('button', { name: '发布', exact: true }).click()
+      await page
+        .getByRole('dialog', { name: '发布智能体', exact: true })
+        .getByRole('button', { name: '发布', exact: true })
+        .click()
+      await dropped
+      await expect(page.getByRole('dialog', { name: '发布智能体', exact: true })).toBeHidden()
+      await expect(page.getByRole('button', { name: '发布', exact: true })).toBeEnabled()
+      const afterFirst = await page.evaluate(async (agent) => {
+        const response = await fetch(`/api/v1/agents/detail?agentId=${agent}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+        })
+        return { status: response.status, body: await response.json() }
+      }, agent)
+      expect(afterFirst.status).toBe(200)
+      await page.screenshot({
+        path: join(evidence, 'agent-publish-response-lost.png'),
+        fullPage: true
+      })
+      await writeFile(
+        join(evidence, 'agent-publish-response-loss-first.json'),
+        JSON.stringify(
+          {
+            firstCommand,
+            firstResponse,
+            currentStateAfterFirst: afterFirst,
+            visible: await page.locator('body').innerText()
+          },
+          null,
+          2
+        )
+      )
+      const second = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/agents/publish' &&
+          response.request().method() === 'POST'
+      )
+      await page.getByRole('button', { name: '发布', exact: true }).click()
+      await page
+        .getByRole('dialog', { name: '发布智能体', exact: true })
+        .getByRole('button', { name: '发布', exact: true })
+        .click()
+      const secondResponse = await second
+      expect(secondResponse.status()).toBe(200)
+      const reloaded = await page.evaluate(async (agent) => {
+        const response = await fetch(`/api/v1/agents/detail?agentId=${agent}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+        })
+        return { status: response.status, body: await response.json() }
+      }, agent)
+      expect(reloaded.status).toBe(200)
+      expect(reloaded.body.data.published_revision).toBe(
+        afterFirst.body.data.published_revision + 1
+      )
+      await writeFile(
+        join(evidence, 'agent-publish-response-loss.json'),
+        JSON.stringify(
+          {
+            firstCommand,
+            firstResponse,
+            currentStateAfterFirst: afterFirst,
+            secondCommand: secondResponse.request().postDataJSON(),
+            secondResponse: await secondResponse.json(),
+            currentStateAfterSecond: reloaded,
+            agentPublishes
+          },
+          null,
+          2
+        )
+      )
+    } else {
+      const published = page.waitForResponse(
+        (result) =>
+          new URL(result.url()).pathname === '/api/v1/agents/publish' &&
+          result.request().method() === 'POST'
+      )
+      await page.getByRole('button', { name: '发布', exact: true }).click()
+      await page
+        .getByRole('dialog', { name: '发布智能体', exact: true })
+        .getByRole('button', { name: '发布', exact: true })
+        .click()
+      expect((await published).status()).toBe(200)
+    }
     const users = page.waitForResponse(
       (result) => new URL(result.url()).pathname === '/api/v1/chat/end-users'
     )

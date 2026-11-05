@@ -120,6 +120,16 @@ class AgentSkillCrossTabBrowserE2ETest extends ChatExecutionChainE2ETest {
         assertFalse(mount.isBlank());
         assertEquals(1, facts.path("skillPublishes").asInt());
         assertEquals(1, facts.path("mountPosts").asInt());
+        if ("candidate".equals(System.getenv("E2E_AGENT_PUBLISH_LOSS"))) {
+            var receipt = objectMapper.readTree(Files.readString(browser.resolve("agent-publish-recovered-receipt.json"))).path("originalReceipt");
+            var publications = queryRows(jdbc, tenantId, "SELECT id::text,revision,request_id::text,request_actor_ref FROM nw_agent_publications WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) ORDER BY revision", tenantId, agentId);
+            assertEquals(2, publications.size(), "原初始发布加本次发布各一份，不新增重复修订");
+            var publication = publications.getLast();
+            assertEquals(receipt.path("publication_id").asText(), publication.get("id").toString());
+            assertEquals(receipt.path("request_id").asText(), publication.get("request_id").toString());
+            assertEquals(receipt.path("revision").asInt(), ((Number) publication.get("revision")).intValue());
+            Files.writeString(evidence.resolve("agent-publication-receipt-database.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(publications));
+        }
         String mode = System.getenv().getOrDefault("E2E_AGENT_SKILL_REFRESH_MODE", "candidate");
         assertEquals(mode, facts.path("mode").asText());
         assertEquals("baseline".equals(mode) ? 1 : 0, facts.path("manualRefreshClicks").asInt());

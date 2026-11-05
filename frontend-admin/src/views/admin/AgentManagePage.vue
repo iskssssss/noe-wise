@@ -68,11 +68,15 @@
       type="warning"
       :closable="false"
     />
-    <section v-if="publicationOperation" class="admin-card" aria-label="保存并发布结果核对">
+    <section
+      v-if="publicationOperation"
+      class="admin-card"
+      :aria-label="publicationOperation.kind === 'publish' ? '发布结果核对' : '保存并发布结果核对'"
+    >
       <p role="status">
-        保存并发布结果尚未确认，当前配置已锁定。请求号：<code>{{
-          publicationOperation.requestId
-        }}</code>
+        {{
+          publicationOperation.kind === 'publish' ? '发布' : '保存并发布'
+        }}结果尚未确认，当前配置已锁定。请求号：<code>{{ publicationOperation.requestId }}</code>
       </p>
       <p class="admin-field-help">
         核对只读取原操作回执。刷新后仅保留请求号，不保存配置正文；原结果未确认前不能再次发布。
@@ -83,7 +87,12 @@
       <p v-if="publicationCheck" role="status">{{ publicationCheck }}</p>
       <ElButton :disabled="busy" @click="checkPublication">核对原操作</ElButton>
       <ElButton
-        v-if="canSaveAndPublish && publicationOperation.command"
+        v-if="
+          publicationOperation.command &&
+          (publicationOperation.kind === 'publish'
+            ? can('foundation.agents.publish')
+            : canSaveAndPublish)
+        "
         :disabled="busy"
         @click="continuePublication"
         >继续原操作</ElButton
@@ -91,8 +100,9 @@
     </section>
     <p v-if="publicationStorageError" role="status">{{ publicationStorageError }}</p>
     <p v-if="publicationReceipt" class="admin-field-help" role="status">
-      保存并发布已确认：修订 {{ publicationReceipt.revision }} · 发布记录
-      {{ publicationReceipt.publication_id }} · 请求号 {{ publicationReceipt.request_id }}
+      {{ publicationReceiptKind === 'publish' ? '发布' : '保存并发布' }}已确认：修订
+      {{ publicationReceipt.revision }} · 发布记录 {{ publicationReceipt.publication_id }} · 请求号
+      {{ publicationReceipt.request_id }}
     </p>
     <p class="admin-muted">
       保存更新草稿。发布后已有会话下一轮聊天采用新配置，正在执行的任务继续原配置。
@@ -1022,7 +1032,8 @@ const pageError = computed(() =>
         : loadError.value),
     modelOptions.error.value && `模型选项读取失败：${modelOptions.error.value}`,
     delegationOptions.error.value && `委派选项读取失败：${delegationOptions.error.value}`,
-    mountNames.error.value && `能力版本名称读取失败：${mountNames.error.value}`
+    mountNames.error.value && `能力版本名称读取失败：${mountNames.error.value}`,
+    publicationHistory.error.value && `发布历史读取失败：${publicationHistory.error.value}`
   ]
     .filter(Boolean)
     .join('；')
@@ -1040,7 +1051,8 @@ const refreshRequired = ref(false)
 const publicationOperation = shallowRef<{
   requestId: string
   agentId: string
-  command?: AgentSaveAndPublishCommand
+  kind?: 'save-and-publish' | 'publish'
+  command?: AgentSaveAndPublishCommand | { agent_id: string; request_id: string }
   formSnapshot?: string
 }>()
 const publicationStorageError = ref('')
@@ -1056,13 +1068,23 @@ function loadPublicationOperation() {
   try {
     const raw = sessionStorage.getItem(key)
     if (!raw) return
-    const value = JSON.parse(raw) as { requestId: string; agentId: string }
+    const value = JSON.parse(raw) as {
+      requestId: string
+      agentId: string
+      kind?: 'save-and-publish' | 'publish'
+      sessionIdentity?: string
+    }
     if (
       value.agentId !== id.value ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
     )
       throw Error('invalid')
-    publicationOperation.value = { requestId: value.requestId, agentId: value.agentId }
+    if (value.sessionIdentity && value.sessionIdentity !== auth.sessionIdentity) return
+    publicationOperation.value = {
+      requestId: value.requestId,
+      agentId: value.agentId,
+      kind: value.kind
+    }
   } catch {
     publicationStorageError.value = '无法读取原发布请求记录，请恢复浏览器存储后重新进入。'
   }
@@ -1079,6 +1101,7 @@ function clearPublicationOperation() {
   }
 }
 const publicationReceipt = shallowRef<AgentSaveAndPublishReceipt>()
+const publicationReceiptKind = ref<'save-and-publish' | 'publish'>('save-and-publish')
 const publicationCheck = ref('')
 const publicationOwner = computed(() => `${auth.identityVersion}:${id.value}`)
 let publicationDisposed = false
@@ -1315,6 +1338,7 @@ async function acceptPublication(
     throw Error('保存并发布回执不完整，请核对原操作')
   if (ownsSession && !ownsSession()) return
   if (!clearPublicationOperation()) return
+  publicationReceiptKind.value = operation.kind ?? 'save-and-publish'
   publicationReceipt.value = value
   publicationCheck.value = ''
   if (operation.formSnapshot) saved.value = operation.formSnapshot
@@ -1331,7 +1355,10 @@ async function acceptPublication(
     return
   if (next) {
     fill(next)
-    message.success(`智能体已保存并发布，修订 ${value.revision}`)
+    message.success(
+      `智能体已${operation.kind === 'publish' ? '发布' : '保存并发布'}，修订 ${value.revision}`
+    )
+    if (activeTab.value === 'history') await publicationHistory.reload()
     return next
   }
 }
@@ -1342,7 +1369,10 @@ async function dispatchPublication(
   ownsSession?: () => boolean
 ) {
   try {
-    const value = await api.agents.saveAndPublish(operation.command!)
+    const value =
+      operation.kind === 'publish'
+        ? await api.agents.publishWithReceipt(operation.command!)
+        : await api.agents.saveAndPublish(operation.command! as AgentSaveAndPublishCommand)
     if (publicationDisposed || owner !== publicationOwner.value || (ownsSession && !ownsSession()))
       return
     const detail = await acceptPublication(value, operation, owner, ownsSession)
@@ -1484,7 +1514,13 @@ async function saveAndPublish(trial = false) {
   }
 }
 async function continuePublication() {
-  if (!canSaveAndPublish.value || !publicationOperation.value?.command) return
+  if (
+    !publicationOperation.value?.command ||
+    !(publicationOperation.value.kind === 'publish'
+      ? can('foundation.agents.publish')
+      : canSaveAndPublish.value)
+  )
+    return
   const operation = publicationOperation.value
   const owner = publicationOwner.value
   await run(() => dispatchPublication(operation, owner, true))
@@ -1527,7 +1563,14 @@ async function save() {
   })
 }
 async function publish() {
-  if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  if (
+    !can('foundation.agents.publish') ||
+    refreshRequired.value ||
+    publicationOperation.value ||
+    publicationStorageError.value
+  )
+    return
+  const owner = publicationOwner.value
   await run(async () => {
     if (dirty.value) throw Error('请先保存当前修改')
     if (
@@ -1538,16 +1581,42 @@ async function publish() {
       }))
     )
       return
-    await api.agents.publish(id.value)
-    refreshRequired.value = true
-    if (agent.value) agent.value.has_draft_changes = false
-    message.success('智能体已发布')
-    const next = await reload()
-    if (next) fill(next)
-    if (activeTab.value === 'history')
-      publications.value = (await api.agents.revisions(id.value)).items
+    if (
+      publicationDisposed ||
+      owner !== publicationOwner.value ||
+      !can('foundation.agents.publish')
+    )
+      return
+    const requestId = crypto.randomUUID()
+    const operation = {
+      kind: 'publish' as const,
+      requestId,
+      agentId: id.value,
+      command: { agent_id: id.value, request_id: requestId }
+    }
+    const key = publicationStorageKey()
+    if (!key) throw Error('当前身份不可用，尚未发送发布请求')
+    try {
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          kind: operation.kind,
+          requestId,
+          agentId: id.value,
+          sessionIdentity: auth.sessionIdentity
+        })
+      )
+    } catch {
+      publicationStorageError.value = '无法保存原发布请求记录，尚未发送发布请求。'
+      throw Error(publicationStorageError.value)
+    }
+    publicationReceipt.value = undefined
+    publicationOperation.value = operation
+    publicationCheck.value = ''
+    await dispatchPublication(operation, owner, false)
   })
 }
+
 async function refreshAgent() {
   await run(async () => {
     if (
@@ -1563,14 +1632,21 @@ async function refreshAgent() {
     if (next) fill(next)
   })
 }
-const publications = ref<AgentPublication[]>([]),
-  publicationDetail = ref<AgentDetail>(),
+const publicationHistory = useResource(
+  async () => (await api.agents.revisions(id.value)).items,
+  [] as AgentPublication[]
+)
+const publications = publicationHistory.data
+watch(publicationOwner, () => {
+  publicationHistory.invalidate()
+  publications.value = []
+  publicationHistory.error.value = ''
+})
+const publicationDetail = ref<AgentDetail>(),
   publicationOpen = ref(false)
 async function loadPublications(tab: string | number) {
   if (tab !== 'history') return
-  await run(async () => {
-    publications.value = (await api.agents.revisions(id.value)).items
-  })
+  await publicationHistory.reload()
 }
 async function viewPublication(publication: AgentPublication) {
   await run(async () => {

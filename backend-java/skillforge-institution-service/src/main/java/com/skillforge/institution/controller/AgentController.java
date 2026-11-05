@@ -86,6 +86,11 @@ public class AgentController {
     @RequirePermission("foundation.agents.publish")
     @PostMapping("/publish")
     public ApiResponse<AgentPublishResponse> publishEndpoint(@Valid @RequestBody PublishCommand command) { return ApiResponses.wrap(agents.publish(command.agentId())); }
+    @RequirePermission("foundation.agents.publish")
+    @PostMapping("/publish-with-receipt")
+    public ApiResponse<AgentSaveAndPublishResponse> publishWithReceipt(@Valid @RequestBody PublishWithReceiptCommand command) {
+        return ApiResponses.wrap(agents.publishWithReceipt(command.agentId(), command.requestId()));
+    }
     @RequirePermission("foundation.agents.create")
     @PostMapping("/revise")
     public ApiResponse<AgentItemResponse> reviseEndpoint(@Valid @RequestBody PublishCommand command) { return ApiResponses.wrap(agents.revise(command.agentId())); }
@@ -101,6 +106,8 @@ public class AgentController {
     public record UpdateAgentCommand(@JsonProperty("agent_id") @NotNull String agentId, @NotNull @Valid UpdateAgentRequest payload) { }
     public record DeleteAgentCommand(@JsonProperty("agent_id") @NotNull String agentId) { }
     public record PublishCommand(@JsonProperty("agent_id") @NotNull String agentId) { }
+    public record PublishWithReceiptCommand(@JsonProperty("agent_id") @NotNull String agentId,
+            @JsonProperty("request_id") @NotNull UUID requestId) { }
     public record RestoreRevisionCommand(@JsonProperty("agent_id") @NotNull String agentId,
             @jakarta.validation.constraints.Min(1) int revision) { }
 }

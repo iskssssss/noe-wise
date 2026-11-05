@@ -75,9 +75,17 @@ public class AgentPublicationService {
     /** 对原 Update 做局部规范编码；嵌套 Map 排序，但保留 null、空集合及数组顺序。 */
     public String requestFingerprint(long tenantId, long agentId, String actor,
             com.skillforge.core.agent.management.AgentManagementContracts.Update payload) {
+        return requestFingerprint("agent.save-and-publish.v1", tenantId, agentId, actor, payload);
+    }
+
+    public String publishRequestFingerprint(long tenantId, long agentId, String actor) {
+        return requestFingerprint("agent.publish.v1", tenantId, agentId, actor, Map.of());
+    }
+
+    private String requestFingerprint(String operation, long tenantId, long agentId, String actor, Object payload) {
         var mapper = json.copy().setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
                 .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-        var command = Map.of("operation", "agent.save-and-publish.v1", "tenant", tenantId,
+        var command = Map.of("operation", operation, "tenant", tenantId,
                 "agent", agentId, "actor", actor, "payload", mapper.convertValue(payload, Object.class));
         try {
             byte[] bytes = mapper.writer().with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)

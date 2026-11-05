@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { ElInput, ElMessageBox, ElSelect } from 'element-plus'
+import { ElInput, ElMessageBox, ElSelect, ElTabs } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { message } from '@skillforge/shared/feedback'
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   update: vi.fn(),
   publish: vi.fn(),
+  publishWithReceipt: vi.fn(),
   saveAndPublish: vi.fn(),
   result: vi.fn(),
   push: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('../../api', () => ({
       list: vi.fn(async () => ({ items: [] })),
       update: mocks.update,
       publish: mocks.publish,
+      publishWithReceipt: mocks.publishWithReceipt,
       saveAndPublish: mocks.saveAndPublish,
       saveAndPublishResult: mocks.result,
       revisions: mocks.publications,
@@ -117,6 +119,132 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
 })
+it('仅发布权限可按原请求恢复发布，刷新只读核对不重发', async () => {
+  useAuthStore().user!.permissions = ['foundation.agents.read', 'foundation.agents.publish']
+  mocks.get.mockResolvedValue({ ...detail(), has_draft_changes: true })
+  mocks.publishWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({ status: 0, userMessage: '结果尚未确认' })
+  )
+  await render()
+  await button('发布').trigger('click')
+  await flushPromises()
+  expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+  const command = mocks.publishWithReceipt.mock.calls[0]![0]
+  expect(command).toEqual({ agent_id: 'agent-1', request_id: expect.any(String) })
+  expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  expect(mocks.publish).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('发布结果尚未确认')
+  expect(button('继续原操作')).toBeDefined()
+  wrapper.unmount()
+  mocks.result.mockResolvedValueOnce({
+    request_id: command.request_id,
+    agent_id: command.agent_id,
+    publication_id: '123',
+    revision: 3,
+    published_at: '2026-10-30T10:00:00Z'
+  })
+  await render()
+  expect(mocks.result).toHaveBeenCalledExactlyOnceWith('agent-1', command.request_id)
+  expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+  expect(button('继续原操作')).toBeUndefined()
+  expect(wrapper.text()).toContain('发布已确认')
+  expect(sessionStorage.length).toBe(0)
+})
+it('仅发布未知后继续原操作沿用原请求，无更新权限也可核对', async () => {
+  useAuthStore().user!.permissions = ['foundation.agents.read', 'foundation.agents.publish']
+  mocks.get.mockResolvedValue({ ...detail(), has_draft_changes: true })
+  mocks.publishWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({ status: 0, userMessage: '结果尚未确认' })
+  )
+  await render()
+  await button('发布').trigger('click')
+  await flushPromises()
+  const command = mocks.publishWithReceipt.mock.calls[0]![0]
+  mocks.publishWithReceipt.mockResolvedValueOnce({
+    ...command,
+    publication_id: '123',
+    revision: 3,
+    published_at: '2026-10-30T10:00:00Z'
+  })
+  await button('继续原操作').trigger('click')
+  await flushPromises()
+  expect(mocks.publishWithReceipt.mock.calls.map((call) => call[0])).toEqual([command, command])
+  expect(mocks.update).not.toHaveBeenCalled()
+  expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+})
+it.each(['no-read', 'other-actor', 'other-session'])(
+  '仅发布刷新在 %s 边界不查询或重发原操作',
+  async (boundary) => {
+    mocks.get.mockResolvedValue({ ...detail(), has_draft_changes: true })
+    mocks.publishWithReceipt.mockRejectedValueOnce(
+      new HttpClientError({ status: 0, userMessage: '结果尚未确认' })
+    )
+    await render()
+    await button('发布').trigger('click')
+    await flushPromises()
+    const command = mocks.publishWithReceipt.mock.calls[0]![0]
+    wrapper.unmount()
+    if (boundary === 'no-read') useAuthStore().user!.permissions = ['foundation.agents.publish']
+    if (boundary === 'other-actor') useAuthStore().user!.sub = 'actor-2'
+    const sessionState = useAuthStore() as unknown as { sessionIdentity: string }
+    const previousIdentity = sessionState.sessionIdentity
+    if (boundary === 'other-session') sessionState.sessionIdentity = 'another-session'
+    try {
+      await render()
+      expect(mocks.result).not.toHaveBeenCalled()
+      expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+      if (boundary !== 'no-read') expect(wrapper.text()).not.toContain(command.request_id)
+    } finally {
+      sessionState.sessionIdentity = previousIdentity
+    }
+  }
+)
+it.each([false, true])(
+  '仅发布确认后刷新当前历史列表，读取失败=%s 不改变发布回执',
+  async (failed) => {
+    mocks.get.mockResolvedValue({ ...detail(), has_draft_changes: true })
+    mocks.publishWithReceipt.mockImplementation(async (command) => ({
+      ...command,
+      publication_id: '123',
+      revision: 3,
+      published_at: '2026-10-30T10:00:00Z'
+    }))
+    await render()
+    const tabs = wrapper.findComponent(ElTabs)
+    tabs.vm.$emit('update:modelValue', 'history')
+    tabs.vm.$emit('tab-change', 'history')
+    await flushPromises()
+    expect(mocks.publications).toHaveBeenCalledTimes(1)
+    if (failed) mocks.publications.mockRejectedValueOnce(new Error('历史暂不可读'))
+    else
+      mocks.publications.mockResolvedValueOnce({
+        items: [
+          {
+            revision_id: '123',
+            revision: 3,
+            name: '新增历史修订',
+            published_at: '2026-10-30T10:00:00Z',
+            current: true
+          }
+        ]
+      })
+    await button('发布').trigger('click')
+    await flushPromises()
+    expect(mocks.publications).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('发布已确认')
+    expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+    if (failed) {
+      expect(wrapper.findComponent(FeedbackNotice).props('title')).toContain(
+        '发布历史读取失败：历史暂不可读'
+      )
+      await button('刷新历史').trigger('click')
+      await flushPromises()
+      expect(mocks.publications).toHaveBeenCalledTimes(3)
+      expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+    } else expect(wrapper.text()).toContain('新增历史修订')
+  }
+)
 it('刷新后自动只读核对原发布并恢复编辑', async () => {
   await startUnknown()
   const command = mocks.saveAndPublish.mock.calls[0]![0] as AgentSaveAndPublishCommand

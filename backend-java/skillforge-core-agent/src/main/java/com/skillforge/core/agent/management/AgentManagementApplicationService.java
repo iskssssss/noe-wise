@@ -260,6 +260,32 @@ public class AgentManagementApplicationService {
         return agent.getId();
     }
 
+    /** 只发布已保存草稿；原请求回执与发布快照同事务提交，不要求更新权限。 */
+    public AgentManagementContracts.SaveAndPublishReceipt publishWithReceipt(AgentManagementContracts.Caller caller,
+            String agentId, java.util.UUID requestId) {
+        if (caller.external()) throw new ApiException(HttpStatus.FORBIDDEN, "发布回执仅供当前机构成员使用");
+        requireOperation(caller, "foundation.agents.publish");
+        requireManageAndRead(caller, agentId);
+        if (requestId == null) throw new ApiException(HttpStatus.BAD_REQUEST, "请求身份不能为空");
+        AgentDO found = findAgent(caller, agentId);
+        AgentDO agent = agentService.lockVersion(found.getTenantId(), found.getId());
+        String actor = "member:" + access.currentSubject().memberId();
+        String fingerprint = publications.publishRequestFingerprint(caller.tenantId(), agent.getId(), actor);
+        var previous = publications.findRequest(caller.tenantId(), agent.getId(), requestId);
+        if (previous != null) {
+            if (!actor.equals(previous.requestActorRef()) || !fingerprint.equals(previous.requestFingerprint()))
+                throw new ApiException(HttpStatus.CONFLICT, "AGENT_SAVE_PUBLISH_REQUEST_CONFLICT",
+                        "发布请求标识已用于不同操作、参数或操作人", false);
+            return new AgentManagementContracts.SaveAndPublishReceipt(requestId, previous.agentId(), previous.id(),
+                    previous.revision(), previous.publishedAt());
+        }
+        agentService.requireIndependentDefinition(agent);
+        requireReady(agent);
+        var published = publications.publish(agent, new AgentPublicationService.RequestIdentity(requestId, fingerprint, actor));
+        return new AgentManagementContracts.SaveAndPublishReceipt(requestId, agent.getId(), published.revisionId(),
+                published.revision(), published.publishedAt());
+    }
+
     /** 保存与发布共用当前身份事务；先核原回执，重试不写草稿或改变当前发布指针。 */
     public AgentManagementContracts.SaveAndPublishReceipt saveAndPublish(AgentManagementContracts.Caller caller,
             String agentId, java.util.UUID requestId, AgentManagementContracts.Update payload) {

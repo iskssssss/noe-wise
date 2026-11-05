@@ -1229,6 +1229,10 @@ export const api = {
       post<AgentSaveAndPublishReceipt>('/agents/save-and-publish', command, {
         retryOnUnauthorized: false
       }),
+    publishWithReceipt: (command: { agent_id: string; request_id: string }) =>
+      post<AgentSaveAndPublishReceipt>('/agents/publish-with-receipt', command, {
+        retryOnUnauthorized: false
+      }),
     saveAndPublishResult: (agentId: string, requestId: string) =>
       get<AgentSaveAndPublishReceipt | undefined>(
         `/agents/save-and-publish/result?agentId=${encodeURIComponent(agentId)}&requestId=${encodeURIComponent(requestId)}`
