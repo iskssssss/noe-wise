@@ -464,6 +464,196 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
       JSON.stringify({ mode, kbId: kb, configuredTopK: 1, samples }, null, 2)
     )
   }
+  if (process.env.E2E_KNOWLEDGE_READY_PUBLISH === 'baseline') {
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.getByRole('tab', { name: '知识发布', exact: true }).click()
+    let original: unknown
+    let posts = 0
+    await page.route('**/api/v1/knowledge/bases/revisions/publish', async (route) => {
+      posts++
+      const actual = await route.fetch()
+      if (posts === 1) {
+        original = await actual.json()
+        await writeFile(
+          join(evidence, 'ready-publication-response.json'),
+          JSON.stringify(original, null, 2)
+        )
+        expect(actual.status()).toBe(200)
+        await route.abort('failed')
+      } else await route.fulfill({ response: actual })
+    })
+    const readyRow = page
+      .getByRole('row')
+      .filter({ has: page.getByRole('button', { name: '发布', exact: true }) })
+    await expect(readyRow).toHaveCount(1)
+    await readyRow.getByRole('button', { name: '发布', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: '发布知识修订', exact: true })
+      .getByRole('button', { name: '发布修订', exact: true })
+      .click()
+    await expect(page.getByRole('dialog', { name: '发布知识修订', exact: true })).toBeHidden()
+    await expect(readyRow.getByRole('button', { name: '发布', exact: true })).toBeEnabled()
+    await page.screenshot({
+      path: join(evidence, 'ready-publication-response-lost.png'),
+      fullPage: true
+    })
+    const lostState = await page.locator('body').innerText()
+    await readyRow.getByRole('button', { name: '发布', exact: true }).click()
+    const retryPending = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === '/api/v1/knowledge/bases/revisions/publish' &&
+        r.request().method() === 'POST'
+    )
+    await page
+      .getByRole('dialog', { name: '发布知识修订', exact: true })
+      .getByRole('button', { name: '发布修订', exact: true })
+      .click()
+    const retry = await retryPending
+    expect(retry.status()).toBe(409)
+    const retryBody = await retry.json()
+    await expect(page.getByRole('dialog', { name: '发布知识修订', exact: true })).toBeHidden()
+    const refresh = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === '/api/v1/knowledge/bases/revisions' &&
+        r.request().method() === 'GET'
+    )
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    const refreshed = await refresh
+    expect(refreshed.status()).toBe(200)
+    await expect(readyRow).toHaveCount(0)
+    await page.screenshot({
+      path: join(evidence, 'ready-publication-refreshed.png'),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, 'ready-publication-journey.json'),
+      JSON.stringify(
+        {
+          posts,
+          original,
+          lostState,
+          retry: retryBody,
+          refreshed: await refreshed.json(),
+          visible: await page.locator('body').innerText()
+        },
+        null,
+        2
+      )
+    )
+  }
+  if (
+    process.env.E2E_KNOWLEDGE_READY_PUBLISH &&
+    process.env.E2E_KNOWLEDGE_READY_PUBLISH !== 'baseline'
+  ) {
+    const notArrived = process.env.E2E_KNOWLEDGE_READY_PUBLISH === 'not-arrived'
+    const postPath = '/api/v1/knowledge/bases/revisions/publish-with-receipt'
+    const resultPath = postPath + '/result'
+    const commands: unknown[] = [],
+      reads: unknown[] = []
+    let allowReads = false,
+      serverPosts = 0
+    let original: unknown
+    await page.route('**' + resultPath + '?*', async (route) => {
+      if (!allowReads) return route.abort('failed')
+      const actual = await route.fetch()
+      const body = actual.status() === 204 ? null : await actual.json()
+      reads.push({ url: route.request().url(), status: actual.status(), body })
+      await route.fulfill({ response: actual })
+    })
+    await page.route('**' + postPath, async (route) => {
+      commands.push(route.request().postDataJSON())
+      if (notArrived && commands.length === 1) return route.abort('failed')
+      serverPosts++
+      const actual = await route.fetch()
+      expect(actual.status()).toBe(200)
+      const receipt = await actual.json()
+      const command = commands[commands.length - 1] as {
+        request_id: string
+        kb_id: string
+        revision: number
+      }
+      expect(receipt.data.request_id).toBe(command.request_id)
+      expect(receipt.data.status).toBe('SUCCEEDED')
+      expect(String(receipt.data.revision.kb_id)).toBe(command.kb_id)
+      expect(receipt.data.revision.revision).toBe(command.revision)
+      expect(receipt.data.revision.source_versions).toEqual([
+        required('E2E_KNOWLEDGE_SOURCE_VERSION')
+      ])
+      original = receipt
+      await writeFile(
+        join(evidence, 'ready-publication-response.json'),
+        JSON.stringify(receipt, null, 2)
+      )
+      if (!notArrived && commands.length === 1) return route.abort('failed')
+      await route.fulfill({ response: actual })
+    })
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.getByRole('tab', { name: '知识发布', exact: true }).click()
+    const readyRow = page
+      .getByRole('row')
+      .filter({ has: page.getByRole('button', { name: '发布', exact: true }) })
+    await expect(readyRow).toHaveCount(1)
+    await readyRow.getByRole('button', { name: '发布', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: '发布知识修订', exact: true })
+      .getByRole('button', { name: '发布修订', exact: true })
+      .click()
+    await expect(page.getByRole('dialog', { name: '发布知识修订', exact: true })).toBeHidden()
+    await expect(page.getByRole('button', { name: '核对原修订发布', exact: true })).toBeVisible()
+    expect(commands).toHaveLength(1)
+    await page.screenshot({
+      path: join(evidence, 'ready-original-unconfirmed.png'),
+      fullPage: true
+    })
+    allowReads = true
+    const recovery = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === resultPath && r.request().method() === 'GET'
+    )
+    await page.reload()
+    const recovered = await recovery
+    expect(recovered.status()).toBe(notArrived ? 204 : 200)
+    const command = commands[0] as { request_id: string; kb_id: string; revision: number }
+    expect(new URL(recovered.url()).searchParams.get('request_id')).toBe(command.request_id)
+    if (notArrived) {
+      await page.getByRole('tab', { name: '知识发布', exact: true }).click()
+      await expect(readyRow.getByRole('button', { name: '发布', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '继续原修订发布', exact: true })).toBeVisible()
+      expect(commands).toHaveLength(1)
+      await page.screenshot({
+        path: join(evidence, 'ready-original-not-arrived.png'),
+        fullPage: true
+      })
+      const continued = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === postPath && r.request().method() === 'POST'
+      )
+      await page.getByRole('button', { name: '继续原修订发布', exact: true }).click()
+      expect((await continued).status()).toBe(200)
+      expect(commands).toHaveLength(2)
+      expect(commands[1]).toEqual(commands[0])
+    } else {
+      expect((await recovered.json()).data).toEqual((original as { data: unknown }).data)
+      expect(commands).toHaveLength(1)
+    }
+    expect(serverPosts).toBe(1)
+    await expect(page.getByText(/原修订发布已确认：修订 2，版本/)).toBeVisible()
+    await expect(page.getByRole('button', { name: '核对原修订发布', exact: true })).toHaveCount(0)
+    await page.screenshot({ path: join(evidence, 'ready-original-confirmed.png'), fullPage: true })
+    await writeFile(
+      join(evidence, 'ready-publication-journey.json'),
+      JSON.stringify(
+        {
+          notArrived,
+          commands,
+          serverPosts,
+          reads,
+          original,
+          visible: await page.locator('body').innerText()
+        },
+        null,
+        2
+      )
+    )
+  }
   if (process.env.E2E_KNOWLEDGE_RERANK) {
     const candidate = process.env.E2E_KNOWLEDGE_RERANK === 'candidate'
     const fallbackMessage = '重排暂不可用，本次结果按原检索顺序返回。'

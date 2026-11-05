@@ -45,6 +45,17 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             try {configureTenantModel(model.endpoint());} finally {TenantContext.clear();}
             if(rerank!=null) rerank.select(rerankCatalog,tenantId);
             var published=new RuntimeExecutionKnowledgeFixture(objectMapper,httpClient,baseUrl(),accessToken).publish(runId,sentinel);
+            if(System.getenv("E2E_KNOWLEDGE_READY_PUBLISH")!=null){
+                var content=published.documentText()+" A newly indexed version is ready for publication.";
+                var changed=send("/api/v1/knowledge/documents/update","PATCH",Map.of("doc_id",published.documentId(),"payload",Map.of("title","Ready publication source","content",content,"expected_source_version",published.sourceVersion())),accessToken);
+                assertEquals(200,changed.statusCode(),changed.body());
+                published=new RuntimeExecutionKnowledgeFixture.Published(published.kbId(),published.documentId(),successData(changed).path("source_version").asText(),published.revisionId(),published.definitionId(),published.capabilityVersionId(),sentinel,content);
+                var draft=send("/api/v1/knowledge/bases/revisions","POST",Map.of("kb_id",published.kbId()),accessToken);
+                assertEquals(200,draft.statusCode(),draft.body());var number=successData(draft).path("revision").asText();
+                var ready=send("/api/v1/knowledge/bases/revisions/ready","POST",Map.of("kb_id",published.kbId(),"revision",number,"payload",Map.of(
+                        "source_versions",java.util.List.of(published.sourceVersion()),"policy",Map.of("model_invocable",true,"user_invocable",false,"allowed_operators",java.util.List.of("KEYWORD"),"freshness_policy","PINNED","citation_required",true))),accessToken);
+                assertEquals(200,ready.statusCode(),ready.body());Files.writeString(evidence.resolve("ready-initial.json"),ready.body());
+            }
             if (topKExperiment) {
                 var configured = send("/api/v1/knowledge/bases/update", "PATCH", Map.of("kb_id", published.kbId(),
                         "payload", Map.of("top_k", 1, "chunk_size", 100, "chunk_overlap", 0)), accessToken);
@@ -123,6 +134,11 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
                         revision.path("id").asLong(), published.definitionId(), revision.path("capability_version_id").asLong(),
                         sentinel, repaired.path("content").asText());
             }
+            if(System.getenv("E2E_KNOWLEDGE_READY_PUBLISH")!=null){
+                var receipt=objectMapper.readTree(Files.readString(browser.resolve("ready-publication-response.json"))).path("data");
+                var revision=receipt.has("revision")&&receipt.path("revision").isObject()?receipt.path("revision"):receipt;
+                published=new RuntimeExecutionKnowledgeFixture.Published(published.kbId(),published.documentId(),published.sourceVersion(),revision.path("id").asLong(),published.definitionId(),revision.path("capability_version_id").asLong(),sentinel,published.documentText());
+            }
             var script=model.register("knowledge-"+SnowflakeIds.nextId(),RuntimeExecutionWorkloadProvider.Workload.KNOWLEDGE);
             script.requireKnowledge("knowledge:"+mountId,published.kbId(),published.sourceVersion(),query,sentinel);
             var agentPublication=send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken);assertEquals(200,agentPublication.statusCode(),agentPublication.body());
@@ -131,14 +147,14 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             String actualRun="run:"+runId;
             try {
                 var capture=postSse(chatPayload(script.prompt()));
-                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null) Files.writeString(evidence.resolve("knowledge-runtime-sse.txt"), capture.raw());
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null || System.getenv("E2E_KNOWLEDGE_READY_PUBLISH")!=null) Files.writeString(evidence.resolve("knowledge-runtime-sse.txt"), capture.raw());
                 assertEquals(200,capture.statusCode());assertTrue(capture.events().contains("execution.completed"),capture.raw());assertFalse(capture.events().contains("error"),capture.raw());
                 assertTrue(capture.raw().contains(script.finalAnswer()),capture.raw());
                 assertEquals(2,script.snapshot().requestCount());assertFalse(script.snapshot().verifiedKnowledgeItemIds().isEmpty());
                 assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND agent_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenantId,actualRun,agentId,sessionId));
                 var selected=queryRows(jdbc,tenantId,"SELECT request.schema_id AS request_schema,request.canonical_json AS request_json,result.schema_id AS result_schema,result.canonical_json AS result_json FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id AND t.attempt_id=a.selected_attempt JOIN agent_runtime_execution_materials request ON request.tenant_id=a.tenant_id AND request.reference=a.request_ref JOIN agent_runtime_execution_materials result ON result.tenant_id=t.tenant_id AND result.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='KNOWLEDGE' AND a.status='SUCCEEDED' AND t.adopted AND t.result_kind='SUCCEEDED'",tenantId,actualRun);
                 assertEquals(1,selected.size());var row=selected.getFirst();var properties=applicationContext.getBean(AgentRuntimeProperties.class);
-                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null) {
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null || System.getenv("E2E_KNOWLEDGE_READY_PUBLISH")!=null) {
                     Files.writeString(evidence.resolve("knowledge-runtime-materials.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(selected));
                     com.fasterxml.jackson.databind.JsonNode finalMessage = null;
                     for (String line : capture.raw().split("\\R")) {

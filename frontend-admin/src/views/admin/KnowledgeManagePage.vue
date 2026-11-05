@@ -144,6 +144,32 @@
       知识发布已确认：修订 {{ publicationReceipt.revision.revision }}，版本
       {{ publicationReceipt.revision.id }}。
     </section>
+    <section v-if="fixedPublicationPending" class="admin-card" role="status">
+      修订 {{ fixedPublicationPending.revision }} 的发布结果尚未确认，请求号
+      {{ fixedPublicationPending.requestId }}。 当前发布状态不能代替原请求回执，请勿重复发布。
+      <ElButton :disabled="busy || !can('foundation.knowledge.read')" @click="checkFixedPublication"
+        >核对原修订发布</ElButton
+      >
+      <ElButton
+        v-if="can('foundation.knowledge.publish')"
+        :disabled="busy || !!fixedPublicationStorageError"
+        @click="continueFixedPublication"
+        >继续原修订发布</ElButton
+      >
+    </section>
+    <section v-if="fixedPublicationRefresh" class="admin-card" role="status">
+      原修订发布已确认，当前发布状态尚未刷新；请重新读取，不必再次发布。
+      <ElButton
+        :disabled="busy || !can('foundation.knowledge.read')"
+        @click="refreshFixedPublication"
+        >重新读取当前发布</ElButton
+      >
+    </section>
+    <p v-if="fixedPublicationStorageError" role="status">{{ fixedPublicationStorageError }}</p>
+    <p v-if="fixedPublicationReceipt?.revision" role="status">
+      原修订发布已确认：修订 {{ fixedPublicationReceipt.revision.revision }}，版本
+      {{ fixedPublicationReceipt.revision.id }}。当前发布状态以列表为准。
+    </p>
     <section v-if="prepareUnknown || prepareRefresh" class="admin-card" role="status">
       {{
         prepareUnknown
@@ -1101,9 +1127,56 @@ const publicationPending = ref<PublicationPending>()
 const publicationStorageError = ref('')
 const publicationRequestId = ref('')
 const publicationReceipt = ref<KnowledgePrepareAndPublishReceipt>()
+type FixedPublicationPending = {
+  requestId: string
+  kbId: string
+  revisionId: string
+  revision: number
+}
+const fixedPublicationPending = ref<FixedPublicationPending>()
+const fixedPublicationStorageError = ref('')
+const fixedPublicationRefresh = ref(false)
+const fixedPublicationReceipt = ref<KnowledgePrepareAndPublishReceipt>()
+const fixedPublicationKey = (owner: string) => `skillforge.knowledge-fixed-publication.${owner}`
+let autoCheckedFixedPublication = ''
 const publicationLocked = computed(
   () =>
-    !!publicationPending.value || !!publicationStorageError.value || rebuildPublicationLocked.value
+    !!publicationPending.value ||
+    !!publicationStorageError.value ||
+    rebuildPublicationLocked.value ||
+    !!fixedPublicationPending.value ||
+    !!fixedPublicationStorageError.value ||
+    fixedPublicationRefresh.value
+)
+watch(
+  publicationOwner,
+  (owner) => {
+    fixedPublicationPending.value = undefined
+    fixedPublicationReceipt.value = undefined
+    fixedPublicationRefresh.value = false
+    fixedPublicationStorageError.value = ''
+    autoCheckedFixedPublication = ''
+    if (!owner) return
+    try {
+      const raw = sessionStorage.getItem(fixedPublicationKey(owner))
+      if (!raw) return
+      const value = JSON.parse(raw) as FixedPublicationPending
+      if (
+        !value ||
+        value.kbId !== id.value ||
+        typeof value.revisionId !== 'string' ||
+        !value.revisionId ||
+        !Number.isSafeInteger(value.revision) ||
+        value.revision < 1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+      )
+        throw Error('invalid')
+      fixedPublicationPending.value = value
+    } catch {
+      fixedPublicationStorageError.value = '无法读取原修订发布记录，请恢复浏览器存储后重新进入。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
 )
 let disposed = false
 let autoCheckedUpload = ''
@@ -1326,6 +1399,19 @@ async function load() {
     }
     return true
   })
+  if (
+    loaded &&
+    !disposed &&
+    !busy.value &&
+    id.value === target &&
+    auth.identityVersion === identity &&
+    can('foundation.knowledge.read') &&
+    fixedPublicationPending.value &&
+    autoCheckedFixedPublication !== fixedPublicationPending.value.requestId
+  ) {
+    autoCheckedFixedPublication = fixedPublicationPending.value.requestId
+    await checkFixedPublication()
+  }
   if (
     loaded &&
     !disposed &&
@@ -2269,8 +2355,157 @@ async function checkPublication() {
     )
   )
 }
+async function acceptFixedPublication(
+  receipt: KnowledgePrepareAndPublishReceipt | undefined,
+  operation: FixedPublicationPending,
+  owner: string,
+  current: () => boolean
+) {
+  if (
+    !current() ||
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    !['SUCCEEDED', 'REJECTED'].includes(receipt.status) ||
+    (receipt.status === 'SUCCEEDED' &&
+      (!receipt.revision ||
+        receipt.revision.id !== operation.revisionId ||
+        receipt.revision.kb_id !== operation.kbId ||
+        receipt.revision.revision !== operation.revision ||
+        receipt.revision.status !== 'published'))
+  )
+    return false
+  try {
+    sessionStorage.removeItem(fixedPublicationKey(owner))
+  } catch {
+    fixedPublicationStorageError.value =
+      '原修订发布已确认，但无法清除本地请求记录，请恢复存储后重新核对。'
+    return false
+  }
+  fixedPublicationPending.value = undefined
+  fixedPublicationStorageError.value = ''
+  if (receipt.status === 'REJECTED') {
+    message.error(receipt.error_message || '原修订发布已拒绝')
+    return true
+  }
+  fixedPublicationReceipt.value = receipt
+  notifyKnowledgePublished(initialOwner.value)
+  message.success(`原修订发布已确认：修订 ${operation.revision}`)
+  fixedPublicationRefresh.value = true
+  await readFixedPublication(operation.kbId, current)
+
+  return true
+}
+async function readFixedPublication(kbId: string, current: () => boolean) {
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((cause: unknown) => {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      if (!current()) {
+        throw 'cancel'
+      }
+      throw cause
+    })
+  try {
+    const [nextBase, nextRevisions] = await Promise.all([
+      guard(api.knowledge.getBase(kbId)),
+      guard(api.knowledge.listRevisions(kbId))
+    ])
+    if (!current()) return
+    base.value = nextBase
+    revisions.value = nextRevisions.items
+    fixedPublicationRefresh.value = false
+  } catch (cause) {
+    if (!current()) throw 'cancel'
+    throw Error(
+      `原修订发布已确认，但当前发布状态读取失败：${cause instanceof Error ? cause.message : '读取失败'}。请重新读取，不必再次发布。`,
+      { cause }
+    )
+  }
+}
+async function refreshFixedPublication() {
+  if (!fixedPublicationRefresh.value || !can('foundation.knowledge.read')) return
+  const current = fixedPublicationCurrent(
+    publicationOwner.value,
+    auth.identityVersion,
+    getSessionId()
+  )
+  await run(() => readFixedPublication(id.value, current))
+}
+async function dispatchFixedPublication(
+  operation: FixedPublicationPending,
+  owner: string,
+  current: () => boolean,
+  initial: boolean
+) {
+  let receipt: KnowledgePrepareAndPublishReceipt
+  try {
+    receipt = await api.knowledge.publishRevisionWithReceipt(
+      operation.requestId,
+      operation.kbId,
+      operation.revision
+    )
+  } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      throw 'cancel'
+    }
+    if (
+      initial &&
+      cause instanceof HttpClientError &&
+      cause.code === 'KNOWLEDGE_PUBLISH_PRE_DISPATCH_REJECTED'
+    ) {
+      try {
+        sessionStorage.removeItem(fixedPublicationKey(owner))
+        fixedPublicationPending.value = undefined
+      } catch {
+        fixedPublicationStorageError.value =
+          '原修订发布未发送，但无法清除本地记录，请恢复存储后核对。'
+      }
+    }
+    throw cause
+  }
+  await acceptFixedPublication(receipt, operation, owner, current)
+}
+function fixedPublicationCurrent(owner: string, identity: number, session: string | null) {
+  return () =>
+    !disposed &&
+    publicationOwner.value === owner &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
+}
+async function checkFixedPublication() {
+  const operation = fixedPublicationPending.value,
+    owner = publicationOwner.value
+  if (!operation || !can('foundation.knowledge.read')) return
+  const current = fixedPublicationCurrent(owner, auth.identityVersion, getSessionId())
+  await run(async () => {
+    let receipt: KnowledgePrepareAndPublishReceipt | undefined
+    try {
+      receipt = await api.knowledge.publishRevisionResult(operation.requestId)
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    }
+    if (current() && !(await acceptFixedPublication(receipt, operation, owner, current)))
+      message.warning('尚未查到匹配的原修订发布回执，结果仍未确认。')
+  })
+}
+async function continueFixedPublication() {
+  const operation = fixedPublicationPending.value,
+    owner = publicationOwner.value
+  if (!operation || fixedPublicationStorageError.value || !can('foundation.knowledge.publish'))
+    return
+  const current = fixedPublicationCurrent(owner, auth.identityVersion, getSessionId())
+  await run(async () => {
+    await dispatchFixedPublication(operation, owner, current, false)
+  })
+}
 async function publishRevision(row: KnowledgeBaseRevision) {
-  if (publicationLocked.value) return
+  if (publicationLocked.value || !can('foundation.knowledge.publish')) return
+  const owner = publicationOwner.value
+  const current = fixedPublicationCurrent(owner, auth.identityVersion, getSessionId())
   await run(async () => {
     if (
       !(await confirm({
@@ -2280,15 +2515,25 @@ async function publishRevision(row: KnowledgeBaseRevision) {
       }))
     )
       return
-    const owner = initialOwner.value
-    Object.assign(row, await api.knowledge.publishRevision(id.value, row.revision))
-    if (base.value) base.value.active_revision_id = row.id
-    if (owner === initialOwner.value) notifyKnowledgePublished(owner)
-    message.success('知识库修订已发布')
-    revisions.value = (await api.knowledge.listRevisions(id.value)).items
-    base.value = await api.knowledge.getBase(id.value)
+    if (!current() || !owner || !can('foundation.knowledge.publish')) return
+    const operation = {
+      requestId: crypto.randomUUID(),
+      kbId: id.value,
+      revisionId: row.id,
+      revision: row.revision
+    }
+    try {
+      sessionStorage.setItem(fixedPublicationKey(owner), JSON.stringify(operation))
+    } catch {
+      fixedPublicationStorageError.value = '无法保存原修订发布记录，尚未发送请求。'
+      return
+    }
+    fixedPublicationPending.value = operation
+    fixedPublicationReceipt.value = undefined
+    await dispatchFixedPublication(operation, owner, current, true)
   })
 }
+
 async function startRebuild() {
   if (rebuildPublicationLocked.value || effectiveIndexingMode.value !== 'high_quality') return
   await run(async () => {

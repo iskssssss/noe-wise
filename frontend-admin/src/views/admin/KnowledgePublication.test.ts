@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   upload: vi.fn(),
   uploadResult: vi.fn(),
   publish: vi.fn(),
+  fixedPublish: vi.fn(),
+  fixedResult: vi.fn(),
   combine: vi.fn(),
   result: vi.fn(),
   member: 'user',
@@ -40,6 +42,8 @@ vi.mock('../../api', () => ({
       uploadFile: mocks.upload,
       uploadResult: mocks.uploadResult,
       publishRevision: mocks.publish,
+      publishRevisionWithReceipt: mocks.fixedPublish,
+      publishRevisionResult: mocks.fixedResult,
       prepareAndPublish: mocks.combine,
       prepareAndPublishResult: mocks.result
     },
@@ -107,6 +111,7 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.member = 'user'
   mocks.kb = 'kb-1'
+  routeState.params.id = 'kb-1'
   mocks.permissions = [
     'foundation.knowledge.read',
     'foundation.knowledge.create',
@@ -123,6 +128,13 @@ beforeEach(() => {
     document: { document_id: 'new-doc', chunks: 1, source_version: 'new-v' }
   }))
   mocks.publish.mockResolvedValue({ ...ready, status: 'published' })
+  mocks.fixedPublish.mockImplementation(
+    async (requestId: string, kbId: string, revision: number) => {
+      const result = await mocks.publish(kbId, revision)
+      return { request_id: requestId, status: 'SUCCEEDED', revision: { ...result, kb_id: kbId } }
+    }
+  )
+  mocks.fixedResult.mockResolvedValue(undefined)
   mocks.confirm.mockResolvedValue(true)
 })
 afterEach(() => {
@@ -789,4 +801,180 @@ it('独立准备 UNKNOWN 切换知识库后不串用，切回保留原范围', a
   expect(drawer.findComponent(ElCheckboxGroup).props('modelValue')).toEqual(['v2'])
   expect(drawer.findComponent(ElCheckboxGroup).props('disabled')).toBe(true)
   expect(mocks.prepare).toHaveBeenCalledTimes(1)
+})
+
+async function startFixedUnknown() {
+  mocks.revisions.mockResolvedValue({ items: [{ ...ready, kb_id: 'kb-1' }] })
+  mocks.fixedPublish.mockRejectedValueOnce(new Error('响应丢失'))
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  wrapper.findAllComponents(ElTabs)[0]!.vm.$emit('update:modelValue', 'versions')
+  await flushPromises()
+  await button('发布').trigger('click')
+  await flushPromises()
+  return mocks.fixedPublish.mock.calls[0]!
+}
+it('固定修订发布UNKNOWN刷新只读核对原回执，不重发并保留原目标', async () => {
+  const [requestId] = await startFixedUnknown()
+  expect(button('发布').props('disabled')).toBe(true)
+  expect(wrapper!.text()).toContain(requestId)
+  wrapper!.unmount()
+  mocks.fixedResult.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published' }
+  })
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(mocks.fixedResult).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(mocks.fixedPublish).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).toContain('原修订发布已确认')
+  expect(sessionStorage.length).toBe(0)
+})
+it('原回执未查到时保持锁，显式继续同ID同知识库修订', async () => {
+  const command = await startFixedUnknown()
+  await button('核对原修订发布').trigger('click')
+  await flushPromises()
+  expect(button('发布').props('disabled')).toBe(true)
+  expect(mocks.fixedPublish).toHaveBeenCalledTimes(1)
+  await button('继续原修订发布').trigger('click')
+  await flushPromises()
+  expect(mocks.fixedPublish.mock.calls).toEqual([command, command])
+  expect(wrapper!.text()).toContain('原修订发布已确认')
+})
+it('切换主体不查询原修订发布，切回保留原请求；失去发布权限不展示继续', async () => {
+  const [requestId] = await startFixedUnknown()
+  mocks.member = 'other'
+  wrapper!.unmount()
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain(requestId)
+  expect(mocks.fixedResult).not.toHaveBeenCalled()
+  mocks.member = 'user'
+  mocks.permissions = ['foundation.knowledge.read']
+  wrapper.unmount()
+  wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.text()).toContain(requestId)
+  expect(mocks.fixedResult).toHaveBeenCalledWith(requestId)
+  expect(button('继续原修订发布')).toBeUndefined()
+  expect(mocks.fixedPublish).toHaveBeenCalledTimes(1)
+})
+
+it('首次固定发布明确未派发拒绝清理记录，继续原操作相同拒绝仍保留原身份', async () => {
+  mocks.fixedPublish.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 422,
+      code: 'KNOWLEDGE_PUBLISH_PRE_DISPATCH_REJECTED',
+      userMessage: '未派发'
+    })
+  )
+  await startFixedUnknown()
+  expect(sessionStorage.length).toBe(0)
+  expect(button('核对原修订发布')).toBeUndefined()
+  expect(button('发布').props('disabled')).toBe(false)
+  await button('发布').trigger('click')
+  await flushPromises()
+  const command = mocks.fixedPublish.mock.calls[1]!
+  expect(wrapper!.text()).toContain(command[0])
+  mocks.fixedPublish.mockRejectedValueOnce(
+    new HttpClientError({
+      status: 422,
+      code: 'KNOWLEDGE_PUBLISH_PRE_DISPATCH_REJECTED',
+      userMessage: '本次未派发'
+    })
+  )
+  await button('继续原修订发布').trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain(command[0])
+  expect(sessionStorage.length).toBe(1)
+})
+it('原修订发布确认后当前状态读取失败保持刷新锁，仅重读不生成新请求', async () => {
+  const [requestId] = await startFixedUnknown()
+  mocks.fixedResult.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published' }
+  })
+  mocks.base.mockRejectedValueOnce(new Error('当前发布状态暂不可读'))
+  await button('核对原修订发布').trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain('原修订发布已确认')
+  expect(wrapper!.text()).toContain('当前发布状态尚未刷新')
+  expect(button('发布').props('disabled')).toBe(true)
+  expect(button('继续原修订发布')).toBeUndefined()
+  expect(sessionStorage.length).toBe(0)
+  mocks.revisions.mockResolvedValueOnce({
+    items: [{ ...ready, kb_id: 'kb-1', status: 'published' }]
+  })
+  await button('重新读取当前发布').trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('当前发布状态尚未刷新')
+  expect(mocks.fixedPublish).toHaveBeenCalledTimes(1)
+  expect(button('发布')).toBeUndefined()
+})
+it('切换知识库后旧固定发布POST迟到失败只认领反馈，不污染新页', async () => {
+  let reject!: (cause: Error) => void
+  mocks.fixedPublish.mockReturnValueOnce(
+    new Promise((_resolve, fail) => {
+      reject = fail
+    })
+  )
+  await startFixedUnknown()
+  routeState.params.id = 'kb-2'
+  await flushPromises()
+  const failure = new HttpClientError({ status: 503, userMessage: '旧知识库发布失败' })
+  const claimed = vi.spyOn(failure, 'claimFeedback')
+  reject(failure)
+  await flushPromises()
+  expect(claimed).toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('旧知识库发布失败')
+  expect(wrapper!.text()).not.toContain('发布结果尚未确认')
+})
+it('切换知识库后旧成功回执的后续GET迟到失败不污染新页', async () => {
+  const [requestId] = await startFixedUnknown()
+  mocks.fixedResult.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published' }
+  })
+  let reject!: (cause: Error) => void
+  mocks.base.mockReturnValueOnce(
+    new Promise((_resolve, fail) => {
+      reject = fail
+    })
+  )
+  await button('核对原修订发布').trigger('click')
+  await flushPromises()
+  routeState.params.id = 'kb-2'
+  await flushPromises()
+  const failure = new HttpClientError({ status: 503, userMessage: '旧当前状态读取失败' })
+  const claimed = vi.spyOn(failure, 'claimFeedback')
+  reject(failure)
+  await flushPromises()
+  expect(claimed).toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('旧当前状态读取失败')
+  expect(wrapper!.text()).not.toContain('当前发布状态尚未刷新')
+})
+
+it('原发布确认后两个状态GET同时失败，各自认领错误且只统一反馈一次', async () => {
+  const [requestId] = await startFixedUnknown()
+  mocks.fixedResult.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    revision: { ...ready, kb_id: 'kb-1', status: 'published' }
+  })
+  const baseFailure = new HttpClientError({ status: 503, userMessage: '当前库读取失败' })
+  const revisionFailure = new HttpClientError({ status: 503, userMessage: '当前修订读取失败' })
+  const claimedBase = vi.spyOn(baseFailure, 'claimFeedback')
+  const claimedRevision = vi.spyOn(revisionFailure, 'claimFeedback')
+  mocks.base.mockRejectedValueOnce(baseFailure)
+  mocks.revisions.mockRejectedValueOnce(revisionFailure)
+  await button('核对原修订发布').trigger('click')
+  await flushPromises()
+  expect(claimedBase).toHaveBeenCalledOnce()
+  expect(claimedRevision).toHaveBeenCalledOnce()
+  expect(wrapper!.text()).toContain('原修订发布已确认')
+  expect(wrapper!.text()).toContain('当前发布状态尚未刷新')
+  expect(button('发布').props('disabled')).toBe(true)
 })

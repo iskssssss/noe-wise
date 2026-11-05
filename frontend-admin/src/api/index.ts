@@ -1949,6 +1949,21 @@ export const api = {
         revision: String(revision),
         payload: { source_versions: sourceVersions, policy }
       }),
+    publishRevisionWithReceipt: (requestId: string, kbId: string, revision: number) =>
+      post<KnowledgePrepareAndPublishReceipt>(
+        '/knowledge/bases/revisions/publish-with-receipt',
+        {
+          request_id: requestId,
+          kb_id: kbId,
+          revision
+        },
+        { retryOnUnauthorized: false }
+      ),
+    publishRevisionResult: (requestId: string) =>
+      get<KnowledgePrepareAndPublishReceipt | undefined>(
+        `/knowledge/bases/revisions/publish-with-receipt/result?request_id=${encodeURIComponent(requestId)}`,
+        { silent: true }
+      ),
     publishRevision: (kbId: string, revision: number) =>
       post<KnowledgeBaseRevision>(`/knowledge/bases/revisions/publish`, {
         kb_id: kbId,

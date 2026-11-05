@@ -21,6 +21,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -32,9 +33,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 文档范围准备、能力发布及成功回执共同提交。 */
+/** 知识修订发布与成功回执共同提交；组合准备和独立发布共享原请求身份。 */
 @RestController
-@RequestMapping("/api/v1/knowledge/bases/revisions/prepare-and-publish")
+@RequestMapping("/api/v1/knowledge/bases/revisions")
 public class KnowledgeRevisionPublishController {
     public static final String PRE_DISPATCH_REJECTED = "KNOWLEDGE_PUBLISH_PRE_DISPATCH_REJECTED";
     private final FoundationAccess access;
@@ -53,7 +54,7 @@ public class KnowledgeRevisionPublishController {
         this.context = context; this.json = json; this.validator = validator; this.transactions = new TransactionTemplate(manager);
     }
 
-    @PostMapping
+    @PostMapping("/prepare-and-publish")
     public ApiResponse<Receipt> publish(@RequestBody Command command) {
         if (command == null || command.requestId() == null || command.kbId() == null || command.kbId() <= 0
                 || command.payload() == null || command.payload().sourceVersions() == null || command.payload().policy() == null
@@ -61,7 +62,6 @@ public class KnowledgeRevisionPublishController {
                 || command.payload().sourceVersions().stream().anyMatch(java.util.Objects::isNull))
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, PRE_DISPATCH_REJECTED, "知识库发布请求参数无效", false);
         String tenantId = TenantIds.requireTenantId();
-        long tenant = Long.parseLong(tenantId);
         FoundationAccess.Subject subject;
         try {
             access.require("foundation.knowledge.create");
@@ -74,37 +74,71 @@ public class KnowledgeRevisionPublishController {
         } catch (ApiException failure) {
             throw new ApiException(failure.getStatus(), PRE_DISPATCH_REJECTED, String.valueOf(failure.getDetail()), false);
         }
-        String fingerprint = fingerprint(command);
+        return execute(command.requestId(), command.kbId(), subject.memberId(), fingerprint(command), () -> {
+            var ready = revisions.prepare(tenantId, command.kbId(), command.payload().sourceVersions(), command.payload().policy());
+            return revisions.publish(tenantId, command.kbId(), ready.revision());
+        });
+    }
+
+    /** 已准备修订只要求发布权限，不重复准备或新增修订。 */
+    @PostMapping("/publish-with-receipt")
+    public ApiResponse<Receipt> publish(@RequestBody SavedCommand command) {
+        if (command == null || command.requestId() == null || command.kbId() == null || command.kbId() <= 0
+                || command.revision() == null || command.revision() <= 0)
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, PRE_DISPATCH_REJECTED, "知识修订发布请求参数无效", false);
+        String tenantId = TenantIds.requireTenantId();
+        FoundationAccess.Subject subject;
+        try {
+            access.require("foundation.knowledge.publish");
+            subject = access.currentSubject();
+            if (subject.platform() || !tenantId.equals(subject.tenantId()))
+                throw new ApiException(HttpStatus.FORBIDDEN, "机构身份与当前租户不匹配");
+            management.requireBase(tenantId, command.kbId(), "manage");
+        } catch (ApiException failure) {
+            throw new ApiException(failure.getStatus(), PRE_DISPATCH_REJECTED, String.valueOf(failure.getDetail()), false);
+        }
+        String fingerprint;
+        try {
+            byte[] input = json.writeValueAsBytes(List.of("knowledge.revision.publish.v1", command.kbId(), command.revision()));
+            fingerprint = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input));
+        } catch (NoSuchAlgorithmException | JsonProcessingException failure) {
+            throw new IllegalStateException("知识修订发布请求无法编码", failure);
+        }
+        return execute(command.requestId(), command.kbId(), subject.memberId(), fingerprint,
+                () -> revisions.publish(tenantId, command.kbId(), command.revision()));
+    }
+
+    private ApiResponse<Receipt> execute(UUID requestId, long kbId, String actor, String fingerprint,
+            Supplier<KnowledgeBaseRevisionResponse> publication) {
+        long tenant = Long.parseLong(TenantIds.requireTenantId());
         Receipt previous = transactions.execute(status -> {
             context.bindTenant(tenant);
-            if (receipts.claim(tenant, command.requestId().toString(), command.kbId(), subject.memberId(), fingerprint) == 1)
+            if (receipts.claim(tenant, requestId.toString(), kbId, actor, fingerprint) == 1)
                 return null;
-            var row = receipts.find(tenant, command.requestId().toString());
-            if (row == null || !subject.memberId().equals(row.actorRef()) || !fingerprint.equals(row.fingerprint()))
+            var row = receipts.find(tenant, requestId.toString());
+            if (row == null || !actor.equals(row.actorRef()) || !fingerprint.equals(row.fingerprint()))
                 throw new ApiException(HttpStatus.CONFLICT, "知识库发布请求标识已用于不同参数或操作人");
-            return receipt(command.requestId(), row);
+            return receipt(requestId, row);
         });
         if (previous != null) return ApiResponses.wrap(previous);
         try {
             Receipt result = transactions.execute(status -> {
                 context.bindTenant(tenant);
-                var ready = revisions.prepare(tenantId, command.kbId(), command.payload().sourceVersions(), command.payload().policy());
-                var published = revisions.publish(tenantId, command.kbId(), ready.revision());
-                var success = new Receipt(command.requestId(), "SUCCEEDED", published, null);
+                var success = new Receipt(requestId, "SUCCEEDED", publication.get(), null);
                 complete(tenant, success);
                 return success;
             });
             return ApiResponses.wrap(result);
         } catch (ApiException failure) {
             if (!failure.getStatus().is4xxClientError()) throw failure;
-            var rejected = new Receipt(command.requestId(), "REJECTED", null, String.valueOf(failure.getDetail()));
+            var rejected = new Receipt(requestId, "REJECTED", null, String.valueOf(failure.getDetail()));
             transactions.executeWithoutResult(status -> { context.bindTenant(tenant); complete(tenant, rejected); });
             return ApiResponses.wrap(rejected);
         }
     }
 
     /** 204 只表示没有可见回执，不证明操作失败。 */
-    @GetMapping("/result")
+    @GetMapping("/prepare-and-publish/result")
     public ResponseEntity<ApiResponse<Receipt>> result(@RequestParam UUID requestId) {
         String tenantId = TenantIds.requireTenantId();
         long tenant = Long.parseLong(tenantId);
@@ -120,6 +154,11 @@ public class KnowledgeRevisionPublishController {
             return receipt(requestId, row);
         });
         return result == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(ApiResponses.wrap(result));
+    }
+
+    @GetMapping("/publish-with-receipt/result")
+    public ResponseEntity<ApiResponse<Receipt>> savedResult(@RequestParam("request_id") UUID requestId) {
+        return result(requestId);
     }
 
     private void complete(long tenant, Receipt receipt) {
@@ -147,6 +186,8 @@ public class KnowledgeRevisionPublishController {
     }
     public record Command(@JsonProperty("request_id") UUID requestId, @JsonProperty("kb_id") Long kbId,
             MarkKnowledgeBaseRevisionReadyRequest payload) { }
+    public record SavedCommand(@JsonProperty("request_id") UUID requestId, @JsonProperty("kb_id") Long kbId,
+            Long revision) { }
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Receipt(@JsonProperty("request_id") UUID requestId, String status,
             KnowledgeBaseRevisionResponse revision, @JsonProperty("error_message") String errorMessage) { }
