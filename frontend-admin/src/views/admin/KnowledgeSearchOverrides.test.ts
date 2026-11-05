@@ -1,29 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElInput, ElInputNumber, ElSelect, ElSwitch } from 'element-plus'
+import { ElButton, ElDialog, ElInput, ElInputNumber, ElSelect, ElSwitch } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
   search: vi.fn(),
   base: vi.fn(),
   document: vi.fn(),
+  documentVersion: vi.fn(),
   user: null as null | { permissions: string[] }
 }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({ user: mocks.user, identityVersion: 0 })
 }))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'test-session',
   api: {
     knowledge: {
       getBase: mocks.base,
       listRevisions: async () => ({ items: [] }),
       listDocuments: async () => ({ items: [], total: 0 }),
       getDocument: mocks.document,
+      documentVersion: mocks.documentVersion,
       search: mocks.search
     },
     settings: { availableModels: async () => [] }
   },
-  get: async () => ({ status: 'IDLE' }),
+  get: async () => ({ status: 'IDLE', kb_id: 'kb-1', job_id: null }),
   post: vi.fn()
 }))
 vi.mock('vue-router', () => ({
@@ -37,7 +40,7 @@ vi.mock('@skillforge/shared/components/CodeEditor.vue', () => ({
 let wrapper: VueWrapper
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.user = null
+  mocks.user = { permissions: ['foundation.knowledge.read'] }
   mocks.base.mockResolvedValue({
     id: 'kb-1',
     name: '知识库',
@@ -46,7 +49,9 @@ beforeEach(() => {
     score_threshold_enabled: true
   })
   mocks.search.mockResolvedValue({
-    items: [{ chunk_id: 'c1', document_id: 'd1', content: '检索结果', score: 0.8 }]
+    items: [
+      { chunk_id: 'c1', document_id: 'd1', source_version: 'v1', content: '检索结果', score: 0.8 }
+    ]
   })
   mocks.document.mockResolvedValue({
     id: 'd1',
@@ -157,7 +162,12 @@ describe('知识检索仅本次参数覆盖', () => {
     })
     select('本次检索方式').vm.$emit('update:modelValue', 'full_text')
     await flushPromises()
-    expect(wrapper.find('details').text()).toContain('hybrid')
+    expect(
+      wrapper
+        .findAll('details')
+        .find((item) => item.text().includes('本次已提交参数'))!
+        .text()
+    ).toContain('hybrid')
     await submit()
     expect(mocks.search).toHaveBeenLastCalledWith({
       kb_id: 'kb-1',
@@ -193,8 +203,83 @@ describe('知识检索仅本次参数覆盖', () => {
     await submit()
     expect(wrapper.text()).toContain('检索结果')
     expect(wrapper.text()).toContain('上次成功检索的问题：测试问题')
-    expect(wrapper.find('details').text()).toContain('全文检索（经济索引）')
+    expect(
+      wrapper
+        .findAll('details')
+        .find((item) => item.text().includes('本次已提交参数'))!
+        .text()
+    ).toContain('全文检索（经济索引）')
     await submit()
     expect(wrapper.text()).toContain('上次成功检索的问题：新问题')
+  })
+})
+
+describe('检索结果精确来源只读查看', () => {
+  it('按结果来源版本读取历史正文，保留当前文档编辑入口', async () => {
+    mocks.user = { permissions: ['foundation.knowledge.read'] }
+    mocks.documentVersion.mockResolvedValue({
+      document_id: 'd1',
+      kb_id: 'kb-1',
+      source_version: 'v1',
+      title: '历史来源',
+      content: '历史原文'
+    })
+    await open()
+    await submit()
+    expect(wrapper.text()).toContain('来源版本 v1')
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '查看本次来源')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.documentVersion).toHaveBeenCalledExactlyOnceWith('d1', 'v1')
+    expect(mocks.document).not.toHaveBeenCalled()
+    const dialog = wrapper.findComponent(ElDialog)
+    expect(dialog.props('title')).toBe('本次来源文档')
+    expect(dialog.text()).toContain('历史原文')
+    expect(dialog.find('textarea').exists()).toBe(false)
+    expect(
+      wrapper.findAllComponents(ElButton).some((button) => button.text() === '查看当前来源文档')
+    ).toBe(true)
+  })
+  it('历史读取失败只重试同一版本，不回退当前正文', async () => {
+    mocks.user = { permissions: ['foundation.knowledge.read'] }
+    mocks.documentVersion.mockRejectedValueOnce(new Error('历史来源不可用')).mockResolvedValueOnce({
+      document_id: 'd1',
+      kb_id: 'kb-1',
+      source_version: 'v1',
+      title: '历史来源',
+      content: '重读历史原文'
+    })
+    await open()
+    await submit()
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '查看本次来源')!
+      .trigger('click')
+    await flushPromises()
+    const dialog = wrapper.findComponent(ElDialog)
+    expect(dialog.text()).toContain('历史来源不可用')
+    expect(mocks.document).not.toHaveBeenCalled()
+    await dialog
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '重新读取本次来源')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.documentVersion.mock.calls).toEqual([
+      ['d1', 'v1'],
+      ['d1', 'v1']
+    ])
+    expect(dialog.text()).toContain('重读历史原文')
+    expect(mocks.document).not.toHaveBeenCalled()
+  })
+  it('没有知识读取权限时不显示来源读取入口', async () => {
+    mocks.user = null
+    await open()
+    await submit()
+    expect(
+      wrapper.findAllComponents(ElButton).some((button) => button.text() === '查看本次来源')
+    ).toBe(false)
+    expect(mocks.documentVersion).not.toHaveBeenCalled()
   })
 })

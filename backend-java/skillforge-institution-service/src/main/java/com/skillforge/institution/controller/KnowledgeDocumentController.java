@@ -99,6 +99,18 @@ public class KnowledgeDocumentController {
         return ApiResponses.wrap(knowledgeService.getDocument(TenantIds.requireTenantId(), docId));
     }
 
+    @Operation(summary = "读取精确来源原文", description = "只读历史正文；不存在时返回 404，不回退当前版本")
+    @RequirePermission("foundation.knowledge.read")
+    @GetMapping("/documents/version")
+    public ApiResponse<com.skillforge.core.knowledge.dto.response.DocumentVersionResponse> getDocumentSource(
+            @RequestParam("docId") Long docId,
+            @RequestParam("sourceVersion") @jakarta.validation.constraints.NotBlank String sourceVersion) {
+        management.requireDocument(TenantIds.requireTenantId(), docId, "read");
+        var version = knowledgeService.getDocumentVersion(TenantIds.requireTenantId(), docId, sourceVersion);
+        return ApiResponses.wrap(new com.skillforge.core.knowledge.dto.response.DocumentVersionResponse(
+                version.id(), version.kbId(), version.sourceVersion(), version.title(), version.content()));
+    }
+
     /**
      * 更新文档：仅标题不触分块；传 content 时按知识库分段参数重新分块并重算向量。
      *

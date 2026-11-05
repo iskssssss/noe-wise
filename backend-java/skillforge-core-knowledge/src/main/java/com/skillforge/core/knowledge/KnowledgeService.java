@@ -699,7 +699,17 @@ public class KnowledgeService {
      */
     public DocumentDetailResponse getDocument(String tenantId, Long docId) {
         KnowledgeDocumentDO document = requireDocument(tenantId, docId);
-        KnowledgeDocumentVersionDO version = requireVersion(tenantId, document.getId(), document.getCurrentSourceVersion());
+        return documentDetail(document, requireVersion(tenantId, document.getId(), document.getCurrentSourceVersion()));
+    }
+
+    /** 读取精确来源正文；历史不存在时明确失败，不替换为当前版本。 */
+    public DocumentDetailResponse getDocumentVersion(String tenantId, Long docId, String sourceVersion) {
+        KnowledgeDocumentDO document = requireDocument(tenantId, docId);
+        KnowledgeDocumentVersionDO version = requireVersion(tenantId, document.getId(), sourceVersion);
+        return documentDetail(document, version);
+    }
+
+    private DocumentDetailResponse documentDetail(KnowledgeDocumentDO document, KnowledgeDocumentVersionDO version) {
         return new DocumentDetailResponse(document.getId(), document.getKbId(), version.getTitle(),
                 version.getSourceType(), version.getStatus(), version.getSourceVersion(), version.getContent(),
                 version.getOriginalFilename(), version.getExtension(), version.getSizeBytes(), version.getParsedBy(),

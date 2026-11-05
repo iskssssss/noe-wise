@@ -120,12 +120,32 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             String actualRun="run:"+runId;
             try {
                 var capture=postSse(chatPayload(script.prompt()));
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null) Files.writeString(evidence.resolve("knowledge-runtime-sse.txt"), capture.raw());
                 assertEquals(200,capture.statusCode());assertTrue(capture.events().contains("execution.completed"),capture.raw());assertFalse(capture.events().contains("error"),capture.raw());
                 assertTrue(capture.raw().contains(script.finalAnswer()),capture.raw());
                 assertEquals(2,script.snapshot().requestCount());assertFalse(script.snapshot().verifiedKnowledgeItemIds().isEmpty());
                 assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND agent_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenantId,actualRun,agentId,sessionId));
                 var selected=queryRows(jdbc,tenantId,"SELECT request.schema_id AS request_schema,request.canonical_json AS request_json,result.schema_id AS result_schema,result.canonical_json AS result_json FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id AND t.attempt_id=a.selected_attempt JOIN agent_runtime_execution_materials request ON request.tenant_id=a.tenant_id AND request.reference=a.request_ref JOIN agent_runtime_execution_materials result ON result.tenant_id=t.tenant_id AND result.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='KNOWLEDGE' AND a.status='SUCCEEDED' AND t.adopted AND t.result_kind='SUCCEEDED'",tenantId,actualRun);
                 assertEquals(1,selected.size());var row=selected.getFirst();var properties=applicationContext.getBean(AgentRuntimeProperties.class);
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null) {
+                    Files.writeString(evidence.resolve("knowledge-runtime-materials.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(selected));
+                    com.fasterxml.jackson.databind.JsonNode finalMessage = null;
+                    for (String line : capture.raw().split("\\R")) {
+                        if (!line.startsWith("data:")) continue;
+                        var event = objectMapper.readTree(line.substring(5));
+                        if (event.path("citations").isArray() && !event.path("citations").isEmpty()) finalMessage = event;
+                    }
+                    assertNotNull(finalMessage, "最终公开消息应保留知识引用元数据");
+                    Files.writeString(evidence.resolve("knowledge-runtime-message.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(finalMessage));
+                    var citation = finalMessage.path("citations").get(0);
+                    assertEquals(published.sourceVersion(), citation.path("source_version").asText());
+                    var citationResponse = get("/api/v1/chat/citations/content?session_id=" + sessionId + "&message_id=" + java.net.URLEncoder.encode(finalMessage.path("message_id").asText(), java.nio.charset.StandardCharsets.UTF_8) + "&citation_id=" + citation.path("citation_id").asText());
+                    assertEquals(200, citationResponse.statusCode(), citationResponse.body());
+                    assertEquals(published.sourceVersion(), successData(citationResponse).path("source_version").asText());
+                    assertTrue(successData(citationResponse).path("text").asText().contains(sentinel));
+                    assertFalse(successData(citationResponse).path("text").asText().contains("UPDATED_CURRENT_SOURCE_"));
+                    Files.writeString(evidence.resolve("knowledge-runtime-citation.json"), citationResponse.body());
+                }
                 var codec=new AgentExecutionCodec(new CodecLimits(properties.getMaxPayloadCodeUnits(),properties.getMaxPayloadNodes(),properties.getMaxPayloadDepth()));
                 var request=codec.decodeKnowledgeRequest(new TypedPayload(row.get("request_schema").toString(),row.get("request_json").toString()));
                 assertEquals(query, assertInstanceOf(com.skillforge.runtime.api.KnowledgeOperation.Search.class, request.request().operation()).query());

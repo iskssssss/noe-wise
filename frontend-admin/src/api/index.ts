@@ -443,6 +443,21 @@ export interface KnowledgeDocumentDetail extends Omit<KnowledgeDocumentItem, 'ch
   size_bytes?: number | null
   parsed_by?: string | null
 }
+export interface KnowledgeDocumentVersion {
+  document_id: string
+  kb_id: string
+  source_version: string
+  title: string
+  content: string
+}
+export interface KnowledgeSearchItem {
+  content: string
+  score: number
+  chunk_id: string
+  document_id: string
+  source_version: string
+  vector_score?: number | null
+}
 export interface KnowledgeBaseRevision {
   id: string
   kb_id: string
@@ -1964,6 +1979,10 @@ export const api = {
       ),
     getDocument: (id: string) =>
       get<KnowledgeDocumentDetail>(`/knowledge/documents/detail?docId=${encodeURIComponent(id)}`),
+    documentVersion: (documentId: string, sourceVersion: string) =>
+      get<KnowledgeDocumentVersion>(
+        `/knowledge/documents/version?${new URLSearchParams({ docId: documentId, sourceVersion })}`
+      ),
     updateDocument: (id: string, expectedSourceVersion: string, data: Record<string, unknown>) =>
       patch<KnowledgeDocumentDetail>(`/knowledge/documents/update`, {
         doc_id: id,
@@ -1999,13 +2018,7 @@ export const api = {
       }),
     search: (data: KnowledgeSearchParams) =>
       post<{
-        items: Array<{
-          content: string
-          score: number
-          chunk_id: string
-          document_id: string
-          vector_score?: number | null
-        }>
+        items: KnowledgeSearchItem[]
       }>('/knowledge/search', data)
   },
 

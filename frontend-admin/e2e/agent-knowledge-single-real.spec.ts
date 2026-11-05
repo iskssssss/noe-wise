@@ -268,6 +268,108 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
       JSON.stringify(emptyJourney, null, 2)
     )
   }
+  if (process.env.E2E_KNOWLEDGE_HISTORY) {
+    const candidate = process.env.E2E_KNOWLEDGE_HISTORY === 'candidate'
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.getByRole('tab', { name: '检索验证', exact: true }).click()
+    await page.getByLabel('检索问题', { exact: true }).fill(required('E2E_KNOWLEDGE_QUERY'))
+    const searched = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/v1/knowledge/search'
+    )
+    await page.getByRole('button', { name: '检索', exact: true }).click()
+    const searchResponse = await searched
+    expect(searchResponse.status()).toBe(200)
+    const search = await searchResponse.json()
+    expect(search.data.items).toHaveLength(1)
+    const original = search.data.items[0]
+    if (candidate) expect(original.source_version).toBe(required('E2E_KNOWLEDGE_SOURCE_VERSION'))
+    await writeFile(
+      join(evidence, 'knowledge-history-search-response.json'),
+      JSON.stringify(search, null, 2)
+    )
+    const changedContent = 'UPDATED_CURRENT_SOURCE_' + required('E2E_KNOWLEDGE_SENTINEL')
+    const changed = await page.evaluate(
+      async ({ documentId, sourceVersion, content }) => {
+        const response = await fetch('/api/v1/knowledge/documents/update', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}`
+          },
+          body: JSON.stringify({
+            doc_id: documentId,
+            payload: { title: '历史引用核验文档', content, expected_source_version: sourceVersion }
+          })
+        })
+        return { status: response.status, body: await response.json() }
+      },
+      {
+        documentId: required('E2E_KNOWLEDGE_DOCUMENT'),
+        sourceVersion: required('E2E_KNOWLEDGE_SOURCE_VERSION'),
+        content: changedContent
+      }
+    )
+    expect(changed.status).toBe(200)
+    expect(changed.body.data.source_version).not.toBe(required('E2E_KNOWLEDGE_SOURCE_VERSION'))
+    let historical: unknown
+    if (candidate) {
+      const loaded = page.waitForResponse(
+        (response) => new URL(response.url()).pathname === '/api/v1/knowledge/documents/version'
+      )
+      await page.getByRole('button', { name: '查看本次来源', exact: true }).click()
+      const response = await loaded
+      expect(response.status()).toBe(200)
+      expect(new URL(response.url()).searchParams.get('sourceVersion')).toBe(
+        original.source_version
+      )
+      const body = await response.json()
+      expect(body.data.source_version).toBe(original.source_version)
+      expect(body.data.content).toContain(original.content)
+      expect(body.data.content).not.toContain('UPDATED_CURRENT_SOURCE_')
+      const sourceDialog = page.getByRole('dialog', { name: '本次来源文档', exact: true })
+      await expect(sourceDialog).toContainText(original.source_version)
+      await expect(sourceDialog).toContainText(original.content)
+      await expect(sourceDialog).not.toContainText(changedContent)
+      await expect(sourceDialog.getByRole('button', { name: '保存原文', exact: true })).toHaveCount(
+        0
+      )
+      historical = {
+        body,
+        visible: await sourceDialog.innerText(),
+        buttons: await sourceDialog.getByRole('button').allTextContents()
+      }
+      await page.screenshot({
+        path: join(evidence, 'knowledge-history-exact-source.png'),
+        fullPage: true
+      })
+      await sourceDialog.locator('.el-dialog__headerbtn').click()
+    }
+    const detail = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/v1/knowledge/documents/detail'
+    )
+    await page.getByRole('button', { name: '查看当前来源文档', exact: true }).click()
+    const current = await (await detail).json()
+    expect(current.data.content).toBe(changedContent)
+    const dialog = page.getByRole('dialog', { name: '历史引用核验文档', exact: true })
+    await expect(dialog.locator('.cm-content')).toContainText(changedContent)
+    const visible = await dialog.innerText()
+    const buttons = await dialog.getByRole('button').allTextContents()
+    await page.screenshot({
+      path: join(evidence, 'knowledge-history-current-source.png'),
+      fullPage: true
+    })
+    await writeFile(
+      join(evidence, 'knowledge-history-source.json'),
+      JSON.stringify(
+        { search, changed, current, visible, buttons, historical, v2Published: false },
+        null,
+        2
+      )
+    )
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  }
   if (process.env.E2E_KNOWLEDGE_CASE) {
     const mode = process.env.E2E_KNOWLEDGE_CASE
     const searchQuery = required('E2E_KNOWLEDGE_QUERY')

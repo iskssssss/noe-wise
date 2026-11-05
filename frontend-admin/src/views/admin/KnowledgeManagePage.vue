@@ -440,11 +440,18 @@
           </p>
           <pre class="search-request">{{ JSON.stringify(lastSearchRequest, null, 2) }}</pre>
         </details>
-        <ElCard v-for="(item, index) in results" :key="item.chunk_id" style="margin-top: 16px"
+        <ElCard
+          v-for="(item, index) in results"
+          :key="`${item.source_version}:${item.chunk_id}`"
+          style="margin-top: 16px"
           ><div class="muted">
-            结果 {{ index + 1 }} · 得分 {{ item.score }} · 文档 {{ item.document_id }}
+            结果 {{ index + 1 }} · 得分 {{ item.score }} · 文档 {{ item.document_id }} · 来源版本
+            {{ item.source_version }}
           </div>
           <p class="readable">{{ item.content }}</p>
+          <ElButton v-if="can('foundation.knowledge.read')" link @click="viewSearchSource(item)"
+            >查看本次来源</ElButton
+          >
           <ElButton
             v-if="can('foundation.knowledge.read')"
             link
@@ -667,6 +674,22 @@
         </div></ElTabPane
       ></ElTabs
     >
+    <ElDialog v-model="searchSourceOpen" title="本次来源文档" @closed="clearSearchSource">
+      <p v-if="searchSourceTarget" class="admin-muted">
+        文档 {{ searchSourceTarget.document_id }} · 来源版本 {{ searchSourceTarget.source_version }}
+      </p>
+      <p v-if="searchSource.loading.value" role="status">正在读取本次来源…</p>
+      <p v-if="searchSource.error.value" role="status">
+        本次来源读取失败：{{ searchSource.error.value }}
+        <ElButton :disabled="searchSource.loading.value" @click="searchSource.reload()"
+          >重新读取本次来源</ElButton
+        >
+      </p>
+      <template v-if="searchSource.data.value">
+        <h3>{{ searchSource.data.value.title }}</h3>
+        <p class="readable">{{ searchSource.data.value.content }}</p>
+      </template>
+    </ElDialog>
     <ElDrawer
       v-model="preparationOpen"
       title="准备知识发布"
@@ -955,6 +978,7 @@ import {
   type KnowledgePrepareAndPublishReceipt,
   type KnowledgeUploadReceipt,
   type KnowledgeSearchParams,
+  type KnowledgeSearchItem,
   type ModelSummary
 } from '../../api'
 import {
@@ -1814,9 +1838,28 @@ const query = ref(''),
   sourceVersion = ref(''),
   lastSearchRequest = ref<KnowledgeSearchParams>(),
   lastSearchMode = ref(''),
-  results = ref<Array<{ content: string; score: number; chunk_id: string; document_id: string }>>(
-    []
-  )
+  results = ref<KnowledgeSearchItem[]>([])
+const searchSourceOpen = ref(false)
+const searchSourceTarget = ref<KnowledgeSearchItem>()
+const searchSource = useResource(async () => {
+  const target = searchSourceTarget.value!
+  return api.knowledge.documentVersion(target.document_id, target.source_version)
+})
+function clearSearchSource() {
+  searchSource.invalidate()
+  searchSource.data.value = undefined
+  searchSourceTarget.value = undefined
+}
+async function viewSearchSource(item: KnowledgeSearchItem) {
+  clearSearchSource()
+  searchSourceTarget.value = item
+  searchSourceOpen.value = true
+  await searchSource.reload()
+}
+watch([id, () => auth.identityVersion], () => {
+  searchSourceOpen.value = false
+  clearSearchSource()
+})
 const effectiveIndexingMode = computed(
   () => base.value?.effective_indexing_mode ?? base.value?.indexing_mode
 )

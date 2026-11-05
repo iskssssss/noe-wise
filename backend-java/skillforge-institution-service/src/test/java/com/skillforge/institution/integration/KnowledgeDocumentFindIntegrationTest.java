@@ -96,6 +96,36 @@ class KnowledgeDocumentFindIntegrationTest extends AbstractIntegrationTest {
         assertFalse(page.path("items").get(0).has("embedding"));
     }
 
+    @Test void exactSourceReadsOldBodyWithoutFallingBackAndKeepsReadAuthority() throws Exception {
+        var original = upload("旧版本标题");
+        TenantContext.setTenantId(tenant);
+        try { knowledge.updateDocument(tenant, original.documentId(), "新版本标题", "新版本正文", original.sourceVersion()); }
+        finally { TenantContext.clear(); }
+        String url = "/api/v1/knowledge/documents/version?docId=" + original.documentId()
+                + "&sourceVersion=" + original.sourceVersion();
+        var historical = ok("GET", url, null, token);
+        assertEquals(original.sourceVersion(), historical.path("source_version").asText());
+        assertEquals("旧版本标题", historical.path("title").asText());
+        assertEquals("受控读取定位材料", historical.path("content").asText());
+        assertEquals(original.documentId().toString(), historical.path("document_id").asText());
+        assertEquals(kb, historical.path("kb_id").asText());
+        var hits = ok("POST", "/api/v1/knowledge/search", Map.of("kb_id", kb,
+                "query", "受控读取", "source_version", original.sourceVersion()), token).path("items");
+        assertFalse(hits.isEmpty());
+        assertEquals(original.sourceVersion(), hits.get(0).path("source_version").asText());
+        assertEquals(404, request("GET", url.replace(original.sourceVersion(), "missing-source"), null, token).statusCode());
+        var other = upload("另一文档");
+        assertEquals(404, request("GET", url.replace("docId=" + original.documentId(), "docId=" + other.documentId()), null, token).statusCode());
+        assertEquals(401, request("GET", url, null, null).statusCode());
+        String otherSlug = "version-other-" + SnowflakeIds.nextId();
+        String otherTenant = createTenant(tenants, plans, otherSlug);
+        TenantContext.setTenantId(otherTenant);
+        try { createTestTenantAdministrator(otherTenant, "other-admin", PASSWORD); }
+        finally { TenantContext.clear(); }
+        int denied = request("GET", url, null, login(otherSlug, "other-admin")).statusCode();
+        assertTrue(denied == 403 || denied == 404);
+    }
+
     @Test void onlyCurrentNondeletedDocumentsMatchAndReadScopesStillApply() throws Exception {
         var old = upload("prior-title");
         TenantContext.setTenantId(tenant);

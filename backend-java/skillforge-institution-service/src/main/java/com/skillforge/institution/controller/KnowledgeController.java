@@ -242,7 +242,7 @@ public class KnowledgeController {
         int topK = request.topK() == null ? 0 : request.topK();
         var hits = knowledgeService.search(TenantIds.requireTenantId(), request.kbId(), request.query(), topK, request);
         return ApiResponses.wrap(new KnowledgeSearchResponse(hits.stream().map(hit ->
-                new KnowledgeSearchItemResponse(hit.content(), hit.score(), hit.vectorScore(), hit.chunkId(), hit.documentId())).toList()));
+                new KnowledgeSearchItemResponse(hit.content(), hit.score(), hit.vectorScore(), hit.chunkId(), hit.documentId(), hit.sourceVersion())).toList()));
     }
 
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */
