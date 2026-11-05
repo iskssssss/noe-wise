@@ -1910,6 +1910,8 @@ async function search() {
       ? '全文检索（经济索引）'
       : request.retrieval_mode || '沿用知识库设置'
     searched.value = true
+    if (response.rerank_status === 'DEGRADED')
+      message.warning('重排暂不可用，本次结果按原检索顺序返回。')
   })
 }
 const preparationOpen = ref(false),

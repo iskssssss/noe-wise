@@ -22,7 +22,12 @@ class DeterministicModelCatalogConfiguration {
                 Availability.SUPPORTED, null, EndpointMode.CUSTOM, null, List.of(protocol),
                 ServiceRegion.CHINA_MAINLAND, Set.of(ModelKind.LLM));
         ModelProvider fixture = () -> new ProviderPreset("custom", "本地确定性模型",
-                ProviderCategory.CUSTOM_OR_SELF_HOSTED, List.of(service));
+                ProviderCategory.CUSTOM_OR_SELF_HOSTED, List.of(service, new ServiceProfile(
+                        "custom-rerank", "本地确定性重排", "custom-v1",
+                        Availability.SUPPORTED, null, EndpointMode.CUSTOM, null,
+                        List.of(new ProtocolProfile(ModelProtocol.OPENAI_RERANK, "openai-rerank-v1",
+                                Set.of(AuthenticationScheme.BEARER_API_KEY), capabilities, VerificationStatus.VERIFIED)),
+                        ServiceRegion.CHINA_MAINLAND, Set.of(ModelKind.RERANK))));
         return new ModelProviderCatalog(List.of(fixture, new DeepSeekModelProvider()));
     }
 }

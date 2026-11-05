@@ -20,6 +20,7 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /** 唯一知识来源的真实页面挂载与同一 Agent 检索验收。 */
 class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
+    @org.springframework.beans.factory.annotation.Autowired com.skillforge.core.model.PlatformModelCatalogService rerankCatalog;
     private static final KnowledgeBrowserServer FRONTEND=KnowledgeBrowserServer.startIsolated("agent-knowledge-single-");
     @DynamicPropertySource static void browserOrigin(DynamicPropertyRegistry registry) {
         registry.add("skillforge.web.allowed-origins", FRONTEND::baseUrl);
@@ -38,9 +39,11 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
         String query = caseSearch ? sentinel.toLowerCase(java.util.Locale.ROOT) : sentinel;
         Path evidence=Path.of("build","runtime-e2e","agent-knowledge-single-"+SnowflakeIds.nextId()).toAbsolutePath();
         Path browser=evidence.resolve("playwright");Files.createDirectories(browser);
-        try(var model=new RuntimeExecutionWorkloadProvider(objectMapper)) {
+        try(var model=new RuntimeExecutionWorkloadProvider(objectMapper);
+            var rerank=System.getenv("E2E_KNOWLEDGE_RERANK") == null ? null : new KnowledgeRerankFixture(rerankCatalog,tenantId)) {
             model.start();TenantContext.setTenantId(tenantId);
             try {configureTenantModel(model.endpoint());} finally {TenantContext.clear();}
+            if(rerank!=null) rerank.select(rerankCatalog,tenantId);
             var published=new RuntimeExecutionKnowledgeFixture(objectMapper,httpClient,baseUrl(),accessToken).publish(runId,sentinel);
             if (topKExperiment) {
                 var configured = send("/api/v1/knowledge/bases/update", "PATCH", Map.of("kb_id", published.kbId(),
@@ -79,6 +82,7 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             env.put("E2E_AGENT_ID",agentId);env.put("E2E_KNOWLEDGE_ID",published.kbId());env.put("E2E_KNOWLEDGE_NAME","execution-knowledge-"+runId);
             env.put("E2E_KNOWLEDGE_REVISION",Long.toString(published.revisionId()));env.put("E2E_KNOWLEDGE_DEFINITION",Long.toString(published.definitionId()));env.put("E2E_KNOWLEDGE_VERSION",Long.toString(published.capabilityVersionId()));
             env.put("E2E_KNOWLEDGE_DOCUMENT", published.documentId()); env.put("E2E_KNOWLEDGE_QUERY", query); env.put("E2E_KNOWLEDGE_SENTINEL", sentinel); env.put("E2E_KNOWLEDGE_SOURCE_VERSION", published.sourceVersion());
+            if(rerank!=null) env.put("E2E_RERANK_CONTROL",rerank.endpoint());
             env.remove("SDK4_LIVE_MODEL_KEY");env.remove("E2E_LIVE_MODEL");
             Process process=command.start();
             try(var owned=new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -87,11 +91,18 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
                 owned.capture();assertFalse(process.isAlive(),"浏览器验收超时："+evidence);
                 String output=Files.readString(evidence.resolve("playwright.log"));
                 if(process.exitValue()!=0) {
+                    if(rerank!=null) Files.writeString(evidence.resolve("rerank-failure-facts.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                            "calls",rerank.calls.get(),"invocations",queryRows(jdbc,tenantId,"SELECT invocation_id,operation_type,status,error_code FROM nw_external_invocations WHERE tenant_id=CAST(? AS bigint) ORDER BY started_at LIMIT 20",tenantId))));
                     var state=Map.of("mounts",queryRows(jdbc,tenantId,"SELECT id AS mount_id,capability_definition_id,capability_version_id FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint)",tenantId,agentId),
                             "runs",queryRows(jdbc,tenantId,"SELECT run_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND agent_id=?",tenantId,agentId));
                     Files.writeString(evidence.resolve("knowledge-browser-failure-state.json"),objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(state));
                 }
                 assertEquals(0,process.exitValue(),"浏览器验收失败："+evidence+"\n"+output);
+                if(rerank!=null) {
+                    assertEquals(2,rerank.calls.get(),"正常和503各派发一次；关闭重排与空候选不应派发");
+                    Files.writeString(evidence.resolve("rerank-http-facts.json"),objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                            "calls",rerank.calls.get(),"invocations",queryRows(jdbc,tenantId,"SELECT invocation_id,operation_type,status,error_code FROM nw_external_invocations WHERE tenant_id=CAST(? AS bigint) ORDER BY started_at LIMIT 20",tenantId))));
+                }
             }
             var facts=objectMapper.readTree(Files.readString(browser.resolve("agent-knowledge-single.json")));
             var mount=facts.path("mount");String mountId=mount.path("mount_id").asText();assertFalse(mountId.isBlank());
@@ -120,14 +131,14 @@ class AgentKnowledgeSingleBrowserE2ETest extends ChatExecutionChainE2ETest {
             String actualRun="run:"+runId;
             try {
                 var capture=postSse(chatPayload(script.prompt()));
-                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null) Files.writeString(evidence.resolve("knowledge-runtime-sse.txt"), capture.raw());
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null) Files.writeString(evidence.resolve("knowledge-runtime-sse.txt"), capture.raw());
                 assertEquals(200,capture.statusCode());assertTrue(capture.events().contains("execution.completed"),capture.raw());assertFalse(capture.events().contains("error"),capture.raw());
                 assertTrue(capture.raw().contains(script.finalAnswer()),capture.raw());
                 assertEquals(2,script.snapshot().requestCount());assertFalse(script.snapshot().verifiedKnowledgeItemIds().isEmpty());
                 assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=? AND agent_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenantId,actualRun,agentId,sessionId));
                 var selected=queryRows(jdbc,tenantId,"SELECT request.schema_id AS request_schema,request.canonical_json AS request_json,result.schema_id AS result_schema,result.canonical_json AS result_json FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id AND t.attempt_id=a.selected_attempt JOIN agent_runtime_execution_materials request ON request.tenant_id=a.tenant_id AND request.reference=a.request_ref JOIN agent_runtime_execution_materials result ON result.tenant_id=t.tenant_id AND result.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='KNOWLEDGE' AND a.status='SUCCEEDED' AND t.adopted AND t.result_kind='SUCCEEDED'",tenantId,actualRun);
                 assertEquals(1,selected.size());var row=selected.getFirst();var properties=applicationContext.getBean(AgentRuntimeProperties.class);
-                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null) {
+                if (System.getenv("E2E_KNOWLEDGE_HISTORY") != null || rerank != null) {
                     Files.writeString(evidence.resolve("knowledge-runtime-materials.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(selected));
                     com.fasterxml.jackson.databind.JsonNode finalMessage = null;
                     for (String line : capture.raw().split("\\R")) {

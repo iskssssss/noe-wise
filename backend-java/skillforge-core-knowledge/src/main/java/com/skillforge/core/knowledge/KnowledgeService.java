@@ -930,10 +930,21 @@ public class KnowledgeService {
      */
     public List<KnowledgeHit> search(
             String tenantId, String kbId, String query, int topK, KnowledgeSearchRequest request) {
+        return searchWithStatus(tenantId, kbId, query, topK, request).items();
+    }
+
+    public record SearchResult(List<KnowledgeHit> items, KnowledgeRerankStatus rerankStatus) {
+        public SearchResult { items = List.copyOf(items); }
+    }
+
+    /** 管理检索同时披露实际重排状态；既有列表消费者继续使用相同检索结果。 */
+    public SearchResult searchWithStatus(
+            String tenantId, String kbId, String query, int topK, KnowledgeSearchRequest request) {
         KnowledgeOperationalSettings.Snapshot settings = operationalSettings.capture();
         KnowledgeBaseDO base = requireBase(tenantId, Long.parseLong(kbId));
+        boolean rerankEnabled = rerankEnabledOf(base, request);
         if (!KnowledgeConstants.BASE_STATUS_ACTIVE.equals(base.getStatus())) {
-            return List.of();
+            return new SearchResult(List.of(), rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED);
         }
         int defaultTopK = base.getTopK() == null ? settings.defaultTopK() : base.getTopK();
         int effectiveTopK = request == null
@@ -946,7 +957,6 @@ public class KnowledgeService {
                 ? false : scoreThresholdEnabled(base, request);
         double threshold = thresholdEnabled ? scoreThresholdOf(base, request, settings) : 0.0;
         double vectorWeight = vectorWeightOf(base, request, settings);
-        boolean rerankEnabled = rerankEnabledOf(base, request);
         String sourceVersion = request == null ? null : request.sourceVersion();
         List<String> activeSourceVersions = sourceVersion == null
                 ? activeSourceVersions(base, tenantId, kbId) : null;
@@ -974,6 +984,7 @@ public class KnowledgeService {
                 : searchForActiveRevision(mode, tenantId, kbId, query, effectiveTopK,
                         vectorWeight, thresholdEnabled, threshold, activeSourceVersions, queryVector);
         items = filterBySourceVersion(items, sourceVersion);
+        KnowledgeRerankStatus rerankStatus = rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED;
         if (rerankEnabled && !items.isEmpty()) {
             List<RerankProvider.RerankResult> reranked;
             // Provider 自动计量继承父 Run/控制操作来源，保持机构、应用与业务范围归属。
@@ -984,9 +995,10 @@ public class KnowledgeService {
             }
             if (reranked != null) {
                 items = applyRerank(items, reranked, thresholdEnabled, threshold);
-            }
+                rerankStatus = KnowledgeRerankStatus.APPLIED;
+            } else rerankStatus = KnowledgeRerankStatus.DEGRADED;
         }
-        return List.copyOf(items);
+        return new SearchResult(items, rerankStatus);
     }
 
     private List<KnowledgeHit> searchForSourceVersion(

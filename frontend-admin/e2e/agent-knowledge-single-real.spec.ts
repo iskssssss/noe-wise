@@ -464,6 +464,124 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
       JSON.stringify({ mode, kbId: kb, configuredTopK: 1, samples }, null, 2)
     )
   }
+  if (process.env.E2E_KNOWLEDGE_RERANK) {
+    const candidate = process.env.E2E_KNOWLEDGE_RERANK === 'candidate'
+    const fallbackMessage = '重排暂不可用，本次结果按原检索顺序返回。'
+    await page.goto(`/admin/knowledge/${kb}`)
+    await page.evaluate((message) => {
+      const state = window as typeof window & { rerankWarnings?: number }
+      state.rerankWarnings = 0
+      new MutationObserver((changes) => {
+        for (const change of changes)
+          for (const node of change.addedNodes) {
+            if (
+              node instanceof HTMLElement &&
+              node.classList.contains('el-message') &&
+              node.textContent?.includes(message)
+            )
+              state.rerankWarnings!++
+          }
+      }).observe(document.body, { childList: true })
+    }, fallbackMessage)
+    await page.getByRole('tab', { name: '检索验证', exact: true }).click()
+    await page.getByLabel('检索问题', { exact: true }).fill(required('E2E_KNOWLEDGE_QUERY'))
+    await page
+      .getByRole('switch', { name: '仅本次检索覆盖参数', exact: true })
+      .locator('..')
+      .click()
+    await page
+      .locator('.el-form-item')
+      .filter({ hasText: '本次重排' })
+      .locator('.el-select__wrapper')
+      .click()
+    await page.getByRole('option', { name: '开启', exact: true }).click()
+    const samples = []
+    for (const mode of candidate
+      ? ['success', 'unavailable', 'disabled', 'empty']
+      : ['success', 'unavailable']) {
+      if (mode === 'unavailable') {
+        const control = await page.request.get(required('E2E_RERANK_CONTROL') + '/fail')
+        expect(control.status()).toBe(200)
+      }
+      if (mode === 'disabled') {
+        await expect(page.getByText(fallbackMessage, { exact: true })).toHaveCount(0, {
+          timeout: 10_000
+        })
+        await page
+          .locator('.el-form-item')
+          .filter({ hasText: '本次重排' })
+          .locator('.el-select__wrapper')
+          .click()
+        await page.getByRole('option', { name: '关闭', exact: true }).click()
+      }
+      if (mode === 'empty') {
+        await page
+          .getByLabel('检索问题', { exact: true })
+          .fill('no_match_' + required('E2E_KNOWLEDGE_QUERY'))
+        await page
+          .locator('.el-form-item')
+          .filter({ hasText: '本次重排' })
+          .locator('.el-select__wrapper')
+          .click()
+        await page.getByRole('option', { name: '开启', exact: true }).click()
+      }
+      const pending = page.waitForResponse(
+        (r) =>
+          new URL(r.url()).pathname === '/api/v1/knowledge/search' &&
+          r.request().method() === 'POST'
+      )
+      await page.getByRole('button', { name: '检索', exact: true }).click()
+      const response = await pending
+      expect(response.status()).toBe(200)
+      expect(response.request().postDataJSON().rerank_enabled).toBe(mode !== 'disabled')
+      const body = await response.json()
+      expect(body.data.items).toHaveLength(mode === 'empty' ? 0 : 1)
+      if (mode === 'success') expect(body.data.items[0].score).toBe(0.95)
+      if (candidate) {
+        expect(body.data.rerank_status).toBe(
+          (
+            {
+              success: 'APPLIED',
+              unavailable: 'DEGRADED',
+              disabled: 'DISABLED',
+              empty: 'NO_CANDIDATES'
+            } as Record<string, string>
+          )[mode]
+        )
+        if (mode === 'unavailable') {
+          expect(body.data.items[0].score).toBe(1)
+          await expect(page.getByText(fallbackMessage, { exact: true })).toHaveCount(1)
+          await expect(
+            page.locator('.el-notification, .el-alert').filter({ hasText: fallbackMessage })
+          ).toHaveCount(0)
+        }
+        if (mode === 'empty')
+          await expect(page.getByText('本次没有召回结果，请检查文档状态或调整问题')).toBeVisible()
+        expect(
+          await page.evaluate(
+            () => (window as typeof window & { rerankWarnings?: number }).rerankWarnings
+          )
+        ).toBe(mode === 'success' ? 0 : 1)
+      }
+      samples.push({
+        mode,
+        request: response.request().postDataJSON(),
+        response: body,
+        visible: await page.locator('body').innerText(),
+        warningCount: await page.evaluate(
+          () => (window as typeof window & { rerankWarnings?: number }).rerankWarnings
+        )
+      })
+      await page.screenshot({
+        path: join(evidence, `knowledge-rerank-${mode}.png`),
+        fullPage: true
+      })
+    }
+    await writeFile(
+      join(evidence, 'knowledge-rerank-observation.json'),
+      JSON.stringify(samples, null, 2)
+    )
+  }
   await writeFile(
     join(evidence, 'agent-knowledge-single.json'),
     JSON.stringify({

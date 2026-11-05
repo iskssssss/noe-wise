@@ -2023,6 +2023,7 @@ export const api = {
     search: (data: KnowledgeSearchParams) =>
       post<{
         items: KnowledgeSearchItem[]
+        rerank_status: 'DISABLED' | 'NO_CANDIDATES' | 'APPLIED' | 'DEGRADED'
       }>('/knowledge/search', data)
   },
 

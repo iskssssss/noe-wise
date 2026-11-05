@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   base: vi.fn(),
   document: vi.fn(),
   documentVersion: vi.fn(),
+  warning: vi.fn(),
   user: null as null | { permissions: string[] }
 }))
 vi.mock('../../stores/auth', () => ({
@@ -37,6 +38,19 @@ vi.mock('vue-router', () => ({
 vi.mock('@skillforge/shared/components/CodeEditor.vue', () => ({
   default: { template: '<div />' }
 }))
+vi.mock('@skillforge/shared/feedback', async (load) => {
+  const actual = await load<typeof import('@skillforge/shared/feedback')>()
+  return {
+    ...actual,
+    message: {
+      ...actual.message,
+      warning: (...args: Parameters<typeof actual.message.warning>) => {
+        mocks.warning(...args)
+        return actual.message.warning(...args)
+      }
+    }
+  }
+})
 let wrapper: VueWrapper
 beforeEach(() => {
   vi.resetAllMocks()
@@ -281,5 +295,65 @@ describe('检索结果精确来源只读查看', () => {
       wrapper.findAllComponents(ElButton).some((button) => button.text() === '查看本次来源')
     ).toBe(false)
     expect(mocks.documentVersion).not.toHaveBeenCalled()
+  })
+})
+
+describe('检索实际重排状态反馈', () => {
+  it('降级只提示一次且保留结果及已提交参数，后续请求失败不重复降级提示', async () => {
+    mocks.search.mockResolvedValueOnce({
+      items: [
+        {
+          chunk_id: 'c1',
+          document_id: 'd1',
+          source_version: 'v1',
+          content: '原检索结果',
+          score: 0.8
+        }
+      ],
+      rerank_status: 'DEGRADED'
+    })
+    await open()
+    await wrapper.findComponent(ElSwitch).setValue(true)
+    select('本次重排').vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await submit()
+    expect(mocks.warning).toHaveBeenCalledExactlyOnceWith(
+      '重排暂不可用，本次结果按原检索顺序返回。'
+    )
+    expect(document.body.querySelectorAll('.el-message')).toHaveLength(1)
+    expect(wrapper.text()).toContain('原检索结果')
+    expect(wrapper.text()).toContain('上次成功检索的问题：测试问题')
+    expect(mocks.search).toHaveBeenCalledExactlyOnceWith({
+      kb_id: 'kb-1',
+      query: '测试问题',
+      rerank_enabled: true
+    })
+    mocks.search.mockRejectedValueOnce(new Error('本次检索失败'))
+    await submit()
+    expect(mocks.warning).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('原检索结果')
+    expect(wrapper.text()).toContain('上次成功检索的问题：测试问题')
+  })
+  it.each(['DISABLED', 'NO_CANDIDATES', 'APPLIED'])('%s 不误报重排降级', async (rerank_status) => {
+    mocks.search.mockResolvedValueOnce({
+      items:
+        rerank_status === 'NO_CANDIDATES'
+          ? []
+          : [
+              {
+                chunk_id: 'c1',
+                document_id: 'd1',
+                source_version: 'v1',
+                content: '正常结果',
+                score: 0.8
+              }
+            ],
+      rerank_status
+    })
+    await open()
+    await submit()
+    expect(mocks.warning).not.toHaveBeenCalled()
+    if (rerank_status === 'NO_CANDIDATES') expect(wrapper.text()).toContain('本次没有召回结果')
+    else expect(wrapper.text()).toContain('正常结果')
   })
 })

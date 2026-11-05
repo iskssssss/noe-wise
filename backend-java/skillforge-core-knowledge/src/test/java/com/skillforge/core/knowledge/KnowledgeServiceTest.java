@@ -554,6 +554,44 @@ class KnowledgeServiceTest {
     }
 
     @Test
+    void reportsActualRerankStageWithoutChangingFallbackItems() {
+        KnowledgeBaseDO base = base();
+        base.setRetrievalMode(KnowledgeConstants.RETRIEVAL_MODE_FULL_TEXT);
+        base.setRerankEnabled(false);
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
+        var request = new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, null, "v1");
+        when(searchIndexer.search("7", "10", "q", 2, "v1")).thenReturn(List.of(item("r", .4, "v1")));
+        var disabled = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(KnowledgeRerankStatus.DISABLED, disabled.rerankStatus());
+        assertEquals(1, disabled.items().size());
+        verifyNoInteractions(rerankProvider);
+
+        base.setRerankEnabled(true);
+        when(rerankProvider.rerank("7", "q", List.of("content r"))).thenReturn(null);
+        var degraded = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(KnowledgeRerankStatus.DEGRADED, degraded.rerankStatus());
+        assertEquals(disabled.items(), degraded.items());
+        assertEquals(degraded.items(), service.search("7", "10", "q", 2, request));
+
+        when(rerankProvider.rerank("7", "q", List.of("content r")))
+                .thenReturn(List.of(new RerankProvider.RerankResult(0, .95)));
+        var applied = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(KnowledgeRerankStatus.APPLIED, applied.rerankStatus());
+        assertEquals(.95, applied.items().get(0).score());
+        when(rerankProvider.rerank("7", "q", List.of("content r"))).thenReturn(List.of());
+        var emptyRanking = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(KnowledgeRerankStatus.APPLIED, emptyRanking.rerankStatus());
+        assertTrue(emptyRanking.items().isEmpty());
+
+        clearInvocations(rerankProvider);
+        when(searchIndexer.search("7", "10", "q", 2, "v1")).thenReturn(List.of());
+        when(chunkMapper.searchKeyword("7", "10", "q", 2, List.of("v1"))).thenReturn(List.of());
+        assertEquals(KnowledgeRerankStatus.NO_CANDIDATES,
+                service.searchWithStatus("7", "10", "q", 2, request).rerankStatus());
+        verifyNoInteractions(rerankProvider);
+    }
+
+    @Test
     void fallsBackToSqlAndAppliesRerankAndArchiveFailClosed() {
         KnowledgeBaseDO base = base();
         when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
