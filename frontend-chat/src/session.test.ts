@@ -2499,7 +2499,29 @@ describe('历史结果发布等待', () => {
       expect(posts).toEqual([])
     }
   )
-  it('过期游标发布等待五次耗尽后交付原错误，不推进游标或清草稿', async () => {
+  it('过期游标快照503后只读恢复，不重发且保留草稿', async () => {
+    await connect()
+    expireFirstObservation()
+    let reads = 0
+    historyLoad = async (id) => {
+      reads++
+      if (reads === 1) return response({ ...emptyHistory(), session_id: id, event_cursor: 'old' })
+      if (reads === 2) return pending(503, 'OTHER_FAILURE')
+      return response({ ...emptyHistory(), session_id: id, event_cursor: 'fresh' })
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await state.openSession('s')
+    await flushPromises()
+    state.draft.value = '准确保留的草稿'
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    expect(reads).toBe(3)
+    expect(eventCalls()).toHaveLength(2)
+    expect(state.history.value.event_cursor).toBe('fresh')
+    expect(state.draft.value).toBe('准确保留的草稿')
+    expect(posts).toEqual([])
+  })
+  it('过期游标发布等待耗尽后仍只读恢复，不推进游标或清草稿', async () => {
     await connect()
     expireFirstObservation()
     let reads = 0
@@ -2513,16 +2535,16 @@ describe('历史结果发布等待', () => {
     state.draft.value = '耗尽后保留'
     await vi.advanceTimersByTimeAsync(15000)
     await flushPromises()
-    expect(reads).toBe(6)
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(reads).toBeGreaterThan(6)
     expect(eventCalls()).toHaveLength(1)
     expect(state.history.value.event_cursor).toBe('old')
     expect(state.draft.value).toBe('耗尽后保留')
-    expect(state.error.value).toBe('结果发布中')
-    expect(state.connection.value).toBe('连接已断开')
+    expect(state.connection.value).not.toBe('连接已断开')
     expect(posts).toEqual([])
   })
   it.each([
-    [503, 'OTHER_FAILURE'],
     [409, 'TASK_OUTPUT_PUBLICATION_PENDING'],
     [401, 'UNAUTHORIZED'],
     [403, 'FORBIDDEN']

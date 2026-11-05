@@ -154,6 +154,41 @@ describe('过期游标只读恢复', () => {
       }),
       { status }
     )
+  it('持续快照503达到既有上限后停止，不重订阅旧游标或提交输入', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(conflict('EVENT_CURSOR_EXPIRED'))
+        .mockResolvedValue(conflict('SNAPSHOT_UNAVAILABLE', 503))
+      vi.stubGlobal('fetch', fetch)
+      const client = createClient('http://localhost', { mode: 'token', token: 't' })
+      const recover = vi.fn(
+        async () => (await client.json<{ cursor: string }>('/snapshot', 'GET')).cursor
+      )
+      const stopped = observe(
+        client,
+        's',
+        'old',
+        new AbortController().signal,
+        vi.fn(),
+        vi.fn(),
+        recover
+      ).catch((error) => error)
+      await vi.advanceTimersByTimeAsync(300000)
+      expect(await stopped).toMatchObject({
+        message: '实时连接暂时不可用，请点击重新连接恢复观察。'
+      })
+      expect(recover).toHaveBeenCalledTimes(9)
+      expect(fetch).toHaveBeenCalledTimes(10)
+      expect(fetch.mock.calls.every(([, init]) => init.method === 'GET')).toBe(true)
+      const count = fetch.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(fetch).toHaveBeenCalledTimes(count)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('精确游标过期后使用权威游标重新订阅', async () => {
     const controller = new AbortController()
     const fetch = vi
@@ -200,6 +235,104 @@ describe('过期游标只读恢复', () => {
     expect(recover).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledOnce()
   })
+  it.each(['unavailable'])('快照 %s 后只读重试成功，再用新游标订阅', async (failure) => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      let snapshots = 0
+      let subscriptions = 0
+      const fetch = vi.fn(async (input: string, init: RequestInit) => {
+        if (new URL(String(input)).pathname.endsWith('/snapshot')) {
+          snapshots++
+          if (snapshots === 1) {
+            if (failure === 'network') throw new TypeError('offline')
+            return conflict('SNAPSHOT_UNAVAILABLE', 503)
+          }
+          return new Response(
+            JSON.stringify({
+              code: 'OK',
+              message: '成功',
+              trace_id: 'test',
+              data: { cursor: 'fresh' }
+            })
+          )
+        }
+        subscriptions++
+        if (subscriptions === 1) return conflict('EVENT_CURSOR_EXPIRED')
+        expect((init.headers as Headers).get('Last-Event-ID')).toBe('fresh')
+        controller.abort()
+        return new Response()
+      })
+      vi.stubGlobal('fetch', fetch)
+      const client = createClient('http://localhost', { mode: 'token', token: 't' })
+      const observing = observe(
+        client,
+        's',
+        'old',
+        controller.signal,
+        vi.fn(),
+        vi.fn(),
+        async () => (await client.json<{ cursor: string }>('/snapshot', 'GET')).cursor
+      )
+      await vi.advanceTimersByTimeAsync(2000)
+      await observing
+      expect(snapshots).toBe(2)
+      expect(subscriptions).toBe(2)
+      expect(fetch.mock.calls.every(([, init]) => init.method === 'GET')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it.each([400, 401, 403, 404, 409, 410])('恢复快照被 %s 拒绝时停止并保留错误', async (status) => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(conflict('EVENT_CURSOR_EXPIRED'))
+      .mockResolvedValueOnce(conflict('SNAPSHOT_DENIED', status))
+    vi.stubGlobal('fetch', fetch)
+    const client = createClient('http://localhost', { mode: 'token', token: 't' })
+    await expect(
+      observe(
+        client,
+        's',
+        'old',
+        new AbortController().signal,
+        vi.fn(),
+        vi.fn(),
+        async () => (await client.json<{ cursor: string }>('/snapshot', 'GET')).cursor
+      )
+    ).rejects.toMatchObject({ status, code: 'SNAPSHOT_DENIED' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+  it('恢复快照重试等待期间取消，不再读取或订阅', async () => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(conflict('EVENT_CURSOR_EXPIRED'))
+        .mockResolvedValue(conflict('SNAPSHOT_UNAVAILABLE', 503))
+      vi.stubGlobal('fetch', fetch)
+      const client = createClient('http://localhost', { mode: 'token', token: 't' })
+      const observing = observe(
+        client,
+        's',
+        'old',
+        controller.signal,
+        vi.fn(),
+        vi.fn(),
+        async () => (await client.json<{ cursor: string }>('/snapshot', 'GET')).cursor
+      )
+      const cancelled = observing.catch((error) => error)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetch).toHaveBeenCalledTimes(2)
+      controller.abort()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(await cancelled).toMatchObject({ name: 'AbortError' })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('历史恢复期间取消后不再订阅', async () => {
     const controller = new AbortController()
     const fetch = vi.fn().mockResolvedValue(conflict('EVENT_CURSOR_EXPIRED'))
@@ -234,6 +367,27 @@ describe('过期游标只读恢复', () => {
         }
       )
     ).rejects.toBe(denied)
+  })
+  it('恢复快照的未分类网络错误原样交付，不扩大自动重试', async () => {
+    const fetch = vi.fn().mockResolvedValue(conflict('EVENT_CURSOR_EXPIRED'))
+    vi.stubGlobal('fetch', fetch)
+    const failure = new TypeError('offline')
+    const recover = vi.fn(async () => {
+      throw failure
+    })
+    await expect(
+      observe(
+        createClient('http://localhost', { mode: 'token', token: 't' }),
+        's',
+        'old',
+        new AbortController().signal,
+        vi.fn(),
+        vi.fn(),
+        recover
+      )
+    ).rejects.toBe(failure)
+    expect(recover).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledOnce()
   })
 })
 

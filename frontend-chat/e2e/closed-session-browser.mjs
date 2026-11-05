@@ -81,7 +81,133 @@ try {
 
   const input = page.getByRole('textbox', { name: '消息', exact: true })
   await expect(input).toBeEnabled()
-  if (f.unknownSteering) {
+  if (f.cursorRecovery) {
+    await input.fill('真实运行游标恢复失败后自动观察验收')
+    const accepted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/chat' &&
+        response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    const receipt = (await (await accepted).json()).data
+    await expect(page.getByRole('button', { name: '停止运行', exact: true })).toBeVisible()
+    let expired = false,
+      failedHistory = false,
+      eventRequests = 0,
+      recoveryHistoryRequests = 0
+    await page.route('**/api/v1/chat/events?**', async (route) => {
+      eventRequests++
+      if (!expired) {
+        expired = true
+        return route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'EVENT_CURSOR_EXPIRED',
+            message: '隔离游标已过期',
+            data: null,
+            trace_id: 'cursor-recovery-control'
+          })
+        })
+      }
+      return route.continue()
+    })
+    await page.route('**/api/v1/chat/history?**', async (route) => {
+      if (expired) {
+        recoveryHistoryRequests++
+        if (!failedHistory) {
+          failedHistory = true
+          return route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              code: 'SERVICE_UNAVAILABLE',
+              message: '隔离历史读取暂不可用',
+              data: null,
+              trace_id: 'cursor-recovery-control'
+            })
+          })
+        }
+      }
+      return route.continue()
+    })
+    const reconnect = async () => {
+      await page.getByRole('button', { name: '更多会话操作', exact: true }).click()
+      await page.getByRole('button', { name: '重新连接', exact: true }).click()
+    }
+    await reconnect()
+    await expect.poll(() => failedHistory).toBe(true)
+    await writeFile(join(f.evidence, 'release-model'), 'release')
+    let terminalRun
+    const runStatusReads = []
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            origin +
+              `/api/v1/chat/runs/status?session_id=${encodeURIComponent(f.session)}&run_id=${encodeURIComponent(receipt.execution_id)}`,
+            { headers: { 'X-Channel-Token': f.token, 'X-Chat-User-Token': f.identity } }
+          )
+          assert.equal(response.status(), 200)
+          terminalRun = await response.json()
+          runStatusReads.push({ at: Date.now(), body: terminalRun })
+          return String(terminalRun.data.status).toLowerCase()
+        },
+        { timeout: 20000 }
+      )
+      .toBe('completed')
+    await writeFile(
+      join(f.evidence, 'cursor-recovery-terminal-run.json'),
+      JSON.stringify({ terminalRun, runStatusReads }, null, 2)
+    )
+    const final = page.getByText(/STREAM_FINISHED/).first()
+    let automaticallyRecovered = true
+    try {
+      await expect(final).toBeVisible({ timeout: 8000 })
+    } catch {
+      automaticallyRecovered = false
+    }
+    const beforeManual = {
+      eventRequests,
+      recoveryHistoryRequests,
+      automaticallyRecovered,
+      visible: await page.locator('body').innerText()
+    }
+    await page.screenshot({
+      path: join(f.evidence, 'cursor-recovery-before-manual.png'),
+      fullPage: true
+    })
+    if (f.cursorRecovery === 'control') {
+      assert.equal(automaticallyRecovered, false)
+      assert.equal(eventRequests, 1)
+      await reconnect()
+      await expect(final).toBeVisible({ timeout: 60000 })
+    } else {
+      assert.equal(automaticallyRecovered, true)
+      assert.ok(eventRequests >= 2)
+      assert.ok(recoveryHistoryRequests >= 2)
+    }
+    assert.equal(chats.length, 1)
+    await writeFile(
+      join(f.evidence, 'receipt.json'),
+      JSON.stringify(
+        {
+          runId: receipt.execution_id,
+          sessionId: f.session,
+          beforeManual,
+          eventRequests,
+          recoveryHistoryRequests,
+          terminalRun,
+          runStatusReads,
+          submissions: chats.length,
+          errors
+        },
+        null,
+        2
+      )
+    )
+    process.stdout.write('PASS: real runtime cursor recovery and observation outcome recorded\n')
+  } else if (f.unknownSteering) {
     await input.fill('运行中补充未知回执导航核验')
     const accepted = page.waitForResponse(
       (response) =>

@@ -989,6 +989,7 @@ export function useConversation() {
         const value = await readHistorySnapshot(api, id, version, signal)
         if (!value || version !== selection || signal.aborted) return ''
         applyHistory(value, true)
+        historyReadFailed.value = false
         return value.event_cursor ?? ''
       }
     ).catch((cause) => {

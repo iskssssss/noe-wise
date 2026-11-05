@@ -25,7 +25,7 @@ ESLint 使用会话端自己的 Vue 3 essential 与 TypeScript recommended flat 
 ## 模块与交互
 
 - `protocol.ts` 声明会话端实际使用的公开 DTO。
-- `client.ts` 持有 HTTP envelope、渠道令牌/HMAC 和 SSE 传输。POST 不自动重试；GET 观察使用 Last-Event-ID 有界重连。游标过期后以权威历史恢复；历史返回精确的成果发布等待状态时，沿用首次读取的最多五次、可取消等待，成功后才采用新游标，普通故障保持原错误。
+- `client.ts` 持有 HTTP envelope、渠道令牌/HMAC 和 SSE 传输。POST 不自动重试；GET 观察使用 Last-Event-ID 有界重连。游标过期后以权威历史恢复，HTTP 5xx 时按观察的有界退避重读历史；历史返回精确的成果发布等待状态时，沿用首次读取的最多五次、可取消等待。成功后才采用新游标，权限拒绝及未分类错误保持原错误。
 - `projection.ts` 按公开消息版本、过程更新序号与 Session 序号合并投影。
 - `session.ts` 持有连接身份、会话选择、输入冻结、附件、历史和取消状态。
 - `ui/` 为会话自身的补参、团队、成果、浏览器设备、目标与协作面板；不是后台公共资源。

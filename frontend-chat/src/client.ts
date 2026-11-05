@@ -244,11 +244,18 @@ export async function observe(
   recoverCursor: () => Promise<string>
 ) {
   let cursor = startCursor,
-    failures = 0
+    failures = 0,
+    needsSnapshot = false
   while (!signal.aborted) {
     let retryAfter = 0
     try {
       status(failures ? '重新连接中' : '连接中')
+      if (needsSnapshot) {
+        cursor = await recoverCursor()
+        if (signal.aborted) return
+        needsSnapshot = false
+        failures = 0
+      }
       const response = await client.events(session, cursor, signal)
       if (signal.aborted) return
       const retry = response.headers.get('retry-after')
@@ -281,15 +288,20 @@ export async function observe(
       if (signal.aborted) return
       if (error instanceof StreamError && !error.retryable) throw error
       if (
+        !needsSnapshot &&
         error instanceof RequestError &&
         error.status === 409 &&
         error.code === 'EVENT_CURSOR_EXPIRED'
       ) {
-        cursor = await recoverCursor()
-        if (signal.aborted) return
+        needsSnapshot = true
         failures = 0
         continue
       }
+      if (
+        needsSnapshot &&
+        !(error instanceof RequestError && error.status >= 500 && error.status < 600)
+      )
+        throw error
       if (error instanceof RequestError && [400, 401, 403, 404, 409, 410].includes(error.status))
         throw error
     }
