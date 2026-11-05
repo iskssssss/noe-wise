@@ -749,6 +749,8 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
     @Test
     @Tag("session-directory-browser")
     void standaloneBrowserRestoresClosedSessionAsReadOnly() throws Exception {
+        boolean unknownSteering = System.getenv("E2E_UNKNOWN_STEERING") != null;
+        if (unknownSteering) provider.holdStreamCompletion();
         String channelToken = "closed-test-" + java.util.UUID.randomUUID();
         String clientRef = java.util.UUID.randomUUID().toString();
         TenantContext.setTenantId(tenantId);
@@ -786,11 +788,17 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         fixture.put("clientRef", clientRef); fixture.put("channel", Long.toString(channel)); fixture.put("session", directorySession);
         fixture.put("agent", agentId); fixture.put("adminToken", accessToken); fixture.put("reply", "fixture-answer-" + runId);
         fixture.put("evidence", evidence.toString()); fixture.put("baseline", "baseline".equals(System.getenv("E2E_CLOSED_SESSION")));
+        fixture.put("unknownSteering", unknownSteering);
+        fixture.put("steeringCandidate", System.getenv("E2E_UNKNOWN_STEERING") != null && System.getenv("E2E_UNKNOWN_STEERING").startsWith("candidate"));
+        fixture.put("automaticSteeringRead", "candidate-auto".equals(System.getenv("E2E_UNKNOWN_STEERING")));
+        fixture.put("steeringRejected", System.getenv("E2E_UNKNOWN_STEERING") != null && System.getenv("E2E_UNKNOWN_STEERING").startsWith("rejected"));
+        fixture.put("rejectedCandidate", "rejected-candidate".equals(System.getenv("E2E_UNKNOWN_STEERING")));
         command.environment().put("CLOSED_FIXTURE", objectMapper.writeValueAsString(fixture));
         Process process = command.start();
         try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
             long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(3);
             while (process.isAlive() && System.nanoTime() < deadline) {
+                if (unknownSteering && Files.exists(evidence.resolve("release-model"))) { provider.advanceHeldStream(); provider.finishHeldStream(); }
                 owned.capture(); process.waitFor(200, TimeUnit.MILLISECONDS);
             }
             assertFalse(process.isAlive(), "closed_browser_timeout: " + evidence);
@@ -801,7 +809,7 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         var runs = queryRows(jdbc, tenantId, "SELECT run_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=?", tenantId, directorySession);
         assertEquals(1, runs.size()); assertEquals(actualRun, runs.getFirst().get("run_id"));
         assertEquals("COMPLETED", runs.getFirst().get("status")); assertEquals("FINISHED", runs.getFirst().get("phase"));
-        assertEquals(1, provider.requestCount());
+        assertTrue(unknownSteering ? provider.requestCount() >= 1 : provider.requestCount() == 1);
         Files.writeString(evidence.resolve("runtime-evidence.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(
                 Map.of("runs", runs, "providerCalls", provider.requestCount(), "sessionId", directorySession)));
     }

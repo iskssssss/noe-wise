@@ -419,9 +419,16 @@ async function openPanel(value: 'tools' | 'teams' | 'artifacts' | 'tasks') {
 function panelChanged(name: 'tools' | 'teams' | 'artifacts' | 'tasks', visible: boolean) {
   if (!visible && activePanel.value === name) activePanel.value = ''
 }
-// 历史读取可取消；导航只阻止尚在改变业务状态或持有未知输入的操作。
+// 历史读取可取消；导航阻止尚在改变业务状态或持有待核对请求的操作。
 const historyNavigationLocked = computed(
-  () => c.connecting || c.sending || c.uploading || c.cancelling || Boolean(c.pendingInput)
+  () =>
+    c.connecting ||
+    c.sending ||
+    c.uploading ||
+    c.cancelling ||
+    Boolean(c.pendingInput) ||
+    c.steeringSending ||
+    Boolean(c.pendingSteering)
 )
 async function navigate(action: () => unknown, locked = c.locked) {
   if (!(await mayDiscard(locked || commandBusy.value, draftDirty.value))) return

@@ -187,6 +187,62 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it.each(['pending', 'sending'])(
+    '补充处于 %s 时锁定导航，原命令恢复入口保持可用',
+    async (mode) => {
+      holder.state.target = 'agent:a'
+      holder.state.sessionId = 's'
+      holder.state.sessions = [
+        { session_id: 'other', displayTitle: '另一个会话', message_count: 1 } as Session
+      ]
+      holder.state.supplementDraft = '原补充'
+      holder.state.pendingSteering = {
+        command_id: 'original-command',
+        run_id: 'run',
+        text: '原补充'
+      } as SteeringInput
+      holder.state.steeringSending = mode === 'sending'
+      holder.state.locked = true
+      const confirmation = vi.spyOn(ChatMessageBox, 'confirm')
+      const wrapper = mount(App, {
+        attachTo: document.body,
+        global: { stubs: { TeamManager: true, WorkspaceStatus: true } }
+      })
+      try {
+        await flushPromises()
+        expect(wrapper.get('#message-input').attributes('disabled')).toBeDefined()
+        expect(holder.state.supplementDraft).toBe('原补充')
+        await wrapper.get('button[aria-label="新建会话"]').trigger('click')
+        await flushPromises()
+        expect(holder.state.newSession).not.toHaveBeenCalled()
+        expect(confirmation).not.toHaveBeenCalled()
+        await wrapper.get('button[aria-label="打开会话导航"]').trigger('click')
+        await flushPromises()
+        const historical = wrapper.get('nav[aria-label="历史会话"] button')
+        expect(historical.attributes('disabled')).toBeDefined()
+        if (mode === 'pending') {
+          const action = (label: string) =>
+            wrapper.findAll('button').find((item) => item.text() === label)!
+          await action('查询状态').trigger('click')
+          await action('重试原补充').trigger('click')
+          expect(holder.state.refreshSteering).toHaveBeenCalledOnce()
+          expect(holder.state.submitSupplement).toHaveBeenCalledWith(true)
+        }
+        holder.state.pendingSteering = undefined
+        holder.state.steeringSending = false
+        holder.state.supplementDraft = ''
+        holder.state.locked = false
+        await flushPromises()
+        expect(historical.attributes('disabled')).toBeUndefined()
+        await wrapper.get('button[aria-label="新建会话"]').trigger('click')
+        await flushPromises()
+        expect(holder.state.newSession).toHaveBeenCalledOnce()
+      } finally {
+        wrapper.unmount()
+      }
+    }
+  )
+
   it('关闭会话显示只读提示并禁用输入上传发送，新建会话仍可使用', async () => {
     holder.state.target = 'agent:a'
     holder.state.sessionId = 'closed'

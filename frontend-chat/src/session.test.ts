@@ -1231,6 +1231,37 @@ describe('独立会话交互状态', () => {
     await flushPromises()
     expect(state.active.value).toBe(false)
   })
+  it('首次补充状态读取失败且没有快照时继续只读轮询，不重发命令', async () => {
+    await connect()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      steeringReadDenied = true
+      state.draft.value = '开始任务'
+      await state.submit()
+      await flushPromises()
+      expect(state.steering.value).toBeUndefined()
+      expect(state.steeringError.value).toBeTruthy()
+      const before = vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([input]) => new URL(String(input)).pathname === '/api/v1/chat/runs/steering'
+        ).length
+      steeringReadDenied = false
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+      const after = vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([input]) => new URL(String(input)).pathname === '/api/v1/chat/runs/steering'
+        ).length
+      expect(after).toBeGreaterThan(before)
+      expect(state.steering.value?.accepting).toBe(true)
+      expect(state.steeringError.value).toBe('')
+      expect(steeringPosts).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('补充已保存后回读403仍保留命令身份，终态不能将它转成新草稿', async () => {
     await connect()
     state.draft.value = '开始任务'
@@ -1317,6 +1348,34 @@ describe('独立会话交互状态', () => {
     await state.refreshSteering()
     expect(state.steering.value?.items[0]?.status).toBe('CONSUMED')
   })
+  it('补充提交在途锁定导航，受理确认后解除', async () => {
+    await connect()
+    state.draft.value = '开始任务'
+    await state.submit()
+    await flushPromises()
+    state.supplementDraft.value = '在途补充'
+    let finish!: (value: Response) => void
+    steerSubmit = () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    const sending = state.submitSupplement()
+    await flushPromises()
+    expect(state.steeringSending.value).toBe(true)
+    expect(state.locked.value).toBe(true)
+    const pending = state.pendingSteering.value!
+    finish(
+      response({
+        run_id: pending.run_id,
+        accepting: true,
+        items: [{ command_id: pending.command_id, text: pending.text, status: 'PENDING' }]
+      })
+    )
+    await sending
+    await flushPromises()
+    expect(state.pendingSteering.value).toBeUndefined()
+    expect(state.locked.value).toBe(false)
+  })
   it('补充网络结果未知保留命令键，显式重试不替换正文', async () => {
     await connect()
     state.draft.value = '开始任务'
@@ -1329,6 +1388,7 @@ describe('独立会话交互状态', () => {
     await state.submitSupplement()
     await flushPromises()
     expect(state.pendingSteering.value).toBeTruthy()
+    expect(state.locked.value).toBe(true)
     state.supplementDraft.value = '之后编辑的补充'
     await state.submitSupplement()
     expect(steeringPosts).toHaveLength(1)
@@ -1344,6 +1404,7 @@ describe('独立会话交互状态', () => {
     expect(steeringPosts[1]).toBe(steeringPosts[0])
     expect(state.pendingSteering.value).toBeUndefined()
     expect(state.supplementDraft.value).toBe('之后编辑的补充')
+    expect(state.locked.value).toBe(false)
   })
   it('原补充结果未知后重试校验拒绝，仍保留原身份等待只读核对', async () => {
     await connect()
@@ -1415,6 +1476,7 @@ describe('独立会话交互状态', () => {
     const reading = state.refreshSteering()
     await flushPromises()
     expect(state.steeringLoading.value).toBe(true)
+    expect(state.locked.value).toBe(true)
     await state.submitSupplement(true)
     expect(steeringPosts).toHaveLength(1)
     finish(
@@ -1426,6 +1488,57 @@ describe('独立会话交互状态', () => {
     )
     await reading
     expect(state.pendingSteering.value).toBeUndefined()
+    expect(steeringPosts).toHaveLength(1)
+    expect(state.locked.value).toBe(false)
+  })
+  it.each([true, false])(
+    '完整查询确认未受理后保留正文，本地完成事件已到达=%s',
+    async (completed) => {
+      await connect()
+      state.draft.value = '开始任务'
+      await state.submit()
+      await flushPromises()
+      state.supplementDraft.value = '未受理补充正文'
+      steerSubmit = async () => {
+        throw new TypeError('offline')
+      }
+      await state.submitSupplement()
+      await flushPromises()
+      expect(state.pendingSteering.value).toBeTruthy()
+      state.draft.value = '独立草稿'
+      if (completed) state.runStates.run = 'completed'
+      await flushPromises()
+      steeringState = { run_id: 'run', accepting: false, items: [] }
+      await state.refreshSteering()
+      expect(state.pendingSteering.value).toBeUndefined()
+      expect(state.locked.value).toBe(false)
+      expect(state.draft.value).toBe('独立草稿\n\n未受理补充正文')
+      expect(state.supplementDraft.value).toBe('')
+      expect(state.steeringError.value).toContain('原补充未受理')
+      expect(state.steeringError.value).toContain('下一条消息草稿')
+      expect(steeringPosts).toHaveLength(1)
+      expect(posts).toHaveLength(1)
+    }
+  )
+  it.each(['accepting', 'read-failed'])('补充核对为 %s 时仍保留原命令与锁定', async (mode) => {
+    await connect()
+    state.draft.value = '开始任务'
+    await state.submit()
+    await flushPromises()
+    state.supplementDraft.value = '待核对正文'
+    steerSubmit = async () => {
+      throw new TypeError('offline')
+    }
+    await state.submitSupplement()
+    await flushPromises()
+    const pending = state.pendingSteering.value
+    steeringState = { run_id: 'run', accepting: true, items: [] }
+    steeringReadDenied = mode === 'read-failed'
+    await state.refreshSteering()
+    expect(state.pendingSteering.value).toBe(pending)
+    expect(state.locked.value).toBe(true)
+    expect(state.supplementDraft.value).toBe('待核对正文')
+    expect(state.steeringError.value).not.toContain('原补充未受理')
     expect(steeringPosts).toHaveLength(1)
   })
   it('结束时结果未知的补充不转成新任务，查询确认后只显示真实消费状态', async () => {
@@ -1455,6 +1568,7 @@ describe('独立会话交互状态', () => {
     expect(state.supplementDraft.value).toBe('')
     expect(state.draft.value).toBe('独立草稿')
     expect(posts).toHaveLength(1)
+    expect(state.steeringError.value).not.toContain('原补充未受理')
   })
   for (const mismatch of [
     'none',

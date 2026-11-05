@@ -216,7 +216,9 @@ export function useConversation() {
       sending.value ||
       uploading.value ||
       cancelling.value ||
-      Boolean(pendingInput.value)
+      Boolean(pendingInput.value) ||
+      steeringSending.value ||
+      Boolean(pendingSteering.value)
   )
   const sessionClosed = computed(() => Boolean(history.value.closed))
   const composerLocked = computed(() => locked.value || sessionClosed.value)
@@ -405,15 +407,28 @@ export function useConversation() {
         sessionAbort.signal
       )
       if (version !== selection || request !== steeringRequest) return
+      const pending = pendingSteering.value
       applySteering(value)
-      steeringError.value = ''
+      if (
+        pending &&
+        pending.run_id === value.run_id &&
+        !value.accepting &&
+        pendingSteering.value === pending
+      ) {
+        pendingSteering.value = undefined
+        preserveSupplement()
+        steeringError.value = '本轮已停止接收补充，原补充未受理；正文已保留到下一条消息草稿。'
+      } else steeringError.value = ''
     } catch (cause) {
       if (version === selection && request === steeringRequest)
         steeringError.value = cause instanceof Error ? cause.message : '补充状态读取失败。'
     } finally {
       if (version === selection && request === steeringRequest) {
         steeringLoading.value = false
-        if (steeringRun.value === run)
+        if (
+          steeringRun.value === run &&
+          !(steering.value?.run_id === run && !steering.value.accepting)
+        )
           steeringPoll = setTimeout(() => void refreshSteering(run), 2500)
       }
     }
