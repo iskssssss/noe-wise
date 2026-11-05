@@ -359,6 +359,16 @@ tasks.register<Test>("sessionDirectoryBrowserE2E") {
         .withPropertyName("sessionDirectoryFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
+tasks.register<Test>("mcpElicitationBrowserE2E") {
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatExecutionWaitingE2ETest.standaloneBrowserContinuesExactMcpElicitation") }
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("nativeStreamBrowserE2E") {
     description = "锁住供应商完成信号，验收终结工具参数不提前公开与单次最终交付"
     group = "verification"

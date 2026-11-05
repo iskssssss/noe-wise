@@ -31,6 +31,36 @@ import org.springframework.context.annotation.Import;
 @Import({ChatRuntimeChannelE2ETest.LoopbackEvents.class, DeterministicModelCatalogConfiguration.class,
         com.skillforge.institution.runtime.AgentRuntimeExecutionConfiguration.class})
 class ChatExecutionWaitingE2ETest extends ChatExecutionChainE2ETest {
+    @Test void standaloneBrowserContinuesExactMcpElicitation() throws Exception {
+        withWaitFixture("browser-elicitation", RuntimeExecutionMcpWaitServer.Mode.WAIT, fixture -> {
+            String token="elicitation-"+java.util.UUID.randomUUID(), client=java.util.UUID.randomUUID().toString();
+            TenantContext.setTenantId(tenantId);long channel;
+            try{channel=createNativeBrowserChannel(token,null,null);}finally{TenantContext.clear();}
+            var profileResponse=httpClient.send(HttpRequest.newBuilder(URI.create(baseUrl()+"/api/v1/chat/client-profile"))
+                    .header("X-Channel-Token",token).header("Content-Type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(Map.of("client_ref",client,"display_name","表单续答验收")))).build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,profileResponse.statusCode());var profile=successData(profileResponse);
+            endUserId=profile.path("end_user_id").asLong();
+            var created=httpClient.send(HttpRequest.newBuilder(URI.create(baseUrl()+"/api/v1/chat/sessions"))
+                    .header("X-Channel-Token",token).header("X-Chat-User-Token",profile.path("identity_token").asText()).header("Content-Type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(Map.of("agent_id",agentId,"end_user_id",endUserId)))).build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,created.statusCode());sessionId=successData(created).path("session_id").asText();
+            var waiting=submitUntilWaiting(fixture);var wait=publicWait(waiting);assertWaiting(fixture,wait);
+            Path root=KnowledgeBrowserServer.repoRoot(), evidence=fixture.evidence().toAbsolutePath();
+            var command=new ProcessBuilder(KnowledgeBrowserServer.nodeExecutable(),root.resolve("frontend-chat/e2e/mcp-elicitation-browser.mjs").toString());
+            command.directory(root.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("browser.log").toFile());
+            command.environment().put("ELICITATION_FIXTURE",objectMapper.writeValueAsString(Map.of("backend",baseUrl(),"token",token,"identity",profile.path("identity_token").asText(),
+                    "clientRef",client,"channel",Long.toString(channel),"session",sessionId,"agent",agentId,"evidence",evidence.toString(),"wait",wait,"reply",fixture.model().finalAnswer())));
+            var process=command.start();try(var owned=new KnowledgeBrowserProcesses(process.toHandle())){
+                long deadline=System.nanoTime()+Duration.ofMinutes(3).toNanos();while(process.isAlive()&&System.nanoTime()<deadline){owned.capture();process.waitFor(200,java.util.concurrent.TimeUnit.MILLISECONDS);}
+                assertFalse(process.isAlive());assertEquals(0,process.exitValue(),Files.readString(evidence.resolve("browser.log")));
+            }
+            assertEquals(2,fixture.model().snapshot().requestCount());assertEquals(2,fixture.script().calls.get());assertEquals(1,fixture.script().effects.get());
+            assertEquals(1,countRuntime("SELECT count(*) FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=? AND status='COMPLETED' AND phase='FINISHED'",tenantId,sessionId));
+            Files.writeString(evidence.resolve("wait-facts.json"),objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(queryRows(jdbc,tenantId,
+                    "SELECT run_id,action_id,generation,input_id,continuation_attempt FROM agent_runtime_execution_waits WHERE tenant_id=? AND run_id=?",tenantId,fixture.actualRun())));
+        });
+    }
     /** 真模型与受控MCP端点的独立链路，不重放公开MCP未知请求。 */
     @Test
     @Tag("live")

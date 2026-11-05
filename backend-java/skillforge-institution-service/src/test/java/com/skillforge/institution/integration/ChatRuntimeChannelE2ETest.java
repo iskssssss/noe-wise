@@ -817,7 +817,7 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
     }
 
     /** 只创建隔离渠道前置资源；浏览器必须真实认证、登记访问者和创建渠道Session。 */
-    private long createNativeBrowserChannel(String token, String apiKey, String apiSecret) {
+    protected long createNativeBrowserChannel(String token, String apiKey, String apiSecret) {
         var channel = new ChannelDO();
         channel.setId(SnowflakeIds.nextId());
         channel.setTenantId(Long.parseLong(tenantId));

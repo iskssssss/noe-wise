@@ -1156,6 +1156,81 @@ describe('会话输入控件', () => {
       wrapper.unmount()
     }
   })
+  it.each(['tool_input', 'plan_review'] as const)(
+    '历史读取期间%s待办禁提交，读取后保留草稿并恢复',
+    async (kind) => {
+      holder.state.sessionId = 's'
+      holder.state.target = 'agent:a'
+      const pending: Pending = {
+        execution_id: 'run',
+        run_revision: '2',
+        checkpoint_revision: '3',
+        interaction_type: kind,
+        ...(kind === 'tool_input'
+          ? {
+              tool_wait: { action_id: 'action', generation: '1' },
+              card: {
+                type: 'tool_input',
+                title: '补充信息',
+                requests: [
+                  {
+                    id: 'request',
+                    message: '填写参数',
+                    requested_schema: { type: 'object', properties: { value: { type: 'string' } } }
+                  }
+                ]
+              }
+            }
+          : {
+              action_id: 'action',
+              invocation_id: 'invocation',
+              pending_id: 'pending',
+              wake_id: 'wake',
+              wait_revision: '4',
+              card: { title: '资料处理计划', plan: '先提取重点，再整理报告。' }
+            })
+      }
+      holder.state.history.pending_interactions = [pending]
+      const wrapper = mount(App, {
+        attachTo: document.body,
+        global: { stubs: { TeamManager: true } }
+      })
+      try {
+        await flushPromises()
+        const form = wrapper.getComponent(PendingForm)
+        const input = form.get(kind === 'tool_input' ? 'input' : 'textarea')
+        await input.setValue('读取前填写的内容')
+        holder.state.loading = true
+        holder.state.locked = true
+        await flushPromises()
+        expect(form.props('disabled')).toBe(true)
+        const submit = form.get<HTMLButtonElement>('button[type="submit"]')
+        expect(submit.element.disabled).toBe(true)
+        await form.get('form').trigger('submit')
+        await flushPromises()
+        expect(holder.state.submit).not.toHaveBeenCalled()
+        expect((input.element as HTMLInputElement).value).toBe('读取前填写的内容')
+        holder.state.loading = false
+        holder.state.locked = false
+        await flushPromises()
+        expect(form.props('disabled')).toBe(false)
+        expect(submit.element.disabled).toBe(false)
+        expect((input.element as HTMLInputElement).value).toBe('读取前填写的内容')
+        await form.get('form').trigger('submit')
+        await flushPromises()
+        expect(holder.state.submit).toHaveBeenCalledOnce()
+        const payload = holder.state.submit.mock.calls[0]![0]
+        if (kind === 'tool_input')
+          expect(payload.tool_input.responses.request.result.canonical_json).toBe(
+            '{"action":"accept","content":{"value":"读取前填写的内容"}}'
+          )
+        else
+          expect(payload.plan_review).toEqual({ decision: 'approve', feedback: '读取前填写的内容' })
+      } finally {
+        wrapper.unmount()
+      }
+    }
+  )
   it('两个待办分别显示且允许新消息，停止按钮只指向所属执行', async () => {
     holder.state.target = 'agent:a'
     holder.state.history.pending_interactions = ['first', 'second'].map((id) => ({
