@@ -1042,6 +1042,38 @@ class AgentExecutionProgramTest {
                 rejectRespond?Optional.of(new SessionOutputContract.ActionRejection("TASK_OUTPUT_RESOLUTION_REQUIRED","先执行实际成果冻结")):Optional.empty(),
                 Optional.empty(),result,new ExecutionBudgetPort.ClosingSpec(2,1,1,100,List.of("真实收尾义务"),tools),closing);
     }
+    @Test void declaredToolErrorKeepsItsFeedbackAndPublishesBusinessFailure() {
+        for (boolean error : List.of(false, true)) {
+            var f = new Fixture();
+            var first = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+            f.commit(first, f.model(new AgentAction.ToolCall("tool:template", new TypedPayload("application/json", "{}")), 1));
+            var tool = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+            f.commit(tool, f.tool(tool, "{\"content\":[],\"isError\":" + error + ",\"structuredContent\":{\"answer\":\"ACTUAL_RESULT\"}}"));
+            var event = f.codec.parse(f.lastAdoption.events().getFirst().data(), AgentExecutionProgram.TOOL_RESULT_SCHEMA);
+            assertEquals("SUCCEEDED", AgentExecutionCodec.string(event, "status"));
+            assertTrue(event.path("outputAccepted").booleanValue());
+            assertEquals(error, event.path("businessFailed").booleanValue());
+            var next = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+            assertTrue(requestHistory(f, next).getLast().textContent().contains("ACTUAL_RESULT"));
+        }
+    }
+
+    @Test void batchToolErrorProducesFailureForOnlyItsOwnProcess() {
+        var f = new Fixture();
+        var model = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        f.commit(model, f.batchModel(List.of(new AgentAction.ToolCall("tool:template", new TypedPayload("application/json", "{\"value\":1}")),
+                new AgentAction.ToolCall("tool:template", new TypedPayload("application/json", "{\"value\":2}"))), 1));
+        var batch = assertInstanceOf(Step.Batch.class, f.program.next(f.run, f.materials));
+        for (int i = 0; i < batch.calls().size(); i++) {
+            var call = batch.calls().get(i);
+            var actual = new BatchCall(call.action(), call.attemptId(), f.tool(call, "{\"content\":[],\"isError\":" + (i == 0) + "}"));
+            var result = f.program.inspectBatch(f.run, f.materials, actual, i + 1);
+            var event = f.codec.parse(result.events().getFirst().data(), AgentExecutionProgram.TOOL_RESULT_SCHEMA);
+            assertEquals(i == 0, event.path("businessFailed").booleanValue());
+            assertEquals("SUCCEEDED", AgentExecutionCodec.string(event, "status"));
+        }
+    }
+
     /** 第二次实际请求含真实安全工具结果，正文、调用配对、配置读取和增量存储均可观察。 */
     @Test
     void carriesActualSafeToolResultIntoNextModelAndFinishesFromRealRespondDecision() {
@@ -1061,6 +1093,7 @@ class AgentExecutionProgramTest {
         assertEquals("tool:template", AgentExecutionCodec.string(publicResult, "toolId"));
         assertEquals("SUCCEEDED", AgentExecutionCodec.string(publicResult, "status"));
         assertTrue(publicResult.get("outputAccepted").booleanValue());
+        assertFalse(publicResult.path("businessFailed").booleanValue());
         assertEquals("工具调用已完成", AgentExecutionCodec.string(publicResult, "summary"));
         assertFalse(process.data().canonicalJson().contains("secret-value"));
         assertFalse(process.data().canonicalJson().contains("REAL_TOOL_VALUE"));

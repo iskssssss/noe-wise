@@ -614,7 +614,7 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
         if (guard.capture().rejects(summary)) summary = PublicOutputGuard.SAFE_MESSAGE;
         if (!value.path("outputAccepted").isBoolean()) throw new IllegalArgumentException("execution_tool_result_acceptance_invalid");
         String status = switch (text(value, "status")) {
-            case "SUCCEEDED" -> value.path("outputAccepted").booleanValue() ? "succeeded" : "failed";
+            case "SUCCEEDED" -> value.path("outputAccepted").booleanValue() && !value.path("businessFailed").asBoolean(false) ? "succeeded" : "failed";
             case "FAILED" -> "failed";
             case "UNKNOWN" -> "outcome_unknown";
             default -> throw new IllegalArgumentException("execution_tool_result_status_invalid");

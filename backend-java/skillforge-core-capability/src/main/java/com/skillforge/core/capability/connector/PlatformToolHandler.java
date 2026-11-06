@@ -32,4 +32,9 @@ public interface PlatformToolHandler {
      */
     Map<String, Object> execute(Map<String, Object> args, PlatformToolExecutionContext context)
             throws Exception;
+
+    /** 根据本工具的输出契约标记确定的业务拒绝。 */
+    default boolean isError(Map<String, Object> result) {
+        return false;
+    }
 }

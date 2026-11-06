@@ -1219,7 +1219,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
                 if (actual.kind() != ExecutionStore.ResultKind.UNKNOWN) throw invalid();
                 problem = Optional.of(new Problem(ProblemKind.UNKNOWN, "tool_outcome_unknown"));
             }
-            if (!(outcome instanceof ToolOutcome.InputRequired)) events = List.of(toolResult(run, prepared, request, actual.kind(), outputRejected || contentRejection.isPresent()));
+            if (!(outcome instanceof ToolOutcome.InputRequired)) events = List.of(toolResult(run, prepared, request, actual.kind(), outputRejected || contentRejection.isPresent(), outcome));
             var observed = new ArrayList<>(events);
             observed.addAll(observations.operation(run, before, prepared, observations.attempt(prepared), AgentExecutionObservations.status(actual.kind())));
             if (outcome instanceof ToolOutcome.Succeeded || outcome instanceof ToolOutcome.Failed)
@@ -1297,7 +1297,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         }
         var rejected=inspected.outcome() instanceof ToolOutcome.Succeeded success?sources.capabilityContentRejection(run,List.of(success.observation())):Optional.<String>empty();
         var events = new ArrayList<ExecutionStore.Event>();
-        events.add(toolResult(run, actual.action(), inspected.slot().request(), actual.result().kind(), inspected.outputRejected() || rejected.isPresent()));
+        events.add(toolResult(run, actual.action(), inspected.slot().request(), actual.result().kind(), inspected.outputRejected() || rejected.isPresent(), inspected.outcome()));
         events.addAll(observations.operation(run, before, actual.action(), actual.attemptId(), AgentExecutionObservations.status(actual.result().kind())));
         if (inspected.outcome() instanceof ToolOutcome.Succeeded || inspected.outcome() instanceof ToolOutcome.Failed)
             events.add(observations.guard(run, before, actual.action(), actual.attemptId(), ExecutionObservation.Stage.TOOL_OUTPUT,
@@ -2130,11 +2130,14 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     /** 工具process只公开真实确定性与固定结论，私有结果、安全正文和opaque材料均不展开。 */
-    private ExecutionStore.Event toolResult(Run run, Prepared prepared, ToolRequest request, ExecutionStore.ResultKind status, boolean outputRejected) {
+    private ExecutionStore.Event toolResult(Run run, Prepared prepared, ToolRequest request, ExecutionStore.ResultKind status, boolean outputRejected, ToolOutcome outcome) {
         var value = trace(run.identity(), run.identity().causationInputId()); value.put("actionId", prepared.action().actionId());
         value.put("toolId", request.target().handle().value()); value.put("callId", request.callId()); value.put("status", status.name());
         value.put("outputAccepted", status == ExecutionStore.ResultKind.SUCCEEDED && !outputRejected);
-        value.put("summary", outputRejected ? "工具调用已完成，输出无法采纳" : switch (status) {
+        boolean businessFailed = !outputRejected && outcome instanceof ToolOutcome.Succeeded success
+                && codec.parse(success.observation(), SessionRuntimePayloads.TOOL_RESULT_SCHEMA).path("isError").asBoolean(false);
+        value.put("businessFailed", businessFailed);
+        value.put("summary", businessFailed ? "工具调用失败" : outputRejected ? "工具调用已完成，输出无法采纳" : switch (status) {
             case SUCCEEDED -> "工具调用已完成"; case FAILED -> "工具调用失败"; case UNKNOWN -> "工具结果未知";
             case INPUT_REQUIRED -> throw invalid();
         });

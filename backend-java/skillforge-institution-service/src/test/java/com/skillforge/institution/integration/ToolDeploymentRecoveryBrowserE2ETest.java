@@ -18,7 +18,7 @@ import org.springframework.test.context.DynamicPropertySource;
 /** 隔离的部署结果未知浏览器与同部署运行时验收。 */
 class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
     private static final KnowledgeBrowserServer FRONTEND = KnowledgeBrowserServer.startIsolated("tool-deployment-recovery-");
-    @DynamicPropertySource static void origin(DynamicPropertyRegistry registry) { registry.add("skillforge.web.allowed-origins", FRONTEND::baseUrl); }
+    @DynamicPropertySource static void origin(DynamicPropertyRegistry registry) { registry.add("skillforge.web.allowed-origins", () -> FRONTEND.baseUrl() + ",http://localhost:3200"); }
     @AfterAll static void closeFrontend() { FRONTEND.close(); }
 
     @Test void lostStopResponseKeepsOldPageWhileRuntimeRejectsDeployment() throws Exception {
@@ -129,6 +129,10 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
                 "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", revision), "priority", 0)), accessToken);
         assertEquals(201, mount.statusCode(), mount.body());
         assertEquals(200, send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken).statusCode());
+        if (System.getenv("E2E_TOOL_CLOCK_RESULT") != null) {
+            invalidClockBrowser(evidence, key);
+            return;
+        }
         var session = send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken);
         assertEquals(200, session.statusCode(), session.body()); sessionId = successData(session).path("session_id").asText();
         try (var model = new ClockModel(objectMapper)) {
@@ -173,11 +177,70 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
         }
     }
 
+    /** 独立会话端实际发起无效参数工具调用，验证过程状态与模型接收结果。 */
+    private void invalidClockBrowser(Path evidence, String key) throws Exception {
+        String token = "clock-test-" + UUID.randomUUID(), clientRef = UUID.randomUUID().toString();
+        long channel;
+        TenantContext.setTenantId(tenantId);
+        try { channel = createNativeBrowserChannel(token, null, null); }
+        finally { TenantContext.clear(); }
+        var profileRequest = java.net.http.HttpRequest.newBuilder(java.net.URI.create(baseUrl() + "/api/v1/chat/client-profile"))
+                .header("X-Channel-Token", token).header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(
+                        Map.of("client_ref", clientRef, "display_name", "工具结果验收")))).build();
+        var profileResponse = httpClient.send(profileRequest, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, profileResponse.statusCode(), profileResponse.body());
+        var profile = objectMapper.readTree(profileResponse.body()).path("data");
+        String user = profile.path("end_user_id").asText(), identity = profile.path("identity_token").asText();
+        assertFalse(user.isBlank()); assertFalse(identity.isBlank());
+        var sessionRequest = java.net.http.HttpRequest.newBuilder(java.net.URI.create(baseUrl() + "/api/v1/chat/sessions"))
+                .header("X-Channel-Token", token).header("X-Chat-User-Token", identity).header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(
+                        Map.of("agent_id", agentId, "end_user_id", user)))).build();
+        var created = httpClient.send(sessionRequest, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode(), created.body());
+        String session = objectMapper.readTree(created.body()).path("data").path("session_id").asText();
+        assertFalse(session.isBlank());
+        Path root = KnowledgeBrowserServer.repoRoot(), chatEvidence = evidence.resolve("chat-browser"); Files.createDirectories(chatEvidence);
+        try (var model = new ClockModel(objectMapper)) {
+            model.start(); TenantContext.setTenantId(tenantId);
+            try { configureTenantModel(model.endpoint()); } finally { TenantContext.clear(); }
+            ProcessBuilder command = new ProcessBuilder(KnowledgeBrowserServer.nodeExecutable(), root.resolve("frontend-chat/e2e/closed-session-browser.mjs").toString());
+            command.directory(root.toFile()); command.redirectErrorStream(true); command.redirectOutput(chatEvidence.resolve("browser.log").toFile());
+            var fixture = new LinkedHashMap<String, Object>();
+            fixture.put("backend", baseUrl()); fixture.put("token", token); fixture.put("identity", identity);
+            fixture.put("clientRef", clientRef); fixture.put("channel", Long.toString(channel)); fixture.put("session", session);
+            fixture.put("agent", agentId); fixture.put("evidence", chatEvidence.toString());
+            fixture.put("toolClock", System.getenv("E2E_TOOL_CLOCK_RESULT"));
+            command.environment().put("CLOSED_FIXTURE", objectMapper.writeValueAsString(fixture));
+            Process process = command.start();
+            try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
+                long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(3);
+                while (process.isAlive() && System.nanoTime() < deadline) { owned.capture(); process.waitFor(200, TimeUnit.MILLISECONDS); }
+                owned.capture(); assertFalse(process.isAlive(), "clock_browser_timeout: " + chatEvidence);
+                assertEquals(0, process.exitValue(), "clock_browser_failed: " + chatEvidence + "\n" + Files.readString(chatEvidence.resolve("browser.log")));
+            }
+            var receipt = objectMapper.readTree(Files.readString(chatEvidence.resolve("receipt.json")));
+            String run = receipt.path("runId").asText();
+            assertEquals(1, receipt.path("submissions").asInt()); assertFalse(run.isBlank());
+            var runs = queryRows(jdbc, tenantId, "SELECT run_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND session_id=?", tenantId, session);
+            var tools = queryRows(jdbc, tenantId, "SELECT a.status,t.result_kind,t.adopted,req.canonical_json AS request,res.canonical_json AS result FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id JOIN agent_runtime_execution_materials req ON req.tenant_id=a.tenant_id AND req.reference=a.request_ref JOIN agent_runtime_execution_materials res ON res.tenant_id=t.tenant_id AND res.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='TOOL'", tenantId, run);
+            assertEquals(1, runs.size()); assertEquals("COMPLETED", runs.getFirst().get("status"));
+            assertEquals(1, tools.size()); assertEquals("SUCCEEDED", tools.getFirst().get("result_kind"));
+            assertTrue(tools.getFirst().get("request").toString().contains("Invalid/Unknown"));
+            assertTrue(tools.getFirst().get("result").toString().contains("timezone 必须是有效的 IANA 时区"));
+            assertEquals(2, model.calls.get()); assertTrue(model.verifiedInvalidResult.get());
+            Files.writeString(evidence.resolve("clock-runtime.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                    "key", key, "session", session, "run", run, "runs", runs, "tools", tools,
+                    "modelCalls", model.calls.get(), "modelRequests", model.requests)));
+        }
+    }
+
     private static final class ClockModel implements AutoCloseable {
-        final ObjectMapper json; final HttpServer server; final AtomicInteger calls=new AtomicInteger(); final java.util.concurrent.atomic.AtomicBoolean verifiedClockResult=new java.util.concurrent.atomic.AtomicBoolean();
+        final ObjectMapper json; final HttpServer server; final AtomicInteger calls=new AtomicInteger(); final java.util.concurrent.atomic.AtomicBoolean verifiedClockResult=new java.util.concurrent.atomic.AtomicBoolean(); final java.util.concurrent.atomic.AtomicBoolean verifiedInvalidResult = new java.util.concurrent.atomic.AtomicBoolean(); final List<com.fasterxml.jackson.databind.JsonNode> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
         ClockModel(ObjectMapper json)throws Exception{this.json=json;server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);server.createContext("/chat/completions",this::respond);}
         void start(){server.start();}String endpoint(){return "http://127.0.0.1:"+server.getAddress().getPort();}
-        void respond(com.sun.net.httpserver.HttpExchange exchange)throws java.io.IOException {var request=json.readTree(exchange.getRequestBody());int ordinal=calls.incrementAndGet();if(ordinal>2)throw new java.io.IOException("unexpected_model_call");if(ordinal==2){for(var input:request.path("messages")){if("tool".equals(input.path("role").asText())&&input.path("content").toString().contains("epoch_millis")&&input.path("content").toString().contains("Asia/Shanghai"))verifiedClockResult.set(true);}if(!verifiedClockResult.get())throw new java.io.IOException("clock_result_not_returned_to_model");}String function=null;for(var tool:request.path("tools"))if(tool.path("function").path("parameters").path("properties").has("timezone"))function=tool.path("function").path("name").asText();if(function==null)throw new java.io.IOException("clock_tool_missing");Object message=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("id","clock-call","type","function","function",Map.of("name",function,"arguments","{}")))):Map.of("role","assistant","content","已读取时钟结果。");String finish=ordinal==1?"tool_calls":"stop",model=request.path("model").asText();var usage=Map.of("prompt_tokens",11,"completion_tokens",7,"total_tokens",18);String body,type;if(!request.path("stream").asBoolean()){type="application/json";body=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion","model",model,"choices",List.of(Map.of("index",0,"message",message,"finish_reason",finish)),"usage",usage));}else{type="text/event-stream";Object delta=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("index",0,"id","clock-call","type","function","function",Map.of("name",function,"arguments","{}")))):message;String first=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",delta))));String last=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",Map.of(),"finish_reason",finish)),"usage",usage));body="data: "+first+"\n\ndata: "+last+"\n\ndata: [DONE]\n\n";}byte[] bytes=body.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type",type);exchange.sendResponseHeaders(200,bytes.length);try(var out=exchange.getResponseBody()){out.write(bytes);}}
+        void respond(com.sun.net.httpserver.HttpExchange exchange)throws java.io.IOException {var request=json.readTree(exchange.getRequestBody()); requests.add(request.deepCopy()); int ordinal=calls.incrementAndGet();if(ordinal>2)throw new java.io.IOException("unexpected_model_call");if(ordinal==2){for(var input:request.path("messages")){if("tool".equals(input.path("role").asText())&&input.path("content").toString().contains("epoch_millis")&&input.path("content").toString().contains("Asia/Shanghai"))verifiedClockResult.set(true);}if (System.getenv("E2E_TOOL_CLOCK_RESULT") != null) { for(var input:request.path("messages")) if("tool".equals(input.path("role").asText()) && input.path("content").toString().contains("timezone 必须是有效的 IANA 时区") && input.path("content").toString().contains("false")) verifiedInvalidResult.set(true); if (!verifiedInvalidResult.get()) throw new java.io.IOException("invalid_result_not_returned_to_model"); } else if(!verifiedClockResult.get())throw new java.io.IOException("clock_result_not_returned_to_model");}String function=null;for(var tool:request.path("tools"))if(tool.path("function").path("parameters").path("properties").has("timezone"))function=tool.path("function").path("name").asText();if(function==null)throw new java.io.IOException("clock_tool_missing");Object message=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):Map.of("role","assistant","content","已读取时钟结果。");String finish=ordinal==1?"tool_calls":"stop",model=request.path("model").asText();var usage=Map.of("prompt_tokens",11,"completion_tokens",7,"total_tokens",18);String body,type;if(!request.path("stream").asBoolean()){type="application/json";body=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion","model",model,"choices",List.of(Map.of("index",0,"message",message,"finish_reason",finish)),"usage",usage));}else{type="text/event-stream";Object delta=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("index",0,"id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):message;String first=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",delta))));String last=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",Map.of(),"finish_reason",finish)),"usage",usage));body="data: "+first+"\n\ndata: "+last+"\n\ndata: [DONE]\n\n";}byte[] bytes=body.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type",type);exchange.sendResponseHeaders(200,bytes.length);try(var out=exchange.getResponseBody()){out.write(bytes);}}
         @Override public void close(){server.stop(0);}
     }
 }

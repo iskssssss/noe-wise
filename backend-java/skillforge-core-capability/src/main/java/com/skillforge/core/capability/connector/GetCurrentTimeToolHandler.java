@@ -16,6 +16,11 @@ public class GetCurrentTimeToolHandler implements PlatformToolHandler {
     }
 
     @Override
+    public boolean isError(Map<String, Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
+
+    @Override
     public Map<String, Object> execute(Map<String, Object> args, PlatformToolExecutionContext context) {
         try {
             String timezone = args == null || args.get("timezone") == null

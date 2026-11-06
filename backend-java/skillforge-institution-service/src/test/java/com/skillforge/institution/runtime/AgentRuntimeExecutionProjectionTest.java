@@ -501,6 +501,17 @@ class AgentRuntimeExecutionProjectionTest {
         assertEquals("SUCCEEDED", body.get("status"));
     }
 
+    @Test void businessFailureIsVisibleWithoutReclassifyingTheActualToolOutcome() throws Exception {
+        var fixture = new Fixture(); var body = fixture.base();
+        body.put("actionId", "action-1"); body.put("toolId", "clock"); body.put("callId", "call-1");
+        body.put("status", "SUCCEEDED"); body.put("summary", "工具调用失败"); body.put("outputAccepted", true);
+        body.put("businessFailed", true);
+        fixture.events(AgentExecutionProgram.TOOL_RESULT_EVENT, AgentExecutionProgram.TOOL_RESULT_SCHEMA, body);
+        fixture.projection.reconcile(fixture.session);
+        assertEquals("failed", fixture.data("process.finished").get("status"));
+        assertEquals("SUCCEEDED", body.get("status"));
+    }
+
     @Test void unsafeHumanQuestionBecomesOnlyASafePresentationRejection() throws Exception {
         var fixture = new Fixture(); var body = fixture.base();
         body.put("actionId", "human-action"); body.put("generation", "2"); body.put("kind", "human");

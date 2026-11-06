@@ -76,6 +76,34 @@ class AgentRuntimePlatformToolProviderTest {
     private static final ToolBinding BINDING = new ToolBinding(ToolBinding.ProviderType.PLATFORM,
             "lookup", "lookup");
 
+    @Test void clockDeclaresInvalidTimezoneWithoutLosingTheOriginalResult() throws Exception {
+        var fixture = fixture(new com.skillforge.core.capability.connector.GetCurrentTimeToolHandler());
+        for (var entry : Map.of("Asia/Shanghai", false, "not-a-timezone", true).entrySet()) {
+            var direct = directFixture("get_current_time", new ObjectMapper().writeValueAsString(Map.of("timezone", entry.getKey())));
+            var result = assertInstanceOf(ToolOutcome.Succeeded.class,
+                    fixture.provider.invokeRegistered(direct.receipt().registered(), direct.receipt().prepared(), direct.call()));
+            var body = new ObjectMapper().readTree(result.observation().canonicalJson());
+            assertEquals(entry.getValue(), body.path("isError").booleanValue());
+            assertEquals(!entry.getValue(), body.path("structuredContent").path("success").booleanValue());
+            if (entry.getValue()) assertEquals("timezone 必须是有效的 IANA 时区", body.path("structuredContent").path("error").textValue());
+        }
+    }
+
+    @Test void unrecognizedBusinessFieldsDoNotBecomeProtocolErrors() throws Exception {
+        var handler = new PlatformToolHandler() {
+            @Override public String toolName() { return "lookup"; }
+            @Override public Map<String, Object> execute(Map<String, Object> arguments, PlatformToolExecutionContext context) {
+                return Map.of("success", false);
+            }
+        };
+        var fixture = fixture(handler); var direct = directFixture("lookup", "{}");
+        var result = assertInstanceOf(ToolOutcome.Succeeded.class,
+                fixture.provider.invokeRegistered(direct.receipt().registered(), direct.receipt().prepared(), direct.call()));
+        var body = new ObjectMapper().readTree(result.observation().canonicalJson());
+        assertFalse(body.path("isError").booleanValue());
+        assertFalse(body.path("structuredContent").path("success").booleanValue());
+    }
+
     /** 新批次线程没有继承租户；真实Guard账本及异步Handler均按已核验的Run绑定。 */
     @Test
     void registeredToolBindsTrustedTenantForLedgerAndAsyncHandlerAndRestoresCaller() throws Exception {

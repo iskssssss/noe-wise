@@ -187,7 +187,7 @@ public final class AgentRuntimePlatformToolProvider {
                     () -> handler instanceof com.skillforge.institution.execution.ProgramCodeToolHandler
                             ? executeProgram(() -> handler.execute(arguments, execution), execution)
                             : execute(() -> handler.execute(arguments, execution), execution));
-            return completed(result, handler instanceof PlatformMediaToolHandler && Boolean.TRUE.equals(result.get("isError")),
+            return completed(result, handler.isError(result) || handler instanceof PlatformMediaToolHandler && Boolean.TRUE.equals(result.get("isError")),
                     handler instanceof PlatformMediaToolHandler, reference);
         } catch (ExternalInvocationGuard.OutcomeUnknownException unknown) {
             boundaryFailure(dispatch,"platform_tool_outcome_unknown",unknown);

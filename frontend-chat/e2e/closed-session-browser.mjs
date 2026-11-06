@@ -81,7 +81,87 @@ try {
 
   const input = page.getByRole('textbox', { name: '消息', exact: true })
   await expect(input).toBeEnabled()
-  if (f.previewStream) {
+  if (f.toolClock) {
+    await input.fill('请查询当前时间并报告。')
+    const accepted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/chat' &&
+        response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    const response = await accepted
+    assert.equal(response.status(), 202)
+    const receipt = (await response.json()).data
+    await expect(page.getByText('已读取时钟结果。', { exact: true })).toBeVisible({
+      timeout: 40000
+    })
+    const toggle = page.locator('.process-toggle').first()
+    await expect(toggle).toBeVisible()
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+    const trace = page.locator('[data-process-trace-toggle]').first()
+    if (await trace.isVisible()) {
+      if ((await trace.getAttribute('aria-pressed')) !== 'true') await trace.click()
+    }
+    const tool = page.locator('.process-step').filter({ hasText: '工具调用' })
+    await expect(tool).toHaveCount(1)
+    const expected = f.toolClock === 'baseline' ? 'succeeded' : 'failed'
+    await expect(tool).toHaveAttribute('data-process-state', expected)
+    await expect(tool.locator('.step-state')).toHaveText(
+      f.toolClock === 'baseline' ? '已完成' : '失败'
+    )
+    assert.equal(chats.length, 1)
+    assert.deepEqual(errors, [])
+    const visible = await page.locator('body').innerText()
+    await page.screenshot({ path: join(f.evidence, 'clock-process.png'), fullPage: true })
+    const historyReady = page.waitForResponse(
+      (item) =>
+        new URL(item.url()).pathname === '/api/v1/chat/history' && item.request().method() === 'GET'
+    )
+    await page.reload()
+    const historyResponse = await historyReady
+    assert.equal(historyResponse.status(), 200)
+    const history = (await historyResponse.json()).data
+    assert.equal(history.session_id, f.session)
+    const persistedTool = history.processes.filter(
+      (item) => item.type === 'tool' && item.run_id === receipt.execution_id
+    )
+    assert.equal(persistedTool.length, 1)
+    assert.equal(persistedTool[0].status, expected)
+    await expect(page.getByText('已读取时钟结果。', { exact: true })).toBeVisible()
+    const restoredToggle = page.locator('.process-toggle').first()
+    await expect(restoredToggle).toBeVisible()
+    if ((await restoredToggle.getAttribute('aria-expanded')) !== 'true')
+      await restoredToggle.click()
+    const restoredTrace = page.locator('[data-process-trace-toggle]').first()
+    if (await restoredTrace.isVisible()) {
+      if ((await restoredTrace.getAttribute('aria-pressed')) !== 'true') await restoredTrace.click()
+    }
+    const restoredTool = page.locator('.process-step').filter({ hasText: '工具调用' })
+    await expect(restoredTool).toHaveCount(1)
+    await expect(restoredTool).toHaveAttribute('data-process-state', expected)
+    await expect(restoredTool.locator('.step-state')).toHaveText(
+      f.toolClock === 'baseline' ? '已完成' : '失败'
+    )
+    assert.equal(chats.length, 1)
+    await page.screenshot({ path: join(f.evidence, 'clock-process-restored.png'), fullPage: true })
+    await writeFile(
+      join(f.evidence, 'receipt.json'),
+      JSON.stringify(
+        {
+          runId: receipt.execution_id,
+          sessionId: f.session,
+          submissions: chats.length,
+          mode: f.toolClock,
+          toolState: await restoredTool.getAttribute('data-process-state'),
+          historyTool: persistedTool[0],
+          restoredVisible: await page.locator('body').innerText(),
+          visible
+        },
+        null,
+        2
+      )
+    )
+  } else if (f.previewStream) {
     await input.fill('公开安全正文预览应在模型完成前可见')
     const accepted = page.waitForResponse(
       (response) =>
