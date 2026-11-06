@@ -89,6 +89,20 @@ class AgentRuntimePlatformToolProviderTest {
         }
     }
 
+    @Test void calculatorDeclaresInvalidExpressionWithoutLosingTheOriginalResult() throws Exception {
+        var fixture = fixture(new com.skillforge.core.capability.connector.CalculateExpressionToolHandler());
+        for (var entry : Map.of("1+2*3", false, "1/0", true).entrySet()) {
+            var direct = directFixture("calculate_expression", new ObjectMapper().writeValueAsString(Map.of("expression", entry.getKey())));
+            var result = assertInstanceOf(ToolOutcome.Succeeded.class,
+                    fixture.provider.invokeRegistered(direct.receipt().registered(), direct.receipt().prepared(), direct.call()));
+            var body = new ObjectMapper().readTree(result.observation().canonicalJson());
+            assertEquals(entry.getValue(), body.path("isError").booleanValue());
+            assertEquals(!entry.getValue(), body.path("structuredContent").path("success").booleanValue());
+            if (entry.getValue()) assertEquals("不能除以零", body.path("structuredContent").path("error").textValue());
+            else assertEquals("7", body.path("structuredContent").path("value").textValue());
+        }
+    }
+
     @Test void unrecognizedBusinessFieldsDoNotBecomeProtocolErrors() throws Exception {
         var handler = new PlatformToolHandler() {
             @Override public String toolName() { return "lookup"; }

@@ -51,6 +51,7 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
     }
 
     @Test void lostCreateResponseLeavesOriginalResultUnknownAndRuntimeUsesDeployment() throws Exception {
+        if (System.getenv("E2E_EXPRESSION_RESULT") != null) { invalidExpressionJourney(); return; }
         if (System.getenv("E2E_TOOL_PROVIDER_BINDING") != null) { providerBindingJourney(); return; }
         login();
         var revised=send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken);
@@ -177,6 +178,24 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
         }
     }
 
+    private void invalidExpressionJourney() throws Exception {
+        login(); assertEquals(200, send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken).statusCode());
+        String definition = "", version = "";
+        for (var item : successData(get("/api/v1/capabilities/definitions?capability_type=TOOL&status=PUBLISHED")))
+            if ("tool:calculate_expression".equals(item.path("capability_key").asText())) { definition = item.path("id").asText(); version = item.path("default_version_id").asText(); }
+        assertFalse(definition.isBlank()); assertFalse(version.isBlank());
+        String key = "expression-control-" + SnowflakeIds.nextId();
+        var deployment = send("/api/v1/capabilities/deployments", "POST", Map.of("deployment_key", key, "tool_version_id", version,
+                "provider_type", "PLATFORM", "provider_ref", "calculate_expression", "environment", "DEVELOPMENT", "status", "ACTIVE"), accessToken);
+        assertEquals(201, deployment.statusCode(), deployment.body());
+        var mount = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "TOOL",
+                "capability_definition_id", definition, "capability_version_id", version, "priority", 0, "tool_config", Map.of("tool_deployment_id", key,
+                        "tool_deployment_revision", successData(deployment).path("revision").asLong()))), accessToken);
+        assertEquals(201, mount.statusCode(), mount.body()); assertEquals(200, send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken).statusCode());
+        Path evidence = Path.of("build", "runtime-e2e", "invalid-expression-" + SnowflakeIds.nextId()).toAbsolutePath(); Files.createDirectories(evidence);
+        invalidClockBrowser(evidence, key);
+    }
+
     /** 独立会话端实际发起无效参数工具调用，验证过程状态与模型接收结果。 */
     private void invalidClockBrowser(Path evidence, String key) throws Exception {
         String token = "clock-test-" + UUID.randomUUID(), clientRef = UUID.randomUUID().toString();
@@ -211,7 +230,8 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
             fixture.put("backend", baseUrl()); fixture.put("token", token); fixture.put("identity", identity);
             fixture.put("clientRef", clientRef); fixture.put("channel", Long.toString(channel)); fixture.put("session", session);
             fixture.put("agent", agentId); fixture.put("evidence", chatEvidence.toString());
-            fixture.put("toolClock", System.getenv("E2E_TOOL_CLOCK_RESULT"));
+            fixture.put("toolExpression", System.getenv("E2E_EXPRESSION_RESULT") != null);
+            fixture.put("toolClock", System.getenv("E2E_EXPRESSION_RESULT") != null ? System.getenv("E2E_EXPRESSION_RESULT") : System.getenv("E2E_TOOL_CLOCK_RESULT"));
             command.environment().put("CLOSED_FIXTURE", objectMapper.writeValueAsString(fixture));
             Process process = command.start();
             try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -227,8 +247,9 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
             var tools = queryRows(jdbc, tenantId, "SELECT a.status,t.result_kind,t.adopted,req.canonical_json AS request,res.canonical_json AS result FROM agent_runtime_execution_actions a JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id JOIN agent_runtime_execution_materials req ON req.tenant_id=a.tenant_id AND req.reference=a.request_ref JOIN agent_runtime_execution_materials res ON res.tenant_id=t.tenant_id AND res.reference=t.result_ref WHERE a.tenant_id=? AND a.run_id=? AND a.kind='TOOL'", tenantId, run);
             assertEquals(1, runs.size()); assertEquals("COMPLETED", runs.getFirst().get("status"));
             assertEquals(1, tools.size()); assertEquals("SUCCEEDED", tools.getFirst().get("result_kind"));
-            assertTrue(tools.getFirst().get("request").toString().contains("Invalid/Unknown"));
-            assertTrue(tools.getFirst().get("result").toString().contains("timezone 必须是有效的 IANA 时区"));
+            boolean expression = System.getenv("E2E_EXPRESSION_RESULT") != null;
+            assertTrue(tools.getFirst().get("request").toString().contains(expression ? "1/0" : "Invalid/Unknown"));
+            assertTrue(tools.getFirst().get("result").toString().contains(expression ? "不能除以零" : "timezone 必须是有效的 IANA 时区"));
             assertEquals(2, model.calls.get()); assertTrue(model.verifiedInvalidResult.get());
             Files.writeString(evidence.resolve("clock-runtime.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
                     "key", key, "session", session, "run", run, "runs", runs, "tools", tools,
@@ -240,7 +261,7 @@ class ToolDeploymentRecoveryBrowserE2ETest extends ChatExecutionChainE2ETest {
         final ObjectMapper json; final HttpServer server; final AtomicInteger calls=new AtomicInteger(); final java.util.concurrent.atomic.AtomicBoolean verifiedClockResult=new java.util.concurrent.atomic.AtomicBoolean(); final java.util.concurrent.atomic.AtomicBoolean verifiedInvalidResult = new java.util.concurrent.atomic.AtomicBoolean(); final List<com.fasterxml.jackson.databind.JsonNode> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
         ClockModel(ObjectMapper json)throws Exception{this.json=json;server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);server.createContext("/chat/completions",this::respond);}
         void start(){server.start();}String endpoint(){return "http://127.0.0.1:"+server.getAddress().getPort();}
-        void respond(com.sun.net.httpserver.HttpExchange exchange)throws java.io.IOException {var request=json.readTree(exchange.getRequestBody()); requests.add(request.deepCopy()); int ordinal=calls.incrementAndGet();if(ordinal>2)throw new java.io.IOException("unexpected_model_call");if(ordinal==2){for(var input:request.path("messages")){if("tool".equals(input.path("role").asText())&&input.path("content").toString().contains("epoch_millis")&&input.path("content").toString().contains("Asia/Shanghai"))verifiedClockResult.set(true);}if (System.getenv("E2E_TOOL_CLOCK_RESULT") != null) { for(var input:request.path("messages")) if("tool".equals(input.path("role").asText()) && input.path("content").toString().contains("timezone 必须是有效的 IANA 时区") && input.path("content").toString().contains("false")) verifiedInvalidResult.set(true); if (!verifiedInvalidResult.get()) throw new java.io.IOException("invalid_result_not_returned_to_model"); } else if(!verifiedClockResult.get())throw new java.io.IOException("clock_result_not_returned_to_model");}String function=null;for(var tool:request.path("tools"))if(tool.path("function").path("parameters").path("properties").has("timezone"))function=tool.path("function").path("name").asText();if(function==null)throw new java.io.IOException("clock_tool_missing");Object message=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):Map.of("role","assistant","content","已读取时钟结果。");String finish=ordinal==1?"tool_calls":"stop",model=request.path("model").asText();var usage=Map.of("prompt_tokens",11,"completion_tokens",7,"total_tokens",18);String body,type;if(!request.path("stream").asBoolean()){type="application/json";body=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion","model",model,"choices",List.of(Map.of("index",0,"message",message,"finish_reason",finish)),"usage",usage));}else{type="text/event-stream";Object delta=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("index",0,"id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):message;String first=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",delta))));String last=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",Map.of(),"finish_reason",finish)),"usage",usage));body="data: "+first+"\n\ndata: "+last+"\n\ndata: [DONE]\n\n";}byte[] bytes=body.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type",type);exchange.sendResponseHeaders(200,bytes.length);try(var out=exchange.getResponseBody()){out.write(bytes);}}
+        void respond(com.sun.net.httpserver.HttpExchange exchange)throws java.io.IOException {var request=json.readTree(exchange.getRequestBody()); requests.add(request.deepCopy()); int ordinal=calls.incrementAndGet();if(ordinal>2)throw new java.io.IOException("unexpected_model_call");if(ordinal==2){for(var input:request.path("messages")){if("tool".equals(input.path("role").asText())&&input.path("content").toString().contains("epoch_millis")&&input.path("content").toString().contains("Asia/Shanghai"))verifiedClockResult.set(true);}if (System.getenv("E2E_TOOL_CLOCK_RESULT") != null || System.getenv("E2E_EXPRESSION_RESULT") != null) { for(var input:request.path("messages")) if("tool".equals(input.path("role").asText()) && input.path("content").toString().contains(System.getenv("E2E_EXPRESSION_RESULT") != null ? "不能除以零" : "timezone 必须是有效的 IANA 时区") && input.path("content").toString().contains("false")) verifiedInvalidResult.set(true); if (!verifiedInvalidResult.get()) throw new java.io.IOException("invalid_result_not_returned_to_model"); } else if(!verifiedClockResult.get())throw new java.io.IOException("clock_result_not_returned_to_model");}String function=null;for(var tool:request.path("tools"))if(tool.path("function").path("parameters").path("properties").has(System.getenv("E2E_EXPRESSION_RESULT") != null ? "expression" : "timezone"))function=tool.path("function").path("name").asText();if(function==null)throw new java.io.IOException("clock_tool_missing");Object message=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_EXPRESSION_RESULT") != null ? "{\"expression\":\"1/0\"}" : System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):Map.of("role","assistant","content",System.getenv("E2E_EXPRESSION_RESULT") != null ? "已读取工具结果。" : "已读取时钟结果。");String finish=ordinal==1?"tool_calls":"stop",model=request.path("model").asText();var usage=Map.of("prompt_tokens",11,"completion_tokens",7,"total_tokens",18);String body,type;if(!request.path("stream").asBoolean()){type="application/json";body=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion","model",model,"choices",List.of(Map.of("index",0,"message",message,"finish_reason",finish)),"usage",usage));}else{type="text/event-stream";Object delta=ordinal==1?Map.of("role","assistant","tool_calls",List.of(Map.of("index",0,"id","clock-call","type","function","function",Map.of("name",function,"arguments",System.getenv("E2E_EXPRESSION_RESULT") != null ? "{\"expression\":\"1/0\"}" : System.getenv("E2E_TOOL_CLOCK_RESULT") == null ? "{}" : "{\"timezone\":\"Invalid/Unknown\"}")))):message;String first=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",delta))));String last=json.writeValueAsString(Map.of("id","clock-model","object","chat.completion.chunk","model",model,"choices",List.of(Map.of("index",0,"delta",Map.of(),"finish_reason",finish)),"usage",usage));body="data: "+first+"\n\ndata: "+last+"\n\ndata: [DONE]\n\n";}byte[] bytes=body.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type",type);exchange.sendResponseHeaders(200,bytes.length);try(var out=exchange.getResponseBody()){out.write(bytes);}}
         @Override public void close(){server.stop(0);}
     }
 }

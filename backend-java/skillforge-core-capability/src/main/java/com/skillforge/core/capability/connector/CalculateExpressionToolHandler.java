@@ -20,6 +20,11 @@ public class CalculateExpressionToolHandler implements PlatformToolHandler {
     }
 
     @Override
+    public boolean isError(Map<String, Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
+
+    @Override
     public Map<String, Object> execute(Map<String, Object> args, PlatformToolExecutionContext context) {
         String expression = args == null || args.get("expression") == null
                 ? "" : String.valueOf(args.get("expression")).replaceAll("\\s+", "");

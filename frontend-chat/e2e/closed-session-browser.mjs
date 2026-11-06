@@ -82,7 +82,8 @@ try {
   const input = page.getByRole('textbox', { name: '消息', exact: true })
   await expect(input).toBeEnabled()
   if (f.toolClock) {
-    await input.fill('请查询当前时间并报告。')
+    const reply = f.toolExpression ? '已读取工具结果。' : '已读取时钟结果。'
+    await input.fill(f.toolExpression ? '请计算 1/0 并报告结果。' : '请查询当前时间并报告。')
     const accepted = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/api/v1/chat' &&
@@ -92,7 +93,7 @@ try {
     const response = await accepted
     assert.equal(response.status(), 202)
     const receipt = (await response.json()).data
-    await expect(page.getByText('已读取时钟结果。', { exact: true })).toBeVisible({
+    await expect(page.getByText(reply, { exact: true })).toBeVisible({
       timeout: 40000
     })
     const toggle = page.locator('.process-toggle').first()
@@ -127,7 +128,7 @@ try {
     )
     assert.equal(persistedTool.length, 1)
     assert.equal(persistedTool[0].status, expected)
-    await expect(page.getByText('已读取时钟结果。', { exact: true })).toBeVisible()
+    await expect(page.getByText(reply, { exact: true })).toBeVisible()
     const restoredToggle = page.locator('.process-toggle').first()
     await expect(restoredToggle).toBeVisible()
     if ((await restoredToggle.getAttribute('aria-expanded')) !== 'true')
