@@ -937,6 +937,9 @@ describe('真实Workflow测试面板边界', () => {
     await button(wrapper, '保存并测试').trigger('click')
     await flushPromises()
     expect(saveDraft).toHaveBeenCalledOnce()
+    expect(
+      mocks.options.mock.calls.filter(([, source]) => source.draftRevision === 8)
+    ).toHaveLength(1)
     expect(mocks.create).toHaveBeenCalledOnce()
     expect(mocks.create.mock.calls[0]![0]).toMatchObject({
       source: { kind: 'draft', draftRevision: 8 },
@@ -971,8 +974,10 @@ describe('真实Workflow测试面板边界', () => {
       return 8
     })
     mocks.options.mockImplementation(async (_workflow, source) => {
-      if (failRead && source.kind === 'draft' && source.draftRevision === 8)
+      if (failRead && source.kind === 'draft' && source.draftRevision === 8) {
+        failRead = false
         throw Error('选项读取失败')
+      }
       return options(source)
     })
     const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
@@ -981,14 +986,89 @@ describe('真实Workflow测试面板边界', () => {
     await button(wrapper, '保存并测试').trigger('click')
     await flushPromises()
     expect(mocks.create).not.toHaveBeenCalled()
+    expect(
+      mocks.options.mock.calls.filter(([, source]) => source.draftRevision === 8)
+    ).toHaveLength(1)
     expect(dom().text()).toContain('选项读取失败')
     expect(mocks.submit).not.toHaveBeenCalled()
-    failRead = false
     await button(wrapper, '重新读取测试选项').trigger('click')
     await flushPromises()
     expect(dom().get<HTMLTextAreaElement>('textarea[aria-label="测试消息"]').element.value).toBe(
       '保留原消息'
     )
+  })
+  it('保存后等待同一修订的选项读取完成才启动测试', async () => {
+    let finish!: (value: WorkflowTestOptions) => void
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.options.mockImplementation(async (_workflow, source) =>
+      source.kind === 'draft' && source.draftRevision === 8
+        ? new Promise<WorkflowTestOptions>((resolve) => {
+            finish = resolve
+          })
+        : options(source)
+    )
+    mocks.create.mockImplementation(async (input) =>
+      receipt({ source: options(input.source).source })
+    )
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(
+      mocks.options.mock.calls.filter(([, source]) => source.draftRevision === 8)
+    ).toHaveLength(1)
+    expect(mocks.create).not.toHaveBeenCalled()
+    finish(options({ kind: 'draft', draftRevision: 8 }))
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+  })
+  it('保存返回相同修订时仍重新读取测试选项', async () => {
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ dirty: false })
+      return 7
+    })
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    const before = mocks.options.mock.calls.length
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    expect(mocks.options).toHaveBeenCalledTimes(before + 1)
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+  })
+  it('保存后的选项读取期间切换身份，迟到响应不启动旧测试或覆盖新身份', async () => {
+    let finish!: (value: WorkflowTestOptions) => void
+    let pending = true
+    const saveDraft = vi.fn(async () => {
+      await wrapper.setProps({ draftRevision: 8, dirty: false })
+      return 8
+    })
+    mocks.options.mockImplementation(async (_workflow, source) => {
+      if (source.kind === 'draft' && source.draftRevision === 8 && pending) {
+        pending = false
+        return new Promise<WorkflowTestOptions>((resolve) => {
+          finish = resolve
+        })
+      }
+      return { ...options(source), costNotice: '新身份选项' }
+    })
+    const wrapper = render({ dirty: true, saveDraft, identityVersion: 1 })
+    await flushPromises()
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2 })
+    await flushPromises()
+    finish({ ...options({ kind: 'draft', draftRevision: 8 }), costNotice: '旧身份迟到选项' })
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(dom().text()).toContain('新身份选项')
+    expect(dom().text()).not.toContain('旧身份迟到选项')
   })
   it('保存期间身份变化不继续原测试意图', async () => {
     let complete!: (revision: number) => void

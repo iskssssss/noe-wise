@@ -327,12 +327,6 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
   await page.locator('input[autocomplete="current-password"]').fill(required('E2E_PASSWORD'))
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).toHaveURL(/\/admin\/workflows\/create$/)
-  const workflowId = `test-flow-${Date.now()}`
-  await page
-    .locator('.el-form-item')
-    .filter({ hasText: '业务标识' })
-    .locator('input')
-    .fill(workflowId)
   await page
     .locator('.el-form-item')
     .filter({ hasText: '名称' })
@@ -341,10 +335,13 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
     .fill('工作流测试流程')
   let creates = 0
   let testCreates = 0
+  let updates = 0
+  let chatPosts = 0
+  const optionRevisions: string[] = []
   page.on('request', (request) => {
     if (
       request.method() === 'POST' &&
-      new URL(request.url()).pathname === '/api/v1/builder/workflows'
+      new URL(request.url()).pathname === '/api/v1/builder/workflows/create-with-receipt'
     )
       creates++
     if (
@@ -352,12 +349,26 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
       new URL(request.url()).pathname === '/api/v1/builder/workflows/test-sessions'
     )
       testCreates++
+    if (
+      request.method() === 'PUT' &&
+      new URL(request.url()).pathname === '/api/v1/builder/workflows/draft'
+    )
+      updates++
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat')
+      chatPosts++
+    if (
+      request.method() === 'GET' &&
+      new URL(request.url()).pathname === '/api/v1/builder/workflows/test-sessions/options'
+    )
+      optionRevisions.push(new URL(request.url()).searchParams.get('draftRevision') ?? '')
   })
-  const saved = responseAt(page, '/api/v1/builder/workflows', 'POST')
+  const saved = responseAt(page, '/api/v1/builder/workflows/create-with-receipt', 'POST')
   const options = responseAt(page, '/api/v1/builder/workflows/test-sessions/options')
   await page.getByRole('button', { name: '保存并配置测试', exact: true }).click()
   const panel = page.getByRole('dialog', { name: '工作流测试' })
-  const savedDraft = await dataOf(await saved)
+  const savedDraft = (await dataOf(await saved)).draft
+  const workflowId = String(savedDraft.workflow_id)
+  expect(workflowId).not.toBe('undefined')
   const optionResponse = await options
   expect(optionResponse.status()).toBe(200)
   expect(new URL(optionResponse.url()).searchParams.get('draftRevision')).toBe(
@@ -402,20 +413,77 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
   await page.getByRole('button', { name: '测试', exact: true }).click()
   await expect(panel.getByLabel('测试消息')).toHaveValue(message)
   await expect(panel).toContainText('当前草稿有未保存修改')
+  const anyControl = !!process.env.E2E_WORKFLOW_OPTIONS_FAILURE
+  const recoveryControl = process.env.E2E_WORKFLOW_OPTIONS_FAILURE === '1'
+  if (recoveryControl)
+    await page.route(
+      '**/api/v1/builder/workflows/test-sessions/options?*',
+      async (route) => {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'TEST_OPTIONS_UNAVAILABLE',
+            message: '测试选项暂不可用',
+            data: null,
+            trace_id: 'isolated-options-fault'
+          })
+        })
+      },
+      { times: 1 }
+    )
   const update = responseAt(page, '/api/v1/builder/workflows/draft', 'PUT')
   const updatedOptions = responseAt(page, '/api/v1/builder/workflows/test-sessions/options')
-  const testCreated = responseAt(page, '/api/v1/builder/workflows/test-sessions', 'POST')
-  const accepted = responseAt(page, '/api/v1/chat', 'POST')
+  let testCreated = recoveryControl
+    ? undefined
+    : responseAt(page, '/api/v1/builder/workflows/test-sessions', 'POST')
+  let accepted = recoveryControl ? undefined : responseAt(page, '/api/v1/chat', 'POST')
   await panel.getByRole('button', { name: '保存并测试', exact: true }).click()
   const updated = await dataOf(await update)
   const nextOptions = await updatedOptions
-  expect(nextOptions.status()).toBe(200)
-  expect(new URL(nextOptions.url()).searchParams.get('draftRevision')).toBe(
-    String(updated.revision)
-  )
-  const testCreatedResponse = await testCreated
+  if (recoveryControl) {
+    expect(nextOptions.status()).toBe(503)
+    await expect(panel.getByRole('button', { name: '重新读取测试选项' })).toBeVisible()
+    expect(
+      optionRevisions.filter((revision) => revision === String(updated.revision))
+    ).toHaveLength(1)
+    await page.screenshot({ path: join(evidence, 'workflow-options-failed.png'), fullPage: true })
+    await writeFile(
+      join(evidence, 'workflow-options-failed.json'),
+      JSON.stringify(
+        {
+          workflowId,
+          revision: updated.revision,
+          updates,
+          testCreates,
+          chatPosts,
+          visible: await panel.innerText()
+        },
+        null,
+        2
+      )
+    )
+    expect(updates).toBe(1)
+    expect(testCreates).toBe(0)
+    expect(chatPosts).toBe(0)
+    const reloaded = responseAt(page, '/api/v1/builder/workflows/test-sessions/options')
+    await panel.getByRole('button', { name: '重新读取测试选项' }).click()
+    const read = await reloaded
+    expect(read.status()).toBe(200)
+    expect(new URL(read.url()).searchParams.get('draftRevision')).toBe(String(updated.revision))
+    await expect(panel.getByLabel('测试消息')).toHaveValue(message)
+    testCreated = responseAt(page, '/api/v1/builder/workflows/test-sessions', 'POST')
+    accepted = responseAt(page, '/api/v1/chat', 'POST')
+    await panel.getByRole('button', { name: '创建并测试', exact: true }).click()
+  } else {
+    expect(nextOptions.status()).toBe(200)
+    expect(new URL(nextOptions.url()).searchParams.get('draftRevision')).toBe(
+      String(updated.revision)
+    )
+  }
+  const testCreatedResponse = await testCreated!
   const createdTest = await dataOf(testCreatedResponse)
-  await dataOf(await accepted)
+  await dataOf(await accepted!)
   expect(createdTest.source.draft_revision).toBe(updated.revision)
   expect(testCreatedResponse.request().postDataJSON().user_input).toBe(message)
   expect(testCreates).toBe(1)
@@ -455,12 +523,24 @@ test('新工作流一次操作保存并打开测试配置', async ({ page }) => 
         testSessionId: createdTest.test_session_id,
         run: observedRun,
         manualActions: 1,
-        testCreates
+        testCreates,
+        updates,
+        chatPosts,
+        optionRevisions
       },
       null,
       2
     )
   )
+  if (anyControl) {
+    expect(updates).toBe(1)
+    expect(testCreates).toBe(1)
+    expect(chatPosts).toBe(1)
+    expect(
+      optionRevisions.filter((revision) => revision === String(updated.revision))
+    ).toHaveLength(recoveryControl ? 2 : 1)
+    return
+  }
   let closeAttempts = 0
   let upstreamCloses = 0
   let refreshes = 0

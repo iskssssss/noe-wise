@@ -81,6 +81,7 @@ let disposed = false,
   epoch = 0,
   controller: AbortController | undefined,
   timer: ReturnType<typeof setTimeout> | undefined
+let optionsRead: { key: string; epoch: number; promise: Promise<void> } | undefined
 interface FormSnapshot {
   userInput: string
   parameters: Record<string, unknown> | string
@@ -287,6 +288,7 @@ function ownedRead<T>(promise: Promise<T>): Promise<T> {
 }
 function stopReads() {
   epoch++
+  optionsRead = undefined
   controller?.abort()
   if (timer) clearTimeout(timer)
   timer = undefined
@@ -464,7 +466,12 @@ function toggleJson(value: boolean) {
   error.value = ''
   jsonMode.value = value
 }
-async function loadOptions() {
+function loadOptions() {
+  const promise = readOptions()
+  optionsRead = { key: sourceKey.value, epoch, promise }
+  return promise
+}
+async function readOptions() {
   if (!props.modelValue || recovery.value || !props.workflowId || !source.value) return
   stopReads()
   const version = epoch,
@@ -870,7 +877,8 @@ async function saveAndTest() {
     authSession = localStorage.getItem(authSessionKey)
     authCaptured = true
     buildTestInput()
-    const form = formFingerprint(snapshotForm()),
+    const previousSourceKey = sourceKey.value,
+      form = formFingerprint(snapshotForm()),
       { source: _source, ...originalOptions } = options.value,
       originalOptionsFingerprint = formFingerprint(originalOptions)
     savingAndTesting.value = true
@@ -891,7 +899,11 @@ async function saveAndTest() {
       error.value = '测试输入已变化，请核对后再次启动测试。'
       return
     }
-    await loadOptions()
+    await (sourceKey.value !== previousSourceKey &&
+    optionsRead?.key === sourceKey.value &&
+    optionsRead.epoch === epoch
+      ? optionsRead.promise
+      : loadOptions())
     if (
       !current() ||
       props.disabled ||

@@ -130,6 +130,8 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         }
         environment.put("E2E_INTERNAL_REASONING", "fixture-reasoning-" + fixtureRunId());
         environment.put("E2E_ARTIFACT_DIR", browserEvidence.toString());
+        if (System.getenv("E2E_WORKFLOW_OPTIONS_FAILURE") != null)
+            command.command().addAll(List.of("--grep", "新工作流一次操作保存并打开测试配置"));
         if ("1".equals(System.getenv("NOEWISE_TEST_CANCEL_RACE"))) {
             Path gate = evidence.resolve("workflow-entered-gate");
             environment.put("E2E_WORKFLOW_CANCEL_GATE", gate.toString());
@@ -191,6 +193,27 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
             Files.writeString(evidence.resolve("workflow-close-state.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(closeEvidence), StandardCharsets.UTF_8);
             assertEquals(0, process.exitValue(), "Chat process browser E2E failed; evidence=" + evidence
                     + "\n" + tail);
+            if (System.getenv("E2E_WORKFLOW_OPTIONS_FAILURE") != null) {
+                var facts = objectMapper.readTree(Files.readString(browserEvidence.resolve("workflow-save-test-candidate.json")));
+                String run = facts.path("run").path("id").asText();
+                assertTrue(!run.isBlank());
+                long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                var runs = queryRows(jdbc, tenantId, "SELECT run_id,session_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=?", tenantId, run);
+                while (System.nanoTime() < end && (runs.isEmpty() || !"FINISHED".equals(runs.getFirst().get("phase")))) {
+                    Thread.sleep(200);
+                    runs = queryRows(jdbc, tenantId, "SELECT run_id,session_id,status,phase FROM agent_runtime_execution_runs WHERE tenant_id=? AND run_id=?", tenantId, run);
+                }
+                var actions = queryRows(jdbc, tenantId, "SELECT a.action_id,a.kind,a.status,m.schema_id,m.canonical_json FROM agent_runtime_execution_actions a LEFT JOIN agent_runtime_execution_materials m ON m.tenant_id=a.tenant_id AND m.reference=a.request_ref WHERE a.tenant_id=? AND a.run_id=? ORDER BY a.action_ordinal", tenantId, run);
+                Files.writeString(evidence.resolve("workflow-options-runtime.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("runs", runs, "actions", actions)));
+                assertEquals(1, runs.size());
+                assertEquals("FINISHED", runs.getFirst().get("phase"));
+                assertEquals("COMPLETED", runs.getFirst().get("status"));
+                assertEquals(1, actions.size());
+                assertEquals("WORKFLOW", actions.getFirst().get("kind"));
+                assertEquals("SUCCEEDED", actions.getFirst().get("status"));
+                assertTrue(actions.getFirst().get("canonical_json").toString().contains("测试当前保存后的工作流"));
+                return;
+            }
             if ("1".equals(System.getenv("NOEWISE_TEST_CANCEL_RACE"))) {
                 assertEquals(1, closeEvidence.get("tests").size());
                 assertEquals("closed", closeEvidence.get("tests").getFirst().get("status"));
