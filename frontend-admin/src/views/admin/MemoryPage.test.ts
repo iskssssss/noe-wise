@@ -144,7 +144,7 @@ it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实显式恢复后才可按新�
   mocks.correct.mockResolvedValue({})
   const wrapper = await render()
   expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '遗忘')).toBe(false)
-  expect(wrapper.text()).toContain('恢复后可纠正')
+  expect(wrapper.text()).toContain('恢复后保留原审核状态')
   expect(button(wrapper, '纠正').props('disabled')).toBe(true)
   button(wrapper, '纠正').vm.$emit('click')
   await flushPromises()
@@ -159,7 +159,7 @@ it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实显式恢复后才可按新�
   expect(mocks.forget).not.toHaveBeenCalled()
   expect(button(wrapper, '遗忘').exists()).toBe(true)
   expect(button(wrapper, '纠正').props('disabled')).toBe(false)
-  expect(wrapper.text()).not.toContain('恢复后可纠正')
+  expect(wrapper.text()).not.toContain('恢复后保留原审核状态')
   await button(wrapper, '纠正').trigger('click')
   await flushPromises()
   await button(wrapper, '保存纠正').trigger('click')
@@ -169,6 +169,48 @@ it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实显式恢复后才可按新�
     expect.objectContaining({ expected_revision: 4 })
   )
   expect(fact.scope).toBe('USER_AGENT')
+})
+
+it.each([
+  {
+    status: 'PENDING_CONFIRM' as const,
+    feedback: '记忆已恢复为待审核，审核通过后才能使用'
+  },
+  { status: 'ACTIVE' as const, feedback: '记忆已恢复，后续任务可按原范围使用' }
+])('需审核的 USER 记忆按恢复回执 $status 展示提示和操作', async ({ status, feedback }) => {
+  fact.status = 'FORGOTTEN'
+  mocks.restore.mockImplementation(async () => {
+    fact = { ...fact, status, revision: 4 }
+    return fact
+  })
+  const wrapper = await render()
+  await button(wrapper, '恢复').trigger('click')
+  await flushPromises()
+  expect(document.querySelector('.el-message-box')?.textContent).toContain(
+    '还原遗忘或衰减前的审核状态'
+  )
+  expect(document.querySelector('.el-message-box')?.textContent).toContain(
+    '待确认记忆恢复后仍需审核'
+  )
+  expect(mocks.restore).not.toHaveBeenCalled()
+  confirmationButton('恢复记忆').click()
+  await flushPromises()
+
+  expect(mocks.restore).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  expect(mocks.detail).not.toHaveBeenCalled()
+  expect(mocks.review).not.toHaveBeenCalled()
+  expect(fact.review_required).toBe(true)
+  expect(document.querySelector('.el-message')?.textContent).toContain(feedback)
+  expect(button(wrapper, '纠正').props('disabled')).toBe(status === 'PENDING_CONFIRM')
+  expect(button(wrapper, '遗忘').props('disabled')).toBe(false)
+  const actions = wrapper.findAllComponents(ElButton).map((item) => item.text())
+  expect(actions.includes('批准')).toBe(status === 'PENDING_CONFIRM')
+  expect(actions.includes('拒绝')).toBe(status === 'PENDING_CONFIRM')
+  expect(actions).not.toContain('恢复')
+  if (status === 'PENDING_CONFIRM') {
+    expect(wrapper.text()).toContain('请先审核跨助手共享')
+    expect(button(wrapper, '批准').props('disabled')).toBe(false)
+  }
 })
 
 it.each(['REJECTED', 'ARCHIVED'] as const)('%s事实不展示非法状态迁移入口', async (status) => {

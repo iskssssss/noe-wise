@@ -3,6 +3,7 @@ package com.skillforge.institution.memory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -278,6 +279,8 @@ class MemoryGovernanceServiceTest {
             correction.assertNoWrites();
 
             Fixture restore = new Fixture(fact(REF, USER, MemoryScope.USER, TYPE, FactStatus.PENDING_CONFIRM));
+            when(restore.memories.findRevision(any(PortCallContext.class), eq(REF), eq(revision)))
+                    .thenReturn(Optional.of(head(restore.current, revision, FactStatus.PENDING_CONFIRM)));
             ApiException restored = assertThrows(ApiException.class, () -> restore.service.transition(
                     TENANT.value(), REF.factId(), revision, FactStatus.ACTIVE,
                     "memory_user_scope_review_approved", "forged-review-reason"));
@@ -285,6 +288,55 @@ class MemoryGovernanceServiceTest {
             assertEquals("memory_user_scope_confirmation_required", restored.getDetail());
             restore.assertNoWrites();
         }
+    }
+
+    @Test
+    void restoringForgottenPendingUserKeepsReviewStateAndOriginalRequestFingerprint() {
+        MemoryFact pending = head(fact(REF, USER, MemoryScope.USER, TYPE, FactStatus.PENDING_CONFIRM), 3,
+                FactStatus.PENDING_CONFIRM);
+        MemoryFact forgotten = head(pending, 4, FactStatus.FORGOTTEN);
+        MemoryFact restored = head(pending, 5, FactStatus.PENDING_CONFIRM);
+        Fixture fixture = new Fixture(forgotten);
+        when(fixture.memories.findRevision(any(PortCallContext.class), eq(REF), eq(3L)))
+                .thenReturn(Optional.of(pending));
+        when(fixture.memories.submit(any())).thenReturn(new MemoryMutationResult.Applied(restored, Optional.of(forgotten), false));
+        fixture.appendSuccessfully();
+
+        assertEquals(restored, fixture.service.transition(TENANT.value(), REF.factId(), 4,
+                FactStatus.ACTIVE, "memory_restored_by_admin", "restore-pending-user"));
+
+        var commands = ArgumentCaptor.forClass(MemoryCommand.class);
+        verify(fixture.memories).submit(commands.capture());
+        MemoryCommand.Transition command = assertInstanceOf(MemoryCommand.Transition.class, commands.getValue());
+        assertEquals(FactStatus.PENDING_CONFIRM, command.target());
+        assertEquals(4, command.expectedRevision());
+        var requests = ArgumentCaptor.forClass(MemoryGovernanceRequest.class);
+        verify(fixture.requests).accept(requests.capture());
+        assertEquals(MemoryGovernanceRequest.fingerprint("TRANSITION", REF.factId(), "4", "ACTIVE", "memory_restored_by_admin"),
+                requests.getValue().fingerprint());
+        assertTrue(restored.reviewRequired());
+    }
+
+    @Test
+    void restoringPreviouslyApprovedUserKeepsActiveDespiteReviewRequiredFlag() {
+        MemoryFact approved = head(fact(REF, USER, MemoryScope.USER, TYPE, FactStatus.PENDING_CONFIRM), 3,
+                FactStatus.ACTIVE);
+        MemoryFact forgotten = head(approved, 4, FactStatus.FORGOTTEN);
+        MemoryFact restored = head(approved, 5, FactStatus.ACTIVE);
+        Fixture fixture = new Fixture(forgotten);
+        when(fixture.memories.findRevision(any(PortCallContext.class), eq(REF), eq(3L)))
+                .thenReturn(Optional.of(approved));
+        when(fixture.memories.submit(any())).thenReturn(new MemoryMutationResult.Applied(restored, Optional.of(forgotten), false));
+        fixture.appendSuccessfully();
+
+        assertEquals(restored, fixture.service.transition(TENANT.value(), REF.factId(), 4,
+                FactStatus.ACTIVE, "memory_restored_by_admin", "restore-approved-user"));
+
+        var commands = ArgumentCaptor.forClass(MemoryCommand.class);
+        verify(fixture.memories).submit(commands.capture());
+        assertEquals(FactStatus.ACTIVE, assertInstanceOf(MemoryCommand.Transition.class, commands.getValue()).target());
+        assertTrue(approved.reviewRequired());
+        assertTrue(restored.reviewRequired());
     }
 
     /** 明确范围批准与无范围拒绝仍交给 Runtime/Port 做旧 revision 的 CAS 判定。 */
@@ -476,7 +528,43 @@ class MemoryGovernanceServiceTest {
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, unknown.getStatus());
         assertEquals(active, fixture.review("requested-review-key"));
 
-        assertStableRetries(fixture, "persisted-review-key");
+        assertStableRetries(fixture, "persisted-review-key", MemoryGovernanceRequest.Operation.REVIEW);
+    }
+
+    @Test
+    void duplicateRestoreAfterHeadAdvanceKeepsPendingTargetAndOriginalReceipt() {
+        MemoryFact pending = head(fact(REF, USER, MemoryScope.USER, TYPE, FactStatus.PENDING_CONFIRM), 3,
+                FactStatus.PENDING_CONFIRM);
+        MemoryFact forgotten = head(pending, 4, FactStatus.FORGOTTEN);
+        MemoryFact restored = head(pending, 5, FactStatus.PENDING_CONFIRM);
+        for (MemoryFact advanced : List.of(restored, head(restored, 6, FactStatus.ACTIVE))) {
+            Fixture fixture = new Fixture(forgotten);
+            fixture.frozenReceipt("persisted-restore-key");
+            when(fixture.memories.findCurrent(any(PortCallContext.class), eq(REF)))
+                    .thenReturn(Optional.of(forgotten), Optional.of(forgotten), Optional.of(advanced), Optional.of(advanced));
+            when(fixture.memories.findRevision(any(PortCallContext.class), eq(REF), eq(4L)))
+                    .thenReturn(Optional.of(forgotten));
+            when(fixture.memories.findRevision(any(PortCallContext.class), eq(REF), eq(3L)))
+                    .thenReturn(Optional.of(pending));
+            when(fixture.memories.submit(any())).thenReturn(
+                    new MemoryMutationResult.Applied(restored, Optional.of(forgotten), false),
+                    new MemoryMutationResult.Applied(restored, Optional.of(forgotten), true));
+            fixture.loseFirstAppendResponse();
+
+            ApiException unknown = assertThrows(ApiException.class, () -> fixture.service.transition(
+                    TENANT.value(), REF.factId(), 4, FactStatus.ACTIVE, "memory_restored_by_admin", "requested-restore-key"));
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, unknown.getStatus());
+            assertEquals(restored, fixture.service.transition(TENANT.value(), REF.factId(), 4,
+                    FactStatus.ACTIVE, "memory_restored_by_admin", "requested-restore-key"));
+
+            assertStableRetries(fixture, "persisted-restore-key", MemoryGovernanceRequest.Operation.TRANSITION);
+            var commands = ArgumentCaptor.forClass(MemoryCommand.class);
+            verify(fixture.memories, times(2)).submit(commands.capture());
+            assertEquals(FactStatus.PENDING_CONFIRM,
+                    assertInstanceOf(MemoryCommand.Transition.class, commands.getAllValues().getFirst()).target());
+            verify(fixture.memories).findRevision(any(PortCallContext.class), eq(REF), eq(4L));
+            verify(fixture.memories, times(2)).findRevision(any(PortCallContext.class), eq(REF), eq(3L));
+        }
     }
 
     /** 纠正重投保留相同replacement及原事件，不能因读取已归档head而重新生成身份。 */
@@ -503,7 +591,7 @@ class MemoryGovernanceServiceTest {
         MemoryFact corrected = fixture.correct(4);
         assertEquals(output.get(), corrected);
         assertEquals(new MemoryFactRef(TENANT, "corrected-fact"), corrected.ref());
-        assertStableRetries(fixture, "persisted-correction-key");
+        assertStableRetries(fixture, "persisted-correction-key", MemoryGovernanceRequest.Operation.CORRECT);
     }
 
     private static void assertInvalidProposal(Fixture fixture) {
@@ -514,7 +602,7 @@ class MemoryGovernanceServiceTest {
     }
 
     /** deadline允许更新；受理身份、授权身份、命令与SessionLog的全部不可变字段必须一致。 */
-    private static void assertStableRetries(Fixture fixture, String frozenKey) {
+    private static void assertStableRetries(Fixture fixture, String frozenKey, MemoryGovernanceRequest.Operation operation) {
         var commands = ArgumentCaptor.forClass(MemoryCommand.class);
         verify(fixture.memories, times(2)).submit(commands.capture());
         List<MemoryCommand> submissions = commands.getAllValues();
@@ -553,9 +641,7 @@ class MemoryGovernanceServiceTest {
         assertEquals(TENANT.value(), requests.getAllValues().getFirst().tenantId());
         assertEquals(REF.factId(), requests.getAllValues().getFirst().factId());
         assertEquals(4L, requests.getAllValues().getFirst().expectedRevision());
-        assertEquals(submissions.getFirst() instanceof MemoryCommand.Transition
-                ? MemoryGovernanceRequest.Operation.REVIEW : MemoryGovernanceRequest.Operation.CORRECT,
-                requests.getAllValues().getFirst().operation());
+        assertEquals(operation, requests.getAllValues().getFirst().operation());
     }
 
     /** 修订标记由宿主添加，模型值本身不能提供准备记录或derivedFrom授权。 */

@@ -174,7 +174,7 @@
             size="small"
             >{{
               row.status === 'FORGOTTEN' || row.status === 'DECAYED'
-                ? '恢复后可纠正'
+                ? '恢复后保留原审核状态'
                 : row.status === 'PENDING_CONFIRM'
                   ? '批准后可纠正'
                   : '当前状态不可纠正'
@@ -709,17 +709,24 @@ async function changeState(row: MemoryFact) {
       title: restoring ? '恢复记忆' : '遗忘记忆',
       confirmText: restoring ? '恢复记忆' : '遗忘记忆',
       content: restoring
-        ? '恢复这条记忆，允许后续任务按原共享范围使用？'
+        ? '恢复这条记忆并还原遗忘或衰减前的审核状态？待确认记忆恢复后仍需审核，已批准记忆可按原范围使用。'
         : '这条记忆将不再供后续任务使用；已经开始的任务保留原快照。'
     }))
   )
     return
   await run(async () => {
-    await (restoring ? api.memories.restore : api.memories.forget)(row.ref.fact_id, row.revision)
+    const result = await (restoring ? api.memories.restore : api.memories.forget)(
+      row.ref.fact_id,
+      row.revision
+    )
     refreshRequired.value = true
     if (await refresh())
       message.success(
-        restoring ? '记忆已恢复，后续任务可按原范围使用' : '记忆已遗忘，后续任务不再使用'
+        restoring
+          ? result.status === 'PENDING_CONFIRM'
+            ? '记忆已恢复为待审核，审核通过后才能使用'
+            : '记忆已恢复，后续任务可按原范围使用'
+          : '记忆已遗忘，后续任务不再使用'
       )
   })
 }

@@ -156,6 +156,7 @@ tasks.named<Test>("test") {
     exclude("**/ToolDeploymentRecoveryBrowserE2ETest.class")
     exclude("**/MemoryDirectoryLimitBrowserE2ETest.class")
     exclude("**/MemoryCorrectionStateBrowserE2ETest.class")
+    exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
@@ -279,6 +280,20 @@ tasks.register<Test>("memoryCorrectionStateBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionStateBrowserE2ETest.forgottenFactRequiresRestorationBeforeCorrectionAndRuntimeRecall") }
     inputs.property("memoryCorrectionState", providers.environmentVariable("E2E_MEMORY_CORRECTION_STATE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-state-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("memoryRestoreReviewBrowserE2E") {
+    description = "验证遗忘恢复保留记忆审核与实际检索边界"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.MemoryRestoreReviewBrowserE2ETest.restorePreservesPendingSharingReviewBeforeRuntimeRecall") }
+    inputs.property("memoryRestoreReview", providers.environmentVariable("E2E_MEMORY_RESTORE_REVIEW").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-restore-review-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

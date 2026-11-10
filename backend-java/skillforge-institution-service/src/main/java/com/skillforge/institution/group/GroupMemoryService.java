@@ -106,7 +106,8 @@ public class GroupMemoryService {
                     revisionTime(access,current,command.expectedRevision()))));
         }
         return transition(access,current,command.expectedRevision(),command.approved()?FactStatus.ACTIVE:FactStatus.REJECTED,
-                command.approved()?"group_memory_review_approved":"group_memory_review_rejected",key);
+                command.approved()?"group_memory_review_approved":"group_memory_review_rejected",key,
+                revisionTime(access,current,command.expectedRevision()));
     }
 
     @Transactional(rollbackFor=Exception.class)
@@ -150,12 +151,19 @@ public class GroupMemoryService {
     private MemoryFact change(Revision command,String key,FactStatus status,String reason) {
         var access=access(command.groupBindingId(),command.operatorEndUserId(),command.agentId(),true,key);
         var current=current(access,command.factId()); governance(access,current,status==FactStatus.ACTIVE);
-        if(status==FactStatus.ACTIVE&&current.status()==FactStatus.PENDING_CONFIRM)throw bad("group_memory_review_required");
-        return transition(access,current,command.expectedRevision(),status,reason,key);
+        var original=memories.findRevision(access.context(),current.ref(),command.expectedRevision())
+                .orElseThrow(()->new ApiException(HttpStatus.CONFLICT,"memory_revision_conflict:"+current.revision()));
+        if(status==FactStatus.ACTIVE) {
+            if(original.status()==FactStatus.PENDING_CONFIRM)throw bad("group_memory_review_required");
+            if(original.status()==FactStatus.FORGOTTEN)
+                status=memories.findRevision(access.context(),current.ref(),command.expectedRevision()-1)
+                        .orElseThrow(()->new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"memory_restore_history_missing")).status();
+        }
+        return transition(access,current,command.expectedRevision(),status,reason,key,original.createdAt());
     }
-    private MemoryFact transition(Access access,MemoryFact current,long revision,FactStatus target,String reason,String key) {
+    private MemoryFact transition(Access access,MemoryFact current,long revision,FactStatus target,String reason,String key,Instant occurredAt) {
         return recorded(runtime.mutate(new MemoryRuntime.MutationCall(access.context(),new MemoryRuntime.Mutation.Transition(
-                key(key),current.ref(),revision,current.scope(),current.type(),target,reason),revisionTime(access,current,revision))));
+                key(key),current.ref(),revision,current.scope(),current.type(),target,reason),occurredAt)));
     }
 
     /** 同键重投仍绑定原候选修订，当前head推进不改变原命令时间。 */

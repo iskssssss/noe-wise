@@ -932,6 +932,14 @@ public final class JdbcMemoryPort implements MemoryPort {
             return Mutation.failed(rejected("memory_transition_not_allowed",
                     command.idempotencyKey().value()));
         }
+        if (current.status() == FactStatus.FORGOTTEN) {
+            var previous = mapper.findRevision(tenant.value(), current.ref().factId(), current.revision() - 1);
+            if (previous == null) throw invalid();
+            // 恢复只还原遗忘前状态，不能借状态往返跳过审核或双 CAS 接受修订。
+            if (!command.target().name().equals(previous.status)) {
+                return Mutation.failed(rejected("memory_restore_status_mismatch", command.idempotencyKey().value()));
+            }
+        }
         // head 已由 current(...,true) 锁定；投影钩子随后锁投影，统一采用 head→projection 顺序。
         if (!transitionGuard.allows(session, command, current)) {
             return Mutation.failed(rejected("memory_transition_precondition_failed", command.idempotencyKey().value()));
@@ -1314,7 +1322,7 @@ public final class JdbcMemoryPort implements MemoryPort {
                     FactStatus.ARCHIVED, FactStatus.FORGOTTEN).contains(target);
             case DECAYED -> target == FactStatus.ACTIVE;
             case PENDING_CONFIRM -> target == FactStatus.ACTIVE || target == FactStatus.REJECTED || target == FactStatus.FORGOTTEN;
-            case FORGOTTEN -> target == FactStatus.ACTIVE;
+            case FORGOTTEN -> target == FactStatus.ACTIVE || target == FactStatus.PENDING_CONFIRM;
             case REJECTED, ARCHIVED -> false;
         };
     }

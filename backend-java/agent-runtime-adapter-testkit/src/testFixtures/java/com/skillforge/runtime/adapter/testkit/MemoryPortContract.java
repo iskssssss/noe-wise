@@ -580,6 +580,64 @@ public abstract class MemoryPortContract {
     }
 
     @Test
+    protected final void forgottenRestorationPreservesReviewStateAndOriginalReceipts() {
+        MemoryFact pending = createFact("restore-review-pending", context(SESSION), draft(SESSION, MemoryScope.USER,
+                FactStatus.PENDING_CONFIRM, NOW.minusSeconds(60), Optional.empty(), "sharing needs review", 0.8));
+        MemoryFact forgotten = applied(port.submit(transition("forget-pending", pending, FactStatus.FORGOTTEN)), false);
+        var bypass = assertInstanceOf(MemoryMutationResult.Rejected.class,
+                port.submit(transition("restore-pending-as-active", forgotten, FactStatus.ACTIVE)));
+        assertEquals("memory_restore_status_mismatch", bypass.failure().reasonCode());
+        assertEquals(forgotten, findCurrent(port, context(SESSION), pending.ref()).orElseThrow());
+
+        var restorePending = transition("restore-pending", forgotten, FactStatus.PENDING_CONFIRM);
+        MemoryFact restoredPending = applied(port.submit(restorePending), false);
+        assertEquals(FactStatus.PENDING_CONFIRM, restoredPending.status());
+        assertEquals(pending.object(), restoredPending.object());
+        assertEquals(pending.sourceEventIds(), restoredPending.sourceEventIds());
+        MemoryFact approved = applied(port.submit(transition("approve-restored", restoredPending, FactStatus.ACTIVE)), false);
+        assertTrue(approved.reviewRequired(), "审核标记保留历史，不决定恢复状态");
+        MemoryFact forgottenApproved = applied(port.submit(transition("forget-approved", approved, FactStatus.FORGOTTEN)), false);
+        var wrongTarget = assertInstanceOf(MemoryMutationResult.Rejected.class,
+                port.submit(transition("restore-approved-as-pending", forgottenApproved, FactStatus.PENDING_CONFIRM)));
+        assertEquals("memory_restore_status_mismatch", wrongTarget.failure().reasonCode());
+        assertEquals(forgottenApproved, findCurrent(port, context(SESSION), pending.ref()).orElseThrow());
+        var restoreActive = transition("restore-approved", forgottenApproved, FactStatus.ACTIVE);
+        MemoryFact restoredActive = applied(port.submit(restoreActive), false);
+        assertEquals(FactStatus.ACTIVE, restoredActive.status());
+        assertTrue(restoredActive.reviewRequired());
+        MemoryFact decayed = applied(port.submit(transition("decay-restored", restoredActive, FactStatus.DECAYED)), false);
+
+        MemoryPort rebuilt = recreatePort();
+        assertEquals(restoredPending, applied(rebuilt.submit(restorePending), true));
+        assertEquals(restoredActive, applied(rebuilt.submit(restoreActive), true));
+        assertEquals(decayed, findCurrent(rebuilt, context(SESSION), pending.ref()).orElseThrow());
+    }
+
+    @Test
+    protected final void forgottenRevisionProposalStillRequiresAtomicAcceptance() {
+        MemoryFact original = createFact("restored-proposal-original", context(SESSION), draft(SESSION, MemoryScope.SESSION,
+                FactStatus.ACTIVE, NOW.minusSeconds(60), Optional.empty(), "original preference", 0.8));
+        MemoryFact proposal = createFact("restored-proposal", context(SESSION), draft(SESSION, MemoryScope.SESSION,
+                FactStatus.PENDING_CONFIRM, NOW.minusSeconds(10), Optional.empty(), "proposed preference", 0.8, Optional.of(original.ref())));
+        MemoryFact forgotten = applied(port.submit(transition("forget-proposal", proposal, FactStatus.FORGOTTEN)), false);
+        var bypass = assertInstanceOf(MemoryMutationResult.Rejected.class,
+                port.submit(transition("restore-proposal-as-active", forgotten, FactStatus.ACTIVE)));
+        assertEquals("memory_restore_status_mismatch", bypass.failure().reasonCode());
+        MemoryFact restored = applied(port.submit(transition("restore-proposal", forgotten, FactStatus.PENDING_CONFIRM)), false);
+        var singleSided = assertInstanceOf(MemoryMutationResult.Rejected.class,
+                port.submit(transition("activate-restored-proposal", restored, FactStatus.ACTIVE)));
+        assertEquals("memory_revision_acceptance_required", singleSided.failure().reasonCode());
+        assertEquals(original, findCurrent(port, context(SESSION), original.ref()).orElseThrow());
+        assertEquals(restored, findCurrent(port, context(SESSION), proposal.ref()).orElseThrow());
+        MemoryFact accepted = applied(port.submit(new MemoryCommand.AcceptRevision(context(SESSION),
+                new IdempotencyKey("accept-restored-proposal"), original.ref(), original.revision(),
+                restored.ref(), restored.revision())), false);
+        assertEquals(restored.ref(), accepted.ref());
+        assertEquals(FactStatus.ACTIVE, accepted.status());
+        assertEquals(FactStatus.ARCHIVED, findCurrent(port, context(SESSION), original.ref()).orElseThrow().status());
+    }
+
+    @Test
     protected final void transitionUsesRevisionCasAndRejectsIllegalStateEdges() {
         MemoryFact current = createFact("transition-current", context(SESSION),
                 draft(SESSION, MemoryScope.SESSION, FactStatus.ACTIVE,

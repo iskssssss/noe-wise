@@ -206,15 +206,27 @@ public class MemoryGovernanceService {
             FactStatus target, String reason, String idempotencyKey) {
         log.debug("记忆治理变更开始 tenant={} expectedRevision={}", tenantId, expectedRevision);
         Owner owner = requireOwner(tenantId, factId);
-        MemoryFact current = current(context(tenantId, owner), tenantId, factId);
-        if (current.scope() == MemoryScope.USER && current.status() == FactStatus.PENDING_CONFIRM
-                && target == FactStatus.ACTIVE) {
-            throw userScopeConfirmationRequired();
+        PortCallContext readContext = context(tenantId, owner);
+        MemoryFact current = current(readContext, tenantId, factId);
+        FactStatus effectiveTarget = target;
+        if (target == FactStatus.ACTIVE) {
+            // 恢复按原请求版本确定目标；head 推进后的重放仍生成同一 Runtime 命令。
+            MemoryFact original = current.revision() == expectedRevision ? current
+                    : memories.findRevision(readContext, current.ref(), expectedRevision).orElseThrow(() ->
+                            new ApiException(HttpStatus.CONFLICT, "memory_governance_revision_missing"));
+            if (original.scope() == MemoryScope.USER && original.status() == FactStatus.PENDING_CONFIRM) {
+                throw userScopeConfirmationRequired();
+            }
+            if (original.status() == FactStatus.FORGOTTEN) {
+                MemoryFact beforeForget = memories.findRevision(readContext, original.ref(), expectedRevision - 1)
+                        .orElseThrow(() -> new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "memory_restore_history_missing"));
+                effectiveTarget = beforeForget.status();
+            }
         }
         var request = requests.accept(new MemoryGovernanceRequest(tenantId, factId, expectedRevision, Operation.TRANSITION,
                 idempotencyKey, fingerprint(Operation.TRANSITION.name(), factId, Long.toString(expectedRevision), target.name(), reason)));
         return transition(context(tenantId, owner, request.key()), current, expectedRevision,
-                target, reason, request);
+                effectiveTarget, reason, request);
     }
 
     /**

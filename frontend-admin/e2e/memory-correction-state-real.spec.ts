@@ -79,7 +79,7 @@ test('遗忘记忆先恢复再纠正，下一运行只使用新正文', async ({
     await page.screenshot({ path: join(evidence, 'forgotten-actions.png'), fullPage: true })
     if (mode === 'candidate') {
       await expect(row.getByRole('button', { name: '纠正', exact: true })).toBeDisabled()
-      await expect(row.getByText('恢复后可纠正', { exact: true })).toBeVisible()
+      await expect(row.getByText('恢复后保留原审核状态', { exact: true })).toBeVisible()
       expect(writes.filter((path) => path.endsWith('/correct'))).toHaveLength(0)
       await row.getByRole('button', { name: '恢复', exact: true }).click()
       const restored = page.waitForResponse(

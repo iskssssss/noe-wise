@@ -823,7 +823,7 @@ public final class MemoryRuntime {
             case DECAYED -> target == FactStatus.ACTIVE;
             case PENDING_CONFIRM -> target == FactStatus.ACTIVE || target == FactStatus.REJECTED
                     || target == FactStatus.FORGOTTEN;
-            case FORGOTTEN -> target == FactStatus.ACTIVE;
+            case FORGOTTEN -> target == FactStatus.ACTIVE || target == FactStatus.PENDING_CONFIRM;
             case REJECTED, ARCHIVED -> false;
         };
         if (!allowed) {

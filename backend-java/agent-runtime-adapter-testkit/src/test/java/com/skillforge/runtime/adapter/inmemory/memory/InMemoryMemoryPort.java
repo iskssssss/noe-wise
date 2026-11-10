@@ -235,6 +235,12 @@ public final class InMemoryMemoryPort implements MemoryPort {
         if (current.supersededBy().isPresent() || !legal(current.status(), command.target())) {
             throw new RejectedFact("memory_transition_not_allowed");
         }
+        if (current.status() == FactStatus.FORGOTTEN) {
+            var history = state.histories.get(current.ref());
+            if (command.target() != history.get(history.size() - 2).status()) {
+                throw new RejectedFact("memory_restore_status_mismatch");
+            }
+        }
         MemoryFact next = copy(current, current.revision() + 1, command.target(),
                 current.validTo(), current.supersededBy());
         state.histories.get(current.ref()).add(next);
@@ -369,7 +375,7 @@ public final class InMemoryMemoryPort implements MemoryPort {
             case DECAYED -> target == FactStatus.ACTIVE;
             case PENDING_CONFIRM -> target == FactStatus.ACTIVE || target == FactStatus.REJECTED
                     || target == FactStatus.FORGOTTEN;
-            case FORGOTTEN -> target == FactStatus.ACTIVE;
+            case FORGOTTEN -> target == FactStatus.ACTIVE || target == FactStatus.PENDING_CONFIRM;
             case REJECTED, ARCHIVED -> false;
         };
     }

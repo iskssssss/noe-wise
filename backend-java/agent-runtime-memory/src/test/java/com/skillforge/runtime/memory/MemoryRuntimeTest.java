@@ -1213,7 +1213,8 @@ class MemoryRuntimeTest {
                 edge(FactStatus.PENDING_CONFIRM, FactStatus.ACTIVE),
                 edge(FactStatus.PENDING_CONFIRM, FactStatus.REJECTED),
                 edge(FactStatus.PENDING_CONFIRM, FactStatus.FORGOTTEN),
-                edge(FactStatus.FORGOTTEN, FactStatus.ACTIVE));
+                edge(FactStatus.FORGOTTEN, FactStatus.ACTIVE),
+                edge(FactStatus.FORGOTTEN, FactStatus.PENDING_CONFIRM));
 
         for (TransitionEdge transition : legal) {
             Fixture fixture = new Fixture();
