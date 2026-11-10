@@ -13,6 +13,8 @@ public record CapabilityDeploymentResponse(
         String deploymentKey,
         @io.swagger.v3.oas.annotations.media.Schema(type="string",pattern="[1-9][0-9]*")
         @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long toolVersionId,
+        @io.swagger.v3.oas.annotations.media.Schema(nullable=true, description="精确绑定版本的名称，版本不可见时为空") String toolName,
+        @io.swagger.v3.oas.annotations.media.Schema(nullable=true, description="精确绑定版本的版本键，版本不可见时为空") String toolVersionKey,
         ToolDeployment.ProviderType providerType,
         String providerRef,
         ToolDeployment.Environment environment,
@@ -23,7 +25,8 @@ public record CapabilityDeploymentResponse(
 
     public static CapabilityDeploymentResponse from(CapabilityDeploymentView value) {
         return new CapabilityDeploymentResponse(value.id(), value.tenantId(), value.deploymentKey(),
-                value.toolVersionId(), value.providerType(), value.providerRef(), value.environment(),
+                value.toolVersionId(), value.toolName(), value.toolVersionKey(),
+                value.providerType(), value.providerRef(), value.environment(),
                 value.status(), value.revision(), value.createdAt(), value.updatedAt());
     }
 }

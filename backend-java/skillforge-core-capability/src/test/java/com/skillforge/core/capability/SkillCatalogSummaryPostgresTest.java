@@ -12,6 +12,7 @@ import com.skillforge.core.capability.persistence.CapabilityDefinitionMapper;
 import com.skillforge.core.capability.persistence.CapabilityVersionDO;
 import com.skillforge.core.capability.persistence.CapabilityVersionMapper;
 import com.skillforge.core.capability.persistence.ToolDeploymentRecordMapper;
+import com.skillforge.core.capability.persistence.ToolDeploymentRecordDO;
 import com.skillforge.core.foundation.config.TenantRlsInterceptor;
 import com.skillforge.core.foundation.workflowtest.WorkflowTestIsolation;
 import com.skillforge.core.shared.exception.ApiException;
@@ -25,12 +26,17 @@ import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.scripting.defaults.DefaultParameterHandler;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.LocalCacheScope;
 import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
+import org.apache.ibatis.transaction.TransactionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
+import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -42,6 +48,7 @@ class SkillCatalogSummaryPostgresTest {
             .withDatabaseName("skill_catalog_summary_test");
     private static SqlSessionFactory factory;
     private static SqlSessionFactory tenantFactory;
+    private static SqlSessionFactory managedTenantFactory;
 
     @BeforeAll static void initialize() throws Exception {
         try (var connection = owner(); var sql = connection.createStatement()) {
@@ -88,24 +95,38 @@ class SkillCatalogSummaryPostgresTest {
                     + "WHERE v.id IN(41,101,81,111,91,121)");
             sql.execute("INSERT INTO nw_workflow_test_sessions VALUES(1,6),(2,14);"
                     + "UPDATE nw_capability_versions SET status='ARCHIVED' WHERE id IN (31,161);"
+                    + "CREATE TEMP TABLE deployment_version_states AS SELECT id,status FROM nw_capability_versions WHERE id IN (41,42,20411,20412,20413,101,102,21011,21012,21013);"
+                    + "UPDATE nw_capability_versions SET status='PUBLISHED' WHERE id IN (SELECT id FROM deployment_version_states);"
+                    + "INSERT INTO nw_tool_deployments(id,tenant_id,deployment_key,tool_version_id,provider_type,provider_ref,environment,status,created_at,updated_at) "
+                    + "SELECT id,7,'directory-'||id,id,'PLATFORM','fixture','TEST','ACTIVE',now(),now() FROM deployment_version_states;"
+                    + "INSERT INTO nw_tool_deployments(id,tenant_id,deployment_key,tool_version_id,provider_type,provider_ref,environment,status,created_at,updated_at) "
+                    + "VALUES(90000,8,'foreign-directory',41,'PLATFORM','fixture','TEST','ACTIVE',now(),now());"
+                    + "UPDATE nw_capability_versions v SET status=s.status FROM deployment_version_states s WHERE v.id=s.id;"
+                    + "DROP TABLE deployment_version_states;"
                     + "CREATE ROLE skillforge_platform LOGIN PASSWORD 'test-only' NOSUPERUSER NOBYPASSRLS;"
                     + "CREATE ROLE skillforge_app LOGIN PASSWORD 'test-only' NOSUPERUSER NOBYPASSRLS;"
-                    + "GRANT USAGE ON SCHEMA public TO skillforge_platform,skillforge_app; GRANT SELECT ON ALL TABLES IN SCHEMA public TO skillforge_platform,skillforge_app");
+                    + "GRANT USAGE ON SCHEMA public TO skillforge_platform,skillforge_app; GRANT SELECT ON ALL TABLES IN SCHEMA public TO skillforge_platform,skillforge_app;"
+                    + "GRANT UPDATE ON nw_tool_deployments TO skillforge_app");
         }
-        for (var role : List.of("skillforge_platform", "skillforge_app")) {
-            var data = new PGSimpleDataSource(); data.setURL(PG.getJdbcUrl());
-            data.setUser(role); data.setPassword("test-only");
-            var config = new MybatisConfiguration(new Environment(role, new JdbcTransactionFactory(), data));
-            config.setMapUnderscoreToCamelCase(true); config.addInterceptor(new TenantRlsInterceptor());
-            config.addMapper(CapabilityDefinitionMapper.class); config.addMapper(CapabilityVersionMapper.class);
-            for (var path : List.of("mapper/CapabilityDefinitionMapper.xml", "mapper/CapabilityVersionMapper.xml", "mapper/CapabilityCatalogContextMapper.xml")) {
-                try (var source = SkillCatalogSummaryPostgresTest.class.getClassLoader().getResourceAsStream(path)) {
-                    assertNotNull(source); new XMLMapperBuilder(source, config, path, config.getSqlFragments()).parse();
-                }
+        factory = catalogFactory("skillforge_platform", new JdbcTransactionFactory());
+        tenantFactory = catalogFactory("skillforge_app", new JdbcTransactionFactory());
+        managedTenantFactory = catalogFactory("skillforge_app", new SpringManagedTransactionFactory());
+    }
+
+    private static SqlSessionFactory catalogFactory(String role, TransactionFactory transactions) throws Exception {
+        var data = new PGSimpleDataSource(); data.setURL(PG.getJdbcUrl());
+        data.setUser(role); data.setPassword("test-only");
+        var config = new MybatisConfiguration(new Environment(role, transactions, data));
+        config.setMapUnderscoreToCamelCase(true); config.addInterceptor(new TenantRlsInterceptor());
+        config.setLocalCacheScope(LocalCacheScope.STATEMENT);
+        config.addMapper(CapabilityDefinitionMapper.class); config.addMapper(CapabilityVersionMapper.class);
+        config.addMapper(ToolDeploymentRecordMapper.class);
+        for (var path : List.of("mapper/CapabilityDefinitionMapper.xml", "mapper/CapabilityVersionMapper.xml", "mapper/CapabilityCatalogContextMapper.xml")) {
+            try (var source = SkillCatalogSummaryPostgresTest.class.getClassLoader().getResourceAsStream(path)) {
+                assertNotNull(source); new XMLMapperBuilder(source, config, path, config.getSqlFragments()).parse();
             }
-            var built = new MybatisSqlSessionFactoryBuilder().build(config);
-            if (role.equals("skillforge_platform")) factory = built; else tenantFactory = built;
         }
+        return new MybatisSqlSessionFactoryBuilder().build(config);
     }
 
     private static Connection owner() throws Exception {
@@ -138,12 +159,85 @@ class SkillCatalogSummaryPostgresTest {
 
     private static CapabilityCatalogService catalog(SqlSession session) {
         return new CapabilityCatalogService(session.getMapper(CapabilityDefinitionMapper.class),
-                session.getMapper(CapabilityVersionMapper.class), mock(ToolDeploymentRecordMapper.class),
+                session.getMapper(CapabilityVersionMapper.class), session.getMapper(ToolDeploymentRecordMapper.class),
                 new CapabilityDescriptorCodec(new ObjectMapper()),
                 new CapabilityCatalogDatabaseContext(session.getMapper(CapabilityCatalogContextMapper.class)), mock(WorkflowTestIsolation.class));
     }
 
     @AfterEach void clear() { TenantContext.clear(); }
+
+    @Test void deploymentDirectoryKeepsExactVisibleVersionNamesWithoutDroppingHiddenRows() throws Exception {
+        TenantContext.setTenantId("7");
+        var dataSource = managedTenantFactory.getConfiguration().getEnvironment().getDataSource();
+        // selectOne 会另开 SqlSession；与宿主一样使用 Spring 事务，使其复用原连接并读取未提交更新。
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)).executeWithoutResult(transaction -> {
+            transaction.setRollbackOnly();
+            assertDoesNotThrow(() -> {
+                try (var session = managedTenantFactory.openSession()) {
+                    var service = catalog(session);
+                    var scope = CapabilityCatalogScope.tenant(7L);
+                    var deployments = service.listDeployments(scope, null);
+                    assertEquals(10, deployments.size());
+                    for (var deployment : deployments) {
+                        long version = deployment.toolVersionId();
+                        assertEquals(7L, deployment.tenantId());
+                        if (List.of(20411L, 20412L, 20413L).contains(version)) {
+                            assertNull(deployment.toolName());
+                            assertNull(deployment.toolVersionKey());
+                            assertEquals(HttpStatus.NOT_FOUND, assertThrows(ApiException.class,
+                                    () -> service.getVersion(scope, version)).getStatus());
+                        } else {
+                            var visible = service.getVersion(scope, version);
+                            assertEquals(visible.name(), deployment.toolName());
+                            assertEquals(visible.versionKey(), deployment.toolVersionKey());
+                        }
+                        assertEquals(deployment, service.getDeployment(scope, deployment.deploymentKey()));
+                    }
+                    var anchored = service.getDeployment(scope, "directory-42");
+                    assertEquals("版本-42", anchored.toolName());
+                    assertEquals("v42", anchored.toolVersionKey());
+                    assertEquals(41L, service.getCurrentPublishedVersion(scope, 4L).id());
+                    assertTrue(service.listDeployments(scope, "DISABLED").isEmpty());
+                    var stopped = service.setDeploymentActive(scope, anchored.deploymentKey(), anchored.revision(), false);
+                    try (var query = session.getConnection().prepareStatement(
+                            "SELECT status,revision FROM nw_tool_deployments WHERE tenant_id=7 AND deployment_key=?")) {
+                        query.setString(1, anchored.deploymentKey());
+                        try (var row = query.executeQuery()) {
+                            assertTrue(row.next()); assertEquals("DISABLED", row.getString(1));
+                            assertEquals(anchored.revision() + 1, row.getLong(2));
+                        }
+                    }
+                    assertEquals("DISABLED", stopped.status());
+                    assertEquals(anchored.revision() + 1, stopped.revision());
+                    assertEquals(anchored.toolName(), stopped.toolName());
+                    assertEquals(anchored.toolVersionKey(), stopped.toolVersionKey());
+                    assertEquals(List.of(stopped), service.listDeployments(scope, "DISABLED"));
+                    try (var cursorSession = managedTenantFactory.openSession()) {
+                        assertSame(session.getConnection(), cursorSession.getConnection());
+                        assertEquals("DISABLED", cursorSession.getMapper(ToolDeploymentRecordMapper.class)
+                                .selectOne(new LambdaQueryWrapper<ToolDeploymentRecordDO>()
+                                        .eq(ToolDeploymentRecordDO::getId, anchored.id())).getStatus());
+                    }
+                    assertEquals(HttpStatus.NOT_FOUND, assertThrows(ApiException.class,
+                            () -> service.getDeployment(scope, "foreign-directory")).getStatus());
+                    assertNull(session.getMapper(ToolDeploymentRecordMapper.class).selectById(90000L));
+                    try (var sql = session.getConnection().createStatement(); var role = sql.executeQuery(
+                            "SELECT current_user,NOT rolsuper AND NOT rolbypassrls,current_setting('app.tenant_id'),current_setting('app.platform_admin') FROM pg_roles WHERE rolname=current_user")) {
+                        assertTrue(role.next()); assertEquals("skillforge_app", role.getString(1));
+                        assertTrue(role.getBoolean(2)); assertEquals("7", role.getString(3)); assertEquals("false", role.getString(4));
+                    }
+                }
+            });
+        });
+        try (var session = tenantFactory.openSession()) {
+            assertEquals("ACTIVE", catalog(session).getDeployment(CapabilityCatalogScope.tenant(7L), "directory-42").status());
+        }
+        TenantContext.setTenantId("8");
+        try (var session = tenantFactory.openSession()) {
+            assertEquals(List.of("foreign-directory"), catalog(session).listDeployments(CapabilityCatalogScope.tenant(8L), null)
+                    .stream().map(CapabilityDeploymentView::deploymentKey).toList());
+        }
+    }
 
     @Test void platformSummaryKeepsExactDefaultsAndStatesWithoutReadingPackageBodies() throws Exception {
         TenantContext.clear();

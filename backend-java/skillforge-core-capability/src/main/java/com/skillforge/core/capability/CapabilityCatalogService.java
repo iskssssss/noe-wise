@@ -672,7 +672,7 @@ public class CapabilityCatalogService {
         } catch (DataIntegrityViolationException exception) {
             throw invalid("tool deployment violates catalog constraints", exception);
         }
-        return deploymentView(deployment);
+        return deploymentView(deployment, version);
     }
 
     /** 目录仅解析当前可自动调用的工具；部署旧版本保留稳定 Definition 身份。 */
@@ -700,7 +700,14 @@ public class CapabilityCatalogService {
             query.eq(ToolDeploymentRecordDO::getStatus, normalizeDeploymentStatus(status));
         }
         query.orderByDesc(ToolDeploymentRecordDO::getUpdatedAt);
-        return deploymentMapper.selectList(query).stream().map(this::deploymentView).toList();
+        var deployments = deploymentMapper.selectList(query);
+        if (deployments.isEmpty()) return List.of();
+        var versionIds = deployments.stream().map(ToolDeploymentRecordDO::getToolVersionId).distinct().toList();
+        var versions = new LinkedHashMap<Long, CapabilityVersionDO>();
+        versionMapper.selectList(versionVisibility(scope)
+                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey)
+                .in(CapabilityVersionDO::getId, versionIds)).forEach(version -> versions.put(version.getId(), version));
+        return deployments.stream().map(value -> deploymentView(value, versions.get(value.getToolVersionId()))).toList();
     }
 
     /** 租户查询自己的 Deployment。 */
@@ -712,7 +719,7 @@ public class CapabilityCatalogService {
             throw error(HttpStatus.FORBIDDEN, CapabilityCatalogErrors.SCOPE_FORBIDDEN,
                     "平台作用域不能读取租户 Deployment");
         }
-        return deploymentView(requireDeployment(scope, deploymentKey));
+        return deploymentView(scope, requireDeployment(scope, deploymentKey));
     }
 
     /** 以 Deployment revision CAS 启停。 */
@@ -739,7 +746,7 @@ public class CapabilityCatalogService {
         if (deploymentMapper.update(null, update) != 1) {
             throw conflict("tool deployment revision is stale");
         }
-        return deploymentView(requireDeployment(scope, deploymentKey));
+        return deploymentView(scope, requireDeployment(scope, deploymentKey));
     }
 
     private void bind(CapabilityCatalogScope scope) {
@@ -895,9 +902,18 @@ public class CapabilityCatalogService {
                 value.getContentHash(), value.getStatus(), value.getCreatedAt(), value.getPublishedAt());
     }
 
-    private CapabilityDeploymentView deploymentView(ToolDeploymentRecordDO value) {
+    private CapabilityDeploymentView deploymentView(CapabilityCatalogScope scope, ToolDeploymentRecordDO value) {
+        var version = versionMapper.selectOne(versionVisibility(scope)
+                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey)
+                .eq(CapabilityVersionDO::getId, value.getToolVersionId()));
+        return deploymentView(value, version);
+    }
+
+    private CapabilityDeploymentView deploymentView(ToolDeploymentRecordDO value, CapabilityVersionDO version) {
         return new CapabilityDeploymentView(value.getId(), value.getTenantId(), value.getDeploymentKey(),
-                value.getToolVersionId(), providerType(value.getProviderType()), value.getProviderRef(),
+                value.getToolVersionId(), version == null ? null : version.getName(),
+                version == null ? null : version.getVersionKey(),
+                providerType(value.getProviderType()), value.getProviderRef(),
                 environment(value.getEnvironment()), value.getStatus(), value.getRevision(),
                 value.getCreatedAt(), value.getUpdatedAt());
     }

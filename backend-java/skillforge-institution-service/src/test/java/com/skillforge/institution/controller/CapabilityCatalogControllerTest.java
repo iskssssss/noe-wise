@@ -254,13 +254,15 @@ class CapabilityCatalogControllerTest {
         ToolDeployment.ProviderType providerType = ToolDeployment.ProviderType.CONNECTOR;
         ToolDeployment.Environment environment = ToolDeployment.Environment.TEST;
         CapabilityDeploymentView view = new CapabilityDeploymentView(
-                11L, 7L, "deployment-1", 9L, providerType, "inst-1", environment,
+                11L, 7L, "deployment-1", 9L, "工具名称", "v1", providerType, "inst-1", environment,
                 "ACTIVE", 1L, Instant.now(), Instant.now());
         when(catalog.createDeployment(eq(scope), eq("deployment-1"), eq(9L), eq(providerType),
                 eq("inst-1"), eq(environment), eq("ACTIVE"))).thenReturn(view);
 
-        controller.createDeployment(new CreateCapabilityDeploymentRequest(
+        var response = controller.createDeployment(new CreateCapabilityDeploymentRequest(
                 "deployment-1", 9L, "connector", "inst-1", "test", "ACTIVE"));
+        assertEquals("工具名称", response.data().toolName());
+        assertEquals("v1", response.data().toolVersionKey());
 
         InOrder order = inOrder(providerValidator, catalog);
         order.verify(providerValidator).validate(7L, providerType, "inst-1", environment);

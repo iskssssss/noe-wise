@@ -76,10 +76,21 @@ class CapabilityCatalogWireContractTest {
         var version=new CapabilityVersionResponse(ID,ID+2,ID+4,CapabilityType.TOOL,"v1","工具",null,"platform",Map.of(),"hash","PUBLISHED",null,null);
         var versionTree=wire(version);
         assertId(versionTree,"id",ID);assertId(versionTree,"definition_id",ID+2);assertId(versionTree,"tenant_id",ID+4);
-        var deployment=new CapabilityDeploymentResponse(ID,ID+2,"target-tool",ID+4,ToolDeployment.ProviderType.PLATFORM,"tool",ToolDeployment.Environment.PRODUCTION,"ACTIVE",5L,null,null);
-        var tree=wire(deployment);
-        assertId(tree,"id",ID);assertId(tree,"tenant_id",ID+2);assertId(tree,"tool_version_id",ID+4);
-        assertTrue(tree.get("revision").isIntegralNumber());assertEquals(5,tree.get("revision").longValue());
+        for (String name : java.util.Arrays.asList("工具名称", null)) {
+            var deployment=new CapabilityDeploymentResponse(ID,ID+2,"target-tool",ID+4,name,name==null?null:"v1",
+                    ToolDeployment.ProviderType.PLATFORM,"tool",ToolDeployment.Environment.PRODUCTION,"ACTIVE",5L,null,null);
+            var tree=wire(deployment);
+            assertId(tree,"id",ID);assertId(tree,"tenant_id",ID+2);assertId(tree,"tool_version_id",ID+4);
+            assertTrue(tree.get("revision").isIntegralNumber());assertEquals(5,tree.get("revision").longValue());
+            assertEquals(13,tree.size());
+            assertTrue(tree.has("tool_name"));assertTrue(tree.has("tool_version_key"));
+            if(name==null) {
+                assertTrue(tree.get("tool_name").isNull());assertTrue(tree.get("tool_version_key").isNull());
+            } else {
+                assertEquals(name,tree.get("tool_name").textValue());assertEquals("v1",tree.get("tool_version_key").textValue());
+            }
+            assertFalse(tree.has("descriptor"));assertFalse(tree.has("schema"));
+        }
     }
     @Test void workflowCapabilityReferenceAndAgentSelectorAreAlsoStrings()throws Exception {
         var workflow=new com.skillforge.core.workflow.dto.response.BuilderWorkflowInstanceResponse(1L,"workflow-instance","workflow",2L,4L,ID,"active",Map.of(),null,null);

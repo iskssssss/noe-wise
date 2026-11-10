@@ -58,6 +58,8 @@ let wrapper: VueWrapper | undefined
 const deployment = (key: string, version: string) => ({
   deploymentKey: key,
   toolVersionId: version,
+  toolName: version === '1' ? '已有工具' : '新工具',
+  toolVersionKey: 'v1',
   providerType: 'MCP',
   providerRef: 'server',
   environment: 'DEVELOPMENT',
@@ -118,7 +120,7 @@ async function refresh() {
   await flushPromises()
 }
 
-it('refreshes tool names with new deployments so they can be found without reopening the page', async () => {
+it('部署列表直接返回名称，刷新后可按完整标签筛选而不补读版本', async () => {
   wrapper = mount(ToolDeploymentsPage, { attachTo: document.body })
   await flushPromises()
   calls.deployments.mockResolvedValue([
@@ -127,35 +129,40 @@ it('refreshes tool names with new deployments so they can be found without reope
     deployment('new-two', '2')
   ])
   await refresh()
-  expect(calls.version.mock.calls.map(([id]) => id)).toEqual(['1', '1', '2'])
+  expect(calls.version).not.toHaveBeenCalled()
   expect(wrapper.text()).toContain('新工具 / v1')
-  await wrapper.findComponent(ElInput).setValue('新工具')
+  await wrapper.findComponent(ElInput).setValue('新工具 / v1')
   expect(wrapper.text()).toContain('new-one')
   expect(wrapper.text()).toContain('new-two')
   expect(wrapper.text()).toContain('2 项部署')
   expect(wrapper.text()).not.toContain('original')
 })
 
-it('keeps existing tool names after a failed list refresh without reading stale version metadata', async () => {
+it('刷新失败保留上次部署与名称', async () => {
   wrapper = mount(ToolDeploymentsPage, { attachTo: document.body })
   await flushPromises()
   calls.deployments.mockRejectedValueOnce(new Error('部署目录暂不可用'))
   await refresh()
-  expect(calls.version).toHaveBeenCalledTimes(1)
+  expect(calls.version).not.toHaveBeenCalled()
   expect(wrapper.text()).toContain('已有工具 / v1')
   expect(wrapper.text()).toContain('original')
 })
 
-it('preserves loaded names after metadata failure and recovers through the same refresh action', async () => {
+it('不可见版本保留部署行且不影响其他部署名称筛选', async () => {
   wrapper = mount(ToolDeploymentsPage, { attachTo: document.body })
   await flushPromises()
-  calls.deployments.mockResolvedValue([deployment('original', '1'), deployment('new-one', '2')])
-  calls.version.mockRejectedValueOnce(new Error('版本信息暂不可用'))
+  calls.deployments.mockResolvedValue([
+    deployment('original', '1'),
+    { ...deployment('hidden-version', '2'), toolName: null, toolVersionKey: null }
+  ])
   await refresh()
   expect(wrapper.text()).toContain('已有工具 / v1')
-  expect(wrapper.text()).toContain('new-one')
-  await refresh()
-  expect(wrapper.text()).toContain('新工具 / v1')
+  expect(wrapper.text()).toContain('hidden-version')
+  expect(wrapper.text()).toContain('版本信息不可用')
+  await wrapper.findComponent(ElInput).setValue('已有工具 / v1')
+  expect(wrapper.text()).toContain('original')
+  expect(wrapper.text()).not.toContain('hidden-version')
+  expect(calls.version).not.toHaveBeenCalled()
 })
 
 const permissions = ref<string[]>([])
@@ -347,21 +354,22 @@ it('旧待核对记录仍可按原标识只读查看部署', async () => {
   expect(action('新增部署')!.props('disabled')).toBe(true)
 })
 
-it('切换主体后清除旧目录且丢弃迟到的版本读取', async () => {
-  let finish!: (version: { id: string; name: string; versionKey: string }) => void
-  calls.version.mockReturnValueOnce(
+it('切换主体后清除旧目录且丢弃迟到的名称与部署读取', async () => {
+  mountWithPermissions([])
+  await flushPromises()
+  expect(wrapper!.text()).toContain('original')
+  let finish!: (rows: ReturnType<typeof deployment>[]) => void
+  calls.deployments.mockReturnValueOnce(
     new Promise((resolve) => {
       finish = resolve
     })
   )
-  mountWithPermissions([])
-  await flushPromises()
-  expect(wrapper!.text()).toContain('original')
+  await refresh()
   authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
   authState.identityVersion++
   await flushPromises()
   expect(wrapper!.text()).not.toContain('original')
-  finish({ id: '1', name: '旧身份工具', versionKey: 'v1' })
+  finish([{ ...deployment('old-row', '1'), toolName: '旧身份工具' }])
   await flushPromises()
   expect(wrapper!.text()).not.toContain('旧身份工具')
   expect(wrapper!.text()).not.toContain('original')

@@ -117,7 +117,9 @@
         label="部署标识"
       /><ElTableColumn min-width="200" show-overflow-tooltip label="工具（跟随当前发布）"
         ><template #default="{ row }"
-          ><div>{{ versionNames[row.toolVersionId] || '版本信息不可用' }}</div>
+          ><div>
+            {{ row.toolName ? `${row.toolName} / ${row.toolVersionKey}` : '版本信息不可用' }}
+          </div>
           <small class="muted">{{ row.toolVersionId }}</small></template
         ></ElTableColumn
       ><ElTableColumn min-width="140" show-overflow-tooltip label="提供方"
@@ -324,14 +326,17 @@ const rules: FormRules = {
   ],
   providerRef: [{ required: true, message: '请选择提供方引用', trigger: 'change' }]
 }
-const versionNames = ref<Record<string, string>>({})
 const query = ref(''),
   environment = ref(''),
   deploymentStatus = ref('')
 const filtered = computed(() =>
   (data.value ?? []).filter(
     (item) =>
-      (item.deploymentKey + (versionNames.value[item.toolVersionId] ?? '') + item.providerRef)
+      (
+        item.deploymentKey +
+        (item.toolName ? `${item.toolName} / ${item.toolVersionKey}` : '') +
+        item.providerRef
+      )
         .toLowerCase()
         .includes(query.value.trim().toLowerCase()) &&
       (!environment.value || item.environment === environment.value) &&
@@ -365,22 +370,6 @@ async function refresh() {
   const deployments = await reload()
   if (deployments === undefined || !current()) return
   directoryLoaded.value = true
-  await run(async () => {
-    const ids = [...new Set(deployments.map((d) => d.toolVersionId))]
-    try {
-      const result = await Promise.all(ids.map((id) => api.capabilities.getVersion(id)))
-      if (current())
-        versionNames.value = Object.fromEntries(
-          result.map((v) => [v.id, `${v.name} / ${v.versionKey}`])
-        )
-    } catch (cause) {
-      if (!current()) {
-        if (cause instanceof HttpClientError) cause.claimFeedback()
-        return
-      }
-      throw cause
-    }
-  })
   for (const operation of [...stateOperations.value]) {
     if (!current()) break
     await checkState(operation, true)
@@ -648,7 +637,6 @@ watch(
   () => {
     invalidate()
     data.value = undefined
-    versionNames.value = {}
     directoryLoaded.value = false
     confirmedChange.value = ''
     checkedDeployment.value = undefined

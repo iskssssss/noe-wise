@@ -336,6 +336,8 @@ describe('CapabilityMount API wire contract', () => {
               tenant_id: '9',
               deployment_key: 'calendar-prod',
               tool_version_id: '201',
+              tool_name: 'Calendar v1',
+              tool_version_key: '1.0.0',
               provider_type: 'MCP',
               provider_ref: 'calendar',
               environment: 'PRODUCTION',
@@ -371,6 +373,8 @@ describe('CapabilityMount API wire contract', () => {
       id: '301',
       deploymentKey: 'calendar-prod',
       toolVersionId: '201',
+      toolName: 'Calendar v1',
+      toolVersionKey: '1.0.0',
       revision: 5
     })
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
@@ -400,6 +404,8 @@ describe('CapabilityMount API wire contract', () => {
       tenant_id: '9',
       deployment_key: 'calendar-prod',
       tool_version_id: '202',
+      tool_name: 'Calendar v1',
+      tool_version_key: '1.0.0',
       provider_type: 'PLATFORM',
       provider_ref: 'get_current_time',
       environment: 'PRODUCTION',
@@ -550,6 +556,8 @@ describe('CapabilityMount API wire contract', () => {
       tenant_id: '9',
       deployment_key: 'calendar-dev',
       tool_version_id: '211',
+      tool_name: null,
+      tool_version_key: null,
       provider_type: 'CONNECTOR',
       provider_ref: 'http-calendar-1',
       environment: 'DEVELOPMENT',
@@ -591,6 +599,8 @@ describe('CapabilityMount API wire contract', () => {
     expect(fetchedVersion.contentHash).toBe('sha256:calendar')
     expect(listedDeployments[0].providerRef).toBe('http-calendar-1')
     expect(fetchedDeployment.environment).toBe('DEVELOPMENT')
+    expect(listedDeployments[0].toolName).toBeNull()
+    expect(fetchedDeployment.toolVersionKey).toBeNull()
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/api/v1/capabilities/definitions?capability_type=SKILL&status=DRAFT',
       '/api/v1/capabilities/definitions/detail?definitionId=210',

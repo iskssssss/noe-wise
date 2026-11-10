@@ -34,7 +34,7 @@ class ToolDeploymentCreationServiceTest {
         });
         when(catalog.createDeployment(any(), eq(key), eq(21L), eq(ToolDeployment.ProviderType.PLATFORM),
                 eq("get_current_time"), eq(ToolDeployment.Environment.DEVELOPMENT), eq("ACTIVE")))
-                .thenReturn(new CapabilityDeploymentView(12L, 7L, key, 21L, ToolDeployment.ProviderType.PLATFORM,
+                .thenReturn(new CapabilityDeploymentView(12L, 7L, key, 21L, null, null, ToolDeployment.ProviderType.PLATFORM,
                         "get_current_time", ToolDeployment.Environment.DEVELOPMENT, "ACTIVE", 1L, null, null));
         when(receipts.complete(7L, id.toString(), 12L, key)).thenReturn(1);
         when(receipts.find(7L, id.toString())).thenAnswer(call -> new ToolDeploymentCreateReceiptMapper.Row("8", fingerprint.get(), "SUCCEEDED", 12L, key));

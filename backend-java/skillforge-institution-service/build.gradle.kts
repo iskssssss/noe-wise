@@ -212,6 +212,17 @@ tasks.register<Test>("jsonQueryBrowserE2E") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("toolDeploymentDirectoryBrowserE2E") {
+    description = "验证部署目录展示、名称筛选与同一工具的真实执行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentDirectoryBrowserE2ETest.deploymentNamesRemainSearchableAndOriginalToolRuns") }
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("toolDeploymentRecoveryBrowserE2E") {
     description = "验证工具部署创建恢复与运行时调用"
     group = "verification"

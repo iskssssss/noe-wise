@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -83,6 +84,42 @@ class CapabilityCatalogServiceTest {
     @AfterEach
     void clearTenant() {
         TenantContext.clear();
+    }
+
+    @Test
+    void deploymentDirectoryReadsOnlyOneBatchOfVersionLabels() {
+        var rows = java.util.stream.LongStream.rangeClosed(1, 3).mapToObj(id -> {
+            var row = new ToolDeploymentRecordDO();
+            row.setId(id); row.setTenantId(7L); row.setDeploymentKey("deployment-" + id);
+            row.setToolVersionId(id == 3 ? 3L : 2L);
+            row.setProviderType("PLATFORM"); row.setProviderRef("fixture");
+            row.setEnvironment("TEST"); row.setStatus("ACTIVE"); row.setRevision(1L);
+            return row;
+        }).toList();
+        when(deployments.selectList(any())).thenReturn(rows);
+        var label = new CapabilityVersionDO();
+        label.setId(2L); label.setName("工具"); label.setVersionKey("v1");
+        when(versions.selectList(any())).thenAnswer(invocation -> {
+            LambdaQueryWrapper<CapabilityVersionDO> query = invocation.getArgument(0);
+            assertEquals("id,name,version_key", query.getSqlSelect());
+            return List.of(label);
+        });
+        var result = service.listDeployments(CapabilityCatalogScope.tenant(7L), null);
+        assertEquals(List.of("deployment-1", "deployment-2", "deployment-3"),
+                result.stream().map(CapabilityDeploymentView::deploymentKey).toList());
+        assertEquals("工具", result.get(0).toolName());
+        assertEquals("v1", result.get(1).toolVersionKey());
+        assertEquals(null, result.get(2).toolName());
+        assertEquals(null, result.get(2).toolVersionKey());
+        verify(versions).selectList(any());
+        verify(versions, never()).selectOne(any());
+    }
+
+    @Test
+    void emptyDeploymentDirectoryDoesNotReadAllVersions() {
+        when(deployments.selectList(any())).thenReturn(List.of());
+        assertEquals(List.of(), service.listDeployments(CapabilityCatalogScope.tenant(7L), null));
+        verify(versions, never()).selectList(any());
     }
 
     @Test
@@ -227,7 +264,10 @@ class CapabilityCatalogServiceTest {
         assertEquals("media-synthesize", deployment.deploymentKey());
         assertEquals("media-connector", deployment.providerRef());
         assertEquals("ACTIVE", deployment.status());
+        assertEquals(published.getName(), deployment.toolName());
+        assertEquals(published.getVersionKey(), deployment.toolVersionKey());
         assertEquals(com.skillforge.core.capability.tool.ToolDeployment.Environment.PRODUCTION, deployment.environment());
+        verify(versions).selectOne(any());
         verify(deployments).insert(any(ToolDeploymentRecordDO.class));
     }
 

@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.skillforge.common.context.TenantContext;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.skillforge.core.agent.capabilitymount.CapabilityMountSetResult;
 import com.skillforge.core.agent.capabilitymount.CapabilityMountStatus;
 import com.skillforge.core.agent.capabilitymount.CapabilityMountPersistenceService;
@@ -47,6 +49,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 
@@ -65,6 +68,8 @@ class CapabilityMountManagementServiceTest {
 
     @BeforeEach
     void setUp() {
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), "mount-test"),
+                KnowledgeBaseRevisionDO.class);
         TenantContext.setTenantId("7");
         persistence = mock(CapabilityMountPersistenceService.class);
         catalog = mock(CapabilityCatalogService.class);
@@ -253,7 +258,7 @@ class CapabilityMountManagementServiceTest {
 
         configureCatalog(CapabilityType.TOOL, 200L, 201L);
         CapabilityDeploymentView foreignDeployment = new CapabilityDeploymentView(
-                600L, 8L, "deploy-1", 201L,
+                600L, 8L, "deploy-1", 201L, null, null,
                 ToolDeployment.ProviderType.TEST_MOCK, "fixture",
                 ToolDeployment.Environment.TEST, "ACTIVE", 2L, null, null);
         when(catalog.getDeployment(any(CapabilityCatalogScope.class), eq("deploy-1")))
@@ -367,7 +372,7 @@ class CapabilityMountManagementServiceTest {
     }
 
     private CapabilityDeploymentView deployment(long versionId, long revision, String status) {
-        return new CapabilityDeploymentView(600L, 7L, "deploy-1", versionId,
+        return new CapabilityDeploymentView(600L, 7L, "deploy-1", versionId, null, null,
                 ToolDeployment.ProviderType.TEST_MOCK, "fixture", ToolDeployment.Environment.TEST,
                 status, revision, null, null);
     }

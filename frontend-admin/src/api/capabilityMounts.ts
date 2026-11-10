@@ -175,6 +175,8 @@ export interface CapabilityDeployment {
   tenantId: string
   deploymentKey: string
   toolVersionId: string
+  toolName: string | null
+  toolVersionKey: string | null
   providerType: ToolDeploymentProviderType
   providerRef: string
   environment: ToolDeploymentEnvironment
@@ -350,6 +352,8 @@ export type CapabilityDeploymentWire = {
   tenant_id: string
   deployment_key: string
   tool_version_id: string
+  tool_name: string | null
+  tool_version_key: string | null
   provider_type: string
   provider_ref: string
   environment: string
@@ -631,6 +635,8 @@ function mapDeployment(wire: CapabilityDeploymentWire): CapabilityDeployment {
     tenantId: catalogDecimalIdentity(wire.tenant_id, 'tenant_id'),
     deploymentKey: textValue(wire.deployment_key, 'deployment_key'),
     toolVersionId: catalogDecimalIdentity(wire.tool_version_id, 'tool_version_id'),
+    toolName: nullableString(wire.tool_name, 'tool_name'),
+    toolVersionKey: nullableString(wire.tool_version_key, 'tool_version_key'),
     providerType: enumValue(wire.provider_type, DEPLOYMENT_PROVIDER_TYPES, 'provider_type'),
     providerRef: textValue(wire.provider_ref, 'provider_ref'),
     environment: enumValue(wire.environment, DEPLOYMENT_ENVIRONMENTS, 'environment'),
