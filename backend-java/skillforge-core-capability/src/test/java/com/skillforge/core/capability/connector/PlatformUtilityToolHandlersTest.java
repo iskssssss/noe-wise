@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -72,8 +73,49 @@ class PlatformUtilityToolHandlersTest {
                 PlatformToolTestContext.create());
 
         assertEquals("Ada", found.get("value"));
+        assertEquals(true, found.get("success"));
+        assertEquals(true, found.get("found"));
+        assertEquals(true, missing.get("success"));
         assertFalse((Boolean) missing.get("found"));
+        assertTrue(missing.containsKey("value"));
         assertEquals(null, missing.get("value"));
+        assertFalse(handler.isError(missing));
+    }
+
+    @Test
+    void jsonQueryPreservesNullNodesIncludingTheRoot() throws Exception {
+        var handler = new JsonQueryToolHandler(objectMapper);
+        Map<String, Object> nullRoot = new LinkedHashMap<>();
+        nullRoot.put("value", null);
+        nullRoot.put("pointer", "");
+        for (var args : List.of(nullRoot,
+                Map.<String, Object>of("value", "null", "pointer", ""),
+                Map.<String, Object>of("value", "{\"contact\":{\"phone\":null}}", "pointer", "/contact/phone"),
+                Map.<String, Object>of("value", "[null]", "pointer", "/0"))) {
+            var result = handler.execute(args, PlatformToolTestContext.create());
+            assertEquals(true, result.get("success"));
+            assertEquals(true, result.get("found"));
+            assertTrue(result.containsKey("value"));
+            assertEquals(null, result.get("value"));
+            assertFalse(handler.isError(result));
+            var wire = objectMapper.readTree(objectMapper.writeValueAsString(result));
+            assertTrue(wire.has("value"));
+            assertTrue(wire.get("value").isNull());
+        }
+    }
+
+    @Test
+    void jsonQueryMarksInvalidInputAsBusinessFailure() {
+        var handler = new JsonQueryToolHandler(objectMapper);
+        for (var args : List.of(Map.<String, Object>of(),
+                Map.<String, Object>of("value", "{", "pointer", ""),
+                Map.<String, Object>of("value", Map.of(), "pointer", "missing-slash"))) {
+            var result = handler.execute(args, PlatformToolTestContext.create());
+            assertEquals(false, result.get("success"));
+            assertTrue(handler.isError(result));
+            assertTrue(result.containsKey("error"));
+            assertFalse(result.containsKey("found"));
+        }
     }
 
     @Test

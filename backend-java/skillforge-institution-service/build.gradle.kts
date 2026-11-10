@@ -130,6 +130,7 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
     exclude("**/AgentLifecycleBrowserE2ETest.class")
+    exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
@@ -185,6 +186,17 @@ tasks.register<Test>("memoryDirectoryLimitBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.MemoryDirectoryLimitBrowserE2ETest.oldestFactOutsideFirstHundredRemainsRuntimeSearchable")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("jsonQueryBrowserE2E") {
+    description = "验证 JSON 查询空值与错误结果的真实回传"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.JsonQueryBrowserE2ETest.queryResultsReachNextModelAndBrowser") }
     outputs.upToDateWhen { false }
 }
 
