@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.common.context.TenantContext;
+import com.skillforge.core.agent.AgentTemplateService;
 import com.skillforge.core.agent.deployment.AgentDeploymentContracts.GrantChain;
 import com.skillforge.core.agent.deployment.AgentDeploymentContracts.GrantHop;
 import com.skillforge.core.agent.deployment.AgentDeploymentContracts.LocalBindings;
+import com.skillforge.core.agent.model.AgentDistributionPolicy;
+import com.skillforge.core.agent.model.AgentTemplateDO;
+import com.skillforge.core.agent.model.AgentTemplateDefinition;
 import com.skillforge.core.billing.persistence.PlanMapper;
 import com.skillforge.core.foundation.persistence.TenantMapper;
 import com.skillforge.core.model.PlatformModelCatalogService;
@@ -17,6 +21,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -39,6 +45,7 @@ class AgentPublicationHttpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private TenantMapper tenants;
     @Autowired private PlanMapper plans;
     @Autowired private PlatformModelCatalogService models;
+    @Autowired private AgentTemplateService templates;
     @Autowired private ObjectMapper json;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlatformTransactionManager transactions;
@@ -53,7 +60,7 @@ class AgentPublicationHttpIntegrationTest extends AbstractIntegrationTest {
         String username = "admin-" + suffix;
         createTestTenantAdministrator(tenant, username, PASSWORD);
         String administrator = login(slug, username);
-        PlatformModelFixtures.selectLlm(models, tenant, "http://127.0.0.1:1/v1", "publication-fixture",
+        String modelId = PlatformModelFixtures.selectLlm(models, tenant, "http://127.0.0.1:1/v1", "publication-fixture",
                 "synthetic-unused-key", "custom", "custom-openai-compatible", "custom-v1");
         String editor = member(administrator, slug, "editor-" + suffix,
                 List.of("foundation.agents.read", "foundation.agents.update",
@@ -61,10 +68,12 @@ class AgentPublicationHttpIntegrationTest extends AbstractIntegrationTest {
         String publisher = member(administrator, slug, "publisher-" + suffix,
                 List.of("foundation.agents.read", "foundation.agents.publish",
                         "foundation.resource.agent.read", "foundation.resource.agent.manage"));
-        String agent = call(administrator, "POST", AGENTS, Map.of("name", "原始草稿", "system_prompt", "发布边界验证"), 200)
-                .path("id").asText();
+        var created = call(administrator, "POST", AGENTS, Map.of("name", "原始草稿", "system_prompt", "发布边界验证"), 200);
+        String agent = created.path("id").asText();
+        assertFalse(created.get("definition_managed").booleanValue());
         var original = facts(tenant, agent);
-        call(editor, "PATCH", AGENTS + "/update", Map.of("agent_id", agent, "payload", Map.of("status", "draft")), 200);
+        assertFalse(call(editor, "PATCH", AGENTS + "/update", Map.of("agent_id", agent, "payload", Map.of("status", "draft")), 200)
+                .get("definition_managed").booleanValue());
         assertEquals(original, facts(tenant, agent));
 
         call(editor, "PATCH", AGENTS + "/update", Map.of("agent_id", agent,
@@ -95,6 +104,10 @@ class AgentPublicationHttpIntegrationTest extends AbstractIntegrationTest {
         String managed = call(administrator, "POST", AGENTS, Map.of("name", "公共部署实例", "system_prompt", "源定义"), 200)
                 .path("id").asText();
         deployment(tenant, managed);
+        assertTrue(call(publisher, "GET", AGENTS + "/detail?agentId=" + managed, Map.of(), 200)
+                .get("definition_managed").booleanValue());
+        assertTrue(call(editor, "PATCH", AGENTS + "/update", Map.of("agent_id", managed, "payload", Map.of("status", "draft")), 200)
+                .get("definition_managed").booleanValue());
         var managedBefore = facts(tenant, managed);
         assertEquals("AGENT_DEFINITION_MANAGED", call(publisher, "POST", AGENTS + "/publish",
                 Map.of("agent_id", managed), 409).path("code").asText());
@@ -102,6 +115,31 @@ class AgentPublicationHttpIntegrationTest extends AbstractIntegrationTest {
         call(editor, "PATCH", AGENTS + "/update", Map.of("agent_id", managed,
                 "payload", Map.of("status", "published")), 422);
         assertEquals(managedBefore, facts(tenant, managed));
+
+        AgentTemplateDO template = new AgentTemplateDO();
+        template.setId(SnowflakeIds.nextId()); template.setTemplateKey("publication-library-" + template.getId());
+        template.setName("独立安装来源"); template.setVersion("1.0.0"); template.setCategory("test");
+        template.setTags(List.of()); template.setDescription("definition ownership");
+        template.setAuthor("test"); template.setAuthorType("platform"); template.setOwnerKind("platform");
+        template.setDistributionPolicy(AgentDistributionPolicy.OPEN_INSTALL);
+        template.setDefinition(new AgentTemplateDefinition("独立安装提示词", "独立角色", modelId, null, List.of(), List.of(), List.of()));
+        template.setPriceType("free"); template.setPriceCents(0); template.setInstallCount(0);
+        template.setStatus("published"); template.setPublishedAt(Instant.now());
+        template.setCreatedAt(Instant.now()); template.setUpdatedAt(Instant.now());
+        templates.save(template); templates.appendPublication(template);
+        var installed = call(administrator, "POST", AGENTS + "/install-template", Map.of(
+                "template_id", template.getId(), "request_id", "library-" + suffix, "name", "独立安装实例"), 200).path("agent");
+        String independent = installed.path("id").asText();
+        assertEquals(template.getId().toString(), installed.path("template_id").asText());
+        assertFalse(installed.get("definition_managed").booleanValue());
+        assertFalse(call(publisher, "GET", AGENTS + "/detail?agentId=" + independent, Map.of(), 200)
+                .get("definition_managed").booleanValue());
+        var definitionOwners = new HashMap<String, Boolean>();
+        for (var item : call(publisher, "GET", AGENTS, Map.of(), 200).path("items"))
+            definitionOwners.put(item.path("id").asText(), item.get("definition_managed").booleanValue());
+        assertEquals(Boolean.FALSE, definitionOwners.get(agent));
+        assertEquals(Boolean.FALSE, definitionOwners.get(independent));
+        assertEquals(Boolean.TRUE, definitionOwners.get(managed));
     }
 
     private String member(String admin, String slug, String username, List<String> permissions) throws Exception {

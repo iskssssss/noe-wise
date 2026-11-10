@@ -3,6 +3,8 @@ import com.baomidou.mybatisplus.spring.service.IService;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.skillforge.core.agent.mapper.AgentMapper;
 import com.skillforge.core.agent.model.AgentDO;
+import java.util.List;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -54,6 +56,11 @@ public class AgentService
                 throw new ApiException(HttpStatus.CONFLICT,"AGENT_DEFINITION_MANAGED",
                         "公共Agent实例请通过部署绑定配置，公共定义由平台发布维护",false);
         }finally {LOG.debug("Agent定义写权检查退出 tenantId={} agentId={}",agent.getTenantId(),agent.getId());}
+    }
+
+    /** 只读取当前目录所需的部署归属，不将来源模板误作公共定义管理关系。 */
+    public Set<Long> managedDefinitionAgentIds(long tenantId, List<Long> agentIds) {
+        return agentIds.isEmpty() ? Set.of() : Set.copyOf(deployments.managedAgentIds(tenantId, agentIds));
     }
 
     /** 与草稿挂载修改同事务记录待发布状态，不改变生效修订。 */

@@ -40,7 +40,7 @@ public final class AgentManagementContracts {
             String templateName, AgentStatus status, Instant createdAt, String systemPrompt,
             String roleDescription, AgentExecutionConfig executionConfig, Long modelConfigId,
             Map<String, Object> config, Instant publishedAt, AgentDelegationConfig delegationConfig,
-            String iconUrl, int revision, Long publishedRevisionId, boolean hasDraftChanges) {
+            String iconUrl, int revision, Long publishedRevisionId, boolean hasDraftChanges, boolean definitionManaged) {
         public Agent { config = immutableConfig(config); }
     }
 

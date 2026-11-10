@@ -16,21 +16,34 @@
         >重新读取</ElButton
       ><ElButton
         v-permission="['foundation.sessions.read']"
-        :disabled="editingBlocked || refreshRequired || agent?.status !== 'published'"
+        :disabled="
+          busy ||
+          !!publicationOperation ||
+          !!publicationStorageError ||
+          refreshRequired ||
+          agent?.status !== 'published'
+        "
         @click="router.push({ path: '/admin/chat', query: { agent_id: id } })"
         >试用当前发布版本</ElButton
       ><ElButton
+        v-if="!agent?.definition_managed"
         v-permission="['foundation.agents.publish']"
         :disabled="
           editingBlocked ||
           refreshRequired ||
           !agent ||
-          (dirty ? !canSaveAndPublish : !agent.has_draft_changes)
+          (dirty ? !canSaveAndPublish : !agent.has_draft_changes && agent.status !== 'disabled')
         "
         :loading="busy"
         :type="canSaveAndPublish ? 'primary' : undefined"
         @click="dirty ? saveAndPublish() : publish()"
-        >{{ dirty && canSaveAndPublish ? '保存并发布' : '发布' }}</ElButton
+        >{{
+          dirty && canSaveAndPublish
+            ? '保存并发布'
+            : agent?.status === 'disabled'
+              ? '重新发布'
+              : '发布'
+        }}</ElButton
       ><ElButton
         v-if="canPublishAndTrial"
         :disabled="editingBlocked || refreshRequired || !agent || !dirty"
@@ -38,6 +51,7 @@
         @click="saveAndPublish(true)"
         >保存发布并试用</ElButton
       ><ElButton
+        v-if="!agent?.definition_managed"
         v-permission="['foundation.agents.update']"
         :type="canSaveAndPublish ? undefined : 'primary'"
         :loading="busy"
@@ -104,7 +118,13 @@
       {{ publicationReceipt.revision }} · 发布记录 {{ publicationReceipt.publication_id }} · 请求号
       {{ publicationReceipt.request_id }}
     </p>
-    <p class="admin-muted">
+    <p v-if="agent?.definition_managed" class="admin-muted" role="status">
+      由公共部署管理，定义与绑定请在公共智能体实例中维护。
+      <RouterLink v-if="can('tenant.agent_deployments.read')" to="/admin/agent-deployments"
+        >管理公共部署</RouterLink
+      >
+    </p>
+    <p v-else class="admin-muted">
       保存更新草稿。发布后已有会话下一轮聊天采用新配置，正在执行的任务继续原配置。
     </p>
     <FeedbackNotice
@@ -197,6 +217,7 @@
         ><ElTabPane :label="'能力挂载（' + agent.mounts.length + '）'" name="capabilities"
           ><div class="admin-toolbar">
             <ElButton
+              v-if="!agent.definition_managed"
               type="primary"
               :disabled="editingBlocked || refreshRequired"
               @click="openMount"
@@ -231,13 +252,14 @@
             ><ElTableColumn width="150" class-name="admin-table-actions" prop="actions" label="操作"
               ><template #default="{ row }"
                 ><ElButton
-                  v-if="row.capabilityType === 'SKILL'"
+                  v-if="!agent.definition_managed && row.capabilityType === 'SKILL'"
                   v-permission="['foundation.agents.update']"
                   link
                   :disabled="editingBlocked || refreshRequired"
                   @click="openSkillBudget(row as CapabilityMount)"
                   >调整预算</ElButton
                 ><ElButton
+                  v-if="!agent.definition_managed"
                   v-permission="['foundation.agents.delete']"
                   type="danger"
                   link
@@ -325,9 +347,7 @@
             </ElForm>
           </section></ElTabPane
         ><ElTabPane label="发布历史" name="history">
-          <ElButton :disabled="editingBlocked" @click="loadPublications('history')"
-            >刷新历史</ElButton
-          >
+          <ElButton :disabled="busy" @click="loadPublications('history')">刷新历史</ElButton>
           <ElTable :data="publications" row-key="revision_id" empty-text="尚无发布记录">
             <ElTableColumn prop="revision" label="发布修订" width="110" />
             <ElTableColumn prop="name" label="名称" min-width="160" show-overflow-tooltip />
@@ -343,13 +363,11 @@
             >
             <ElTableColumn label="操作" width="190"
               ><template #default="{ row }">
-                <ElButton
-                  link
-                  :disabled="editingBlocked"
-                  @click="viewPublication(row as AgentPublication)"
+                <ElButton link :disabled="busy" @click="viewPublication(row as AgentPublication)"
                   >查看配置</ElButton
                 >
                 <ElButton
+                  v-if="!agent.definition_managed"
                   v-permission="['foundation.agents.update']"
                   link
                   :disabled="editingBlocked || dirty"
@@ -936,7 +954,10 @@ import { listenSkillPublished } from './skillPublicationEvents'
 const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const canSaveAndPublish = computed(
-  () => can('foundation.agents.update') && can('foundation.agents.publish')
+  () =>
+    !agent.value?.definition_managed &&
+    can('foundation.agents.update') &&
+    can('foundation.agents.publish')
 )
 const canPublishAndTrial = computed(
   () =>
@@ -1142,7 +1163,11 @@ onScopeDispose(() => {
   stopKnowledgeNotifications()
 })
 const editingBlocked = computed(
-  () => busy.value || !!publicationOperation.value || !!publicationStorageError.value
+  () =>
+    busy.value ||
+    !!publicationOperation.value ||
+    !!publicationStorageError.value ||
+    agent.value?.definition_managed
 )
 const mountVersionNames = ref<Record<string, string>>({})
 const skillBudgetOpen = ref(false)
@@ -1549,7 +1574,13 @@ async function checkPublication() {
   })
 }
 async function save() {
-  if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  if (
+    agent.value?.definition_managed ||
+    refreshRequired.value ||
+    publicationOperation.value ||
+    publicationStorageError.value
+  )
+    return
   await run(async () => {
     if (!(await validateConfiguration())) return
     if (!form.name.trim()) throw Error('请输入名称')
@@ -1565,6 +1596,7 @@ async function save() {
 }
 async function publish() {
   if (
+    agent.value?.definition_managed ||
     !can('foundation.agents.publish') ||
     refreshRequired.value ||
     publicationOperation.value ||

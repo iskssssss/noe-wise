@@ -522,6 +522,7 @@ export interface DelegationConfig {
   target_agent_ids: string[]
 }
 export interface AgentItem {
+  definition_managed: boolean
   revision: number
   published_revision_id: number | null
   published_revision: number | null
@@ -631,6 +632,7 @@ export interface AgentDetail extends AgentItem {
 }
 
 type AgentDetailWire = {
+  definition_managed: boolean
   published_revision_id: number | null
   published_revision: number | null
   has_draft_changes: boolean
@@ -667,6 +669,7 @@ function mapAgentDetail(wire: AgentDetailWire): AgentDetail {
   })
   return {
     id: String(wire.id),
+    definition_managed: wire.definition_managed,
     agent_key: wire.agent_key,
     revision: wire.revision,
     published_revision_id: wire.published_revision_id,

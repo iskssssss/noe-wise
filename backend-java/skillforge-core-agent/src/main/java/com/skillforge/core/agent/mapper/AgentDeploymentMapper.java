@@ -13,6 +13,7 @@ public interface AgentDeploymentMapper {
     String lockExternal(@Param("integrationId")String integrationId,@Param("tenantId")long tenantId,@Param("externalAgentRef")String externalAgentRef);
     Row findExternal(@Param("integrationId")String integrationId,@Param("tenantId")long tenantId,@Param("externalAgentRef")String externalAgentRef);
     Row findAgent(@Param("tenantId")long tenantId,@Param("agentId")long agentId);
+    List<Long> managedAgentIds(@Param("tenantId")long tenantId,@Param("agentIds")List<Long> agentIds);
     Row findDeployment(@Param("tenantId")long tenantId,@Param("deploymentId")long deploymentId);
     Row lockDeployment(@Param("tenantId")long tenantId,@Param("deploymentId")long deploymentId);
     Row lockAgent(@Param("tenantId")long tenantId,@Param("agentId")long agentId);

@@ -2,16 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElTable } from 'element-plus'
 import { clearFeedback, confirm } from '@skillforge/shared/feedback'
+import { useAuthStore } from '../../stores/auth'
 import AgentsPage from './AgentsPage.vue'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), remove: vi.fn() }))
-vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({
+const mocks = vi.hoisted(() => ({ list: vi.fn(), remove: vi.fn(), update: vi.fn() }))
+vi.mock('../../stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const state = reactive({
     identityVersion: 1,
-    user: { tenant_id: '1', sub: 'actor-1', permissions: [] }
+    user: { tenant_id: '1', sub: 'actor-1', permissions: [] as string[] }
   })
+  return { useAuthStore: () => state }
+})
+vi.mock('../../api', () => ({
+  api: { agents: { list: mocks.list, remove: mocks.remove, update: mocks.update } }
 }))
-vi.mock('../../api', () => ({ api: { agents: { list: mocks.list, remove: mocks.remove } } }))
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
   onBeforeRouteLeave: vi.fn(),
@@ -22,8 +27,29 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   confirm: vi.fn()
 }))
 
-const first = { id: 'a', name: '客服甲', agent_key: 'support-a', status: 'DRAFT' }
-const second = { id: 'b', name: '客服乙', agent_key: 'support-b', status: 'DRAFT' }
+const first = {
+  id: 'a',
+  name: '客服甲',
+  agent_key: 'support-a',
+  status: 'draft',
+  definition_managed: false,
+  published_revision_id: null
+}
+const second = {
+  id: 'b',
+  name: '客服乙',
+  agent_key: 'support-b',
+  status: 'draft',
+  definition_managed: false,
+  published_revision_id: null
+}
+const published = {
+  ...first,
+  status: 'published',
+  published_revision_id: 101,
+  published_revision: 1,
+  has_draft_changes: false
+}
 let wrapper: VueWrapper | undefined
 function button(label: string) {
   return wrapper!.findAllComponents(ElButton).find((item) => item.text() === label)!
@@ -42,9 +68,113 @@ async function open() {
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  useAuthStore().identityVersion = 1
+  useAuthStore().user!.permissions = ['foundation.agents.read', 'foundation.agents.update']
   vi.mocked(confirm).mockResolvedValue(true)
   mocks.list.mockResolvedValue({ total: 2, items: [first, second] })
   mocks.remove.mockResolvedValue({ status: 'deleted' })
+})
+
+describe('智能体停用与服务端状态回读', () => {
+  beforeEach(() => {
+    mocks.list.mockResolvedValue({ total: 1, items: [published] })
+    mocks.update.mockResolvedValue({ ...published, status: 'disabled' })
+  })
+
+  it('停用只提交状态，采用服务端完整回读且不额外刷新列表', async () => {
+    const response = { ...published, status: 'disabled', name: '服务端名称' }
+    mocks.update.mockResolvedValue(response)
+    await open()
+    expect(button('删除')).toBeUndefined()
+    await button('停用').trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledExactlyOnceWith('a', { status: 'disabled' })
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    expect(rows()).toEqual([response])
+    expect(wrapper!.text()).toContain('已停用')
+    expect(document.body.textContent).toContain('智能体已停用，可在配置页重新发布后恢复使用')
+    expect(button('停用')).toBeUndefined()
+  })
+
+  it('拒绝停用保留原行并可重新读取，不显示成功', async () => {
+    mocks.update.mockRejectedValueOnce(new Error('无停用权限'))
+    await open()
+    await button('停用').trigger('click')
+    await flushPromises()
+    expect(rows()).toEqual([published])
+    expect(document.body.textContent).toContain('无停用权限')
+    expect(document.body.textContent).not.toContain('智能体已停用')
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('取消停用不提交状态', async () => {
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    await open()
+    await button('停用').trigger('click')
+    await flushPromises()
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(rows()).toEqual([published])
+  })
+
+  it.each(['success', 'failure'])('身份改变后丢弃迟到的停用%s', async (outcome) => {
+    let resolve!: (value: unknown) => void
+    let reject!: (reason: Error) => void
+    mocks.update.mockImplementationOnce(
+      () =>
+        new Promise((accept, fail) => {
+          resolve = accept
+          reject = fail
+        })
+    )
+    await open()
+    await button('停用').trigger('click')
+    await flushPromises()
+    useAuthStore().identityVersion++
+    if (outcome === 'success') resolve({ ...published, status: 'disabled' })
+    else reject(new Error('旧身份停用失败'))
+    await flushPromises()
+    expect(rows()).toEqual([published])
+    expect(document.body.textContent).not.toContain('智能体已停用')
+    expect(document.body.textContent).not.toContain('旧身份停用失败')
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('卸载后不接收停用成功反馈', async () => {
+    let resolve!: (value: unknown) => void
+    mocks.update.mockImplementationOnce(
+      () =>
+        new Promise((accept) => {
+          resolve = accept
+        })
+    )
+    await open()
+    await button('停用').trigger('click')
+    await flushPromises()
+    wrapper!.unmount()
+    wrapper = undefined
+    resolve({ ...published, status: 'disabled' })
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('智能体已停用')
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('公共部署实例只展示管理归属，不暴露普通停用和删除', async () => {
+    mocks.list.mockResolvedValue({ total: 1, items: [{ ...published, definition_managed: true }] })
+    await open()
+    expect(button('停用')).toBeUndefined()
+    expect(button('删除')).toBeUndefined()
+    expect(button('配置')).toBeUndefined()
+    expect(button('查看')).toBeDefined()
+    expect(wrapper!.text()).toContain('由公共部署管理')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('没有更新权限不提供停用操作', async () => {
+    useAuthStore().user!.permissions = ['foundation.agents.read']
+    await open()
+    expect(button('停用')).toBeUndefined()
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
 })
 afterEach(() => {
   wrapper?.unmount()

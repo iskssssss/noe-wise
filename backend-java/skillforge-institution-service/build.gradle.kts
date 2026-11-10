@@ -129,6 +129,7 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
+    exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
@@ -550,6 +551,19 @@ tasks.register<Test>("agentSavePublishTrialBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.editedAgentPublicationIsUsedByRealTrial")
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.crossTabDelegationCatalogReachesRuntime")
+    }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentLifecycleBrowserE2E") {
+    description = "验证智能体停用、重新发布与真实运行的页面闭环"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter {
+        includeTestsMatching("com.skillforge.institution.integration.AgentLifecycleBrowserE2ETest.disabledAgentCanBeRepublishedAndRunFromBrowser")
     }
     outputs.upToDateWhen { false }
 }

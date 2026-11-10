@@ -5,6 +5,7 @@ export interface EntityOption {
 }
 const labels: Record<string, string> = {
   published: '已发布',
+  disabled: '已停用',
   archived: '已归档',
   ready: '就绪',
   deprecated: '已弃用',

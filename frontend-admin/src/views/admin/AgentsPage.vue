@@ -105,14 +105,35 @@
         }}</template></ElTableColumn
       ><ElTableColumn width="128" label="工作草稿"
         ><template #default="{ row }"
-          ><ElTag v-if="row.has_draft_changes" type="warning">待发布</ElTag
+          ><span v-if="row.definition_managed">由公共部署管理</span>
+          <ElTag v-else-if="row.has_draft_changes" type="warning">待发布</ElTag
           ><span v-else>与发布一致</span></template
         ></ElTableColumn
-      ><ElTableColumn width="112" class-name="admin-table-actions" prop="actions" label="操作"
+      ><ElTableColumn min-width="164" class-name="admin-table-actions" prop="actions" label="操作"
         ><template #default="{ row }"
-          ><ElButton link @click="router.push('/admin/agents/' + row.id)" :disabled="busy"
-            >配置</ElButton
+          ><ElButton link @click="router.push('/admin/agents/' + row.id)" :disabled="busy">{{
+            row.definition_managed ? '查看' : '配置'
+          }}</ElButton
+          ><RouterLink
+            v-if="
+              row.definition_managed &&
+              auth.user?.permissions.includes('tenant.agent_deployments.read')
+            "
+            to="/admin/agent-deployments"
+            >管理公共部署</RouterLink
           ><ElButton
+            v-if="
+              !row.definition_managed &&
+              row.status === 'published' &&
+              auth.user?.permissions.includes('foundation.agents.update')
+            "
+            link
+            type="warning"
+            :disabled="busy"
+            @click="disable(row as AgentItem)"
+            >停用</ElButton
+          ><ElButton
+            v-if="!row.definition_managed && row.status === 'draft' && !row.published_revision_id"
             v-permission="['foundation.agents.delete']"
             link
             type="danger"
@@ -637,7 +658,52 @@ async function checkAgentCreation(automatic = false) {
   })
   if (receipt) await navigateCreatedAgent(receipt.agent_id)
 }
+async function disable(row: AgentItem) {
+  if (
+    row.definition_managed ||
+    row.status !== 'published' ||
+    !auth.user?.permissions.includes('foundation.agents.update')
+  )
+    return
+  const identity = auth.identityVersion
+  await run(async () => {
+    if (
+      !(await confirm({
+        title: '停用智能体',
+        confirmText: '停用',
+        danger: true,
+        content: `停用“${row.name}”后将拒绝新的执行，发布历史与会话记录保留。可在配置页重新发布后恢复使用。`
+      }))
+    )
+      return
+    if (
+      !active ||
+      identity !== auth.identityVersion ||
+      !auth.user?.permissions.includes('foundation.agents.update')
+    )
+      return
+    let updated: AgentItem
+    try {
+      updated = await api.agents.update(row.id, { status: 'disabled' })
+    } catch (reason) {
+      if (!active || identity !== auth.identityVersion) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    }
+    if (!active || identity !== auth.identityVersion) return
+    invalidate()
+    if (data.value)
+      data.value = {
+        ...data.value,
+        items: data.value.items.map((item) => (item.id === row.id ? updated : item))
+      }
+    message.success('智能体已停用，可在配置页重新发布后恢复使用')
+  })
+}
 async function remove(row: AgentItem) {
+  if (row.definition_managed || row.status !== 'draft' || row.published_revision_id) return
   if (
     await confirm({
       title: '删除智能体',

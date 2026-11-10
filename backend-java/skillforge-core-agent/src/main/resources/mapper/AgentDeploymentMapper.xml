@@ -18,6 +18,10 @@
   <select id="findAgent" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
     SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND agent_id=#{agentId}
   </select>
+  <select id="managedAgentIds" resultType="long">
+    SELECT agent_id FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND agent_id IN
+    <foreach collection="agentIds" item="agentId" open="(" separator="," close=")">#{agentId}</foreach>
+  </select>
   <select id="findDeployment" resultType="com.skillforge.core.agent.mapper.AgentDeploymentMapper$Row">
     SELECT <include refid="columns"/> FROM nw_agent_deployments WHERE tenant_id=#{tenantId} AND deployment_id=#{deploymentId}
   </select>

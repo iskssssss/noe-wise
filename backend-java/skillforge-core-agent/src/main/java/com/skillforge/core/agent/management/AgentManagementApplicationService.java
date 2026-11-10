@@ -105,8 +105,9 @@ public class AgentManagementApplicationService {
         var testAgentIds = tests.ownedAgentIds(tenantId, candidates.stream().map(AgentDO::getId).toList());
         List<AgentDO> agents = candidates.stream().filter(agent -> !testAgentIds.contains(agent.getId())).toList();
         Map<Long, String> templateNames = loadTemplateNames(agents);
+        var managedAgentIds = agentService.managedDefinitionAgentIds(tenantId, agents.stream().map(AgentDO::getId).toList());
         return agents.stream().map(agent -> view(agent, agent.getTemplateId() == null
-                ? null : templateNames.get(agent.getTemplateId()))).toList();
+                ? null : templateNames.get(agent.getTemplateId()), managedAgentIds.contains(agent.getId()))).toList();
     }
 
     /** 直接创建独立草稿；套餐检查和资源登记与 Agent 写入处于同一事务。 */
@@ -456,11 +457,16 @@ public class AgentManagementApplicationService {
     }
 
     private AgentManagementContracts.Agent view(AgentDO agent, String templateName) {
+        return view(agent, templateName, agentService.managedDefinitionAgentIds(agent.getTenantId(), List.of(agent.getId()))
+                .contains(agent.getId()));
+    }
+
+    private AgentManagementContracts.Agent view(AgentDO agent, String templateName, boolean definitionManaged) {
         return new AgentManagementContracts.Agent(agent.getId(), agent.getTenantId(), agent.getAgentKey(), agent.getName(),
                 agent.getTemplateId(), templateName, AgentStatus.fromCode(agent.getStatus()), agent.getCreatedAt(),
                 agent.getSystemPrompt(), agent.getRoleDescription(), agent.getExecutionConfig(), agent.getModelConfigId(),
                 agent.getConfig(), agent.getPublishedAt(), agent.getDelegationConfig(), agent.getIconUrl(), agent.getRevision(),
-                agent.getPublishedRevisionId(), Boolean.TRUE.equals(agent.getHasDraftChanges()));
+                agent.getPublishedRevisionId(), Boolean.TRUE.equals(agent.getHasDraftChanges()), definitionManaged);
     }
 
     private void requireReady(AgentDO agent) {

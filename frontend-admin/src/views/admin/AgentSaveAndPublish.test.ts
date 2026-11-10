@@ -66,6 +66,7 @@ vi.mock('../../api', () => ({
 vi.mock('../../api/tools', () => ({ toolsApi: { available: vi.fn(async () => ({ items: [] })) } }))
 const detail = (id = 'agent-1') => ({
   id,
+  definition_managed: false,
   agent_key: id,
   name: '原智能体',
   role_description: '',
@@ -404,12 +405,69 @@ it('没有能力读取权限时不读取挂载名称，仍自动核对原发布'
   expect(wrapper.text()).toContain('保存并发布已确认')
 })
 async function render() {
-  wrapper = mount(AgentManagePage, { attachTo: document.body })
+  wrapper = mount(AgentManagePage, {
+    attachTo: document.body,
+    global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } }
+  })
   await flushPromises()
 }
 function button(label: string) {
   return wrapper.findAll('button').find((item) => item.text() === label)!
 }
+
+it('已停用且无草稿修改可直接重新发布，仅需发布权限并沿用原请求回执', async () => {
+  useAuthStore().user!.permissions = ['foundation.agents.read', 'foundation.agents.publish']
+  mocks.get.mockResolvedValue({ ...detail(), status: 'disabled' })
+  mocks.publishWithReceipt.mockImplementationOnce(async (command) => {
+    mocks.get.mockResolvedValue({ ...detail(), published_revision: 3 })
+    return { ...command, publication_id: '123', revision: 3, published_at: '2026-10-30T10:00:00Z' }
+  })
+  await render()
+  expect(button('重新发布').attributes('disabled')).toBeUndefined()
+  await button('重新发布').trigger('click')
+  await flushPromises()
+  expect(mocks.publishWithReceipt).toHaveBeenCalledExactlyOnceWith({
+    agent_id: 'agent-1',
+    request_id: expect.any(String)
+  })
+  expect(mocks.update).not.toHaveBeenCalled()
+  expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('发布已确认')
+  expect(button('重新发布')).toBeUndefined()
+})
+
+it('只有更新权限不能重新发布停用的智能体', async () => {
+  useAuthStore().user!.permissions = ['foundation.agents.read', 'foundation.agents.update']
+  mocks.get.mockResolvedValue({ ...detail(), status: 'disabled' })
+  await render()
+  await button('重新发布').trigger('click')
+  await flushPromises()
+  expect(mocks.publishWithReceipt).not.toHaveBeenCalled()
+  expect(mocks.update).not.toHaveBeenCalled()
+})
+
+it.each([false, true])(
+  '公共部署实例不提供普通编辑发布入口，部署读权限=%s',
+  async (canReadDeployment) => {
+    if (canReadDeployment) useAuthStore().user!.permissions.push('tenant.agent_deployments.read')
+    mocks.get.mockResolvedValue({
+      ...detail(),
+      status: 'disabled',
+      definition_managed: true,
+      has_draft_changes: true
+    })
+    await render()
+    expect(wrapper.text()).toContain('由公共部署管理')
+    expect(button('保存草稿')).toBeUndefined()
+    expect(button('发布')).toBeUndefined()
+    expect(button('重新发布')).toBeUndefined()
+    expect(button('保存发布并试用')).toBeUndefined()
+    expect(nameInput().get('input').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('a[href="/admin/agent-deployments"]').exists()).toBe(canReadDeployment)
+    expect(mocks.publishWithReceipt).not.toHaveBeenCalled()
+    expect(mocks.update).not.toHaveBeenCalled()
+  }
+)
 function nameInput() {
   return wrapper
     .findAllComponents(ElInput)

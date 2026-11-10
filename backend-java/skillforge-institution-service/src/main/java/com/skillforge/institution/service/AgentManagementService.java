@@ -128,7 +128,7 @@ public class AgentManagementService {
         return new AgentItemResponse(agent.id(), agent.agentKey(), agent.name(), agent.templateId(), agent.templateName(),
                 agent.status(), agent.createdAt(), agent.delegationConfig(), agent.iconUrl(), agent.roleDescription(),
                 agent.revision(), agent.publishedRevisionId(), agent.publishedRevisionId() == null ? null : agent.revision(),
-                agent.hasDraftChanges());
+                agent.hasDraftChanges(), agent.definitionManaged());
     }
 
     private AgentDetailResponse agentDetail(AgentManagementContracts.Detail detail) {
@@ -138,6 +138,6 @@ public class AgentManagementService {
                 agent.modelConfigId() == null ? null : agent.modelConfigId().toString(), agent.config(), agent.publishedAt(),
                 detail.mountSet().generation(), detail.mountSet().mounts().stream().map(CapabilityMountResponse::from).toList(),
                 agent.delegationConfig(), agent.iconUrl(), agent.revision(), agent.publishedRevisionId(),
-                agent.publishedRevisionId() == null ? null : agent.revision(), agent.hasDraftChanges());
+                agent.publishedRevisionId() == null ? null : agent.revision(), agent.hasDraftChanges(), agent.definitionManaged());
     }
 }

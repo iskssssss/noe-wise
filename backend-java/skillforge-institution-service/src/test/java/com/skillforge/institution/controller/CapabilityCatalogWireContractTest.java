@@ -87,8 +87,9 @@ class CapabilityCatalogWireContractTest {
         assertTrue(workflowTree.get("installation_revision").isIntegralNumber());
         var agent=new com.skillforge.core.agent.dto.response.AgentItemResponse(ID,"agent","助手",null,null,
                 com.skillforge.core.agent.enums.AgentStatus.PUBLISHED,null,com.skillforge.core.agent.model.AgentDelegationConfig.disabled(),
-                null,null,3,null,null,false);
+                null,null,3,null,null,false,false);
         var agentTree=wire(agent);assertId(agentTree,"id",ID);assertTrue(agentTree.get("revision").isIntegralNumber());
+        assertTrue(agentTree.get("definition_managed").isBoolean());assertFalse(agentTree.get("definition_managed").booleanValue());
         var knowledge=new com.skillforge.core.knowledge.dto.response.KnowledgeBaseRevisionResponse(1L,2L,3L,
                 "published",java.util.List.of(),null,null,null,null,ID,null);
         var knowledgeTree=wire(knowledge);assertId(knowledgeTree,"capability_version_id",ID);

@@ -28,5 +28,6 @@ public record AgentItemResponse(
         String iconUrl, String roleDescription, int revision,
         @JsonProperty("published_revision_id") Long publishedRevisionId,
         @JsonProperty("published_revision") Integer publishedRevision,
-        @JsonProperty("has_draft_changes") boolean hasDraftChanges) {
+        @JsonProperty("has_draft_changes") boolean hasDraftChanges,
+        @JsonProperty("definition_managed") boolean definitionManaged) {
 }
