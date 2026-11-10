@@ -141,6 +141,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentTemplateBudgetBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
+    exclude("**/ConvertDatetimeBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
@@ -303,6 +304,22 @@ tasks.register<Test>("knowledgeChunkOverlapBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeChunkOverlapBrowserE2ETest.longParagraphRemainsSearchableAcrossChunkBoundary") }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("convertDatetimeBrowserE2E") {
+    description = "验证时间转换参数错误回传模型后在同一运行中纠正"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ConvertDatetimeBrowserE2ETest.invalidTimezoneCanBeCorrectedInTheSameRuntime") }
+    inputs.property("convertDatetime", providers.environmentVariable("E2E_CONVERT_DATETIME").orElse("candidate"))
+    inputs.files(fileTree("../..") {
+        include("frontend-admin/src/**", "frontend-admin/e2e/convert-datetime-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
+        include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
+    }).withPropertyName("convertDatetimeFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
     outputs.upToDateWhen { false }
 }
 

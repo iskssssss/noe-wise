@@ -1,5 +1,6 @@
 package com.skillforge.core.capability.connector;
 
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -20,6 +21,11 @@ public class ConvertDatetimeToolHandler implements PlatformToolHandler {
     }
 
     @Override
+    public boolean isError(Map<String, Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
+
+    @Override
     public Map<String, Object> execute(Map<String, Object> args, PlatformToolExecutionContext context) {
         try {
             String datetime = required(args, "datetime");
@@ -30,6 +36,8 @@ public class ConvertDatetimeToolHandler implements PlatformToolHandler {
             ZonedDateTime converted = instant.atZone(ZoneId.of(targetTimezone));
             return Map.of("success", true, "timezone", converted.getZone().getId(),
                     "value", format(converted, outputFormat));
+        } catch (DateTimeException e) {
+            return Map.of("success", false, "error", "target_timezone 必须是有效的 IANA 时区");
         } catch (IllegalArgumentException e) {
             return Map.of("success", false, "error", e.getMessage());
         }

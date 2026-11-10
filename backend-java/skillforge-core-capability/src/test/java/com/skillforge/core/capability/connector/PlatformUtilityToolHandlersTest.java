@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** 平台无外部依赖工具的契约测试。 */
 class PlatformUtilityToolHandlersTest {
@@ -57,9 +59,41 @@ class PlatformUtilityToolHandlersTest {
 
         assertTrue((Boolean) result.get("success"));
         assertEquals("2026-01-01T08:00:00", result.get("value"));
+        assertFalse(handler.isError(result));
         assertFalse((Boolean) handler.execute(Map.of(
                 "datetime", "2026-01-01T00:00:00Z", "output_format", "yyyy-MM-dd"),
                 PlatformToolTestContext.create()).get("success"));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "2026-01-01T00:00:00Z,Asia/Shanghai,Asia/Beijing,ISO_OFFSET_DATE_TIME,target_timezone 必须是有效的 IANA 时区",
+        "2026-01-01T00:00:00,Asia/Beijing,Asia/Shanghai,ISO_OFFSET_DATE_TIME,datetime 必须是 ISO 8601 时间，source_timezone 必须是有效的 IANA 时区",
+        "not-a-date,Asia/Shanghai,Asia/Shanghai,ISO_OFFSET_DATE_TIME,datetime 必须是 ISO 8601 时间，source_timezone 必须是有效的 IANA 时区",
+        "2026-01-01T00:00:00Z,Asia/Shanghai,Asia/Shanghai,yyyy-MM-dd,output_format 必须是 ISO_OFFSET_DATE_TIME、ISO_LOCAL_DATE_TIME、ISO_LOCAL_DATE 或 EPOCH_MILLIS"
+    })
+    void datetimeInputRejectionsRemainKnownToolErrors(String datetime, String source, String target,
+            String format, String error) {
+        var handler = new ConvertDatetimeToolHandler();
+        var result = handler.execute(Map.of("datetime", datetime, "source_timezone", source,
+                "target_timezone", target, "output_format", format), PlatformToolTestContext.create());
+
+        assertEquals(Map.of("success", false, "error", error), result);
+        assertTrue(handler.isError(result));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "2026-01-01T00:00:00Z,2026-01-01T08:00:00+08:00",
+        "2026-01-01T03:00:00+03:00,2026-01-01T08:00:00+08:00"
+    })
+    void datetimeAbsoluteInputDoesNotRequireSourceTimezone(String datetime, String expected) {
+        var handler = new ConvertDatetimeToolHandler();
+        var result = handler.execute(Map.of("datetime", datetime, "source_timezone", "Asia/Beijing",
+                "target_timezone", "Asia/Shanghai"), PlatformToolTestContext.create());
+
+        assertEquals(Map.of("success", true, "timezone", "Asia/Shanghai", "value", expected), result);
+        assertFalse(handler.isError(result));
     }
 
     @Test
