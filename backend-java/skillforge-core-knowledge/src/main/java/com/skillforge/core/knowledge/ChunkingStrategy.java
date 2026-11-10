@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 段落感知文本分块器（对齐 Dify 分段语义，按字符计）。
+ * 段落感知文本分块器，按字符计。
  *
  * <p>切分优先级：空行分段 > 句末标点分句（标点保留句尾）> 单换行分句；
  * 句子按最大长度贪心合并，超长单句按长度硬切兜底；相邻分块按重叠长度
@@ -28,7 +28,7 @@ public final class ChunkingStrategy {
      */
     public static List<String> split(String text, int maxLength, int overlap) {
         int size = Math.max(1, maxLength);
-        int ov = Math.max(0, overlap);
+        int ov = Math.min(size - 1, Math.max(0, overlap));
         String normalized = normalize(text);
         if (normalized.isEmpty()) {
             return List.of();
@@ -46,13 +46,10 @@ public final class ChunkingStrategy {
                 current.append(overlapSuffix(chunks, ov));
             }
             current.append(sentence);
-            // 超长单句：按最大长度硬切（保留现状兜底）
+            // 硬切同样保留重叠；重叠小于块长，保证每次至少推进一个字符。
             while (current.length() > size) {
-                String head = current.substring(0, size);
-                chunks.add(head);
-                String rest = current.substring(size);
-                current.setLength(0);
-                current.append(rest);
+                chunks.add(current.substring(0, size));
+                current.delete(0, size - overlapSuffix(chunks, ov).length());
             }
         }
         if (current.length() > 0) {

@@ -44,6 +44,30 @@ class ChunkingStrategyTest {
     }
 
     @Test
+    void hardSplitPreservesSearchPhraseAcrossTheBoundary() {
+        String text = "甲".repeat(97) + "跨段检索凭证" + "乙".repeat(80);
+        List<String> chunks = ChunkingStrategy.split(text, 100, 20);
+        assertEquals(3, chunks.size());
+        assertTrue(chunks.stream().allMatch(chunk -> chunk.length() <= 100));
+        assertTrue(chunks.get(1).contains("跨段检索凭证"));
+        assertEquals(chunks.get(0).substring(80), chunks.get(1).substring(0, 20));
+        assertEquals(chunks.get(1).substring(80), chunks.get(2).substring(0, 20));
+        assertEquals(text, chunks.get(0) + chunks.get(1).substring(20) + chunks.get(2).substring(20));
+    }
+
+    @Test
+    void hardSplitAdvancesWithMaximumOverlapWithoutTrailingDuplicate() {
+        assertEquals(List.of("abc", "bcd", "cde", "def"), ChunkingStrategy.split("abcdef", 3, 2));
+        assertEquals(List.of("a", "b", "c"), ChunkingStrategy.split("abc", 1, 0));
+    }
+
+    @Test
+    void hardSplitUsesTheSameSentenceBoundaryOverlapAsMergedChunks() {
+        assertEquals(List.of("abcd.", "abcd.efghi", "efghijklmn", "ghijklmno"),
+                ChunkingStrategy.split("abcd.efghijklmno", 10, 8));
+    }
+
+    @Test
     void overlapAppliesAtSentenceBoundary() {
         String text = "句子一。句子二。句子三。句子四。句子五。";
         List<String> chunks = ChunkingStrategy.split(text, 12, 6);

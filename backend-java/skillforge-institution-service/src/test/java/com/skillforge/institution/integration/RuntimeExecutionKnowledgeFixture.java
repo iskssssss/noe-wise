@@ -28,14 +28,21 @@ final class RuntimeExecutionKnowledgeFixture {
     /** 关键词索引不调用Embedding；原文本、sourceVersion和已发布能力均由正式接口产生。 */
     Published publish(String run, String sentinel) throws Exception {
         String text = "Only this document contains the random sentinel " + sentinel + ". The answer must cite this exact source.";
+        return publish(run, sentinel, text, Map.of("indexing_mode", "economical", "retrieval_mode", "full_text"), null);
+    }
+
+    /** 自定义正文和分块设置仍通过同一上传、索引与发布入口，可保留本次公开回执。 */
+    Published publish(String run, String sentinel, String text, Map<String, Object> configuration,
+            java.nio.file.Path evidence) throws Exception {
         var created = request("/api/v1/knowledge/bases", "POST", Map.of("name", "execution-knowledge-" + run,
                 "description", "sentinel=" + sentinel, "indexing_mode", "economical", "retrieval_mode", "full_text"));
         assertEquals(200, created.statusCode(), created.body());
         String kb = data(created).path("id").asText(); assertFalse(kb.isBlank());
         var settings = request("/api/v1/knowledge/bases/update", "PATCH", Map.of("kb_id", kb,
-                "payload", Map.of("indexing_mode", "economical", "retrieval_mode", "full_text")));
+                "payload", configuration));
         assertEquals(200, settings.statusCode(), settings.body());
         var uploaded = upload(kb, "sentinel document " + run, text);
+        if (evidence != null) java.nio.file.Files.writeString(evidence.resolve("upload.json"), uploaded.body());
         assertEquals(200, uploaded.statusCode(), uploaded.body());
         assertEquals("SUCCEEDED", data(uploaded).path("status").asText());
         String document = data(uploaded).path("document").path("document_id").asText(); assertFalse(document.isBlank());
@@ -52,6 +59,7 @@ final class RuntimeExecutionKnowledgeFixture {
                         "allowed_operators", List.of("KEYWORD"), "freshness_policy", "PINNED", "citation_required", true))));
         assertEquals(200, ready.statusCode(), ready.body()); assertEquals("ready", data(ready).path("status").asText());
         var published = request("/api/v1/knowledge/bases/revisions/publish", "POST", Map.of("kb_id", kb, "revision", number));
+        if (evidence != null) java.nio.file.Files.writeString(evidence.resolve("publication.json"), published.body());
         assertEquals(200, published.statusCode(), published.body()); assertEquals("published", data(published).path("status").asText());
         long revisionId = data(published).path("id").asLong();
         long version = data(published).path("capability_version_id").asLong();

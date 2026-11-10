@@ -131,6 +131,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
     exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
+    exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
@@ -186,6 +187,17 @@ tasks.register<Test>("memoryDirectoryLimitBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.MemoryDirectoryLimitBrowserE2ETest.oldestFactOutsideFirstHundredRemainsRuntimeSearchable")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeChunkOverlapBrowserE2E") {
+    description = "验证知识长段重叠分块与真实检索引用"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeChunkOverlapBrowserE2ETest.longParagraphRemainsSearchableAcrossChunkBoundary") }
     outputs.upToDateWhen { false }
 }
 
