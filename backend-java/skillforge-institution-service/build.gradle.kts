@@ -133,6 +133,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/AgentNameValidationBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
+    exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
@@ -216,6 +217,20 @@ tasks.register<Test>("knowledgeChunkOverlapBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeChunkOverlapBrowserE2ETest.longParagraphRemainsSearchableAcrossChunkBoundary") }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("jsonSchemaPropertiesBrowserE2E") {
+    description = "验证 JSON Schema 额外属性约束的真实工具回传"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.JsonSchemaPropertiesBrowserE2ETest.additionalPropertyResultsReachNextModelAndBrowser") }
+    inputs.property("jsonSchemaProperties", providers.environmentVariable("E2E_JSON_SCHEMA_PROPERTIES").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/json-schema-properties-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

@@ -142,6 +142,67 @@ class PlatformUtilityToolHandlersTest {
     }
 
     @Test
+    void schemaValidatorRejectsExtraFieldsWithoutDeclaredProperties() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        for (var schema : List.of(
+                Map.of("type", "object", "additionalProperties", false),
+                Map.of("type", "object", "properties", Map.of(), "additionalProperties", false))) {
+            assertEquals(Map.of("success", true, "valid", true, "errors", List.of()),
+                    handler.validateValue(Map.of(), schema));
+            assertEquals(Map.of("success", true, "valid", false,
+                            "errors", List.of("$: 不允许额外字段 unexpected")),
+                    handler.validateValue(Map.of("unexpected", 1), schema));
+        }
+    }
+
+    @Test
+    void schemaValidatorAppliesAdditionalSchemaOnlyToUndeclaredProperties() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        for (var schema : List.of(
+                Map.of("type", "object", "additionalProperties", Map.of("type", "string")),
+                Map.of("type", "object", "properties", Map.of("id", Map.of("type", "integer")),
+                        "additionalProperties", Map.of("type", "string")))) {
+            assertEquals(Map.of("success", true, "valid", false,
+                            "errors", List.of("$.label: 类型不符合 schema.type")),
+                    handler.validateValue(Map.of("label", 7), schema));
+            assertTrue((Boolean) handler.validateValue(Map.of("label", "ok"), schema).get("valid"));
+        }
+        var schema = Map.of("properties", Map.of("id", Map.of("type", "integer")),
+                "additionalProperties", Map.of("type", "string"));
+        assertTrue((Boolean) handler.validateValue(Map.of("id", 7, "label", "ok"), schema).get("valid"));
+        assertEquals(List.of("$.id: 类型不符合 schema.type"),
+                handler.validateValue(Map.of("id", "wrong", "label", "ok"), schema).get("errors"));
+    }
+
+    @Test
+    void schemaValidatorRecursesIntoAdditionalPropertySchemas() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        var schema = Map.of("additionalProperties", Map.of("type", "object",
+                "additionalProperties", Map.of("type", "string", "minLength", 2)));
+        assertEquals(List.of("$.labels.name: 长度小于 schema.minLength"),
+                handler.validateValue(Map.of("labels", Map.of("name", "A")), schema).get("errors"));
+        assertTrue((Boolean) handler.validateValue(Map.of("labels", Map.of("name", "Ada")), schema).get("valid"));
+    }
+
+    @Test
+    void schemaValidatorAllowsAdditionalFieldsByDefaultOrExplicitly() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        for (var schema : List.of(Map.of(), Map.of("additionalProperties", true),
+                Map.of("additionalProperties", Map.of()))) {
+            assertTrue((Boolean) handler.validateValue(Map.of("extra", List.of(1, "ok")), schema).get("valid"));
+        }
+    }
+
+    @Test
+    void schemaValidatorRejectsInvalidAdditionalPropertiesConstraint() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        for (var constraint : List.of(7, "false", List.of())) {
+            assertEquals(List.of("$: schema.additionalProperties 必须是布尔值或对象"),
+                    handler.validateValue(Map.of(), Map.of("additionalProperties", constraint)).get("errors"));
+        }
+    }
+
+    @Test
     void schemaValidatorEnforcesArrayBoundsEvenWithoutItemSchema() {
         var handler = new JsonSchemaValidateToolHandler(objectMapper);
         var schema = Map.of("type", "array", "minItems", 1, "maxItems", 2);

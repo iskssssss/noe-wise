@@ -177,13 +177,24 @@ public class JsonSchemaValidateToolHandler implements PlatformToolHandler {
                 }
             }
         }
-        if (schema.has("additionalProperties") && !schema.get("additionalProperties").asBoolean(true) && properties != null) {
-            Iterator<String> fields = value.fieldNames();
-            while (fields.hasNext()) {
-                String field = fields.next();
-                if (!properties.has(field)) {
-                    errors.add(path + ": 不允许额外字段 " + field);
-                }
+        JsonNode additional = schema.get("additionalProperties");
+        if (additional == null || additional.isBoolean() && additional.booleanValue()) {
+            return;
+        }
+        if (!additional.isBoolean() && !additional.isObject()) {
+            errors.add(path + ": schema.additionalProperties 必须是布尔值或对象");
+            return;
+        }
+        Iterator<Map.Entry<String, JsonNode>> entries = value.fields();
+        while (entries.hasNext()) {
+            Map.Entry<String, JsonNode> entry = entries.next();
+            if (properties != null && properties.has(entry.getKey())) {
+                continue;
+            }
+            if (additional.isBoolean()) {
+                errors.add(path + ": 不允许额外字段 " + entry.getKey());
+            } else {
+                validate(entry.getValue(), additional, path + "." + entry.getKey(), depth + 1, errors);
             }
         }
     }
