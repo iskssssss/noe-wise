@@ -48,6 +48,9 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.springframework.mock.web.MockMultipartFile;
@@ -245,6 +248,83 @@ class KnowledgeServiceTest {
 
         service.deleteDocument("7", 20L, document.getCurrentSourceVersion());
         verify(documentMapper).softDelete(eq(7L), eq(20L), anyString());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = "chunk content")
+    void titleChangeReusesOriginalChunkSetWhenBodyIsOmittedOrUnchanged(String submittedContent) {
+        var document = document();
+        var current = version();
+        current.setChunkCount(2);
+        var first = chunk();
+        first.setContent("chunk ");
+        var second = chunk();
+        second.setId(31L);
+        second.setChunkIndex(1);
+        second.setContent("content");
+        second.setContentId(95L);
+        second.setEmbeddingId(96L);
+        second.setEmbedding("[0.3,0.4]");
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
+        when(documentMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(document);
+        when(documentVersionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(current);
+        when(chunkMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(first, second));
+
+        service.updateDocument("7", 20L, "new title", submittedContent, "v1");
+
+        var inserted = ArgumentCaptor.forClass(KnowledgeDocumentVersionDO.class);
+        verify(documentVersionMapper).insert(inserted.capture());
+        var next = inserted.getValue();
+        assertEquals("new title", next.getTitle());
+        assertEquals(current.getContent(), next.getContent());
+        assertEquals(current.getContentId(), next.getContentId());
+        assertEquals(current.getChunkSetId(), next.getChunkSetId());
+        assertEquals(2, next.getChunkCount());
+        assertEquals(KnowledgeConstants.DOC_STATUS_READY, next.getStatus());
+        assertNotEquals("v1", next.getSourceVersion());
+        verify(documentMapper).compareAndSetCurrentVersion(7L, 20L, "v1", next.getSourceVersion());
+        ArgumentCaptor<List<Map<String, Object>>> indexed = ArgumentCaptor.forClass(List.class);
+        verify(searchIndexer).indexChunks(eq("7"), indexed.capture());
+        assertEquals(List.of(30L, 31L), indexed.getValue().stream().map(row -> row.get("chunk_id")).toList());
+        assertEquals(List.of("chunk ", "content"), indexed.getValue().stream().map(row -> row.get("content")).toList());
+        assertEquals(List.of("[0.1,0.2]", "[0.3,0.4]"), indexed.getValue().stream().map(row -> row.get("embedding")).toList());
+        assertTrue(indexed.getValue().stream().allMatch(row -> next.getSourceVersion().equals(row.get("source_version"))));
+        verify(storageMapper, never()).insertSet(anyLong(), anyLong(), anyLong(), anyLong());
+        verify(storageMapper, never()).insertChunk(any(KnowledgeChunkDO.class));
+        verify(storageMapper, never()).insertDocumentContent(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+        verify(storageMapper, never()).insertChunkContent(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+        verify(storageMapper, never()).insertEmbedding(anyLong(), anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyString());
+        verify(embeddingProvider, never()).embed(anyString(), anyString(), anyLong(), anyString());
+        verify(embeddingProvider, never()).embedBatch(anyString(), anyString(), anyLong(), any());
+        assertEquals("v1", current.getSourceVersion());
+        assertEquals("title", current.getTitle());
+        assertEquals("v1", first.getSourceVersion());
+        assertEquals("v1", second.getSourceVersion());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = "chunk content")
+    void unchangedTitleAndBodyDoNotCreateAnotherSourceVersion(String submittedContent) {
+        var document = document();
+        when(documentMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(document);
+        when(documentVersionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(version());
+
+        var result = service.updateDocument("7", 20L, "title", submittedContent, "v1");
+
+        assertEquals("v1", result.sourceVersion());
+        assertEquals("title", result.title());
+        assertEquals("chunk content", result.content());
+        assertEquals("v1", document.getCurrentSourceVersion());
+        verify(documentVersionMapper, never()).insert(any(KnowledgeDocumentVersionDO.class));
+        verify(documentVersionMapper, never()).updateById(any(KnowledgeDocumentVersionDO.class));
+        verify(documentMapper, never()).compareAndSetCurrentVersion(anyLong(), anyLong(), anyString(), anyString());
+        verify(storageMapper, never()).insertDocumentContent(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+        verify(storageMapper, never()).insertSet(anyLong(), anyLong(), anyLong(), anyLong());
+        verifyNoInteractions(chunkMapper, searchIndexer);
+        verify(embeddingProvider, never()).embed(anyString(), anyString(), anyLong(), anyString());
+        verify(embeddingProvider, never()).embedBatch(anyString(), anyString(), anyLong(), any());
     }
 
     @Test

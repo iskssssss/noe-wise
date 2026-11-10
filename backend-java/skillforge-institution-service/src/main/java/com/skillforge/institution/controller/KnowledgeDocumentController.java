@@ -112,7 +112,8 @@ public class KnowledgeDocumentController {
     }
 
     /**
-     * 更新文档：仅标题不触分块；传 content 时按知识库分段参数重新分块并重算向量。
+     * 更新文档：仅标题变化复用原文与分块集合；省略或回送相同正文不重新分块。
+     * 正文实际变化时按知识库参数重新分块，未变化分块复用向量。
      *
      * @param docId   文档 ID
      * @param request 更新请求

@@ -717,12 +717,12 @@ public class KnowledgeService {
     }
 
     /**
-     * 更新文档：仅标题不触分块；传 content 时按知识库分段参数重新分块并重算向量。
+     * 更新文档：仅标题变化复用原文与分块集合；正文实际变化时才按知识库参数重新分块。
      *
      * @param tenantId 租户 ID
      * @param docId    文档 ID
      * @param title    新标题，可空
-     * @param content  新正文，可空（传入即重新分块）
+     * @param content  新正文，可空；省略或与当前正文相同均保留原分块
      * @return 更新后的详情
      */
     @Transactional(propagation = Propagation.NEVER)
@@ -738,13 +738,14 @@ public class KnowledgeService {
         KnowledgeBaseDO base = requireWritableBase(tenantId, document.getKbId());
         List<KnowledgeChunkDO> previous = chunksOf(tenantId, document.getId(), expectedSourceVersion);
         String nextContent = content == null ? current.getContent() : content;
+        boolean contentChanged = !Objects.equals(nextContent, current.getContent());
         KnowledgeDocumentVersionDO next = newVersion(document,
                 title == null ? current.getTitle() : title,
                 nextContent, current.getSourceType(), current.getOriginalFilename(),
                 current.getExtension(), current.getSizeBytes(), current.getParsedBy());
-        if (Objects.equals(nextContent, current.getContent())) next.setContentId(current.getContentId());
+        if (!contentChanged) next.setContentId(current.getContentId());
         List<KnowledgeChunkDO> chunks;
-        if (content == null) {
+        if (!contentChanged) {
             next.setChunkSetId(current.getChunkSetId());
             chunks = new ArrayList<>();
             for (KnowledgeChunkDO old : previous) {
