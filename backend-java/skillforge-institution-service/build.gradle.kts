@@ -128,6 +128,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatInputRetryBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
+    exclude("**/ChannelBindingRoutingBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
@@ -168,6 +169,22 @@ tasks.register<Test>("channelRuntimeBrowserE2E") {
         include("frontend-chat/src/**", "frontend-chat/vite.config.ts", "frontend-chat/index.html", "frontend-chat/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("channelRuntimeFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("channelBindingRoutingBrowserE2E") {
+    description = "验证渠道绑定编辑保留路由参数与实际执行目标"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChannelBindingRoutingBrowserE2ETest.bindingEditPreservesRoutingForRuntime") }
+    inputs.property("routingMode", providers.environmentVariable("E2E_CHANNEL_BINDING_ROUTING").orElse("candidate"))
+    inputs.files(fileTree("../..") {
+        include("frontend-admin/src/**", "frontend-admin/e2e/channel-binding-routing-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
+        include("frontend-chat/src/**", "frontend-chat/vite.config.ts", "frontend-chat/index.html", "frontend-chat/package.json")
+        include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
+    }).withPropertyName("channelBindingRoutingFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {

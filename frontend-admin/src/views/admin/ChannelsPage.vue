@@ -682,11 +682,15 @@ async function saveBindings() {
   await run(async () => {
     await api.channels.bindAgents(
       selected.value!.id!,
-      selectedAgents.value.map((id, index) => ({
-        agent_id: id,
-        priority: index,
-        is_default: id === defaultAgent.value
-      }))
+      selectedAgents.value.map((id, index) => {
+        const binding = selected.value!.agent_bindings?.find((item) => item.id === id)
+        return {
+          agent_id: id,
+          priority: binding?.priority ?? index,
+          traffic_percentage: binding?.traffic_percentage,
+          is_default: id === defaultAgent.value
+        }
+      })
     )
     bindingOpen.value = false
     await reload()

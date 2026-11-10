@@ -89,6 +89,40 @@ function selects() {
 }
 
 describe('渠道绑定与候选目录独立恢复', () => {
+  it('原样保存保留详情中的路由参数，零优先级和零流量不被默认值覆盖', async () => {
+    mocks.detail.mockResolvedValue({
+      ...channel,
+      agent_bindings: [
+        { ...bindings[0], priority: 20, traffic_percentage: 25 },
+        { ...bindings[1], priority: 0, traffic_percentage: 0 }
+      ]
+    })
+    await openBindings()
+    await saveBindingDraft()
+    expect(mocks.bind).toHaveBeenCalledExactlyOnceWith('channel-1', [
+      { agent_id: 'agent-1', priority: 20, traffic_percentage: 25, is_default: true },
+      { agent_id: 'agent-2', priority: 0, traffic_percentage: 0, is_default: false }
+    ])
+  })
+  it('增删成员和调整默认项只改变所选集合，保留旧成员参数并沿用新成员默认行为', async () => {
+    mocks.detail.mockResolvedValue({
+      ...channel,
+      agent_bindings: [
+        { ...bindings[0], priority: 20, traffic_percentage: 25 },
+        { ...bindings[1], priority: 10, traffic_percentage: 75 }
+      ]
+    })
+    await openBindings()
+    selects()[0]!.vm.$emit('update:modelValue', ['agent-2', 'agent-3'])
+    await flushPromises()
+    selects()[1]!.vm.$emit('update:modelValue', 'agent-3')
+    await flushPromises()
+    await saveBindingDraft()
+    expect(mocks.bind).toHaveBeenCalledExactlyOnceWith('channel-1', [
+      { agent_id: 'agent-2', priority: 10, traffic_percentage: 75, is_default: false },
+      { agent_id: 'agent-3', priority: 1, is_default: true }
+    ])
+  })
   it('同名智能体按角色说明或标识查找并保存准确身份', async () => {
     mocks.detail.mockResolvedValue({ ...channel, agent_bindings: [] })
     mocks.agents.mockResolvedValue({
