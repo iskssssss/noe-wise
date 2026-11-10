@@ -70,7 +70,7 @@ class AgentTemplatePublicationPostgresTest {
         try(var session=factory.openSession()) {
             var mapper=session.getMapper(AgentTemplateMapper.class);
             var json=new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-            var service=new AgentTemplateService(null,null,null,json);ReflectionTestUtils.setField(service,"baseMapper",mapper);
+            var service=new AgentTemplateService(null,null,null,json,null);ReflectionTestUtils.setField(service,"baseMapper",mapper);
             READS.queries.clear();var history=service.publications(31L);
             assertEquals(List.of("1.3.0","1.2.0","1.1.0"),history.stream().map(row->row.getVersion()).toList());
             assertEquals(1,READS.queries.size());var full=READS.queries.getFirst();READS.queries.clear();

@@ -17,7 +17,7 @@ import static org.mockito.Mockito.*;
 /** 服务端分发策略保护普通复制与受控部署，缺失策略必须失败关闭。 */
 class AgentTemplateDistributionPolicyTest {
     private final AgentTemplateService service = new AgentTemplateService(mock(PlatformModelCatalogService.class),
-            mock(CapabilityCatalogService.class), mock(PlatformToolCatalog.class), new ObjectMapper());
+            mock(CapabilityCatalogService.class), mock(PlatformToolCatalog.class), new ObjectMapper(), null);
 
     @Test void controlledDefinitionRejectsOrdinaryConsumption() {
         var failure = assertThrows(ApiException.class,

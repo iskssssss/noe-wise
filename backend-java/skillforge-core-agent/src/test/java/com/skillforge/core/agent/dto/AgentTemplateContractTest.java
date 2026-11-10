@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,15 +20,25 @@ import com.skillforge.core.capability.CapabilityType;
 import com.skillforge.core.capability.CapabilityVersionView;
 import com.skillforge.core.capability.SkillActivationMode;
 import com.skillforge.core.capability.connector.PlatformToolCatalog;
+import com.skillforge.core.foundation.runtimeconfig.AgentExecutionConfig;
+import com.skillforge.core.foundation.settings.OperationalSettingsService;
 import com.skillforge.core.model.PlatformModelCatalogService;
+import com.skillforge.core.model.PlatformModelConfig;
+import com.skillforge.core.shared.exception.ApiException;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.http.HttpStatus;
 
 /** Agent 模板完整定义的序列化与发布校验契约。 */
 class AgentTemplateContractTest {
+    private final PlatformModelCatalogService models = mock(PlatformModelCatalogService.class);
+    private final PlatformModelConfig model = mock(PlatformModelConfig.class);
+    private final OperationalSettingsService settings = mock(OperationalSettingsService.class);
 
     /** 精确策略枚举进入真实 JSON 边界，未知值和显式清除均不能降级成开放默认。 */
     @Test
@@ -106,6 +119,76 @@ class AgentTemplateContractTest {
             assertThat(issue.path()).isEqualTo("definition.model_config_id");
             assertThat(issue.code()).isEqualTo("required");
         });
+        verifyNoInteractions(models, settings);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"2048,false", "2049,true"})
+    void explicitTokenBudgetMustLeaveRoomBeyondModelOutput(long tokens, boolean valid) {
+        var service = service(mock(CapabilityCatalogService.class));
+        var definition = new AgentTemplateDefinition("prompt", "role", "1",
+                new AgentExecutionConfig(null, null, null, tokens, null), List.of(), List.of(), List.of());
+
+        var result = service.validateDefinition(definition);
+
+        assertThat(result.valid()).isEqualTo(valid);
+        if (valid) assertThat(result.issues()).isEmpty();
+        else assertThat(result.issues()).singleElement().satisfies(issue -> {
+            assertThat(issue.path()).isEqualTo("definition.execution_config");
+            assertThat(issue.code()).isEqualTo("budget_invalid");
+            assertThat(issue.message()).contains("agent_budget_cannot_fit_text_closing:max_total_tokens");
+        });
+        verify(models).requireEnabled("1", "LLM");
+        verifyNoMoreInteractions(models);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"600,60,60,false", "600,60,61,true", "30,60,30,false", "30,60,31,true"})
+    void explicitActiveTimeUsesSmallerModelAndOperationalTimeout(
+            int modelTimeout, int callTimeout, long activeSeconds, boolean valid) {
+        var service = service(mock(CapabilityCatalogService.class));
+        when(model.timeoutSeconds()).thenReturn(modelTimeout);
+        when(settings.read("calls")).thenReturn(new OperationalSettingsService.Snapshot(
+                7, Map.of("chat_timeout_seconds", callTimeout)));
+        var definition = new AgentTemplateDefinition("prompt", "role", "1",
+                new AgentExecutionConfig(null, null, null, null, activeSeconds), List.of(), List.of(), List.of());
+
+        var result = service.validateDefinition(definition);
+
+        assertThat(result.valid()).isEqualTo(valid);
+        if (valid) assertThat(result.issues()).isEmpty();
+        else assertThat(result.issues()).singleElement().satisfies(issue -> {
+            assertThat(issue.path()).isEqualTo("definition.execution_config");
+            assertThat(issue.code()).isEqualTo("budget_invalid");
+            assertThat(issue.message()).contains("agent_budget_cannot_fit_text_closing:max_wall_time_seconds");
+        });
+        verify(settings).read("calls");
+        verifyNoMoreInteractions(settings);
+    }
+
+    @Test
+    void inheritedBudgetKeepsDefaultExecutionPolicy() {
+        var result = service(mock(CapabilityCatalogService.class))
+                .validateDefinition(definition(List.of(), List.of(), List.of()));
+
+        assertThat(result.valid()).isTrue();
+        assertThat(result.issues()).isEmpty();
+    }
+
+    @Test
+    void unavailableModelDoesNotHideInvalidBasicBudget() {
+        var service = service(mock(CapabilityCatalogService.class));
+        when(models.requireEnabled("1", "LLM"))
+                .thenThrow(new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "model_disabled"));
+        var definition = new AgentTemplateDefinition("prompt", "role", "1",
+                new AgentExecutionConfig(null, null, null, 0L, null), List.of(), List.of(), List.of());
+
+        var result = service.validateDefinition(definition);
+
+        assertThat(result.valid()).isFalse();
+        assertThat(result.issues()).extracting(issue -> issue.path() + ":" + issue.code())
+                .containsExactly("definition.model_config_id:model_unavailable", "definition.execution_config:budget_invalid");
+        verifyNoInteractions(settings);
     }
 
     @Test
@@ -179,8 +262,13 @@ class AgentTemplateContractTest {
     }
 
     private AgentTemplateService service(CapabilityCatalogService catalog) {
-        return new AgentTemplateService(mock(PlatformModelCatalogService.class), catalog,
-                platformTools(), new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
+        when(model.maxOutputTokens()).thenReturn(2048);
+        when(model.timeoutSeconds()).thenReturn(120);
+        when(models.requireEnabled("1", "LLM")).thenReturn(model);
+        when(settings.read("calls")).thenReturn(new OperationalSettingsService.Snapshot(
+                1, Map.of("chat_timeout_seconds", 120)));
+        return new AgentTemplateService(models, catalog,
+                platformTools(), new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(), settings);
     }
 
     private AgentTemplateDefinition definition(

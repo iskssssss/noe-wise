@@ -16,7 +16,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class AgentTemplatePublicationReadTest {
     @Test void exactSnapshotUsesOnlyRequestedIdentityAndPreservesMissingAndCorruptFailures() {
         var mapper=mock(AgentTemplateMapper.class);
-        var service=new AgentTemplateService(null,null,null,new ObjectMapper());
+        var service=new AgentTemplateService(null,null,null,new ObjectMapper(),null);
         ReflectionTestUtils.setField(service,"baseMapper",mapper);
         when(mapper.publication(31L,"1.0.0")).thenReturn("{\"id\":31,\"version\":\"1.0.0\",\"name\":\"原发布\"}");
         var target=service.requirePublication(31L,"1.0.0");assertEquals("原发布",target.getName());

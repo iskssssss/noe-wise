@@ -17,8 +17,11 @@ import com.skillforge.core.agent.model.AgentTemplateDO;
 import com.skillforge.core.agent.model.AgentTemplateDisplay;
 import com.skillforge.core.agent.model.AgentTemplateDefinition;
 import com.skillforge.core.capability.connector.PlatformToolCatalog;
+import com.skillforge.core.foundation.runtimeconfig.AgentBudgetValidation;
+import com.skillforge.core.foundation.settings.OperationalSettingsService;
 import com.skillforge.core.shared.exception.ApiException;
 import com.skillforge.core.model.PlatformModelCatalogService;
+import com.skillforge.core.model.PlatformModelConfig;
 import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,10 +34,12 @@ public class AgentTemplateService extends ServiceImpl<AgentTemplateMapper, Agent
     private final CapabilityCatalogService catalog;
     private final PlatformToolCatalog platformTools;
     private final ObjectMapper json;
+    private final OperationalSettingsService settings;
 
     public AgentTemplateService(PlatformModelCatalogService models, CapabilityCatalogService catalog,
-            PlatformToolCatalog platformTools, ObjectMapper json) {
+            PlatformToolCatalog platformTools, ObjectMapper json, OperationalSettingsService settings) {
         this.models = models; this.catalog = catalog; this.platformTools = platformTools; this.json = json;
+        this.settings = settings;
     }
 
     /** 仅补全调用方已经授权的目录身份；不将展示读取作为执行或安装授权。 */
@@ -214,10 +219,17 @@ public class AgentTemplateService extends ServiceImpl<AgentTemplateMapper, Agent
         if (definition == null) return new AgentTemplateValidationResponse(false, List.of(new Issue("definition", "required", "请配置 Agent 定义")));
         if (blank(definition.systemPrompt())) issue(issues, "system_prompt", "required", "请填写完整系统提示词");
         if (blank(definition.roleDescription())) issue(issues, "role_description", "required", "请填写公开角色简介");
+        Optional<PlatformModelConfig> model = Optional.empty();
         if (blank(definition.modelConfigId())) issue(issues, "model_config_id", "required", "请选择默认模型");
-        else try { models.requireEnabled(definition.modelConfigId(), "LLM"); }
+        else try { model = Optional.of(models.requireEnabled(definition.modelConfigId(), "LLM")); }
         catch (ApiException | IllegalArgumentException e) { issue(issues, "model_config_id", "model_unavailable", "默认模型不存在、已停用或不是 LLM"); }
-        try { com.skillforge.core.foundation.runtimeconfig.AgentBudgetValidation.validate(definition.executionConfig()); }
+        try {
+            if (model.isPresent()) {
+                var selected = model.orElseThrow();
+                long timeout = Math.min(selected.timeoutSeconds(), settings.read("calls").integer("chat_timeout_seconds"));
+                AgentBudgetValidation.validateModelMinimum(definition.executionConfig(), selected.maxOutputTokens(), timeout);
+            } else AgentBudgetValidation.validate(definition.executionConfig());
+        }
         catch (ApiException | IllegalArgumentException e) { issue(issues, "execution_config", "budget_invalid", e.getMessage()); }
 
         String tenant = TenantContext.getTenantId();

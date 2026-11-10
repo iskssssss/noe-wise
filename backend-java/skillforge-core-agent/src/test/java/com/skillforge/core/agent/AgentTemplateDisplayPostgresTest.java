@@ -68,7 +68,7 @@ class AgentTemplateDisplayPostgresTest {
     @Test void distinctDefinitionReadsBecomeOneThreeColumnQueryWithoutHydratingDefinition() throws Exception {
         try(var session=factory.openSession()) {
             var mapper=session.getMapper(AgentTemplateMapper.class);
-            var service=new AgentTemplateService(null,null,null,new ObjectMapper());ReflectionTestUtils.setField(service,"baseMapper",mapper);
+            var service=new AgentTemplateService(null,null,null,new ObjectMapper(),null);ReflectionTestUtils.setField(service,"baseMapper",mapper);
             READS.rows.clear();
             assertTrue(service.displays(List.of()).isEmpty());assertTrue(READS.rows.isEmpty());
             var baseline=new java.util.HashMap<Long,AgentTemplateDisplay>();

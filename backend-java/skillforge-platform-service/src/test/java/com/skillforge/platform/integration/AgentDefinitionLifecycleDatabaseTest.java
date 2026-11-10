@@ -21,6 +21,7 @@ import com.skillforge.core.foundation.access.FoundationAccess;
 import com.skillforge.core.foundation.integration.PlatformManagementService;
 import com.skillforge.core.foundation.persistence.AuditLogMapper;
 import com.skillforge.core.model.PlatformModelCatalogService;
+import com.skillforge.core.model.PlatformModelConfig;
 import com.skillforge.core.capability.CapabilityCatalogService;
 import com.skillforge.core.foundation.settings.OperationalSettingsService;
 import com.skillforge.core.foundation.application.AuditService;
@@ -54,6 +55,8 @@ class AgentDefinitionLifecycleDatabaseTest {
     private static AuditService restrictedAudit;
     private static DriverManagerDataSource restrictedSource;
     private static AgentTemplateService templates;
+    private static PlatformModelCatalogService models;
+    private static OperationalSettingsService settings;
     private static AgentTemplateAdminService service;
     private static TransactionTemplate tx;
 
@@ -79,7 +82,13 @@ class AgentDefinitionLifecycleDatabaseTest {
         var restrictedSessions=mybatis(restricted);restrictedMapper=restrictedSessions.getMapper(AgentTemplateMapper.class);
         restrictedAudit=new AuditService(restrictedSessions.getMapper(AuditLogMapper.class));
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        templates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        models=mock(PlatformModelCatalogService.class);
+        var model=mock(PlatformModelConfig.class);
+        when(model.maxOutputTokens()).thenReturn(2048);when(model.timeoutSeconds()).thenReturn(120);
+        when(models.requireEnabled("1","LLM")).thenReturn(model);
+        settings=mock(OperationalSettingsService.class);
+        when(settings.read("calls")).thenReturn(new OperationalSettingsService.Snapshot(1,Map.of("chat_timeout_seconds",120)));
+        templates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(templates,"baseMapper",mapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(true,null,"7"));
         service=new AgentTemplateAdminService(new com.skillforge.core.agent.AgentDefinitionLifecycleService(templates,mock(PlatformManagementService.class),access,json,new AuditService(sessions.getMapper(AuditLogMapper.class)),mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class)));
@@ -108,7 +117,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'受让机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
@@ -279,7 +288,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var subject=new java.util.concurrent.atomic.AtomicReference<>(new FoundationAccess.Subject(false,"7","9"));
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenAnswer(call->subject.get());
@@ -322,7 +331,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
@@ -353,7 +362,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var integrations=mock(com.skillforge.core.foundation.integration.InstitutionIntegrationService.class);
@@ -385,7 +394,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'其他机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var subject=new java.util.concurrent.atomic.AtomicReference<>(new FoundationAccess.Subject(false,"7","9"));
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenAnswer(call->subject.get());
@@ -426,7 +435,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
@@ -453,7 +462,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
@@ -489,7 +498,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id=7");
         var json=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var tenantTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json);
+        var tenantTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),json,settings);
         ReflectionTestUtils.setField(tenantTemplates,"baseMapper",restrictedMapper);
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false,"7","9"));
         var lifecycle=new com.skillforge.core.agent.AgentDefinitionLifecycleService(tenantTemplates,mock(PlatformManagementService.class),access,json,restrictedAudit,
@@ -526,7 +535,7 @@ class AgentDefinitionLifecycleDatabaseTest {
         owner.update("INSERT INTO nw_tenants(id,name,slug,plan_id) VALUES(7,'共享源机构','source-seven',1),(8,'受让机构','recipient-eight',1) ON CONFLICT(id) DO NOTHING");
         owner.update("UPDATE nw_tenants SET status='active' WHERE id IN(7,8)");
         var tenantJson=new ObjectMapper().registerModule(new JavaTimeModule()).setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        var sourceTemplates=new AgentTemplateService(mock(PlatformModelCatalogService.class),mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),tenantJson);
+        var sourceTemplates=new AgentTemplateService(models,mock(CapabilityCatalogService.class),mock(com.skillforge.core.capability.connector.PlatformToolCatalog.class),tenantJson,settings);
         ReflectionTestUtils.setField(sourceTemplates,"baseMapper",restrictedMapper);
         var subject=new java.util.concurrent.atomic.AtomicReference<>(new FoundationAccess.Subject(false,"7","9"));
         var access=mock(FoundationAccess.class);when(access.currentSubject()).thenAnswer(call->subject.get());

@@ -137,6 +137,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
     exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/AgentNameValidationBrowserE2ETest.class")
+    exclude("**/AgentTemplateBudgetBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
@@ -219,6 +220,22 @@ tasks.register<Test>("skillPackageEncodingBrowserE2E") {
         include("frontend-admin/src/**", "frontend-admin/e2e/skill-package-encoding-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("skillPackageEncodingFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("agentTemplateBudgetBrowserE2E") {
+    description = "验证模板预算在平台发布前拒绝并可修正安装执行"
+    group = "verification"
+    dependsOn(":skillforge-platform-service:bootJar")
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentTemplateBudgetBrowserE2ETest.templateBudgetValidationPrecedesInstallation") }
+    inputs.property("templateBudget", providers.environmentVariable("E2E_TEMPLATE_BUDGET").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-platform") { include("src/**", "e2e/template-budget-browser.mjs", "vite.config.*", "package*.json", "index.html") },
+        fileTree("../../frontend-shared") { include("src/**", "package.json") }, fileTree("../../tools/frontend") { include("**/*.ts", "**/*.mjs") })
+        .withPropertyName("templateBudgetFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {

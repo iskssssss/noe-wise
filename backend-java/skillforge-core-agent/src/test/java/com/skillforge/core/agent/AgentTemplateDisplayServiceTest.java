@@ -17,7 +17,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class AgentTemplateDisplayServiceTest {
     @Test void emptySkipsSqlAndDistinctIdsUseOneNarrowMapperRead() {
         var mapper=mock(AgentTemplateMapper.class);
-        var service=new AgentTemplateService(null,null,null,new ObjectMapper());
+        var service=new AgentTemplateService(null,null,null,new ObjectMapper(),null);
         ReflectionTestUtils.setField(service,"baseMapper",mapper);
         assertTrue(service.displays(List.of()).isEmpty());verifyNoInteractions(mapper);
         when(mapper.selectDisplayByIds(List.of(31L,32L,33L,99L))).thenReturn(List.of(
