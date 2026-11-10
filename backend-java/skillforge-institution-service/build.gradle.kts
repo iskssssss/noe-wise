@@ -129,6 +129,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/ChannelBindingRoutingBrowserE2ETest.class")
+    exclude("**/SessionCitationBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
@@ -185,6 +186,21 @@ tasks.register<Test>("channelBindingRoutingBrowserE2E") {
         include("frontend-chat/src/**", "frontend-chat/vite.config.ts", "frontend-chat/index.html", "frontend-chat/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("channelBindingRoutingFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("sessionCitationBrowserE2E") {
+    description = "验证会话记录能够读取实际知识引用来源"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.SessionCitationBrowserE2ETest.sessionHistoryCanOpenRuntimeKnowledgeCitation") }
+    inputs.property("citationMode", providers.environmentVariable("E2E_SESSION_CITATION").orElse("candidate"))
+    inputs.files(fileTree("../..") {
+        include("frontend-admin/src/**", "frontend-admin/e2e/session-citation-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
+        include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
+    }).withPropertyName("sessionCitationFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {

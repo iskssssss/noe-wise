@@ -368,28 +368,10 @@
               }}</ElTag
               ><small>{{ formatDateTime(message.created_at) }}</small>
             </div>
-            <SessionMessageContent :session="sessionId" :message="message" />
-            <ol v-if="chatCitations(message.metadata?.citations).length" aria-label="知识依据">
-              <li
-                v-for="citation in chatCitations(message.metadata?.citations)"
-                :id="`citation-${citation.citation_id}`"
-                :key="citation.item_id"
-                tabindex="-1"
-              >
-                <ElButton
-                  link
-                  type="primary"
-                  @click="
-                    citationSelection = {
-                      session: sessionId,
-                      message: message.message_id,
-                      citation: citation.citation_id
-                    }
-                  "
-                  >{{ citation.label }}</ElButton
-                >
-              </li>
-            </ol></ElCard
+            <SessionMessageContent
+              :session="sessionId"
+              :message="message"
+              @citation="citationSelection = $event" /></ElCard
           ><ElEmpty
             v-if="!messages.length && !busy && !readError"
             :description="
@@ -837,7 +819,6 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import ChatRunBudgetView from '@skillforge/shared/components/ChatRunBudgetView.vue'
 import { executionStopReason, type RunBudget } from '@skillforge/shared/components/chatRunBudget'
-import { chatCitations } from '@skillforge/shared/components/chatCitations'
 import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 

@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElDrawer, ElSelect } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { clearFeedback } from '@skillforge/shared/feedback'
+import CitationDetail from '../../components/CitationDetail.vue'
 import SessionsPage from './SessionsPage.vue'
 
 const calls = vi.hoisted(() => ({
@@ -10,9 +11,12 @@ const calls = vi.hoisted(() => ({
   users: vi.fn(),
   sessions: vi.fn(),
   detail: vi.fn(),
-  history: vi.fn()
+  history: vi.fn(),
+  get: vi.fn()
 }))
+vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ identityVersion: 0 }) }))
 vi.mock('../../api', () => ({
+  get: calls.get,
   api: {
     agents: { list: calls.agents },
     chat: {
@@ -215,8 +219,16 @@ describe('会话筛选目录独立恢复', () => {
   it('详情和消息并行读取，消息尚在读取时可先查看详情', async () => {
     let finishHistory!: (value: unknown) => void
     let finishDetail!: (value: unknown) => void
-    calls.history.mockReturnValueOnce(new Promise((resolve) => { finishHistory = resolve }))
-    calls.detail.mockReturnValueOnce(new Promise((resolve) => { finishDetail = resolve }))
+    calls.history.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishHistory = resolve
+      })
+    )
+    calls.detail.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDetail = resolve
+      })
+    )
     const wrapper = await render()
     await button(wrapper, '资料会话').trigger('click')
     await flushPromises()
@@ -224,7 +236,10 @@ describe('会话筛选目录独立恢复', () => {
     expect(calls.history).toHaveBeenCalledWith('session-a')
     finishDetail({
       session: { session_id: 'session-a', updated_at: '2026-10-30T00:00:00Z' },
-      agent: { name: '客服助手' }, executions: [], tasks: [], callbacks: []
+      agent: { name: '客服助手' },
+      executions: [],
+      tasks: [],
+      callbacks: []
     })
     await flushPromises()
     expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(true)
@@ -232,5 +247,113 @@ describe('会话筛选目录独立恢复', () => {
     finishHistory({ session_id: 'session-a', has_more: false, messages: [] })
     await flushPromises()
     expect(document.body.textContent).toContain('本会话暂无可见消息')
+  })
+})
+
+describe('会话详情知识依据', () => {
+  beforeEach(() => {
+    calls.sessions.mockResolvedValue([
+      { session_id: 'session-a', summary: '资料会话' },
+      { session_id: 'session-b', summary: '另一会话' }
+    ])
+    calls.detail.mockImplementation(async (id: string) => ({
+      session: { session_id: id },
+      agent: { name: '客服助手' },
+      executions: [],
+      tasks: [],
+      callbacks: []
+    }))
+    calls.history.mockImplementation(async (id: string) => ({
+      session_id: id,
+      has_more: false,
+      messages: [
+        {
+          message_id: `reply-${id}`,
+          role: 'assistant',
+          content: '回答正文',
+          metadata: {
+            citations: [
+              {
+                ordinal: 1,
+                item_id: 'item-1',
+                source_id: 'source-1',
+                source_version: 'version-1',
+                citation_id: 'k1234567890abcdef',
+                label: '知识依据 1'
+              }
+            ]
+          }
+        }
+      ]
+    }))
+    calls.get.mockResolvedValue({
+      label: '知识依据 1',
+      source_version: 'version-1',
+      text: '原始知识片段'
+    })
+  })
+
+  it('按所选消息读取来源，关闭外层详情清除片段且重开后重新读取', async () => {
+    const wrapper = await render()
+    await button(wrapper, '资料会话').trigger('click')
+    await flushPromises()
+    await button(wrapper, '知识依据 1').trigger('click')
+    await flushPromises()
+    const sourceUrl =
+      '/chat/citations/content?session_id=session-a&message_id=reply-session-a&citation_id=k1234567890abcdef'
+    expect(calls.get).toHaveBeenCalledExactlyOnceWith(sourceUrl, {
+      signal: expect.any(AbortSignal),
+      silent: true
+    })
+    expect(document.body.textContent).toContain('原始知识片段')
+    expect(document.body.textContent).toContain('来源版本：version-1')
+    wrapper.getComponent(ElDrawer).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(wrapper.findComponent(CitationDetail).exists()).toBe(false)
+    expect(document.body.textContent).not.toContain('原始知识片段')
+    expect((calls.get.mock.calls[0]![1] as { signal: AbortSignal }).signal.aborted).toBe(true)
+    await button(wrapper, '资料会话').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(CitationDetail).exists()).toBe(false)
+    expect(calls.get).toHaveBeenCalledTimes(1)
+    await button(wrapper, '知识依据 1').trigger('click')
+    await flushPromises()
+    expect(calls.get).toHaveBeenCalledTimes(2)
+    expect(calls.get.mock.calls[1]![0]).toBe(sourceUrl)
+    expect(document.body.textContent).toContain('原始知识片段')
+  })
+
+  it('读取另一会话前清除已选来源，不等新详情读取完成', async () => {
+    const wrapper = await render()
+    await button(wrapper, '资料会话').trigger('click')
+    await flushPromises()
+    await button(wrapper, '知识依据 1').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('原始知识片段')
+    let finishDetail!: (value: unknown) => void
+    calls.detail.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDetail = resolve
+      })
+    )
+    await button(wrapper, '另一会话').trigger('click')
+    await flushPromises()
+    expect(calls.detail).toHaveBeenLastCalledWith('session-b')
+    expect(wrapper.findComponent(CitationDetail).exists()).toBe(false)
+    expect(document.body.textContent).not.toContain('原始知识片段')
+    expect((calls.get.mock.calls[0]![1] as { signal: AbortSignal }).signal.aborted).toBe(true)
+    finishDetail({
+      session: { session_id: 'session-b' },
+      agent: { name: '客服助手' },
+      executions: [],
+      tasks: [],
+      callbacks: []
+    })
+    await flushPromises()
+    await button(wrapper, '知识依据 1').trigger('click')
+    await flushPromises()
+    expect(calls.get.mock.calls[1]![0]).toBe(
+      '/chat/citations/content?session_id=session-b&message_id=reply-session-b&citation_id=k1234567890abcdef'
+    )
   })
 })

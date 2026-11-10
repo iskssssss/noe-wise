@@ -127,7 +127,8 @@
               </div>
               <SessionMessageContent
                 :session="history!.session_id"
-                :message="message" /></ElCard></ElTabPane
+                :message="message"
+                @citation="citationSelection = $event" /></ElCard></ElTabPane
           ><ElTabPane label="工作流执行"
             ><ElTable
               table-layout="auto"
@@ -198,8 +199,11 @@
           ></ElTabs
         ></template
       ></ElDrawer
-    ></AdminPage
-  >
+    ><CitationDetail
+      v-if="citationSelection"
+      :selection="citationSelection"
+      @close="citationSelection = undefined"
+  /></AdminPage>
 </template>
 <script setup lang="ts">
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
@@ -208,7 +212,7 @@ import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
-import { computed, onMounted, ref, useId } from 'vue'
+import { computed, onMounted, ref, useId, watch } from 'vue'
 import {
   guardFormEnter,
   AdminPage,
@@ -218,6 +222,7 @@ import {
   useResource
 } from '@skillforge/shared/admin'
 import SessionMessageContent from '../../components/SessionMessageContent.vue'
+import CitationDetail from '../../components/CitationDetail.vue'
 import { api, type SessionDetail, type ChatHistoryResponse } from '../../api'
 const agentId = ref(''),
   endUserId = ref(''),
@@ -274,8 +279,17 @@ const { busy, error, run } = useTask(),
   pendingSession = ref(''),
   detail = ref<SessionDetail>(),
   history = ref<ChatHistoryResponse>()
+const citationSelection = ref<{ session: string; message: string; citation: string }>()
+watch(
+  open,
+  (value) => {
+    if (!value) citationSelection.value = undefined
+  },
+  { flush: 'sync' }
+)
 async function view(id: string) {
   if (busy.value) return
+  citationSelection.value = undefined
   pendingSession.value = id
   await run(async () => {
     const historyRead = api.chat.history(id).then(
