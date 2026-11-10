@@ -131,7 +131,7 @@
           ><ElButton
             link
             @click="edit(row as MemoryFact)"
-            :disabled="busy || refreshRequired || requiresSharingConfirmation(row as MemoryFact)"
+            :disabled="busy || refreshRequired || row.status !== 'ACTIVE'"
             >纠正</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
@@ -167,6 +167,18 @@
             type="warning"
             size="small"
             >请先审核跨助手共享</ElText
+          ><ElText
+            v-else-if="row.status !== 'ACTIVE'"
+            class="memory-review-notice"
+            type="warning"
+            size="small"
+            >{{
+              row.status === 'FORGOTTEN' || row.status === 'DECAYED'
+                ? '恢复后可纠正'
+                : row.status === 'PENDING_CONFIRM'
+                  ? '批准后可纠正'
+                  : '当前状态不可纠正'
+            }}</ElText
           ></template
         ></ElTableColumn
       ></ElTable
@@ -315,7 +327,7 @@
           v-permission="['foundation.memory.update']"
           type="primary"
           :loading="busy"
-          :disabled="refreshRequired || latestChanged"
+          :disabled="refreshRequired || latestChanged || selected?.status !== 'ACTIVE'"
           @click="save"
           >保存纠正</ElButton
         ></template
@@ -600,7 +612,7 @@ const { requestClose } = useDrawerClose({
   }
 })
 function edit(row: MemoryFact) {
-  if (refreshRequired.value || requiresSharingConfirmation(row)) return
+  if (refreshRequired.value || row.status !== 'ACTIVE') return
   latestMemory.invalidate()
   latestMemory.data.value = undefined
   latestMemory.error.value = ''
@@ -618,9 +630,8 @@ function edit(row: MemoryFact) {
   open.value = true
 }
 async function save() {
-  if (refreshRequired.value || latestChanged.value) return
+  if (refreshRequired.value || latestChanged.value || selected.value?.status !== 'ACTIVE') return
   await run(async () => {
-    if (selected.value && requiresSharingConfirmation(selected.value)) return
     if (!(await formRef.value?.validate().catch(() => false))) return
     objectError.value = ''
     try {

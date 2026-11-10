@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElInput, ElSelect, ElSwitch } from 'element-plus'
+import { reactive } from 'vue'
+import { ElButton, ElDrawer, ElInput, ElSelect, ElSwitch } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import type { MemoryFact } from '../../api'
@@ -132,7 +133,7 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实使用原版本恢复为活动状态', async (status) => {
+it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实显式恢复后才可按新版本纠正', async (status) => {
   fact.status = status
   fact.scope = 'USER_AGENT'
   fact.review_required = false
@@ -140,8 +141,16 @@ it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实使用原版本恢复为活�
     fact = { ...fact, status: 'ACTIVE', revision: 4 }
     return fact
   })
+  mocks.correct.mockResolvedValue({})
   const wrapper = await render()
   expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '遗忘')).toBe(false)
+  expect(wrapper.text()).toContain('恢复后可纠正')
+  expect(button(wrapper, '纠正').props('disabled')).toBe(true)
+  button(wrapper, '纠正').vm.$emit('click')
+  await flushPromises()
+  expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+  expect(mocks.correct).not.toHaveBeenCalled()
+  expect(mocks.restore).not.toHaveBeenCalled()
   await button(wrapper, '恢复').trigger('click')
   await flushPromises()
   confirmationButton('恢复记忆').click()
@@ -149,6 +158,17 @@ it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实使用原版本恢复为活�
   expect(mocks.restore).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
   expect(mocks.forget).not.toHaveBeenCalled()
   expect(button(wrapper, '遗忘').exists()).toBe(true)
+  expect(button(wrapper, '纠正').props('disabled')).toBe(false)
+  expect(wrapper.text()).not.toContain('恢复后可纠正')
+  await button(wrapper, '纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(mocks.correct).toHaveBeenCalledExactlyOnceWith(
+    'fact/user',
+    expect.objectContaining({ expected_revision: 4 })
+  )
+  expect(fact.scope).toBe('USER_AGENT')
 })
 
 it.each(['REJECTED', 'ARCHIVED'] as const)('%s事实不展示非法状态迁移入口', async (status) => {
@@ -160,6 +180,13 @@ it.each(['REJECTED', 'ARCHIVED'] as const)('%s事实不展示非法状态迁移�
   expect(actions).not.toContain('恢复')
   expect(actions).not.toContain('批准')
   expect(actions).not.toContain('拒绝')
+  expect(button(wrapper, '纠正').props('disabled')).toBe(true)
+  expect(wrapper.text()).toContain('当前状态不可纠正')
+  button(wrapper, '纠正').vm.$emit('click')
+  await flushPromises()
+  expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+  expect(mocks.correct).not.toHaveBeenCalled()
+  expect(mocks.restore).not.toHaveBeenCalled()
 })
 
 describe('记忆筛选辅助目录独立恢复', () => {
@@ -294,6 +321,7 @@ describe('记忆筛选辅助目录独立恢复', () => {
   it('智能体目录失败仍可选终端用户，重读失败目录不重查记忆或覆盖纠正草稿', async () => {
     mocks.agents.mockRejectedValueOnce(new Error('智能体读取被拒绝'))
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     const wrapper = await render()
     const selectors = wrapper.findAllComponents(EntitySelect)
     expect(selectors[1]!.props('options')).toEqual([{ id: 'user-a', label: '客户甲' }])
@@ -398,7 +426,8 @@ describe('记忆共享范围审核', () => {
     await button(wrapper, '查询').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('操作已完成，但当前列表尚未更新')
-    expect(button(wrapper, '纠正').props('disabled')).toBe(false)
+    expect(button(wrapper, '纠正').props('disabled')).toBe(true)
+    expect(wrapper.text()).toContain('批准后可纠正')
     expect(button(wrapper, '批准').props('disabled')).toBe(false)
     await button(wrapper, '批准').trigger('click')
     await flushPromises()
@@ -407,6 +436,7 @@ describe('记忆共享范围审核', () => {
 
   it.each(['string', 'object'])('直接纠正%s文本并保留条件和时间等字段', async (kind) => {
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     const original = {
       value: kind === 'string' ? '晚上联系' : { text: '晚上联系', detail: '保留' },
       conditions: ['工作日'],
@@ -435,6 +465,7 @@ describe('记忆共享范围审核', () => {
 
   it('纠正文本时不改变大整数、转义内容和其他原始 JSON 字节', async () => {
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     const original =
       '{"value":{"text":"晚上联系","amount":9007199254740993},"conditions":[],"temporal":{"kind":"stable","from":null,"to":null},"extra":1e+30}'
     fact.object.canonical_json = original
@@ -455,6 +486,7 @@ describe('记忆共享范围审核', () => {
 
   it('重复的正文键不提供有歧义的简易编辑', async () => {
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     fact.object.canonical_json =
       '{"value":{"text":"一","text":"二"},"conditions":[],"temporal":{"kind":"stable","from":null,"to":null}}'
     const wrapper = await render()
@@ -466,6 +498,7 @@ describe('记忆共享范围审核', () => {
 
   it('非文本记忆继续使用结构化编辑', async () => {
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     fact.object.canonical_json = JSON.stringify({
       value: 42,
       conditions: [],
@@ -480,6 +513,7 @@ describe('记忆共享范围审核', () => {
 
   it('纠正成功后读取失败仍保留结果并只允许读取恢复', async () => {
     fact.scope = 'USER_AGENT'
+    fact.status = 'ACTIVE'
     mocks.correct.mockResolvedValue({})
     const wrapper = await render()
     await button(wrapper, '纠正').trigger('click')
@@ -490,7 +524,7 @@ describe('记忆共享范围审核', () => {
     expect(mocks.correct).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('操作已完成，但当前列表尚未更新')
     expect(button(wrapper, '纠正').props('disabled')).toBe(true)
-    expect(button(wrapper, '批准').props('disabled')).toBe(true)
+    expect(button(wrapper, '遗忘').props('disabled')).toBe(true)
     await button(wrapper, '查询').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('操作已完成，但当前列表尚未更新')
@@ -574,12 +608,40 @@ describe('记忆共享范围审核', () => {
     expect(mocks.review).toHaveBeenCalledExactlyOnceWith('fact/user', 3, approved)
   })
 
-  it('待确认 USER 记忆的纠正入口提示先审核，不提交纠正或恢复', async () => {
+  it.each([
+    { scope: 'USER' as const, notice: '请先审核跨助手共享' },
+    { scope: 'USER_AGENT' as const, notice: '批准后可纠正' }
+  ])('待确认 $scope 记忆先审核，不提交纠正或恢复', async ({ scope, notice }) => {
+    fact.scope = scope
     const wrapper = await render()
-    expect(wrapper.text()).toContain('请先审核跨助手共享')
+    expect(wrapper.text()).toContain(notice)
     expect(button(wrapper, '纠正').props('disabled')).toBe(true)
-    await button(wrapper, '纠正').trigger('click')
+    expect(button(wrapper, '批准').props('disabled')).toBe(false)
+    button(wrapper, '纠正').vm.$emit('click')
+    await flushPromises()
 
+    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+    expect(mocks.correct).not.toHaveBeenCalled()
+    expect(mocks.restore).not.toHaveBeenCalled()
+  })
+
+  it('选中事实不再活动时保存事件不提交，保留纠正草稿', async () => {
+    fact = reactive<MemoryFact>({ ...fact, scope: 'USER_AGENT', status: 'ACTIVE' })
+    const wrapper = await render()
+    await button(wrapper, '纠正').trigger('click')
+    await flushPromises()
+    const subject = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === 'user-a')!
+    subject.vm.$emit('update:modelValue', '保留的纠正草稿')
+    fact.status = 'FORGOTTEN'
+    await flushPromises()
+
+    expect(button(wrapper, '保存纠正').props('disabled')).toBe(true)
+    button(wrapper, '保存纠正').vm.$emit('click')
+    await flushPromises()
+    expect(subject.props('modelValue')).toBe('保留的纠正草稿')
+    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(true)
     expect(mocks.correct).not.toHaveBeenCalled()
     expect(mocks.restore).not.toHaveBeenCalled()
   })

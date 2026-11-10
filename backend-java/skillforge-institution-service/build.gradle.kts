@@ -146,6 +146,7 @@ tasks.named<Test>("test") {
     exclude("**/TeamMemberCrossTabBrowserE2ETest.class")
     exclude("**/ToolDeploymentRecoveryBrowserE2ETest.class")
     exclude("**/MemoryDirectoryLimitBrowserE2ETest.class")
+    exclude("**/MemoryCorrectionStateBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
@@ -177,6 +178,20 @@ tasks.register<Test>("billingReconciliationRecoveryBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.BillingReconciliationRecoveryBrowserE2ETest.committedConfigurationWithLostResponseCannotBeAttributed")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("memoryCorrectionStateBrowserE2E") {
+    description = "验证记忆纠正状态与下一运行检索"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionStateBrowserE2ETest.forgottenFactRequiresRestorationBeforeCorrectionAndRuntimeRecall") }
+    inputs.property("memoryCorrectionState", providers.environmentVariable("E2E_MEMORY_CORRECTION_STATE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-state-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 
