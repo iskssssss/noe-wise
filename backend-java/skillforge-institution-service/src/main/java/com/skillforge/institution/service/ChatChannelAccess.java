@@ -117,10 +117,22 @@ public class ChatChannelAccess {
     }
 
     public void requireTarget(String agent, String team, String user) {
+        requireTarget(agent, team, user, false);
+    }
+
+    /** 会话目录可列出停用团队的历史，仍要求当前身份和全部发布成员授权。 */
+    public void requireHistoryTarget(String agent, String team, String user) {
+        requireTarget(agent, team, user, true);
+    }
+
+    private void requireTarget(String agent, String team, String user, boolean history) {
         boolean hasAgent = agent != null && !agent.isBlank();
         boolean hasTeam = team != null && !team.isBlank();
         if (hasAgent == hasTeam) throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "请选择一个智能体或团队");
-        if (hasTeam) userTeams.requireAvailable(team, user); else requireAgent(agent);
+        if (hasTeam) {
+            if (history) userTeams.requireHistory(team, user);
+            else userTeams.requireAvailable(team, user);
+        } else requireAgent(agent);
     }
 
     public void requireCommandTeam(String team, String user) {
@@ -145,6 +157,15 @@ public class ChatChannelAccess {
     }
 
     public SessionView requireSession(String sessionId) {
+        return requireSession(sessionId, false);
+    }
+
+    /** 只用于根会话公开历史及状态；不改变执行、成员来源或成果访问门禁。 */
+    public SessionView requireSessionHistory(String sessionId) {
+        return requireSession(sessionId, true);
+    }
+
+    private SessionView requireSession(String sessionId, boolean history) {
         SessionView session = sessions.require(Long.toString(tenant()), sessionId);
         if (!Long.valueOf(channel()).equals(session.getChannelId())) {
             throw new ApiException(HttpStatus.FORBIDDEN, "会话不属于当前渠道");
@@ -152,7 +173,7 @@ public class ChatChannelAccess {
         com.skillforge.institution.chat.ChatEndUserTokens.requireEndUser(
                 session.getEndUserId() == null ? null : session.getEndUserId().toString());
         requireTarget(session.getAgentId() == null ? null : session.getAgentId().toString(),
-                session.getTeamId(), session.getEndUserId() == null ? null : session.getEndUserId().toString());
+                session.getTeamId(), session.getEndUserId() == null ? null : session.getEndUserId().toString(), history);
         return session;
     }
 

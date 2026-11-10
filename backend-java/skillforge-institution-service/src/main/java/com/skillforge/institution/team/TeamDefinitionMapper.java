@@ -18,6 +18,8 @@ public interface TeamDefinitionMapper {
     int publish(@Param("revision") long revision, @Param("publishedRevision") long publishedRevision, @Param("definition") String definition, @Param("tenant") long tenant, @Param("id") String id);
     /** published：参数限定查询范围；返回数据库结果，数据库错误交由事务边界传播。 */
     java.util.List<String> published(@Param("tenant") long tenant, @Param("id") String id);
+    /** 历史门禁只读取当前发布指针对应的公开定义，停用不改变该指针。 */
+    java.util.List<String> publishedForHistory(@Param("tenant") long tenant, @Param("id") String id);
     /** version：参数限定查询范围；返回数据库结果，数据库错误交由事务边界传播。 */
     java.util.List<String> version(@Param("tenant") long tenant, @Param("id") String id, @Param("revision") long revision);
     java.util.List<String> versions(@Param("tenant") long tenant, @Param("id") String id);

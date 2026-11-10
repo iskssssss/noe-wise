@@ -121,30 +121,26 @@ public class ChatTeamService {
         }
     }
 
-    /** 创建、查询会话均验证团队所属渠道和终端用户，并实时核对全部成员授权。
-     * <p>业务校验与存储异常向调用方传播；诊断日志不记录输入正文和返回内容。
-     * @param id 当前领域对象标识
-     * @param endUserId 会话绑定终端用户标识
-     */
+    /** 创建或操作会话要求团队仍启用，并实时核对所属身份及全部已发布成员授权。 */
     @Transactional(readOnly = true)
     public void requireAvailable(String id, String endUserId) {
-        final long databaseStarted = System.nanoTime();
-        DATABASE_LOG.debug("数据库业务方法进入 component={} method={} tenant={}", "ChatTeamService", "requireAvailable", TenantContext.getTenantId());
-        try {
-            String tenant = tenant(); long channel = channel();
-            if (id == null || id.isBlank() || endUserId == null || !endUserId.matches("[1-9][0-9]*"))
-                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "请选择团队和已登记的聊天身份");
-            boolean allowed = Boolean.TRUE.equals(mapper.available(Long.parseLong(tenant), channel, id, endUserId));
-            if (!allowed) throw new ApiException(HttpStatus.FORBIDDEN, "团队不属于当前渠道和聊天身份");
-            var team = teams.published(tenant, id);
-            for (var member : team.team().members()) requireAuthorizedAgent(tenant, channel, member.agentId());
+        requireAccess(id, endUserId, false);
+    }
 
-        } catch (RuntimeException | Error databaseFailure) {
-            DATABASE_LOG.debug("数据库业务方法失败 component={} method={} tenant={} failureType={}", "ChatTeamService", "requireAvailable", TenantContext.getTenantId(), databaseFailure.getClass().getSimpleName());
-            throw databaseFailure;
-        } finally {
-            DATABASE_LOG.debug("数据库业务方法退出 component={} method={} tenant={} elapsedMicros={}", "ChatTeamService", "requireAvailable", TenantContext.getTenantId(), (System.nanoTime()-databaseStarted)/1000);
-        }
+    /** 停用团队仍可读取根会话公开历史，所属身份和全部发布成员的当前授权保持不变。 */
+    @Transactional(readOnly = true)
+    public void requireHistory(String id, String endUserId) {
+        requireAccess(id, endUserId, true);
+    }
+
+    private void requireAccess(String id, String endUserId, boolean history) {
+        String tenant = tenant(); long channel = channel();
+        if (id == null || id.isBlank() || endUserId == null || !endUserId.matches("[1-9][0-9]*"))
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "请选择团队和已登记的聊天身份");
+        if (!Boolean.TRUE.equals(mapper.available(Long.parseLong(tenant), channel, id, endUserId)))
+            throw new ApiException(HttpStatus.FORBIDDEN, "团队不属于当前渠道和聊天身份");
+        var team = history ? teams.publishedForHistory(tenant, id) : teams.published(tenant, id).team();
+        for (var member : team.members()) requireAuthorizedAgent(tenant, channel, member.agentId());
     }
 
     /**

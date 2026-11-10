@@ -212,6 +212,9 @@ export function useConversation() {
       ? teams.value.find((item) => item.id === target.value.slice(5))?.name
       : agents.value.find((item) => item.id === target.value.slice(6))?.name
   )
+  const targetDisabled = computed(() =>
+    teams.value.some((team) => target.value === `team:${team.id}` && team.status === 'disabled')
+  )
   const locked = computed(
     () =>
       connecting.value ||
@@ -224,7 +227,7 @@ export function useConversation() {
       Boolean(pendingSteering.value)
   )
   const sessionClosed = computed(() => Boolean(history.value.closed))
-  const composerLocked = computed(() => locked.value || sessionClosed.value)
+  const composerLocked = computed(() => locked.value || sessionClosed.value || targetDisabled.value)
   const fail = (cause: unknown) => {
     error.value =
       cause instanceof Error ? cause.message : '未能确认操作结果，请先核对当前会话状态。'
@@ -441,6 +444,7 @@ export function useConversation() {
       version = selection
     if (
       !api ||
+      targetDisabled.value ||
       sessionClosed.value ||
       historyReadFailed.value ||
       steeringSending.value ||
@@ -1153,6 +1157,7 @@ export function useConversation() {
     }
   }
   async function ensureSession(): Promise<string> {
+    if (targetDisabled.value) throw new Error('团队已停用，可查看历史；重新发布后才能继续对话。')
     if (sessionId.value) return sessionId.value
     if (createPromise) return createPromise
     const api = client.value,
@@ -1227,6 +1232,7 @@ export function useConversation() {
   }
   async function submit(hitl?: Record<string, unknown>, retry = false) {
     if (
+      targetDisabled.value ||
       sessionClosed.value ||
       historyReadFailed.value ||
       loading.value ||
@@ -1873,6 +1879,7 @@ export function useConversation() {
     active,
     locked,
     sessionClosed,
+    targetDisabled,
     composerLocked,
     targetName,
     selectedTarget,
@@ -1880,7 +1887,9 @@ export function useConversation() {
     disconnect,
     changeTarget,
     openSession,
-    newSession: clearSession,
+    newSession: () => {
+      if (!targetDisabled.value) clearSession()
+    },
     refreshSessions,
     ensureSession,
     loadEarlier,

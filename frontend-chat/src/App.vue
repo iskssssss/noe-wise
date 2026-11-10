@@ -209,9 +209,6 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => window.removeEventListener('beforeunload', protectDraft))
-const targetDisabled = computed(() =>
-  c.teams.some((team) => c.target === `team:${team.id}` && team.status === 'disabled')
-)
 const commandBusy = ref(false),
   commands = ref<{ command: string; title: string; description: string }[]>([])
 const commandKeys = new Map<string, string>()
@@ -597,7 +594,7 @@ onMounted(async () => {
     if (selected.clientRef !== c.clientRef) return
     const allowed =
       c.agents.some((item) => `agent:${item.id}` === selected.target) ||
-      c.teams.some((item) => `team:${item.id}` === selected.target && item.status !== 'disabled')
+      c.teams.some((item) => `team:${item.id}` === selected.target)
     if (!allowed) return
     await c.changeTarget(selected.target)
     if (c.sessions.some((item) => item.session_id === selected.session))
@@ -666,10 +663,14 @@ async function restoreText(id: string, confirmed: boolean) {
 }
 function saveTeam(team: Team) {
   const index = c.teams.findIndex((item) => item.id === team.id)
+  const wasDisabled = c.teams[index]?.status === 'disabled'
   if (index >= 0) c.teams[index] = team
   else c.teams.push(team)
-  if (team.status === 'disabled' && c.target === `team:${team.id}`)
-    c.notice = '当前团队已停用，已保留当前会话与草稿。发起新会话前，请选择其他对话对象。'
+  if (c.target === `team:${team.id}`) {
+    if (team.status === 'disabled')
+      c.notice = '当前团队已停用，已保留当前会话与草稿。可查看历史，重新发布后可继续对话。'
+    else if (wasDisabled) c.notice = '当前团队已重新发布，可在原会话继续对话。'
+  }
 }
 async function send() {
   if (c.inputMode === 'supplement') {
@@ -682,7 +683,6 @@ async function send() {
     c.composerLocked ||
     c.historyReadFailed ||
     c.active ||
-    (targetDisabled.value && !c.sessionId) ||
     !(await validateForm(composerRef.value))
   )
     return
@@ -943,13 +943,12 @@ const formTipId = useId()
                 ></ChatOptionGroup
               ><ChatOptionGroup v-if="c.teams.length" label="团队"
                 ><ChatOption
-                  v-for="team in c.teams.filter(
-                    (item) => item.status !== 'disabled' || c.target === `team:${item.id}`
-                  )"
+                  v-for="team in c.teams"
                   :key="team.id"
                   :value="`team:${team.id}`"
-                  :label="team.status === 'disabled' ? `${team.name}（已停用）` : team.name"
-                  :disabled="team.status === 'disabled'" /></ChatOptionGroup
+                  :label="
+                    team.status === 'disabled' ? `${team.name}（已停用）` : team.name
+                  " /></ChatOptionGroup
             ></ChatSelect>
             <FieldTip :id="formTipId + '-target'"
               >按名称或角色说明查找智能体；团队由负责人协调成员协作。</FieldTip
@@ -958,8 +957,8 @@ const formTipId = useId()
         ><ChatButton
           native-type="button"
           class="primary new-conversation"
-          :disabled="c.locked || !c.target || targetDisabled"
-          :title="targetDisabled ? '团队已停用，请选择其他对话对象' : '新建会话'"
+          :disabled="c.locked || !c.target || c.targetDisabled"
+          :title="c.targetDisabled ? '团队已停用，请选择其他对话对象' : '新建会话'"
           @click="navigate(c.newSession)"
           ><IconPlus class="ui-icon" aria-hidden="true" /><span>新对话</span></ChatButton
         >
@@ -1057,8 +1056,8 @@ const formTipId = useId()
             text
             class="icon-button header-new"
             aria-label="新建会话"
-            :disabled="c.locked || !c.target || targetDisabled"
-            :title="targetDisabled ? '团队已停用，请选择其他对话对象' : '新建会话'"
+            :disabled="c.locked || !c.target || c.targetDisabled"
+            :title="c.targetDisabled ? '团队已停用，请选择其他对话对象' : '新建会话'"
             @click="navigate(c.newSession)"
             ><IconSquarePen class="ui-icon" aria-hidden="true"
           /></ChatButton>
@@ -1270,14 +1269,14 @@ const formTipId = useId()
               :client="c.client"
               :client-ref="c.clientRef"
               :pending="pending"
-              :disabled="c.historyReadFailed || c.sessionClosed"
+              :disabled="c.historyReadFailed || c.sessionClosed || c.targetDisabled"
             />
             <PendingForm
               v-else
               ref="pendingRef"
               :pending="pending"
               :busy="c.sending || Boolean(c.pendingInput) || c.cancelling"
-              :disabled="c.loading || c.historyReadFailed || c.sessionClosed"
+              :disabled="c.loading || c.historyReadFailed || c.sessionClosed || c.targetDisabled"
               :cancel-disabled="c.locked"
               :question-displayed="pendingQuestionDisplayed(pending)"
               @submit="c.submit($event)"
@@ -1344,7 +1343,13 @@ const formTipId = useId()
               >查询状态</ChatButton
             >
             <ChatButton
-              :disabled="c.steeringSending || c.steeringLoading || c.loading || c.historyReadFailed"
+              :disabled="
+                c.steeringSending ||
+                c.steeringLoading ||
+                c.loading ||
+                c.historyReadFailed ||
+                c.targetDisabled
+              "
               @click="c.submitSupplement(true)"
               >重试原补充</ChatButton
             >
@@ -1356,7 +1361,7 @@ const formTipId = useId()
             :closable="false"
             ><ChatButton text :disabled="c.loading" @click="c.reconnect()">恢复观察</ChatButton
             ><ChatButton
-              :disabled="c.loading || c.historyReadFailed || c.sessionClosed"
+              :disabled="c.loading || c.historyReadFailed || c.sessionClosed || c.targetDisabled"
               @click="c.submit(undefined, true)"
               >重试原请求</ChatButton
             ></ChatAlert
@@ -1366,6 +1371,12 @@ const formTipId = useId()
           class="composer"
           :class="{ 'is-running': c.active, 'is-expanded': composerExpanded }"
         >
+          <ChatAlert
+            v-if="c.targetDisabled"
+            title="当前团队已停用，仅可查看历史。当前会话与草稿保留，重新发布后可继续对话。"
+            type="info"
+            :closable="false"
+          />
           <ChatAlert
             v-if="c.sessionClosed"
             title="会话已关闭，可查看历史；请新建对话继续。"
@@ -1518,7 +1529,7 @@ const formTipId = useId()
                       ? !c.canSteer || !c.supplementDraft.trim() || Boolean(c.pendingSteering)
                       : c.historyReadFailed ||
                         !c.target ||
-                        (targetDisabled && !c.sessionId) ||
+                        c.targetDisabled ||
                         (!c.draft.trim() && !messageHasResources)
                   "
                   :loading="c.sending || commandBusy || c.steeringSending"
@@ -1527,8 +1538,8 @@ const formTipId = useId()
                       ? '发送本轮补充'
                       : !c.target
                         ? '请先选择对话对象'
-                        : targetDisabled && !c.sessionId
-                          ? '团队已停用，请选择其他对话对象'
+                        : c.targetDisabled
+                          ? '团队已停用，重新发布后可继续对话'
                           : !c.draft.trim() && !messageHasResources
                             ? '请输入消息或添加附件'
                             : '发送消息'

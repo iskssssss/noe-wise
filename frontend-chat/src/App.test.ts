@@ -142,8 +142,13 @@ function createState() {
     get sessionClosed(): boolean {
       return this.history.closed
     },
+    get targetDisabled(): boolean {
+      return this.teams.some(
+        (team) => this.target === `team:${team.id}` && team.status === 'disabled'
+      )
+    },
     get composerLocked(): boolean {
-      return this.locked || this.sessionClosed
+      return this.locked || this.sessionClosed || this.targetDisabled
     },
     active: false,
     uploading: false,
@@ -162,6 +167,7 @@ function createState() {
     newSession: vi.fn(),
     changeTarget: vi.fn(),
     disconnect: vi.fn(),
+    connect: vi.fn(async () => {}),
     fail: vi.fn()
   })
 }
@@ -1492,7 +1498,90 @@ describe('会话输入控件', () => {
     wrapper.unmount()
   })
 
-  it('停用当前团队保留会话和草稿，仅禁用新建会话', async () => {
+  it('停用团队仍可从对话对象中选择以查看历史', async () => {
+    holder.state.teams = [
+      {
+        id: 'team-disabled',
+        revision: 1,
+        name: '历史团队',
+        description: '',
+        status: 'disabled',
+        primary_agent_id: 'a',
+        members: [{ agent_id: 'a' }]
+      }
+    ]
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { stubs: { TeamManager: true } }
+    })
+    await wrapper.get('[aria-label="打开会话导航"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.target-picker [role="combobox"]').trigger('click')
+    await flushPromises()
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索选项"]')!
+    search.value = '历史团队'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    const active = document.getElementById(search.getAttribute('aria-activedescendant')!)!
+    expect(active.textContent).toContain('历史团队（已停用）')
+    expect(active.getAttribute('aria-disabled')).not.toBe('true')
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    expect(holder.state.changeTarget).toHaveBeenCalledWith('team:team-disabled')
+    wrapper.unmount()
+  })
+
+  it('重载恢复停用团队的原会话，并持续显示只读状态', async () => {
+    holder.state.teams = [
+      {
+        id: 'team-disabled',
+        revision: 1,
+        name: '历史团队',
+        description: '',
+        status: 'disabled',
+        primary_agent_id: 'a',
+        members: [{ agent_id: 'a' }]
+      }
+    ]
+    holder.state.sessions = [{ session_id: 'original-session', message_count: 2 }]
+    holder.state.changeTarget.mockImplementation((target: string) => {
+      holder.state.target = target
+    })
+    holder.state.openSession.mockImplementation((session: string) => {
+      holder.state.sessionId = session
+    })
+    sessionStorage.setItem(
+      'skillforge.chat.connection',
+      JSON.stringify({
+        address: 'http://localhost',
+        mode: 'token',
+        token: 'test',
+        name: '测试'
+      })
+    )
+    sessionStorage.setItem(
+      'skillforge.chat.selection',
+      JSON.stringify({
+        clientRef: 'c',
+        target: 'team:team-disabled',
+        session: 'original-session'
+      })
+    )
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { stubs: { TeamManager: true, ConversationTools: true } }
+    })
+    await flushPromises()
+    expect(holder.state.changeTarget).toHaveBeenCalledWith('team:team-disabled')
+    expect(holder.state.openSession).toHaveBeenCalledWith('original-session')
+    expect(holder.state.sessionId).toBe('original-session')
+    expect(wrapper.text()).toContain('当前团队已停用，仅可查看历史')
+    expect(wrapper.get('button[aria-label="发送消息"]').attributes('disabled')).toBeDefined()
+    expect(holder.state.notice).toBe('')
+    wrapper.unmount()
+  })
+
+  it('停用当前团队保留会话和草稿，禁发并在重新发布后恢复', async () => {
     const team: Team = {
       id: 'team-1',
       revision: 1,
@@ -1519,12 +1608,25 @@ describe('会话输入控件', () => {
     expect(holder.state.sessionId).toBe('existing-session')
     expect(holder.state.draft).toBe('尚未提交的内容')
     expect(holder.state.notice).toContain('已保留当前会话与草稿')
+    expect(wrapper.text()).toContain('当前团队已停用，仅可查看历史')
+    expect(wrapper.get('#message-input').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('input[aria-label="选择文件"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[aria-label="发送消息"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('#message-input').trigger('keydown', { key: 'Enter' })
+    expect(holder.state.submit).not.toHaveBeenCalled()
     expect(
       wrapper
         .findAll('button')
         .find((item) => item.text().includes('新对话'))!
         .attributes('disabled')
     ).toBeDefined()
+    wrapper.getComponent(TeamManager).vm.$emit('saved', { ...team, status: 'published' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('当前团队已停用，仅可查看历史')
+    expect(wrapper.get('button[aria-label="发送消息"]').attributes('disabled')).toBeUndefined()
+    expect(holder.state.notice).toBe('当前团队已重新发布，可在原会话继续对话。')
+    expect(holder.state.sessionId).toBe('existing-session')
+    expect(holder.state.draft).toBe('尚未提交的内容')
     wrapper.unmount()
   })
 

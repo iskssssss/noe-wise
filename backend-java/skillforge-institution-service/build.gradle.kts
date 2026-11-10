@@ -126,6 +126,7 @@ tasks.named<Test>("test") {
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/ChatInputRetryBrowserE2ETest.class")
+    exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
@@ -436,6 +437,20 @@ tasks.register<Test>("mcpElicitationBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.ChatExecutionWaitingE2ETest.standaloneBrowserContinuesExactMcpElicitation") }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("chatTeamDisableBrowserE2E") {
+    description = "验证个人团队停用与重新发布后的原会话提交"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatTeamDisableBrowserE2ETest.disabledTeamBlocksExistingConversationUntilRepublished") }
+    inputs.property("teamDisable", providers.environmentVariable("E2E_CHAT_TEAM_DISABLE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/team-disable-browser.mjs", "vite.config.*", "package*.json", "index.html") })
+        .withPropertyName("teamDisableFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
     outputs.upToDateWhen { false }
 }
 

@@ -191,6 +191,119 @@ it('没有智能体时自动选择唯一可用团队并读取其会话', async (
   expect(createdSessions).toBe(0)
 })
 
+describe('停用团队的历史与执行边界', () => {
+  const team = {
+    id: 'team-1',
+    revision: 1,
+    name: '咨询团队',
+    description: '',
+    status: 'published',
+    primary_agent_id: 'agent',
+    members: [{ agent_id: 'agent' }]
+  }
+  it.each([false, true])('已有会话=%s 时停用禁发，重新发布后使用原目标继续', async (existing) => {
+    teamCatalog = [{ ...team }]
+    await connect()
+    await state.changeTarget('team:team-1')
+    if (existing) await state.openSession('s')
+    state.draft.value = '保留的草稿'
+    state.teams.value[0]!.status = 'disabled'
+
+    expect(state.targetDisabled.value).toBe(true)
+    expect(state.composerLocked.value).toBe(true)
+    await state.submit()
+    await state.upload([new File(['内容'], '附件.txt', { type: 'text/plain' })])
+    await expect(state.ensureSession()).rejects.toThrow('团队已停用')
+    state.newSession()
+    expect(posts).toEqual([])
+    expect(uploadedForms).toEqual([])
+    expect(createdSessions).toBe(0)
+    expect(state.sessionId.value).toBe(existing ? 's' : '')
+    expect(state.target.value).toBe('team:team-1')
+    expect(state.draft.value).toBe('保留的草稿')
+
+    state.teams.value[0]!.status = 'published'
+    expect(state.composerLocked.value).toBe(false)
+    await state.submit()
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0]!)).toMatchObject({ session_id: 's', team_id: 'team-1' })
+    expect(createdSessions).toBe(existing ? 0 : 1)
+  })
+  it('可选择停用团队读取原会话，重新连接保留历史和当前草稿', async () => {
+    teamCatalog = [{ ...team, status: 'disabled' }]
+    historyLoad = async (id) =>
+      response({
+        ...emptyHistory(),
+        session_id: id,
+        messages: [{ message_id: 'original', role: 'assistant', content: '已完成的回复' }]
+      })
+    await connect()
+    await state.changeTarget('team:team-1')
+    await state.openSession('s')
+    state.draft.value = '待重新发布后发送'
+    await state.reconnect()
+    expect(state.history.value.messages[0]?.content).toBe('已完成的回复')
+    expect(state.sessionId.value).toBe('s')
+    expect(state.draft.value).toBe('待重新发布后发送')
+    expect(state.historyReadFailed.value).toBe(false)
+    expect(state.composerLocked.value).toBe(true)
+    expect(posts).toEqual([])
+    expect(createdSessions).toBe(0)
+  })
+  it('停用期间不重试未知输入，重新发布也不清除或自动发送原身份', async () => {
+    teamCatalog = [{ ...team }]
+    await connect()
+    await state.changeTarget('team:team-1')
+    await state.openSession('s')
+    state.draft.value = '只发送一次'
+    submit = async () => {
+      throw new TypeError('offline')
+    }
+    await state.submit()
+    const original = state.pendingInput.value
+    expect(original).toBeTruthy()
+    state.teams.value[0]!.status = 'disabled'
+    await state.submit(undefined, true)
+    state.newSession()
+    await state.reconnect()
+    expect(state.pendingInput.value).toBe(original)
+    expect(state.draft.value).toBe('只发送一次')
+    expect(state.sessionId.value).toBe('s')
+    state.teams.value[0]!.status = 'published'
+    await flushPromises()
+    expect(state.pendingInput.value).toBe(original)
+    expect(posts).toHaveLength(1)
+  })
+  it('停用期间不重试未知补充，保留命令和两份草稿', async () => {
+    teamCatalog = [{ ...team }]
+    await connect()
+    await state.changeTarget('team:team-1')
+    state.draft.value = '开始任务'
+    await state.submit()
+    await flushPromises()
+    state.supplementDraft.value = '待确认补充'
+    steerSubmit = async () => {
+      throw new TypeError('offline')
+    }
+    await state.submitSupplement()
+    await flushPromises()
+    const original = state.pendingSteering.value
+    expect(original).toBeTruthy()
+    state.draft.value = '下一条草稿'
+    state.teams.value[0]!.status = 'disabled'
+    await state.submitSupplement(true)
+    expect(state.canSteer.value).toBe(false)
+    expect(state.pendingSteering.value).toBe(original)
+    expect(state.supplementDraft.value).toBe('待确认补充')
+    expect(state.draft.value).toBe('下一条草稿')
+    state.teams.value[0]!.status = 'published'
+    await flushPromises()
+    expect(state.pendingSteering.value).toBe(original)
+    expect(steeringPosts).toHaveLength(1)
+    expect(posts).toHaveLength(1)
+  })
+})
+
 it('图片上传结果未知时只读核对原标识，确认后加入草稿', async () => {
   await connect()
   const original = vi.mocked(fetch).getMockImplementation()!

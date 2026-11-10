@@ -125,7 +125,7 @@ async function save(disable = false) {
   if (
     disable &&
     !(await confirmAction(
-      `停用团队“${form.name}”后，将不能再选择它发起新会话。`,
+      `停用团队“${form.name}”后，不能新建会话或继续发送。已有会话和数据保留，可查看历史消息；重新发布后可继续对话。`,
       '停用团队',
       '停用团队'
     ))

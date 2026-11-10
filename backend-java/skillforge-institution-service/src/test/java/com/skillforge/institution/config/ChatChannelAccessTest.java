@@ -108,20 +108,22 @@ class ChatChannelAccessTest {
         verifyNoInteractions(agents, profiles);
     }
 
-    @Test void externalReadWriteAndReplayRequireBoundTargetWhileAdminIsUnchanged() throws Exception {
+    @Test void onlyRootHistoryReadsUseHistoryAccessWhileOtherRoutesKeepExecutionAccess() throws Exception {
         var access = mock(ChatChannelAccess.class);
         HandlerInterceptor guard = guard(access);
         var response = new MockHttpServletResponse();
-        for (String path : java.util.List.of("/api/v1/chat/history", "/api/v1/chat/replay")) {
+        for (String path : java.util.List.of("/api/v1/chat/history", "/api/v1/chat/runs/status",
+                "/api/v1/chat/events", "/api/v1/chat/limits", "/api/v1/chat/replay", "/api/v1/chat/sessions/deliverables")) {
             var request = external("GET", path);
             request.setParameter("session_id", "s1");
             guard.preHandle(request, response, null);
         }
+        verify(access, times(4)).requireSessionHistory("s1");
         verify(access, times(2)).requireSession("s1");
         var list = external("GET", "/api/v1/chat/sessions");
         list.setParameter("agentId", "3");
         guard.preHandle(list, response, null);
-        verify(access).requireTarget("3", null, null);
+        verify(access).requireHistoryTarget("3", null, null);
         var session = org.mockito.Mockito.mock(SessionView.class); org.mockito.Mockito.when(session.getAgentId()).thenReturn(3L);
         when(access.requireSession("s1")).thenReturn(session);
         when(access.requireAgent("4")).thenReturn(4L);
@@ -141,8 +143,11 @@ class ChatChannelAccessTest {
         when(sessions.require("1","s")).thenReturn(session);when(agents.selectOne(any())).thenReturn(agent);when(bindings.selectCount(any())).thenReturn(1L);
         var access=access(agents,bindings,sessions);
         assertSame(session,access.requireSession("s"));
+        assertSame(session,access.requireSessionHistory("s"));
         ChannelContext.setChannelId("4");assertThrows(ApiException.class,()->access.requireSession("s"));
+        assertThrows(ApiException.class,()->access.requireSessionHistory("s"));
         org.mockito.Mockito.when(session.getChannelId()).thenReturn(null);assertThrows(ApiException.class,()->access.requireSession("s"));
+        assertThrows(ApiException.class,()->access.requireSessionHistory("s"));
     }
 
     @Test void collaborationReadAndPlanModeWriteRequireTheTargetSession() throws Exception {
@@ -270,6 +275,9 @@ class ChatChannelAccessTest {
 
         assertSame(session, access.requireSession("team-session"));
         verify(userTeams).requireAvailable("team-1", "9");
+        assertSame(session, access.requireSessionHistory("team-session"));
+        verify(userTeams).requireHistory("team-1", "9");
+        assertThrows(ApiException.class, () -> access.requireHistoryTarget("3", "team-1", "9"));
     }
 
     @Test void existingSessionRejectsTargetAndEndUserChanges() throws Exception {

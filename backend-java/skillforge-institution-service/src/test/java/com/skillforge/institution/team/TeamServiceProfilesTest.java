@@ -114,6 +114,19 @@ class TeamServiceProfilesTest {
         verifyNoInteractions(agents, mounts, catalog, models, publications, resolver);
     }
 
+    @Test
+    void historyReadsTheSelectedPublicPublicationWithoutResolvingDraftOrExecutionConfig() throws Exception {
+        var publication = new TeamDefinition("team", "已发布团队", "", "published", 4,
+                draft().members(), "11");
+        when(mapper.publishedForHistory(7L, "team")).thenReturn(List.of(json.writeValueAsString(publication)));
+
+        assertEquals(publication, service.publishedForHistory("7", "team"));
+        assertNull(com.skillforge.common.context.TenantContext.getTenantId());
+        verify(mapper).publishedForHistory(7L, "team");
+        verifyNoMoreInteractions(mapper);
+        verifyNoInteractions(agents, mounts, catalog, models, publications, resolver);
+    }
+
     /** 缺失线程上下文时使用可信调用租户，异常后也不能泄漏到后续任务。 */
     @Test
     void trustedTenantScopeRestoresAfterMapperFailure() {
@@ -124,6 +137,12 @@ class TeamServiceProfilesTest {
         });
         assertThrows(IllegalStateException.class, () -> service.list("7"));
         assertNull(com.skillforge.common.context.TenantContext.getTenantId());
+        when(mapper.publishedForHistory(7L, "team")).thenAnswer(invocation -> {
+            assertEquals("7", com.skillforge.common.context.TenantContext.getTenantId());
+            throw new IllegalStateException("storage_unavailable");
+        });
+        assertThrows(IllegalStateException.class, () -> service.publishedForHistory("7", "team"));
+        assertNull(com.skillforge.common.context.TenantContext.getTenantId());
     }
 
     /** 已有认证租户不得被方法参数改写，且拒绝发生在数据库访问之前。 */
@@ -132,6 +151,7 @@ class TeamServiceProfilesTest {
         com.skillforge.common.context.TenantContext.setTenantId("8");
         try {
             assertThrows(SecurityException.class, () -> service.list("7"));
+            assertThrows(SecurityException.class, () -> service.publishedForHistory("7", "team"));
             assertEquals("8", com.skillforge.common.context.TenantContext.getTenantId());
             verifyNoInteractions(mapper);
         } finally {

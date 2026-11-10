@@ -45,12 +45,18 @@ public class ChatChannelAccessConfiguration implements WebMvcConfigurer {
                 if (request.getMethod().equals("GET")) {
                     if (path.equals("/api/v1/chat/sessions")) {
                         ChatEndUserTokens.requireEndUser(request.getParameter("end_user_id"));
-                        access.requireTarget(request.getParameter("agentId"), request.getParameter("team_id"), request.getParameter("end_user_id"));
+                        access.requireHistoryTarget(request.getParameter("agentId"), request.getParameter("team_id"), request.getParameter("end_user_id"));
                     }
                     else {
                         String session = request.getParameter("session_id");
                         if (session == null) session = request.getParameter("sessionId");
-                        if (session != null) access.requireSession(session);
+                        if (session != null) {
+                            switch (path) {
+                                case "/api/v1/chat/history", "/api/v1/chat/runs/status", "/api/v1/chat/events", "/api/v1/chat/limits" ->
+                                        access.requireSessionHistory(session);
+                                default -> access.requireSession(session);
+                            }
+                        }
                     }
                 } else if (request instanceof CachedBodyHttpServletRequest cached) {
                     JsonNode body = mapper.readTree(cached.getCachedBody());

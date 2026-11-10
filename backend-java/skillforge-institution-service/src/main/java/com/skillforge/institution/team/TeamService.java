@@ -288,6 +288,17 @@ public class TeamService implements com.skillforge.core.chat.ChatTeamGateway {
         }
     }
 
+    /** 根会话历史使用当前发布指针对应的公开定义；停用只允许读取，不授予执行或成员来源访问权。 */
+    @Transactional(readOnly = true)
+    public TeamDefinition publishedForHistory(String tenant, String id) {
+        String previous = TenantContext.getTenantId();
+        if (previous != null && !previous.equals(tenant))
+            throw new SecurityException("database_tenant_scope_mismatch");
+        return TenantContext.callWithTenant(tenant, () -> mapper.publishedForHistory(Long.parseLong(tenant), id).stream()
+                .findFirst().map(payload -> read(payload, TeamDefinition.class))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "团队没有可读取的发布记录")));
+    }
+
     /** 每个新 Run 按发布团队的稳定成员身份解析当前发布配置，历史和在途 Run 保留原快照。 */
     @Transactional(isolation = Isolation.REPEATABLE_READ)
     public FrozenTeam freezePublished(String tenant, String id) {

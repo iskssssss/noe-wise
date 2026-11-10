@@ -44,6 +44,44 @@ async function panel(failure: Error = new TypeError('Failed to fetch')) {
 }
 
 describe('团队创建的未知结果恢复', () => {
+  it('停用确认说明停止续写并保留历史，提交原团队身份', async () => {
+    const client = createClient('http://localhost', { mode: 'token', token: 'test' })
+    const json = vi.spyOn(client, 'json').mockResolvedValue({ ...team, status: 'disabled' })
+    const confirm = vi.spyOn(ChatMessageBox, 'confirm').mockResolvedValue()
+    const wrapper = mount(TeamManager, {
+      props: {
+        modelValue: true,
+        client,
+        clientRef: 'visitor',
+        teams: [team],
+        agents: [{ id: 'agent-1', name: '成员', is_default: true }]
+      }
+    })
+    mounted.push(wrapper)
+    wrapper.getComponent(ChatSelect).vm.$emit('change', team.id)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '停用团队')!
+      .trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('不能新建会话或继续发送。已有会话和数据保留，可查看历史消息'),
+      '停用团队',
+      expect.any(Object)
+    )
+    expect(json).toHaveBeenCalledWith(
+      '/chat/teams/disable',
+      'POST',
+      {
+        client_ref: 'visitor',
+        id: team.id,
+        revision: 1
+      },
+      expect.any(AbortSignal)
+    )
+    expect(wrapper.emitted('saved')?.[0]?.[0]).toMatchObject({ id: team.id, status: 'disabled' })
+  })
   it('未知结果冻结草稿，关闭重开后也不能重复无ID新建', async () => {
     const { wrapper, json } = await panel()
     expect(wrapper.find('[aria-label="核对团队创建结果"]').exists()).toBe(true)

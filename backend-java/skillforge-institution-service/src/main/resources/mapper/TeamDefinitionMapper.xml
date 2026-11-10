@@ -10,6 +10,9 @@
   <select id="published" resultType="string">SELECT v.definition::text FROM nw_agent_teams t JOIN nw_agent_team_versions v
                   ON v.tenant_id=t.tenant_id AND v.team_id=t.id AND v.revision=t.published_revision
                 WHERE t.tenant_id=#{tenant} AND t.id=#{id} AND t.status='published'</select>
+  <select id="publishedForHistory" resultType="string">SELECT (v.definition->'team')::text FROM nw_agent_teams t JOIN nw_agent_team_versions v
+                  ON v.tenant_id=t.tenant_id AND v.team_id=t.id AND v.revision=t.published_revision
+                WHERE t.tenant_id=#{tenant} AND t.id=#{id} AND t.status IN ('published','disabled')</select>
   <select id="version" resultType="string">SELECT definition::text FROM nw_agent_team_versions WHERE tenant_id=#{tenant} AND team_id=#{id} AND revision=#{revision}</select>
   <select id="versions" resultType="string">SELECT definition::text FROM nw_agent_team_versions WHERE tenant_id=#{tenant} AND team_id=#{id} ORDER BY revision DESC</select>
   <select id="revokedChannelMember" resultType="boolean">SELECT EXISTS(SELECT 1 FROM nw_chat_user_teams t WHERE t.tenant_id=#{tenant} AND t.team_id=#{team}
