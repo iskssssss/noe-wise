@@ -257,6 +257,35 @@ class KnowledgeServiceTest {
     }
 
     @Test
+    void uploadToRebuildingBaseIsRejectedBeforeParsingOrEmbedding() {
+        var base = base();
+        base.setRebuildJobId(99L);
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
+        var file = new MockMultipartFile("file", "unsupported.bin", "application/octet-stream", new byte[]{1});
+
+        var rejected = assertThrows(ApiException.class, () -> service.uploadFile("7", 10L, null, file));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, rejected.getStatus());
+        assertEquals("KNOWLEDGE_UPLOAD_REJECTED", rejected.getCode());
+        assertEquals("知识库正在重建，请发布重建结果或取消重建后再试", rejected.getDetail());
+        verifyNoInteractions(embeddingProvider, documentMapper, documentVersionMapper, chunkMapper, searchIndexer);
+    }
+
+    @Test
+    void uploadModelFailureKeepsItsOriginalUnconfirmedContract() {
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
+        var failure = new ApiException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                "embedding_dimensions_mismatch");
+        when(embeddingProvider.embedBatch(eq("7"), eq("81"), eq(3L), any())).thenThrow(failure);
+        var file = new MockMultipartFile("file", "notes.txt", "text/plain", "hello knowledge".getBytes());
+
+        var actual = assertThrows(ApiException.class, () -> service.uploadFile("7", 10L, null, file));
+
+        org.junit.jupiter.api.Assertions.assertSame(failure, actual);
+        verifyNoInteractions(documentMapper, documentVersionMapper, chunkMapper, searchIndexer);
+    }
+
+    @Test
     void uploadChunkLimitRejectsBeforeEmbeddingAndDocumentWrite() {
         when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
         when(operationalSettings.capture()).thenReturn(new KnowledgeOperationalSettings.Snapshot(

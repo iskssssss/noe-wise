@@ -140,6 +140,7 @@ tasks.named<Test>("test") {
     exclude("**/LegacyKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/KnowledgeRebuild401BrowserE2ETest.class")
     exclude("**/KnowledgeRebuildProgressBrowserE2ETest.class")
+    exclude("**/KnowledgeUploadRejectionBrowserE2ETest.class")
     exclude("**/KnowledgeRebuildFenceBrowserE2ETest.class")
     exclude("**/ConversationTaskRecoveryBrowserE2ETest.class")
     exclude("**/TeamMemberCrossTabBrowserE2ETest.class")
@@ -551,6 +552,20 @@ tasks.register<Test>("knowledgeRebuild401BrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.KnowledgeRebuild401BrowserE2ETest.lostUnauthorizedPublicationResponseUsesSameRuntimeVersion")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeUploadRejectionBrowserE2E") {
+    description = "验证知识上传拒绝回执及重新上传后的运行时检索"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeUploadRejectionBrowserE2ETest.rejectedUploadCanEndAndNewSourceCanReachRuntime") }
+    inputs.property("knowledgeUploadRejection", providers.environmentVariable("E2E_KNOWLEDGE_UPLOAD_REJECTION").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-upload-rejection-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

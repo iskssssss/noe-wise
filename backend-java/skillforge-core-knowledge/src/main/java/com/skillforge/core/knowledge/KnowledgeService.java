@@ -330,9 +330,10 @@ public class KnowledgeService {
     /** 文件解析和模型调用先于短事务；上传回执与文档提交由事务内的调用方统一完成。 */
     PreparedDocument prepareUploadDocument(String tenantId, Long kbId, String title, MultipartFile file) {
         KnowledgeOperationalSettings.Snapshot settings = operationalSettings.capture();
+        KnowledgeBaseDO base;
         DocumentParser.ParsedDocument parsed;
         try {
-            requireBase(tenantId, kbId);
+            base = requireWritableBase(tenantId, kbId);
             long maxBytes = (long) settings.maxUploadMb() * 1024 * 1024;
             if (file.getSize() > maxBytes) {
                 throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,
@@ -345,7 +346,7 @@ public class KnowledgeService {
         }
         String docTitle = title == null || title.isBlank()
                 ? defaultTitle(file.getOriginalFilename()) : title;
-        return prepareDocument(tenantId, kbId, docTitle, parsed.content(),
+        return prepareDocument(tenantId, base, docTitle, parsed.content(),
                 KnowledgeConstants.SOURCE_FILE, parsed, settings);
     }
 
@@ -395,14 +396,13 @@ public class KnowledgeService {
             String sourceType, DocumentParser.ParsedDocument parsed,
             KnowledgeOperationalSettings.Snapshot settings) {
         return persistPreparedDocument(tenantId,
-                prepareDocument(tenantId, kbId, title, content, sourceType, parsed, settings));
+                prepareDocument(tenantId, requireWritableBase(tenantId, kbId), title, content, sourceType, parsed, settings));
     }
 
     private PreparedDocument prepareDocument(
-            String tenantId, Long kbId, String title, String content,
+            String tenantId, KnowledgeBaseDO base, String title, String content,
             String sourceType, DocumentParser.ParsedDocument parsed,
             KnowledgeOperationalSettings.Snapshot settings) {
-        KnowledgeBaseDO base = requireWritableBase(tenantId, kbId);
         KnowledgeDocumentDO document = new KnowledgeDocumentDO();
         document.setId(SnowflakeIds.nextId());
         document.setTenantId(Long.parseLong(tenantId));
@@ -420,7 +420,7 @@ public class KnowledgeService {
 
     /** 仅准备模型与完整版本，供治理投影在启动原子写事务前调用。 */
     PreparedDocument prepareProjectionDocument(String tenantId, Long kbId, String title, String content) {
-        return prepareDocument(tenantId, kbId, title, content,
+        return prepareDocument(tenantId, requireWritableBase(tenantId, kbId), title, content,
                 KnowledgeConstants.SOURCE_PROJECTION, null, operationalSettings.capture());
     }
 
@@ -1491,7 +1491,7 @@ public class KnowledgeService {
         KnowledgeBaseDO base = TransactionSynchronizationManager.isActualTransactionActive()
                 ? revisionMapper.lockBase(Long.parseLong(tenantId),kbId) : requireBase(tenantId,kbId);
         if(base==null)throw new ApiException(HttpStatus.NOT_FOUND,"知识库不存在");
-        if (base.getRebuildJobId() != null) throw conflict("knowledge_rebuild_write_locked");
+        if (base.getRebuildJobId() != null) throw conflict("知识库正在重建，请发布重建结果或取消重建后再试");
         return base;
     }
 
