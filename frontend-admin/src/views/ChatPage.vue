@@ -1901,21 +1901,23 @@ async function closeSession() {
       }))
     )
       return
-    pendingCloses.value.add(sessionId.value)
+    const id = sessionId.value
+    pendingCloses.value.add(id)
     try {
-      await api.chat.closeSession(sessionId.value)
+      const receipt = await api.chat.closeSession(id)
+      if (receipt.session_id !== id || receipt.status !== 'closed')
+        throw Error('关闭回执与原会话不匹配，请读取会话状态核对')
     } catch (cause) {
       // 此关闭入口的认证、授权、归属与请求校验拒绝发生在写入前；仅接受正式错误契约。
       if (
         cause instanceof HttpClientError &&
         ['UNAUTHORIZED', 'FORBIDDEN', 'NOT_FOUND', 'VALIDATION_ERROR'].includes(cause.code ?? '')
       )
-        pendingCloses.value.delete(sessionId.value)
+        pendingCloses.value.delete(id)
       throw cause
     }
-    const detail = await api.chat.sessionDetail(sessionId.value)
-    sessionClosed.value = detail.closed
-    if (detail.closed) pendingCloses.value.delete(sessionId.value)
+    sessionClosed.value = true
+    pendingCloses.value.delete(id)
   })
 }
 async function older() {

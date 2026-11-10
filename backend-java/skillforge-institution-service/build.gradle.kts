@@ -127,6 +127,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/ChatInputRetryBrowserE2ETest.class")
     exclude("**/ChatSessionRestoreBrowserE2ETest.class")
+    exclude("**/ChatSessionCloseReceiptBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/ChannelBindingRoutingBrowserE2ETest.class")
@@ -280,6 +281,20 @@ tasks.register<Test>("memoryCorrectionStateBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionStateBrowserE2ETest.forgottenFactRequiresRestorationBeforeCorrectionAndRuntimeRecall") }
     inputs.property("memoryCorrectionState", providers.environmentVariable("E2E_MEMORY_CORRECTION_STATE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-state-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("sessionCloseReceiptBrowserE2E") {
+    description = "验证已确认关闭回执可直接完成会话状态更新"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatSessionCloseReceiptBrowserE2ETest.confirmedCloseReceiptDoesNotRequireAnotherDetailRead") }
+    inputs.property("sessionCloseReceipt", providers.environmentVariable("E2E_SESSION_CLOSE_RECEIPT").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/session-close-receipt-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

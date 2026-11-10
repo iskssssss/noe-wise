@@ -90,7 +90,7 @@ beforeEach(() => {
     closed: false
   })
   mocks.observe.mockResolvedValue(undefined)
-  mocks.close.mockResolvedValue({ status: 'closed' })
+  mocks.close.mockResolvedValue({ session_id: 'session-1', status: 'closed' })
   mocks.confirm.mockResolvedValue(true)
 })
 afterEach(() => {
@@ -180,6 +180,8 @@ describe('智能体试用目录恢复与权限', () => {
     await close.trigger('click')
     await flushPromises()
     expect(mocks.close).toHaveBeenCalledExactlyOnceWith('session-1')
+    expect(wrapper.text()).toContain('此会话已关闭')
+    expect(wrapper.text()).not.toContain('关闭结果尚待核对')
   })
   it('筛选历史请求在途时锁定身份和会话切换，结果仍属于原条件', async () => {
     let resolveSessions!: (value: Array<{ session_id: string }>) => void

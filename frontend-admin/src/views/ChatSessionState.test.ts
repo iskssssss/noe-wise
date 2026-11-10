@@ -590,18 +590,18 @@ describe('历史会话绑定与关闭', () => {
     expect(wrapper.text()).not.toContain('此会话已关闭')
     expect(mocks.submit).not.toHaveBeenCalled()
   })
-  it('关闭成功后读取权威状态，并保留输入和历史，不自动再次提交', async () => {
+  it('关闭成功后直接采用回执，详情不可读也保留输入和历史且不再请求', async () => {
     await setup()
-    mocks.detail.mockResolvedValue({
-      session: { session_id: 'A' },
-      end_user_id: '42',
-      target_agent_id: '101',
-      closed: true
-    })
+    mocks.detail.mockClear()
+    mocks.detail.mockRejectedValue(new Error('详情暂不可读'))
     await button('关闭会话').trigger('click')
     await flushPromises()
     expect(mocks.close).toHaveBeenCalledExactlyOnceWith('A')
+    expect(mocks.detail).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('此会话已关闭')
+    expect(wrapper.text()).not.toContain('关闭结果尚待核对')
+    expect(button('发送').attributes('disabled')).toBeDefined()
+    expect(button('关闭会话').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('A消息')
     expect(
       wrapper
@@ -609,6 +609,25 @@ describe('历史会话绑定与关闭', () => {
         .find((item) => item.props('placeholder') === '输入消息')!
         .props('modelValue')
     ).toBe('未发送草稿')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { session_id: 'B', status: 'closed' },
+    { session_id: 'A', status: 'open' }
+  ])('不匹配关闭回执 $session_id/$status 保留原会话待核对状态', async (receipt) => {
+    await setup()
+    mocks.detail.mockClear()
+    mocks.close.mockResolvedValue(receipt)
+    await button('关闭会话').trigger('click')
+    await flushPromises()
+    expect(mocks.close).toHaveBeenCalledExactlyOnceWith('A')
+    expect(mocks.detail).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('关闭结果尚待核对')
+    expect(wrapper.text()).not.toContain('此会话已关闭')
+    expect(button('发送').attributes('disabled')).toBeDefined()
+    expect(button('关闭会话').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('A消息')
     expect(mocks.submit).not.toHaveBeenCalled()
   })
 
