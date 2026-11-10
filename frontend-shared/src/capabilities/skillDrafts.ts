@@ -109,7 +109,7 @@ const textExtensions = new Set([
 ])
 
 /** 文件类型只按领域声明的扩展名判定；路径合法性继续由原包校验边界处理。 */
-function isTextFile(path: string): boolean {
+export function isSkillTextFile(path: string): boolean {
   const dot = path.lastIndexOf('.')
   return dot >= 0 && textExtensions.has(path.slice(dot + 1).toLowerCase())
 }
@@ -147,7 +147,7 @@ const mapContent = (value: SkillDraftWire): SkillDraftContent => ({
   files: Object.fromEntries(
     Object.entries(value.files ?? {}).map(([path, content]) => [
       path,
-      isTextFile(path) ? decodeText(content) : content
+      isSkillTextFile(path) ? decodeText(content) : content
     ])
   ),
   modelInvocable: value.model_invocable,
@@ -175,7 +175,7 @@ export const skillDraftSavePayload = (input: SaveSkillDraftInput) => ({
   files: Object.fromEntries(
     Object.entries(input.files).map(([path, content]) => [
       path,
-      isTextFile(path) ? encodeText(content) : content
+      isSkillTextFile(path) ? encodeText(content) : content
     ])
   ),
   model_invocable: input.modelInvocable,

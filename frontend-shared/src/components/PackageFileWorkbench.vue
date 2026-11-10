@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch, useId } from 'vue'
 import { ElButton, ElInput, ElAlert, ElEmpty, ElTree } from 'element-plus'
 import { confirm } from '../feedback'
 import { guardFormEnter } from '../admin/keyboard'
+import { isSkillTextFile } from '../capabilities/skillDrafts'
 import CodeEditor from './CodeEditor.vue'
 const props = withDefaults(defineProps<{ files: Record<string, string>; readonly?: boolean }>(), {
   readonly: false
@@ -71,6 +72,7 @@ watch(selected, async (value) => {
   treeRef.value?.setCurrentKey(`file:${value}`)
 })
 const language = computed(() => selected.value.split('.').pop() ?? 'text')
+const textFile = computed(() => isSkillTextFile(selected.value))
 function selectFile(path: string): boolean {
   if (!Object.hasOwn(props.files, path)) return false
   search.value = ''
@@ -85,7 +87,7 @@ async function reveal(path: string, line = 1): Promise<boolean> {
 }
 defineExpose({ selectFile, reveal })
 function update(content: string) {
-  if (!props.readonly && selected.value)
+  if (!props.readonly && selected.value && textFile.value)
     emit('update:files', { ...props.files, [selected.value]: content })
 }
 async function startCreate() {
@@ -114,6 +116,10 @@ function add(event?: Event) {
   ) {
     error.value =
       '文件未创建。请填写不重复的相对路径，去掉上级目录，并检查是否与已有文件或目录冲突。'
+    return
+  }
+  if (!isSkillTextFile(name)) {
+    error.value = '此文件类型不支持在线新建或文本编辑，请通过完整 ZIP 导入。'
     return
   }
   error.value = ''
@@ -192,6 +198,7 @@ async function remove() {
         />
         <p :id="helpId + '-path-help'" class="admin-field-help">
           使用 / 分隔目录，例如 scripts/main.py。路径不能与已有文件或目录冲突；创建后需保存草稿。
+          在线新建支持 Markdown、TXT、JSON、YAML、脚本等文本文件，其他类型通过完整 ZIP 导入。
         </p>
         <ElAlert v-if="error" :title="error" type="error" :closable="false" />
         <div class="file-create-actions">
@@ -234,7 +241,9 @@ async function remove() {
       <header>
         <div class="file-current">
           <strong>{{ selected || '文件编辑' }}</strong
-          ><span class="file-mode">{{ readonly ? '只读版本' : '草稿 · 修改后需保存' }}</span>
+          ><span class="file-mode">{{
+            readonly ? '只读版本' : textFile ? '草稿 · 修改后需保存' : '原始资源 · 只读'
+          }}</span>
         </div>
         <ElButton
           v-if="selected && !readonly"
@@ -245,14 +254,23 @@ async function remove() {
           >删除文件</ElButton
         >
       </header>
+      <p
+        v-if="selected && !textFile"
+        :id="helpId + '-resource-help'"
+        class="admin-field-help resource-help"
+      >
+        该文件按原始资源保存，仅展示 Base64 内容。需要更换时，请导入包含全部文件的完整
+        ZIP；导入会替换草稿文件。
+      </p>
       <CodeEditor
         v-if="selected"
         :key="selected"
         ref="editorRef"
         :model-value="files[selected] ?? ''"
-        :language="language"
+        :language="textFile ? language : 'text'"
         :label="`文件 ${selected}`"
-        :readonly="readonly"
+        :described-by="textFile ? undefined : helpId + '-resource-help'"
+        :readonly="readonly || !textFile"
         height="500px"
         @update:model-value="update"
       />
@@ -263,9 +281,11 @@ async function remove() {
         ><ElButton v-if="!readonly" type="primary" @click="startCreate">新建文件</ElButton></ElEmpty
       >
       <p v-if="selected" class="admin-field-help file-footer" role="status">
-        {{ language.toUpperCase() }} · {{ (files[selected] ?? '').split('\n').length }} 行<span
-          >使用方向键浏览文件树，Enter 选择文件</span
-        >
+        {{
+          textFile
+            ? `${language.toUpperCase()} · ${(files[selected] ?? '').split('\n').length} 行`
+            : 'Base64 · 只读'
+        }}<span>使用方向键浏览文件树，Enter 选择文件</span>
       </p>
     </div>
   </section>
@@ -301,6 +321,9 @@ async function remove() {
 }
 .file-search {
   margin-bottom: 12px;
+}
+.resource-help {
+  margin: 0 12px 12px;
 }
 .file-create {
   display: flex;
