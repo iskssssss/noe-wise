@@ -9,11 +9,15 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.util.AccessPattern;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.io.IOException;
 import java.util.List;
+import org.hibernate.validator.constraints.CodePointLength;
 
 /** 平台模板编辑请求；定义为完整对象替换，草稿允许尚未选择模型。 */
 public record UpdateAgentTemplateRequest(
+        @CodePointLength(max = 128, message = "名称最多 128 个字符")
+        @Schema(description = "模板名称，最多 128 个 Unicode 码点；null 不修改", maxLength = 128)
         String name,
         String category, List<String> tags, String description, String iconUrl,
         String priceType, Integer priceCents, AgentTemplateDefinition definition,

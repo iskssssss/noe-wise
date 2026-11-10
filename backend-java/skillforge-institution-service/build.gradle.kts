@@ -131,6 +131,7 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
     exclude("**/AgentLifecycleBrowserE2ETest.class")
+    exclude("**/AgentNameValidationBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
@@ -603,6 +604,20 @@ tasks.register<Test>("agentSavePublishTrialBrowserE2E") {
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.editedAgentPublicationIsUsedByRealTrial")
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.crossTabDelegationCatalogReachesRuntime")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentNameValidationBrowserE2E") {
+    description = "验证智能体名称边界与真实保存发布执行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentNameValidationBrowserE2ETest.boundedAgentNameCanBePublishedAndUsedByRuntime") }
+    inputs.property("agentNameValidation", providers.environmentVariable("E2E_AGENT_NAME_VALIDATION").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-name-validation-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

@@ -4,6 +4,42 @@ import { defineComponent, h, reactive, ref } from 'vue'
 import { ElForm, ElFormItem, ElInput, ElSelect, ElOption, type FormInstance } from 'element-plus'
 import AgentConfigFields from '@skillforge/shared/admin/AgentConfigFields.vue'
 
+it.each(['文', '😀'])('名称按码点校验，超限保留输入并允许修正：%s', async (character) => {
+  const form = ref<FormInstance>()
+  const value = reactive({
+    name: character.repeat(128),
+    system_prompt: '职责',
+    model_config_id: 'model' as string | null
+  })
+  const wrapper = mount(
+    defineComponent({
+      setup: () => () =>
+        h(ElForm, { ref: form, model: value }, () =>
+          h(AgentConfigFields, {
+            modelValue: value,
+            models: [],
+            'onUpdate:modelValue': (next: typeof value) => Object.assign(value, next)
+          })
+        )
+    })
+  )
+  try {
+    expect(await form.value!.validate()).toBe(true)
+    const name = wrapper
+      .findAllComponents(ElFormItem)
+      .find((field) => field.props('prop') === 'name')!
+    await name.getComponent(ElInput).setValue(character.repeat(129))
+    expect(value.name).toBe(character.repeat(129))
+    const invalid = await form.value!.validate().catch((fields) => fields)
+    expect(invalid).toHaveProperty('name')
+    expect(name.text()).toContain('128')
+    await name.getComponent(ElInput).setValue(character.repeat(128))
+    expect(await form.value!.validate()).toBe(true)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
 it.each([false, true])('说明字段按宿主模型能力展示并提交：%s', async (supported) => {
   const value = reactive({
     name: '测试',

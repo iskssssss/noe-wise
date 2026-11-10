@@ -2,8 +2,10 @@ package com.skillforge.core.agent.dto.request;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.skillforge.core.agent.model.AgentDelegationConfig;
 import com.skillforge.core.agent.enums.AgentStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.Map;
 import com.skillforge.core.foundation.runtimeconfig.AgentExecutionConfig;
+import org.hibernate.validator.constraints.CodePointLength;
 /**
  * 更新 Agent 请求 DTO。
  *
@@ -17,6 +19,8 @@ import com.skillforge.core.foundation.runtimeconfig.AgentExecutionConfig;
  * @param delegationConfig Agent 委派配置，可选；null 不修改
  */
 public record UpdateAgentRequest(
+        @CodePointLength(max = 128, message = "名称最多 128 个字符")
+        @Schema(description = "Agent 名称，最多 128 个 Unicode 码点；null 不修改", maxLength = 128)
         String name,
         AgentStatus status,
         String systemPrompt,

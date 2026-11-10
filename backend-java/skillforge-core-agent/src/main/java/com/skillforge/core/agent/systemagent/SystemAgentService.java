@@ -217,7 +217,7 @@ public class SystemAgentService {
     }
 
     private void validate(Config c,String mode,boolean executable,boolean debug) {
-        if (c==null || c.name()==null || c.name().isBlank() || c.name().length()>128
+        if (c==null || c.name()==null || c.name().isBlank() || c.name().codePointCount(0,c.name().length())>128
                 || (c.description()!=null && c.description().length()>2000)
                 || c.systemPrompt()==null || c.systemPrompt().length()>64000
                 || c.timeoutSeconds()<1 || c.timeoutSeconds()>3600 || c.maxBusinessModelCalls()<1 || c.maxBusinessModelCalls()>100) {

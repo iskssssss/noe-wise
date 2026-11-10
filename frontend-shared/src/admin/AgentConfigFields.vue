@@ -13,6 +13,7 @@
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
+import { AGENT_NAME_MAX_LENGTH, agentNameLengthRule } from './agentName'
 
 import { useId } from 'vue'
 import { ElFormItem, ElInput, ElSelect, ElOption } from 'element-plus'
@@ -35,14 +36,18 @@ const formTipId = useId()
   <ElFormItem
     label="名称"
     prop="name"
-    :rules="[{ required: true, whitespace: true, message: '请输入名称', trigger: 'blur' }]"
+    :rules="[
+      { required: true, whitespace: true, message: '请输入名称', trigger: 'blur' },
+      agentNameLengthRule
+    ]"
     ><ElInput
       :model-value="modelValue.name"
       :disabled="disabled"
-      maxlength="200"
-      show-word-limit
       @update:model-value="update('name', $event)"
-    />
+      ><template #suffix
+        >{{ Array.from(modelValue.name).length }} / {{ AGENT_NAME_MAX_LENGTH }}</template
+      >
+    </ElInput>
   </ElFormItem>
   <ElFormItem v-if="'description' in modelValue" label="说明"
     ><ElInput

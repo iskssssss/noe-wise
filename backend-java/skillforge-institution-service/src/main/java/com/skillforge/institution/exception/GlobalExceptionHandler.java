@@ -3,6 +3,8 @@ package com.skillforge.institution.exception;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.core.shared.web.HostExceptionHandler;
 import com.skillforge.core.shared.web.ApiResponse;
+import com.skillforge.institution.controller.AgentController;
+import com.skillforge.institution.controller.AgentCreationController;
 import com.skillforge.institution.controller.KnowledgeController;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,14 +40,22 @@ public class GlobalExceptionHandler extends HostExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handle(Exception failure, HttpServletResponse response) {
         var mapped = super.handle(failure, response);
         if (mapped == null || !(failure instanceof MethodArgumentNotValidException validation)
-                || validation.getParameter().getContainingClass() != KnowledgeController.class
-                || validation.getParameter().getMethod() == null
-                || !Set.of("createBase", "updateBaseEndpoint").contains(validation.getParameter().getMethod().getName()))
+                || validation.getParameter().getMethod() == null)
             return mapped;
+        var controller = validation.getParameter().getContainingClass();
+        var method = validation.getParameter().getMethod().getName();
+        String code;
+        if (controller == KnowledgeController.class && Set.of("createBase", "updateBaseEndpoint").contains(method))
+            code = "KNOWLEDGE_WRITE_REJECTED";
+        else if (controller == AgentCreationController.class && "create".equals(method))
+            code = "AGENT_CREATE_REJECTED";
+        else if (controller == AgentController.class && "install".equals(method))
+            code = "AGENT_INSTALL_REJECTED";
+        else return mapped;
         var body = mapped.getBody();
         if (body == null) return mapped;
         return ResponseEntity.status(mapped.getStatusCode()).headers(mapped.getHeaders()).body(
-                new ApiResponse<>("KNOWLEDGE_WRITE_REJECTED", body.message(), null,
+                new ApiResponse<>(code, body.message(), null,
                         body.traceId(), body.retryable(), body.fieldErrors()));
     }
 }

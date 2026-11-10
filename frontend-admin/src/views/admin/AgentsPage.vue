@@ -173,17 +173,20 @@
           label="名称"
           prop="name"
           :rules="[
-            { required: true, whitespace: true, message: '请输入智能体名称', trigger: 'blur' }
+            { required: true, whitespace: true, message: '请输入智能体名称', trigger: 'blur' },
+            agentNameLengthRule
           ]"
           required
           ><ElInput
             v-described-by="formTipId + '-field-0'"
             :aria-describedby="formTipId + '-field-0'"
             v-model="name"
-            maxlength="100"
-          />
+            ><template #suffix
+              >{{ Array.from(name).length }} / {{ AGENT_NAME_MAX_LENGTH }}</template
+            >
+          </ElInput>
           <FieldTip :id="formTipId + '-field-0'"
-            >填写智能体的展示名称，最多 100 个字符。</FieldTip
+            >填写智能体的展示名称，最多 {{ AGENT_NAME_MAX_LENGTH }} 个字符。</FieldTip
           > </ElFormItem
         ><ElCollapse
           ><ElCollapseItem title="初始配置（可选）" name="initial"
@@ -448,6 +451,7 @@ import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
+import { AGENT_NAME_MAX_LENGTH, agentNameLengthRule } from '@skillforge/shared/admin/agentName'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'

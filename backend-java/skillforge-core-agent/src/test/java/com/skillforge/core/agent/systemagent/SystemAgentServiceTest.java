@@ -11,6 +11,9 @@ import com.skillforge.core.model.PlatformModelConfig;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.http.HttpStatus;
 
 /** 发布指针、冻结受理及生命周期的领域回归。 */
 class SystemAgentServiceTest {
@@ -37,6 +40,68 @@ class SystemAgentServiceTest {
                 config,version==null?null:config,Instant.parse("2026-09-22T00:00:00Z"));
     }
     void current(View value) throws Exception {when(mapper.find("1")).thenReturn(json.writeValueAsString(value));}
+
+    @Test void createsDraftWith128EmojiWithoutTruncatingTheName() throws Exception {
+        String name = "😀".repeat(128);
+        when(mapper.create(anyString(), eq("unicode-agent"), isNull(), eq("MODEL_TASK"), anyString()))
+                .thenAnswer(invocation -> {
+                    String id = invocation.getArgument(0);
+                    Config written = json.readValue((String) invocation.getArgument(4), Config.class);
+                    var created = new View(id, "unicode-agent", null, "MODEL_TASK", "draft", 1,
+                            null, written, null, Instant.parse("2026-09-22T00:00:00Z"));
+                    when(mapper.find(id)).thenReturn(json.writeValueAsString(created));
+                    return 1;
+                });
+        when(mapper.audit(anyString(), eq(1L), eq("create"), eq("42"))).thenReturn(1);
+
+        var created = service.create("unicode-agent", name, "", "MODEL_TASK", "42");
+
+        assertEquals(name, created.draft().name());
+        verify(mapper).create(eq(created.id()), eq("unicode-agent"), isNull(), eq("MODEL_TASK"), anyString());
+        verify(mapper).audit(created.id(), 1L, "create", "42");
+        verifyNoInteractions(models, resources);
+    }
+
+    @Test void updatesDraftWith128EmojiWithoutTruncatingTheName() throws Exception {
+        current(view("draft", 1, null));
+        String name = "😀".repeat(128);
+        var replacement = new Config(name, "", "提示词", null, 30, 1, List.of());
+        when(mapper.save(eq("1"), eq(1L), anyString())).thenAnswer(invocation -> {
+            Config written = json.readValue((String) invocation.getArgument(2), Config.class);
+            current(new View("1", "memory-extraction", "memory-extraction", "MODEL_TASK", "draft", 2,
+                    null, written, null, Instant.parse("2026-09-22T00:00:00Z")));
+            return 1;
+        });
+        when(mapper.audit("1", 2L, "update", "42")).thenReturn(1);
+
+        var updated = service.update("1", 1, replacement, "42");
+
+        assertEquals(name, updated.draft().name());
+        assertEquals(2, updated.revision());
+        verify(mapper).save("1", 1L, json.writeValueAsString(replacement));
+        verify(mapper).audit("1", 2L, "update", "42");
+        verifyNoInteractions(models, resources);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"a", "😀"})
+    void rejects129CodePointNamesBeforeCreatingOrUpdating(String unit) throws Exception {
+        String name = unit.repeat(129);
+        var createFailure = assertThrows(ApiException.class,
+                () -> service.create("unicode-agent", name, "", "MODEL_TASK", "42"));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, createFailure.getStatus());
+        assertEquals("system_agent_config_invalid", createFailure.getDetail());
+        verifyNoInteractions(mapper);
+
+        current(view("draft", 1, null));
+        var replacement = new Config(name, "", "提示词", null, 30, 1, List.of());
+        var updateFailure = assertThrows(ApiException.class, () -> service.update("1", 1, replacement, "42"));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, updateFailure.getStatus());
+        assertEquals("system_agent_config_invalid", updateFailure.getDetail());
+        verify(mapper).find("1");
+        verifyNoMoreInteractions(mapper);
+        verifyNoInteractions(models, resources);
+    }
 
     @Test void savingPublishedDraftDoesNotSwitchProductionPointer() throws Exception {
         current(view("published",3,1L)); when(mapper.save(eq("1"),eq(3L),anyString())).thenReturn(1);

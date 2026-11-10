@@ -14,6 +14,7 @@ import com.skillforge.core.agent.management.AgentManagementContracts;
 import com.skillforge.core.foundation.access.FoundationAccess;
 import com.skillforge.core.foundation.access.FoundationPermissionInterceptor;
 import com.skillforge.core.shared.exception.ApiException;
+import com.skillforge.core.shared.web.HostTraceIdFilter;
 import com.skillforge.institution.exception.GlobalExceptionHandler;
 import com.skillforge.institution.service.AgentManagementService;
 import com.skillforge.institution.service.AgentTemplateInstallationService;
@@ -24,6 +25,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -31,6 +34,7 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 /** 真实宿主映射、JSON 和权限拦截；应用服务为边界桩，不冒称事务验收。 */
 class AgentSaveAndPublishControllerTest {
@@ -42,20 +46,29 @@ class AgentSaveAndPublishControllerTest {
     private final AgentManagementApplicationService core = mock(AgentManagementApplicationService.class);
     private final FoundationAccess access = mock(FoundationAccess.class);
     private final InstitutionResourceAccess resources = mock(InstitutionResourceAccess.class);
+    private final AgentTemplateInstallationService installations = mock(AgentTemplateInstallationService.class);
+    private final LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
     private MockMvc mvc;
 
     @BeforeEach void setup() {
-        TenantContext.setTenantId("7");
-        var validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mvc = MockMvcBuilders.standaloneSetup(new AgentController(new AgentManagementService(core, resources),
-                        mock(AgentTemplateInstallationService.class)))
+                        installations))
                 .addInterceptors(new FoundationPermissionInterceptor(access))
                 .setControllerAdvice(new GlobalExceptionHandler(json))
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json))
+                .addFilters(new HostTraceIdFilter((request, response, handler, failure) ->
+                        mvc.getDispatcherServlet().getWebApplicationContext()
+                                .getBean("handlerExceptionResolver", HandlerExceptionResolver.class)
+                                .resolveException(request, response, handler, failure)),
+                        (request, response, chain) -> {
+                            // 固定认证身份在每次请求的 trace 生命周期内装配。
+                            TenantContext.setTenantId("7");
+                            chain.doFilter(request, response);
+                        })
                 .setValidator(validator).build();
     }
-    @AfterEach void clear() { TenantContext.clear(); }
+    @AfterEach void clear() { TenantContext.clear(); validator.close(); }
 
     @Test void postMapsExactInputOnceAndReturnsFiveFieldReceiptWithStringIdentities() throws Exception {
         var receipt = receipt();
@@ -90,6 +103,37 @@ class AgentSaveAndPublishControllerTest {
         verify(core, times(2)).saveAndPublishResult(new AgentManagementContracts.Caller(7L, false), AGENT, REQUEST);
         verifyNoMoreInteractions(core);
         verify(access, times(2)).require("foundation.agents.read");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"a", "😀"})
+    void oversizedPublicationNameRejectsWithNestedFieldBeforeApplicationService(String unit) throws Exception {
+        mvc.perform(post(PATH).header("X-Trace-Id", "agent-publish-name-validation")
+                        .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of(
+                        "agent_id", AGENT, "request_id", REQUEST, "payload", Map.of("name", unit.repeat(129))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.field_errors['payload.name']").isNotEmpty())
+                .andExpect(jsonPath("$.trace_id").value("agent-publish-name-validation"))
+                .andExpect(header().string("X-Trace-Id", "agent-publish-name-validation"));
+
+        verifyNoInteractions(core, installations, resources);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"a", "😀"})
+    void oversizedInstallationNameIsDefinitelyRejectedBeforeInstallationService(String unit) throws Exception {
+        mvc.perform(post("/api/v1/agents/install-template").header("X-Trace-Id", "agent-install-name-validation")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("template_id", 1L,
+                                "request_id", "name-validation", "name", unit.repeat(129)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AGENT_INSTALL_REJECTED"))
+                .andExpect(jsonPath("$.field_errors.name").isNotEmpty())
+                .andExpect(jsonPath("$.trace_id").value("agent-install-name-validation"))
+                .andExpect(header().string("X-Trace-Id", "agent-install-name-validation"));
+
+        verifyNoInteractions(core, installations, resources);
     }
 
     @Test void missingOrMalformedRequestIdentityAndPayloadRejectBeforeApplicationService() throws Exception {

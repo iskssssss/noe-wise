@@ -9,6 +9,8 @@ import com.skillforge.core.capability.CapabilityCatalogDatabaseContext;
 import com.skillforge.core.foundation.access.FoundationAccess;
 import com.skillforge.core.shared.exception.ApiException;
 import com.skillforge.institution.common.TenantIds;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -31,9 +33,6 @@ public class AgentCreationService {
     }
     @Transactional(rollbackFor = Exception.class)
     public Result create(Command command) {
-        if (command == null || command.requestId() == null || command.payload() == null ||
-                command.payload().name() == null || command.payload().name().isBlank())
-            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "智能体创建请求无效");
         access.require("foundation.agents.create");
         long tenant = Long.parseLong(TenantIds.requireTenantId());
         String actor = subject(tenant), requestId = command.requestId().toString(), fingerprint = fingerprint(command.payload());
@@ -70,6 +69,7 @@ public class AgentCreationService {
                 .digest(json.writer().with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsBytes(payload))); }
         catch (NoSuchAlgorithmException | JsonProcessingException failure) { throw new IllegalStateException("智能体创建请求无法编码", failure); }
     }
-    public record Command(@JsonProperty("request_id") UUID requestId, CreateAgentRequest payload) { }
+    public record Command(@JsonProperty("request_id") @NotNull UUID requestId,
+                          @NotNull @Valid CreateAgentRequest payload) { }
     public record Result(@JsonProperty("request_id") UUID requestId, @JsonProperty("agent_id") String agentId) { }
 }

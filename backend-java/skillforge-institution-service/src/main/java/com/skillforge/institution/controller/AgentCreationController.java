@@ -5,6 +5,7 @@ import com.skillforge.core.shared.exception.ApiException;
 import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.core.shared.web.ApiResponses;
 import com.skillforge.institution.service.AgentCreationService;
+import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,7 +16,7 @@ public class AgentCreationController {
     private final AgentCreationService service;
     public AgentCreationController(AgentCreationService service) { this.service = service; }
     @PostMapping
-    public ApiResponse<AgentCreationService.Result> create(@RequestBody AgentCreationService.Command command) {
+    public ApiResponse<AgentCreationService.Result> create(@Valid @RequestBody AgentCreationService.Command command) {
         try { return ApiResponses.wrap(service.create(command)); }
         catch (ApiException failure) {
             if (!failure.getStatus().is4xxClientError() || failure.getStatus().value() == 408 || "AGENT_CREATE_IDENTITY_CONFLICT".equals(failure.getCode())) throw failure;

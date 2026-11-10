@@ -74,6 +74,32 @@ it('创建成功直接进入原智能体', async () => {
   expect(mocks.push).toHaveBeenCalledWith('/admin/agents/123')
   expect(sessionStorage.length).toBe(0)
 })
+
+it('名称超限在创建前保留输入，修正为128个码点后提交', async () => {
+  mocks.create.mockImplementation(async (id: string) => ({ request_id: id, agent_id: '123' }))
+  await render()
+  await button('新建智能体').trigger('click')
+  await flushPromises()
+  const drawer = wrapper
+    .findAllComponents(ElDrawer)
+    .find((item) => item.props('title') === '新建智能体')!
+  const input = drawer.findComponent(ElInput).get('input')
+  await input.setValue('😀'.repeat(129))
+  await button('创建并配置').trigger('click')
+  await flushPromises()
+  expect(mocks.create).not.toHaveBeenCalled()
+  expect(sessionStorage.length).toBe(0)
+  expect((input.element as HTMLInputElement).value).toBe('😀'.repeat(129))
+  await vi.waitFor(() => {
+    expect(document.body.querySelector('.el-form-item__error')?.textContent).toContain('128')
+  })
+  await input.setValue('😀'.repeat(128))
+  await button('创建并配置').trigger('click')
+  await flushPromises()
+  expect(mocks.create).toHaveBeenCalledOnce()
+  expect(mocks.create.mock.calls[0]![1]).toMatchObject({ name: '😀'.repeat(128) })
+  expect(mocks.push).toHaveBeenCalledWith('/admin/agents/123')
+})
 it('断连刷新后自动只读核对原请求并进入原智能体', async () => {
   mocks.create.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '断连' }))
   await render()
