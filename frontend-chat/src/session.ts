@@ -1336,7 +1336,7 @@ export function useConversation() {
         return
       }
       if (result.status === 'quota_exhausted') {
-        pendingInput.value = undefined
+        if (!retry) pendingInput.value = undefined
         notice.value = result.card?.body ?? result.message ?? '本月额度已用尽。'
         return
       }
@@ -1356,7 +1356,9 @@ export function useConversation() {
     } catch (cause) {
       if (version === selection && request === submissionRequest) {
         const rejected = pendingInput.value === body ? body : undefined
+        // 重试拒绝只说明当前请求未获准，不能证明原输入未被受理。
         if (
+          !retry &&
           rejected &&
           cause instanceof RequestError &&
           cause.code &&

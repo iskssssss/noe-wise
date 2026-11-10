@@ -20,6 +20,8 @@ corepack pnpm --filter frontend-chat build
 
 ESLint 使用会话端自己的 Vue 3 essential 与 TypeScript recommended flat config，检查源码、测试和本地脚本。Prettier 单独负责格式化，`format` 可写入格式修正；ESLint 最后加载 `eslint-config-prettier`，避免重复处理格式规则。
 
+原消息结果未知后的重试恢复可在 `backend-java` 执行 `./gradlew :skillforge-institution-service:chatInputRetryBrowserE2E`（Windows 使用 `gradlew.bat`）。该任务启动隔离数据库、真实服务与浏览器，使用本地 HTTP 模型；首次受理回执受控丢失后，真实关闭会话并重试，验证拒绝不能清除原请求，随后只读恢复历史。需要 Docker、已安装的前端依赖及 Playwright Chromium；结果保存在机构服务的 `build/runtime-e2e/input-retry-*`，浏览器 trace 留存前对本次凭据脱敏。该检查不代表外部供应商验收。
+
 开发端口默认 3200，`/api` 代理至 `http://localhost:8000`，可通过 Vite 的 `--port` 指定实际端口。构建输出为 `dist/`，静态部署示例见 `nginx.conf.example`。跨域服务须显式允许页面来源与渠道认证请求头；生产使用 HTTPS。
 
 ## 模块与交互

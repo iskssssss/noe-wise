@@ -125,6 +125,7 @@ tasks.named<Test>("test") {
     exclude("**/StagingRuntimeE2E.class")
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
+    exclude("**/ChatInputRetryBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
@@ -403,6 +404,20 @@ tasks.register<Test>("mcpElicitationBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.ChatExecutionWaitingE2ETest.standaloneBrowserContinuesExactMcpElicitation") }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("chatInputRetryBrowserE2E") {
+    description = "验证原输入结果未知时重试拒绝与历史确认"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatInputRetryBrowserE2ETest.rejectedRetryKeepsOriginalInputUntilHistoryConfirmsIt") }
+    inputs.property("inputRetry", providers.environmentVariable("E2E_CHAT_INPUT_RETRY").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/input-retry-browser.mjs", "vite.config.*", "package*.json", "index.html") })
+        .withPropertyName("inputRetryFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
     outputs.upToDateWhen { false }
 }
 

@@ -1809,6 +1809,93 @@ describe('独立会话交互状态', () => {
     expect(state.pendingInput.value).toBeUndefined()
     expect(posts).toHaveLength(1)
   })
+  it.each([403, 404, 409])(
+    '原消息结果未知后重试被%s拒绝，仍保留原请求等待历史核对',
+    async (status) => {
+      await connect()
+      await state.openSession('s')
+      state.draft.value = '只执行一次'
+      submit = async () => {
+        throw new TypeError('response lost')
+      }
+      await state.submit()
+      const original = state.pendingInput.value!
+      submit = async () =>
+        new Response(
+          JSON.stringify({
+            code: 'CONFLICT',
+            message: '当前请求被拒绝',
+            data: null,
+            trace_id: 'test'
+          }),
+          { status }
+        )
+      await state.submit(undefined, true)
+      expect(posts).toEqual([posts[0], posts[0]])
+      expect(state.pendingInput.value).toEqual(original)
+      expect(state.composerLocked.value).toBe(true)
+      expect(state.draft.value).toBe('只执行一次')
+      expect(state.error.value).toBe('当前请求被拒绝')
+      await state.submit()
+      expect(posts).toHaveLength(2)
+      historyLoad = async (id) =>
+        response({
+          ...emptyHistory(),
+          session_id: id,
+          closed: true,
+          messages: [
+            { message_id: original.client_message_id, role: 'user', content: '只执行一次' }
+          ]
+        })
+      await state.reconnect()
+      expect(state.pendingInput.value).toBeUndefined()
+      expect(state.sessionClosed.value).toBe(true)
+      expect(state.composerLocked.value).toBe(true)
+      expect(posts).toHaveLength(2)
+    }
+  )
+  it('原消息结果未知后重试额度不足，仍保留原身份且不允许新发送', async () => {
+    await connect()
+    state.draft.value = '保留原消息'
+    submit = async () => {
+      throw new TypeError('response lost')
+    }
+    await state.submit()
+    const original = state.pendingInput.value!
+    submit = async () => response({ status: 'quota_exhausted', message: '本月额度已用尽' })
+    await state.submit(undefined, true)
+    expect(posts).toEqual([posts[0], posts[0]])
+    expect(state.pendingInput.value).toEqual(original)
+    expect(state.composerLocked.value).toBe(true)
+    expect(state.draft.value).toBe('保留原消息')
+    expect(state.notice.value).toBe('本月额度已用尽')
+    await state.submit()
+    expect(posts).toHaveLength(2)
+  })
+  it.each(['validation', 'quota'])(
+    '首次消息在入口被%s明确拒绝，释放编辑并保留草稿',
+    async (reason) => {
+      await connect()
+      state.draft.value = '可修正的原稿'
+      submit = async () =>
+        reason === 'quota'
+          ? response({ status: 'quota_exhausted', message: '本月额度已用尽' })
+          : new Response(
+              JSON.stringify({
+                code: 'VALIDATION_ERROR',
+                message: '输入校验未通过',
+                data: null,
+                trace_id: 'test'
+              }),
+              { status: 422 }
+            )
+      await state.submit()
+      expect(state.pendingInput.value).toBeUndefined()
+      expect(state.composerLocked.value).toBe(false)
+      expect(state.draft.value).toBe('可修正的原稿')
+      expect(posts).toHaveLength(1)
+    }
+  )
   it('精确事件回执解除提交，其他会话或同文本的其他输入不能确认本次请求', async () => {
     await connect()
     let finish!: (value: Response) => void
