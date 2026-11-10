@@ -126,6 +126,7 @@ tasks.named<Test>("test") {
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/ChatInputRetryBrowserE2ETest.class")
+    exclude("**/ChatSessionRestoreBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
     exclude("**/ChannelBindingRoutingBrowserE2ETest.class")
@@ -501,6 +502,20 @@ tasks.register<Test>("chatTeamDisableBrowserE2E") {
     inputs.property("teamDisable", providers.environmentVariable("E2E_CHAT_TEAM_DISABLE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/team-disable-browser.mjs", "vite.config.*", "package*.json", "index.html") })
         .withPropertyName("teamDisableFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("chatSessionRestoreBrowserE2E") {
+    description = "验证目录读取失败后恢复原会话并延续模型上下文"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatSessionRestoreBrowserE2ETest.savedSessionRestoresWhenDirectoryRefreshFails") }
+    inputs.property("sessionRestore", providers.environmentVariable("E2E_CHAT_SESSION_RESTORE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/session-restore-browser.mjs", "vite.config.*", "package*.json", "index.html") })
+        .withPropertyName("sessionRestoreFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
     outputs.upToDateWhen { false }
 }
 

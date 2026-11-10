@@ -1531,7 +1531,7 @@ describe('会话输入控件', () => {
     wrapper.unmount()
   })
 
-  it('重载恢复停用团队的原会话，并持续显示只读状态', async () => {
+  it.each([true, false])('重载恢复停用团队的原会话并只读，目录包含会话：%s', async (listed) => {
     holder.state.teams = [
       {
         id: 'team-disabled',
@@ -1543,7 +1543,7 @@ describe('会话输入控件', () => {
         members: [{ agent_id: 'a' }]
       }
     ]
-    holder.state.sessions = [{ session_id: 'original-session', message_count: 2 }]
+    holder.state.sessions = listed ? [{ session_id: 'original-session', message_count: 2 }] : []
     holder.state.changeTarget.mockImplementation((target: string) => {
       holder.state.target = target
     })
@@ -1578,6 +1578,27 @@ describe('会话输入控件', () => {
     expect(wrapper.text()).toContain('当前团队已停用，仅可查看历史')
     expect(wrapper.get('button[aria-label="发送消息"]').attributes('disabled')).toBeDefined()
     expect(holder.state.notice).toBe('')
+    wrapper.unmount()
+  })
+
+  it.each(['', null, 42])('刷新时不以无效的持久会话标识 %s 发起读取', async (session) => {
+    sessionStorage.setItem(
+      'skillforge.chat.connection',
+      JSON.stringify({ address: 'http://localhost', mode: 'token', token: 'test', name: '测试' })
+    )
+    sessionStorage.setItem(
+      'skillforge.chat.selection',
+      JSON.stringify({ clientRef: 'c', target: 'agent:a', session })
+    )
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { stubs: { TeamManager: true, ConversationTools: true } }
+    })
+    await flushPromises()
+    expect(holder.state.changeTarget).toHaveBeenCalledWith('agent:a')
+    expect(holder.state.openSession).not.toHaveBeenCalled()
+    expect(holder.state.ensureSession).not.toHaveBeenCalled()
+    expect(holder.state.submit).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

@@ -597,7 +597,8 @@ onMounted(async () => {
       c.teams.some((item) => `team:${item.id}` === selected.target)
     if (!allowed) return
     await c.changeTarget(selected.target)
-    if (c.sessions.some((item) => item.session_id === selected.session))
+    // 导航目录失败不阻断精确会话恢复；历史接口负责核验当前访问权限。
+    if (typeof selected.session === 'string' && selected.session.length > 0)
       await c.openSession(selected.session)
   } catch (error) {
     c.fail(error)
