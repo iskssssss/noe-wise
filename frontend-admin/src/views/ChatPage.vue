@@ -368,28 +368,7 @@
               }}</ElTag
               ><small>{{ formatDateTime(message.created_at) }}</small>
             </div>
-            <template v-if="message.role === 'user' && historyContents(message.metadata).length">
-              <template v-for="(part, index) in historyContents(message.metadata)" :key="index">
-                <MarkdownContent v-if="part.type === 'text'" :content="part.text" />
-                <SessionMediaImage v-else :session="sessionId" :media="part.media_id" />
-              </template>
-            </template>
-            <MarkdownContent v-else :content="message.content" />
-            <div v-if="message.role === 'user'" class="toolbar" aria-label="已发送附件">
-              <template v-if="message.metadata?.attachments?.length">
-                <ElTag v-for="file in message.metadata.attachments" :key="file.id" size="small">{{
-                  file.name
-                }}</ElTag>
-              </template>
-              <template v-else-if="Array.isArray(message.metadata?.attachment_ids)">
-                <ElTag
-                  v-for="(_, index) in message.metadata.attachment_ids"
-                  :key="index"
-                  size="small"
-                  >附件 {{ index + 1 }}</ElTag
-                >
-              </template>
-            </div>
+            <SessionMessageContent :session="sessionId" :message="message" />
             <ol v-if="chatCitations(message.metadata?.citations).length" aria-label="知识依据">
               <li
                 v-for="citation in chatCitations(message.metadata?.citations)"
@@ -859,7 +838,6 @@ import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import ChatRunBudgetView from '@skillforge/shared/components/ChatRunBudgetView.vue'
 import { executionStopReason, type RunBudget } from '@skillforge/shared/components/chatRunBudget'
 import { chatCitations } from '@skillforge/shared/components/chatCitations'
-import { historyContents } from '@skillforge/shared/components/chatMedia'
 import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 
@@ -882,6 +860,7 @@ import HandoffCreation from '../components/HandoffCreation.vue'
 import ToolInputForm from '../components/ToolInputForm.vue'
 import BrowserConnectionCard from '../components/BrowserConnectionCard.vue'
 import SessionMediaImage from '../components/SessionMediaImage.vue'
+import SessionMessageContent from '../components/SessionMessageContent.vue'
 import CitationDetail from '../components/CitationDetail.vue'
 import { browserBridge, connectionBridgeMessage } from '@skillforge/shared/utils/browserConnection'
 import { CHAT_CONNECTION_STATES } from '@skillforge/shared/utils/stream'

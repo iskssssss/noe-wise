@@ -46,7 +46,9 @@
     </ElForm>
     <ElButton v-if="loadError" :loading="loading" @click="reload">重新读取会话</ElButton>
     <p v-if="data" class="session-count" role="status">
-      {{ data.items.length }} 个会话 · 智能体：{{ appliedAgentName }} · 终端用户：{{ appliedUserName }}
+      {{ data.items.length }} 个会话 · 智能体：{{ appliedAgentName }} · 终端用户：{{
+        appliedUserName
+      }}
       <span v-if="pendingFilters">；筛选条件已更改，请查询后应用。</span>
       <span v-if="loadError">；本次读取失败，仍显示上次结果。</span>
     </p>
@@ -54,7 +56,13 @@
       table-layout="auto"
       :data="data?.items ?? []"
       v-loading="loading"
-      :empty-text="!data ? (loading ? '正在读取会话…' : '会话列表尚未读取，请重新读取') : '没有符合查询条件的会话，可清除智能体或用户筛选后查询'"
+      :empty-text="
+        !data
+          ? loading
+            ? '正在读取会话…'
+            : '会话列表尚未读取，请重新读取'
+          : '没有符合查询条件的会话，可清除智能体或用户筛选后查询'
+      "
       ><ElTableColumn min-width="320" show-overflow-tooltip label="会话 / 摘要">
         <template #default="{ row }"
           ><ElButton
@@ -103,7 +111,9 @@
             ><ElButton v-if="!history" :loading="busy" @click="loadHistory">{{
               busy ? '正在读取消息' : '重新读取消息'
             }}</ElButton>
-            <ElEmpty v-else-if="!history.messages.length" description="本会话暂无可见消息" /><ElButton
+            <ElEmpty
+              v-else-if="!history.messages.length"
+              description="本会话暂无可见消息" /><ElButton
               v-if="history?.has_more"
               :disabled="busy"
               @click="older"
@@ -115,7 +125,9 @@
               ><div class="muted">
                 {{ statusLabel(message.role) }} · {{ formatDateTime(message.created_at) }}
               </div>
-              <MarkdownContent :content="message.content" /></ElCard></ElTabPane
+              <SessionMessageContent
+                :session="history!.session_id"
+                :message="message" /></ElCard></ElTabPane
           ><ElTabPane label="工作流执行"
             ><ElTable
               table-layout="auto"
@@ -205,7 +217,7 @@ import {
   useTask,
   useResource
 } from '@skillforge/shared/admin'
-import MarkdownContent from '@skillforge/shared/components/MarkdownContent.vue'
+import SessionMessageContent from '../../components/SessionMessageContent.vue'
 import { api, type SessionDetail, type ChatHistoryResponse } from '../../api'
 const agentId = ref(''),
   endUserId = ref(''),
@@ -223,8 +235,10 @@ const agentId = ref(''),
     })
     return { items, agentId: selectedAgent, endUserId: selectedUser }
   })
-const pendingFilters = computed(() =>
-  !!data.value && (data.value.agentId !== agentId.value || data.value.endUserId !== endUserId.value)
+const pendingFilters = computed(
+  () =>
+    !!data.value &&
+    (data.value.agentId !== agentId.value || data.value.endUserId !== endUserId.value)
 )
 const agentDirectory = useResource(async () => (await api.agents.list()).items)
 const userDirectory = useResource(() => api.chat.endUsers())
@@ -236,12 +250,14 @@ const userOptions = computed(() =>
 )
 const appliedAgentName = computed(() =>
   data.value?.agentId
-    ? agentDirectory.data.value?.find((agent) => agent.id === data.value?.agentId)?.name || data.value.agentId
+    ? agentDirectory.data.value?.find((agent) => agent.id === data.value?.agentId)?.name ||
+      data.value.agentId
     : '全部'
 )
 const appliedUserName = computed(() =>
   data.value?.endUserId
-    ? userOptions.value.find((user) => user.id === data.value?.endUserId)?.label || data.value.endUserId
+    ? userOptions.value.find((user) => user.id === data.value?.endUserId)?.label ||
+      data.value.endUserId
     : '全部'
 )
 const pageError = computed(() =>
@@ -263,8 +279,8 @@ async function view(id: string) {
   pendingSession.value = id
   await run(async () => {
     const historyRead = api.chat.history(id).then(
-      (value) => ({ value } as const),
-      (reason: unknown) => ({ reason } as const)
+      (value) => ({ value }) as const,
+      (reason: unknown) => ({ reason }) as const
     )
     detail.value = await api.chat.sessionDetail(id)
     history.value = undefined

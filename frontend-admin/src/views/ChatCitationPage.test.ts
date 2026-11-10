@@ -4,7 +4,10 @@ import { ElSelect } from 'element-plus'
 import ChatPage from './ChatPage.vue'
 vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({
+    identityVersion: 0,
     user: {
+      tenant_id: '1',
+      sub: 'member-1',
       permissions: [
         'foundation.sessions.read',
         'foundation.sessions.create',
@@ -35,7 +38,6 @@ vi.mock('../api', () => ({
     teams: { list: async () => [] }
   }
 }))
-vi.mock('../stores/auth', () => ({ useAuthStore: () => ({ identityVersion: 0 }) }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
   onBeforeRouteLeave: vi.fn(),
@@ -58,6 +60,7 @@ it('消息依据使用当前会话与消息身份，切换会话清除已显示�
     closed: false
   }))
   mocks.history.mockImplementation(async (id: string) => ({
+    session_id: id,
     messages: [
       {
         message_id: `msg-${id}`,

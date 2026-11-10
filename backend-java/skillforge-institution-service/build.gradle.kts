@@ -416,6 +416,7 @@ tasks.register<Test>("chatProcessBrowserE2E") {
     inputs.property("inputRecoveryBaseline", providers.environmentVariable("E2E_CHAT_INPUT_RECOVERY_BASELINE").orElse("0"))
     inputs.property("historyPages", providers.environmentVariable("E2E_CHAT_HISTORY_PAGES").orElse("0"))
     inputs.property("httpStatus", providers.environmentVariable("E2E_HTTP_STATUS").orElse("0"))
+    inputs.property("sessionMessageContent", providers.environmentVariable("E2E_SESSION_MESSAGE_CONTENT").orElse("0"))
     group = "verification"
     val ordinaryTests = sourceSets.named("test").get()
     testClassesDirs = ordinaryTests.output.classesDirs
@@ -427,7 +428,7 @@ tasks.register<Test>("chatProcessBrowserE2E") {
     }
     inputs.files(
         fileTree("../../frontend-admin") {
-            include("src/**", "e2e/chat-execution-process.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html")
+            include("src/**", "e2e/chat-execution-process.spec.ts", "e2e/session-message-content-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html")
         },
         fileTree("../../frontend-shared") { include("src/**", "package.json") },
         fileTree("../../frontend-vendor/vben") { include("packages/**/src/**", "packages/**/package.json", "internal/**/src/**", "internal/**/package.json") },

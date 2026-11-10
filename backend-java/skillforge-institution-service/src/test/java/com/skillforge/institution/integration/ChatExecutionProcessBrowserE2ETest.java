@@ -3,6 +3,14 @@ package com.skillforge.institution.integration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.skillforge.core.model.ModelSelections;
+import com.skillforge.core.model.ModelWrite;
+import com.skillforge.core.model.PlatformModelCatalogService;
+import com.skillforge.runtime.adapter.model.deepseek.DeepSeekModelProvider;
+import com.skillforge.runtime.adapter.model.provider.ModelImageSupport;
+import com.skillforge.runtime.adapter.model.provider.ModelProvider;
+import com.skillforge.runtime.adapter.model.provider.ModelProviderCatalog;
+import com.skillforge.runtime.api.media.ModelImagePolicy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +47,47 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
     private HttpErrorModel httpErrorModel;
     @org.springframework.beans.factory.annotation.Autowired
     private com.skillforge.core.chat.session.SessionMailboxService historyMailbox;
+    @org.springframework.beans.factory.annotation.Autowired
+    private PlatformModelCatalogService sessionMessageModels;
+    @org.springframework.test.context.bean.override.convention.TestBean(
+            name = "deterministicModelCatalog", methodName = "sessionMessageModelCatalog")
+    private ModelProviderCatalog sessionMessageCatalog;
+
+    static ModelProviderCatalog sessionMessageModelCatalog() {
+        var catalog = new DeterministicModelCatalogConfiguration().deterministicModelCatalog();
+        if (System.getenv("E2E_SESSION_MESSAGE_CONTENT") == null) return catalog;
+        ModelProvider fixture = new ModelProvider() {
+            @Override
+            public ModelProviderCatalog.ProviderPreset preset() { return catalog.presets().getFirst(); }
+
+            @Override
+            public ModelImageSupport protocolImageSupport(ModelProviderCatalog.ServiceProfile service,
+                    ModelProviderCatalog.ProtocolProfile protocol) {
+                if (!"custom-openai-compatible".equals(service.serviceId())) return ModelImageSupport.unsupported();
+                return new ModelImageSupport(ModelProviderCatalog.SupportLevel.SUPPORTED,
+                        ModelProviderCatalog.SupportLevel.UNSUPPORTED, null);
+            }
+        };
+        return new ModelProviderCatalog(List.of(fixture, new DeepSeekModelProvider()));
+    }
+
+    @Override
+    protected void configureTenantModel(String endpoint) {
+        if (System.getenv("E2E_SESSION_MESSAGE_CONTENT") == null) {
+            super.configureTenantModel(endpoint);
+            return;
+        }
+        // 图片输入由隔离模型显式声明；普通浏览器场景继续使用原文本模型。
+        var imagePolicy = new ModelImagePolicy(
+                true, false, 1, 1024, 1024 * 1024, 2048, 512, 85, 170, "session-message-fixture.v1");
+        var model = sessionMessageModels.create(new ModelWrite(
+                null, "Session message fixture", "LLM", true, "custom", "custom-openai-compatible",
+                "custom-v1", "openai-chat-completions", "bearer-api-key", endpoint, "runtime-fixture",
+                "runtime-fixture-key", 4096, 32768, 1024, 0.2, "DISABLED", 30,
+                null, null, null, null, null, "CNY", imagePolicy), "integration-fixture");
+        sessionMessageModels.publish(model.id(), model.revision(), "integration-fixture");
+        sessionMessageModels.select(tenantId, new ModelSelections(model.id(), null, null));
+    }
 
     @BeforeEach
     void configureBrowserRatePolicy() {
@@ -102,8 +151,14 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         // Playwright 启动时会清空自己的 outputDir，宿主日志不能放进该清理范围。
         Path browserEvidence = evidence.resolve("playwright");
         Path log = evidence.resolve("playwright-vite.log");
-        ProcessBuilder command = new ProcessBuilder(
-                playwright.toString(), "test", "e2e/chat-execution-process.spec.ts");
+        String sessionMessageContent = System.getenv("E2E_SESSION_MESSAGE_CONTENT");
+        if (sessionMessageContent != null) {
+            assertTrue(List.of("baseline", "candidate").contains(sessionMessageContent));
+            assertTrue(!live, "会话内容夹具只使用隔离本地模型");
+        }
+        ProcessBuilder command = new ProcessBuilder(playwright.toString(), "test",
+                sessionMessageContent == null ? "e2e/chat-execution-process.spec.ts"
+                        : "e2e/session-message-content-real.spec.ts");
         command.directory(adminRoot.toFile());
         command.redirectErrorStream(true);
         command.redirectOutput(log.toFile());
@@ -180,6 +235,13 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
                 if (process.waitFor(200, TimeUnit.MILLISECONDS)) { finished = true; break; }
             }
             captureProcessTree(owned);
+            if (sessionMessageContent != null) {
+                var runtimeState = Map.of(
+                        "runs", queryRows(jdbc, tenantId, "SELECT run_id,session_id,input_id,status,phase,cancelled FROM agent_runtime_execution_runs WHERE tenant_id=? ORDER BY created_second,created_nano LIMIT 50", tenantId),
+                        "actions", queryRows(jdbc, tenantId, "SELECT a.run_id,a.action_id,a.kind,a.status,t.attempt_id,t.result_kind,t.result_ref,t.adopted FROM agent_runtime_execution_actions a LEFT JOIN agent_runtime_execution_attempts t ON t.tenant_id=a.tenant_id AND t.run_id=a.run_id AND t.action_id=a.action_id WHERE a.tenant_id=? ORDER BY a.run_id,a.action_ordinal,t.observation_sequence LIMIT 100", tenantId));
+                Files.writeString(evidence.resolve("session-content-runtime-state.json"),
+                        objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(runtimeState), StandardCharsets.UTF_8);
+            }
             assertTrue(finished, "Chat process browser E2E exceeded 5 minutes; evidence=" + evidence);
             String output = Files.exists(log)
                     ? Files.readString(log, StandardCharsets.UTF_8) : "<no Playwright log>";
