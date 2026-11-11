@@ -140,6 +140,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/AgentNameValidationBrowserE2ETest.class")
     exclude("**/AgentTemplateBudgetBrowserE2ETest.class")
+    exclude("**/AgentTemplateResourcesBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
     exclude("**/ConvertDatetimeBrowserE2ETest.class")
@@ -281,6 +282,20 @@ tasks.register<Test>("memoryCorrectionStateBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionStateBrowserE2ETest.forgottenFactRequiresRestorationBeforeCorrectionAndRuntimeRecall") }
     inputs.property("memoryCorrectionState", providers.environmentVariable("E2E_MEMORY_CORRECTION_STATE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-state-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentTemplateResourcesBrowserE2E") {
+    description = "验证可选资源目录失败后模板仍可安装并执行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentTemplateResourcesBrowserE2ETest.optionalResourceReadFailureDoesNotBlockTemplateInstallation") }
+    inputs.property("agentTemplateResources", providers.environmentVariable("E2E_AGENT_TEMPLATE_RESOURCES").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-template-resources-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

@@ -2501,6 +2501,131 @@ describe('能力挂载关联一致性', () => {
     expect(name.props('modelValue')).toBe('重试前填写的名称')
     expect(mocks.installTemplate).not.toHaveBeenCalled()
   })
+  it('可选资源首次读取失败仍保留模板详情，并允许空绑定安装', async () => {
+    mocks.listDefinitions.mockRejectedValueOnce(new Error('资源目录不可读'))
+    const wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { directives: { permission: () => {} }, stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await button(wrapper, '从模板安装').trigger('click')
+    await flushPromises()
+    const drawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((value) => value.props('title') === '从模板安装')!
+    const field = (label: string) =>
+      drawer.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+    expect(field('智能体名称').getComponent(ElInput).props('modelValue')).toBe('客服模板')
+    expect(field('服务流程').getComponent(ElSelect).props('disabled')).toBe(true)
+    expect(document.body.textContent).toContain(
+      '可选资源尚未读取，可刷新可用资源，或跳过绑定直接安装。'
+    )
+    expect(document.body.textContent).toContain('资源目录不可读')
+    expect(document.body.textContent).not.toContain('尚未读到模板详情')
+    expect(button(drawer, '安装并配置').props('disabled')).toBe(false)
+    await button(drawer, '安装并配置').trigger('click')
+    await flushPromises()
+    expect(mocks.installTemplate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        template_id: 'template-1',
+        name: '客服模板',
+        resource_bindings: [],
+        delegation_bindings: []
+      })
+    )
+  })
+  it('可选资源重读仅刷新目录，保留用户编辑名称和已取得的模板详情', async () => {
+    mocks.templateDetail.mockResolvedValue({
+      name: '客服模板',
+      definition: {
+        resource_slots: [{ key: 'service', label: '服务流程', capability_type: 'WORKFLOW' }],
+        delegation_slots: [{ key: 'helper', label: '协作助手' }]
+      }
+    })
+    mocks.listDefinitions.mockRejectedValueOnce(new Error('资源目录不可读'))
+    const wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { directives: { permission: () => {} }, stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await button(wrapper, '从模板安装').trigger('click')
+    await flushPromises()
+    const drawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((value) => value.props('title') === '从模板安装')!
+    const field = (label: string) =>
+      drawer.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+    const name = field('智能体名称').getComponent(ElInput)
+    expect(mocks.agents).toHaveBeenCalledTimes(1)
+    await name.get('input').setValue('重读前编辑的名称')
+    await button(drawer, '刷新可用资源').trigger('click')
+    await flushPromises()
+    expect(mocks.templateDetail).toHaveBeenCalledExactlyOnceWith('template-1')
+    expect(mocks.listDefinitions).toHaveBeenCalledTimes(2)
+    expect(mocks.agents).toHaveBeenCalledTimes(2)
+    expect(name.props('modelValue')).toBe('重读前编辑的名称')
+    const slot = field('服务流程').getComponent(ElSelect)
+    expect(slot.props('disabled')).toBe(false)
+    expect(slot.findAllComponents(ElOption).map((option) => option.props('value'))).toEqual(['10'])
+    expect(document.body.textContent).not.toContain('可选资源尚未读取')
+    expect(mocks.installTemplate).not.toHaveBeenCalled()
+  })
+  it('切换模板后资源读取失败不展示前一个模板的目录', async () => {
+    mocks.templates.mockResolvedValue({
+      items: [
+        { id: 'template-1', name: '客服模板', version: '1' },
+        { id: 'template-2', name: '服务模板', version: '1' }
+      ]
+    })
+    mocks.listDefinitions
+      .mockResolvedValueOnce([
+        { id: '10', defaultVersionId: '21', name: '前模板流程', capabilityType: 'WORKFLOW' }
+      ])
+      .mockRejectedValueOnce(new Error('新模板资源目录不可读'))
+    const wrapper = mount(AgentsPage, {
+      attachTo: document.body,
+      global: { directives: { permission: () => {} }, stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await button(wrapper, '从模板安装').trigger('click')
+    await flushPromises()
+    const drawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((value) => value.props('title') === '从模板安装')!
+    const field = (label: string) =>
+      drawer.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+    const template = field('模板').getComponent(ElSelect)
+    template.vm.$emit('update:modelValue', 'template-1')
+    template.vm.$emit('change', 'template-1')
+    await flushPromises()
+    expect(
+      field('服务流程')
+        .getComponent(ElSelect)
+        .findAllComponents(ElOption)
+        .map((option) => option.props('label'))
+    ).toEqual(['前模板流程'])
+    mocks.templateDetail.mockResolvedValueOnce({
+      name: '服务模板',
+      definition: {
+        resource_slots: [{ key: 'service', label: '新服务流程', capability_type: 'WORKFLOW' }]
+      }
+    })
+    template.vm.$emit('update:modelValue', 'template-2')
+    template.vm.$emit('change', 'template-2')
+    await flushPromises()
+    expect(mocks.templateDetail).toHaveBeenLastCalledWith('template-2')
+    expect(field('智能体名称').getComponent(ElInput).props('modelValue')).toBe('服务模板')
+    const slot = field('新服务流程').getComponent(ElSelect)
+    expect(slot.props('disabled')).toBe(true)
+    expect(slot.findAllComponents(ElOption)).toHaveLength(0)
+    expect(document.body.textContent).toContain('可选资源尚未读取')
+    expect(document.body.textContent).not.toContain('前模板流程')
+    expect(button(drawer, '安装并配置').props('disabled')).toBe(false)
+    expect(mocks.installTemplate).not.toHaveBeenCalled()
+  })
   it('手动选模板读取失败时保留名称，取消切换后可重读原模板', async () => {
     mocks.templates.mockResolvedValue({
       items: [

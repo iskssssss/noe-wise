@@ -38,7 +38,7 @@ public record AgentTemplateDefinition(
             @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=com.skillforge.core.shared.web.DecimalStringIdDeserializer.class) Long capabilityVersionId, SkillMountConfigRequest skillConfig,
             String platformToolName, Integer priority) { }
 
-    /** 必需资源槽：机构选择自己的已发布资源；缺少声明绑定时实例未就绪。 */
+    /** 机构资源槽：独立安装可跳过；公共定义部署缺少声明绑定时实例未就绪。 */
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record ResourceSlot(String key, String label, String description, CapabilityType capabilityType) { }
 

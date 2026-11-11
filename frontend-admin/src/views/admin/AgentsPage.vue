@@ -283,11 +283,19 @@
           </ElButton>
         </ElEmpty>
         <p>{{ templateDetail?.description }}</p>
+        <p
+          v-if="resourceSlots.length && !templateResourcesLoaded && !busy"
+          role="status"
+          class="admin-muted"
+        >
+          可选资源尚未读取，可刷新可用资源，或跳过绑定直接安装。
+        </p>
         <ElFormItem v-for="slot in resourceSlots" :key="slot.key" :label="slot.name || slot.key"
           ><ElSelect
             v-described-by="formTipId + '-field-5' + '-' + encodeURIComponent(String(slot.key))"
             :aria-describedby="formTipId + '-field-5' + '-' + encodeURIComponent(String(slot.key))"
             v-model="slot.definitionId"
+            :disabled="!templateResourcesLoaded"
             @change="
               () => {
                 slot.deploymentKey = undefined
@@ -411,7 +419,7 @@
         ><ElButton
           v-if="templateDetail && (resourceSlots.length || delegateSlots.length)"
           :disabled="busy || !!pendingInstallation"
-          @click="refreshTemplateResources"
+          @click="refreshTemplateResources()"
           >刷新可用资源</ElButton
         >
         <ElFormItem v-for="slot in delegateSlots" :key="slot.key" :label="slot.name || slot.key"
@@ -811,6 +819,7 @@ const templateOpen = ref(false),
   loadedTemplateId = ref(''),
   attemptedTemplateId = ref(''),
   templateDetail = ref<AgentTemplate>(),
+  templateResourcesLoaded = ref(false),
   versions = ref<Array<Pick<CapabilityVersion, 'id' | 'definitionId' | 'capabilityType'>>>([]),
   definitions = ref<CapabilityDefinition[]>([])
 const deployments = ref<CapabilityDeployment[]>([]),
@@ -940,7 +949,12 @@ async function loadTemplate() {
   templateDetail.value = undefined
   resourceSlots.value = []
   delegateSlots.value = []
-  await run(async () => {
+  definitions.value = []
+  versions.value = []
+  deployments.value = []
+  instances.value = []
+  templateResourcesLoaded.value = false
+  const loaded = await run(async () => {
     const detail = await api.agents.templateDetail(selected)
     if (
       !active ||
@@ -962,14 +976,6 @@ async function loadTemplate() {
       key: s.key,
       name: s.label ?? s.key
     }))
-    const resources = await readTemplateResources(slots.map((slot) => slot.type))
-    if (
-      !active ||
-      auth.identityVersion !== identity ||
-      !templateOpen.value ||
-      templateId.value !== selected
-    )
-      return
     const keepEditedName =
       selected === automaticTemplateId.value
         ? templateName.value !== automaticTemplateName.value
@@ -978,13 +984,11 @@ async function loadTemplate() {
     if (selected === automaticTemplateId.value) automaticTemplateName.value = detail.name
     resourceSlots.value = slots
     delegateSlots.value = delegates
-    definitions.value = resources.definitions
-    versions.value = resources.versions
-    deployments.value = resources.deployments
-    instances.value = resources.instances
     templateDetail.value = detail
     loadedTemplateId.value = selected
+    return true
   })
+  if (loaded) await refreshTemplateResources(true)
 }
 async function readTemplateResources(types: string[]) {
   if (!types.length) return { definitions: [], versions: [], deployments: [], instances: [] }
@@ -1024,14 +1028,14 @@ async function readTemplateResources(types: string[]) {
     instances: workflows.items
   }
 }
-async function refreshTemplateResources() {
+async function refreshTemplateResources(initial = false) {
   if (busy.value || pendingInstallation.value || !templateDetail.value) return
   const owner = auth.identityVersion
   const template = templateId.value
   await run(async () => {
     const [resources, agents] = await Promise.all([
       readTemplateResources(resourceSlots.value.map((slot) => slot.type)),
-      delegateSlots.value.length ? api.agents.list() : undefined
+      !initial && delegateSlots.value.length ? api.agents.list() : undefined
     ])
     if (
       !active ||
@@ -1045,8 +1049,9 @@ async function refreshTemplateResources() {
     versions.value = resources.versions
     deployments.value = resources.deployments
     instances.value = resources.instances
+    templateResourcesLoaded.value = true
     if (agents) data.value = agents
-    message.success('可用资源已刷新，请核对槽位选择')
+    if (!initial) message.success('可用资源已刷新，请核对槽位选择')
   })
 }
 function templateMount(
@@ -1113,7 +1118,7 @@ async function install() {
   const identity = auth.identityVersion
   const installed = await run(async () => {
     if (!templateId.value) throw Error('请选择模板')
-    if (!templateDetail.value) throw Error('请先成功读取模板及可用资源')
+    if (!templateDetail.value) throw Error('请先成功读取模板详情')
     if (!templateName.value.trim()) throw Error('请输入智能体名称')
     const command = pendingInstallation.value ?? {
       template_id: templateId.value,
