@@ -786,7 +786,7 @@ const formTipId = useId()
                     () => {
                       mount.capability_definition_id = ''
                       mount.tool_deployment_id = null
-                      mount.activation_mode = mount.capability_type === 'SKILL' ? 'ON_DEMAND' : null
+                      mount.activation_mode = null
                     }
                   "
                 >
@@ -834,17 +834,10 @@ const formTipId = useId()
                 </p>
               </ElFormItem>
               <ElFormItem v-if="mount.capability_type === 'SKILL'" label="激活方式">
-                <ElSelect
-                  v-described-by="formTipId + '-field-4' + '-' + mountKey(mount)"
-                  :aria-describedby="formTipId + '-field-4' + '-' + mountKey(mount)"
-                  v-model="mount.activation_mode"
-                >
-                  <ElOption value="ALWAYS" label="始终激活" />
-                  <ElOption value="ON_DEMAND" label="按需激活" />
-                </ElSelect>
+                <span>由技能当前发布配置决定</span>
 
                 <FieldTip :id="formTipId + '-field-4' + '-' + mountKey(mount)"
-                  >选择技能进入执行上下文的方式。</FieldTip
+                  >新执行采用技能当前发布版本，激活方式随该版本生效。</FieldTip
                 >
               </ElFormItem>
               <ElFormItem v-if="mount.capability_type === 'TOOL'" label="工具部署">
@@ -979,7 +972,7 @@ const formTipId = useId()
                   capability_definition_id: '',
                   priority: 0,
                   token_budget: null,
-                  activation_mode: 'ON_DEMAND',
+                  activation_mode: null,
                   tool_deployment_id: null
                 })
               "

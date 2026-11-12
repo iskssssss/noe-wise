@@ -10,6 +10,8 @@ import com.skillforge.core.agent.systemagent.SystemAgentTypes.Mount;
 import com.skillforge.core.capability.CapabilityCatalogDatabaseContext;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class PlatformAgentResourcesTest {
 
@@ -17,7 +19,7 @@ class PlatformAgentResourcesTest {
     void readsSkillInstructionsFromPublishedSkillPackage() {
         PlatformAgentResourceMapper mapper = mock(PlatformAgentResourceMapper.class);
         when(mapper.currentCapability("SKILL", "101")).thenReturn("""
-                {"id":"101","definition_id":"101","name":"reporting","descriptor":{"package":{"files":[
+                {"id":"101","definition_id":"101","name":"reporting","descriptor":{"activation_mode":"ALWAYS","package":{"files":[
                 {"path":"SKILL.md","encoding":"UTF8","content":"# Reporting\\nUse facts."}]}}}
                 """);
         PlatformAgentResources resources = resources(mapper);
@@ -26,6 +28,32 @@ class PlatformAgentResourcesTest {
                 new Mount("SKILL", "101", 10, 256L, "ALWAYS", null)));
 
         assertThat(instructions).isEqualTo("# Reporting\nUse facts.");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"ALWAYS,ON_DEMAND", "ON_DEMAND,ALWAYS", "ALWAYS,", "ON_DEMAND,"})
+    void skillModeComesFromPublicationForDraftPublicationAndExecution(String publishedMode, String requestedMode) {
+        PlatformAgentResourceMapper mapper = mock(PlatformAgentResourceMapper.class);
+        when(mapper.currentCapability("SKILL", "101")).thenReturn("""
+                {"id":"201","definition_id":"101","name":"reporting","descriptor":{
+                  "activation_mode":"%s","package":{"files":[
+                  {"path":"SKILL.md","encoding":"UTF8","content":"# Reporting\\nUse facts."}]}}}
+                """.formatted(publishedMode));
+        var resources = resources(mapper);
+        var requested = new Mount("SKILL", "101", 7, 512L, requestedMode, null);
+        var expected = new Mount("SKILL", "101", 7, 512L, publishedMode, null);
+
+        assertThat(resources.validateDraft(List.of(requested))).containsExactly(expected);
+        assertThat(resources.validate(List.of(requested), false)).containsExactly(expected);
+        var frozen = resources.resolveForExecution(List.of(requested), true).getFirst();
+
+        assertThat(frozen.mount()).isEqualTo(expected);
+        assertThat(frozen.capabilityId()).isEqualTo("101");
+        assertThat(frozen.capabilityVersionId()).isEqualTo("201");
+        assertThat(frozen.descriptor()).containsEntry("activation_mode", publishedMode);
+        assertThat(frozen.skillInstructions()).isEqualTo("# Reporting\nUse facts.");
+        assertThat(requested.activationMode()).isEqualTo(requestedMode);
+        org.mockito.Mockito.verify(mapper, org.mockito.Mockito.times(3)).currentCapability("SKILL", "101");
     }
 
     @Test

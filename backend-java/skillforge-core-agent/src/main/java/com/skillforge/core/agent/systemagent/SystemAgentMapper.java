@@ -13,6 +13,8 @@ public interface SystemAgentMapper {
     int create(@Param("id") String id, @Param("key") String key, @Param("purpose") String purpose,
                @Param("mode") String mode, @Param("config") String config);
     int save(@Param("id") String id, @Param("expected") long expected, @Param("config") String config);
+    int publish(@Param("id") String id, @Param("expected") long expected,
+                @Param("published") long published, @Param("config") String config);
     int state(@Param("id") String id, @Param("expected") long expected,
               @Param("status") String status, @Param("published") Long published);
     int append(@Param("id") String id, @Param("version") long version,

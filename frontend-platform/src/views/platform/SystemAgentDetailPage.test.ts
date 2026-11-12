@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElForm, ElFormItem, ElMessageBox, ElSelect } from 'element-plus'
+import { ElButton, ElForm, ElFormItem, ElInputNumber, ElMessageBox, ElSelect } from 'element-plus'
 import { reactive } from 'vue'
 import SystemAgentDetailPage from './SystemAgentDetailPage.vue'
 import { clearFeedback } from '@skillforge/shared/feedback'
@@ -533,6 +533,122 @@ it('未保存草稿时仍可调试已发布版本，并明确不包含本地修�
     })
   )
   expect(config.props('modelValue').name).toBe('未保存名称')
+})
+
+it('新增技能挂载使用发布配置的激活方式，刷新目录保留草稿并提交空激活覆盖', async () => {
+  const detail = await mocks.detail()
+  detail.execution_mode = 'AGENT_RUN'
+  mocks.options.mockResolvedValue({
+    skills: [{ id: 'skill-1', name: '已发布技能' }],
+    tools: [],
+    deployments: []
+  })
+  mocks.update.mockImplementationOnce(async ({ config }) => ({
+    ...detail,
+    revision: 8,
+    draft: {
+      ...config,
+      mounts: config.mounts.map((item: object) => ({ ...item, activation_mode: 'ALWAYS' }))
+    }
+  }))
+  const page = await openPage()
+  await button('添加挂载').trigger('click')
+  await flushPromises()
+  const field = (label: string) =>
+    page.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+  const activation = field('激活方式')
+  expect(activation.findComponent(ElSelect).exists()).toBe(false)
+  expect(activation.text()).toContain('由技能当前发布配置决定')
+  field('能力（跟随当前发布）').getComponent(ElSelect).vm.$emit('update:modelValue', 'skill-1')
+  field('Token 预算').getComponent(ElInputNumber).vm.$emit('update:modelValue', 384)
+  field('优先级').getComponent(ElInputNumber).vm.$emit('update:modelValue', 5)
+  const form = page.findAllComponents(ElForm).find((item) => item.props('model')?.mounts)!
+  const config = form.props('model') as {
+    system_prompt: string
+    mounts: Array<{
+      capability_definition_id: string
+      token_budget: number
+      priority: number
+      activation_mode: string | null
+    }>
+  }
+  config.system_prompt = '尚未保存的技能提示词'
+  mocks.options.mockResolvedValueOnce({
+    skills: [
+      { id: 'skill-1', name: '已发布技能' },
+      { id: 'skill-2', name: '新发布技能' }
+    ],
+    tools: [],
+    deployments: []
+  })
+  const detailReads = mocks.detail.mock.calls.length
+  await button('刷新能力选项').trigger('click')
+  await flushPromises()
+  expect(mocks.detail).toHaveBeenCalledTimes(detailReads)
+  expect(config.system_prompt).toBe('尚未保存的技能提示词')
+  expect(config.mounts).toEqual([
+    expect.objectContaining({
+      capability_definition_id: 'skill-1',
+      token_budget: 384,
+      priority: 5,
+      activation_mode: null
+    })
+  ])
+  await form.trigger('submit')
+  await flushPromises()
+  expect(mocks.update).toHaveBeenCalledExactlyOnceWith({
+    agent_id: '901',
+    expected_revision: 7,
+    config: expect.objectContaining({
+      system_prompt: '尚未保存的技能提示词',
+      mounts: [
+        expect.objectContaining({
+          capability_type: 'SKILL',
+          capability_definition_id: 'skill-1',
+          token_budget: 384,
+          priority: 5,
+          activation_mode: null
+        })
+      ]
+    })
+  })
+  expect(form.props('model')!.mounts[0]!.activation_mode).toBe('ALWAYS')
+  expect(field('激活方式').findComponent(ElSelect).exists()).toBe(false)
+})
+
+it('已有技能挂载切换类型时清除原激活值，切回技能后仍由发布配置决定', async () => {
+  prepareToolMount()
+  const detail = await mocks.detail()
+  Object.assign(detail.draft.mounts[0], {
+    capability_type: 'SKILL',
+    capability_definition_id: 'skill-1',
+    activation_mode: 'ALWAYS',
+    token_budget: 384
+  })
+  mocks.options.mockResolvedValue({
+    skills: [{ id: 'skill-1', name: '已发布技能' }],
+    tools: [],
+    deployments: []
+  })
+  const page = await openPage()
+  const field = (label: string) =>
+    page.findAllComponents(ElFormItem).find((item) => item.props('label') === label)!
+  const config = page
+    .findAllComponents(ElForm)
+    .find((item) => item.props('model')?.mounts)!
+    .props('model') as { mounts: Array<{ activation_mode: string | null }> }
+  expect(config.mounts[0]!.activation_mode).toBe('ALWAYS')
+  expect(field('激活方式').findComponent(ElSelect).exists()).toBe(false)
+  const type = field('类型').getComponent(ElSelect)
+  for (const value of ['TOOL', 'SKILL']) {
+    type.vm.$emit('update:modelValue', value)
+    type.vm.$emit('change', value)
+    await flushPromises()
+    expect(config.mounts[0]!.activation_mode).toBeNull()
+  }
+  expect(field('激活方式').text()).toContain('由技能当前发布配置决定')
+  expect(field('激活方式').findComponent(ElSelect).exists()).toBe(false)
+  expect(mocks.update).not.toHaveBeenCalled()
 })
 
 it('草稿中独立刷新能力目录，保留已有挂载并提示失效实例', async () => {

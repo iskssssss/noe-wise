@@ -7,6 +7,7 @@
   <select id="findPurpose" resultType="string"><include refid="view"/> WHERE a.purpose=#{purpose}</select>
   <insert id="create">INSERT INTO nw_platform_system_agents(id,agent_key,purpose,execution_mode,draft) VALUES(CAST(#{id} AS bigint),#{key},#{purpose},#{mode},CAST(#{config} AS jsonb))</insert>
   <update id="save">UPDATE nw_platform_system_agents SET draft=CAST(#{config} AS jsonb),revision=revision+1,updated_at=now() WHERE id=CAST(#{id} AS bigint) AND revision=#{expected} AND status!='archived'</update>
+  <update id="publish">UPDATE nw_platform_system_agents SET draft=CAST(#{config} AS jsonb),status='published',published_version=#{published},revision=revision+1,updated_at=now() WHERE id=CAST(#{id} AS bigint) AND revision=#{expected} AND status!='archived'</update>
   <update id="state">UPDATE nw_platform_system_agents SET status=#{status},published_version=#{published},revision=revision+1,updated_at=now() WHERE id=CAST(#{id} AS bigint) AND revision=#{expected}</update>
   <insert id="append">INSERT INTO nw_platform_system_agent_versions(agent_id,version,config,actor_id) VALUES(CAST(#{id} AS bigint),#{version},CAST(#{config} AS jsonb),#{actor})</insert>
   <select id="versions" resultType="string">SELECT jsonb_build_object('version',version,'config',config,'created_at',created_at)::text FROM nw_platform_system_agent_versions WHERE agent_id=CAST(#{id} AS bigint) ORDER BY version DESC</select>

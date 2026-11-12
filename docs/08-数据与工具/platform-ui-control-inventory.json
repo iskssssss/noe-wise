@@ -1001,7 +1001,7 @@
       "consumer": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "component": "FieldTip",
       "source": "frontend-shared/src/components/FieldTip.vue",
-      "source_line": 1088,
+      "source_line": 1081,
       "bindings": {
         ":id": "formTipId + '-field-2' + '-' + mountKey(mount)"
       }
@@ -68377,7 +68377,7 @@
         },
         {
           "event": "change",
-          "expression": "\n                    () => {\n                      mount.capability_definition_id = ''\n                      mount.tool_deployment_id = null\n                      mount.activation_mode = mount.capability_type === 'SKILL' ? 'ON_DEMAND' : null\n                    }\n                  "
+          "expression": "\n                    () => {\n                      mount.capability_definition_id = ''\n                      mount.tool_deployment_id = null\n                      mount.activation_mode = null\n                    }\n                  "
         }
       ],
       "outcome": "local_state_or_field_update",
@@ -68996,224 +68996,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elselect.044",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "G31",
-        "G32",
-        "G33"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElSelect",
-      "source_line": 837,
-      "control_type": "elselect",
-      "label_key_or_text": "",
-      "label_source": "unbound",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts",
-        "v-if=mount.capability_type === 'SKILL"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [
-        {
-          "event": "v-model",
-          "expression": "mount.activation_mode"
-        }
-      ],
-      "outcome": "local_state_or_field_update",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:837",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElSelect",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "label_binding_not_found_in_template",
-        "field_constraints_not_bound_in_template",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.eloption.045",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElOption",
-      "source_line": 842,
-      "control_type": "eloption",
-      "label_key_or_text": "始终激活",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts",
-        "v-if=mount.capability_type === 'SKILL"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:842",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElOption",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.eloption.046",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElOption",
-      "source_line": 843,
-      "control_type": "eloption",
-      "label_key_or_text": "按需激活",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts",
-        "v-if=mount.capability_type === 'SKILL"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:843",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElOption",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.047",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "FieldTip",
-      "source_line": 846,
-      "control_type": "fieldtip",
-      "label_key_or_text": "",
-      "label_source": "unbound",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts",
-        "v-if=mount.capability_type === 'SKILL"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:846",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "admin-domain.FieldTip",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "label_binding_not_found_in_template",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.text.099",
+      "object_id": "P12.SystemAgentDetailPage.text.096",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69223,9 +69006,9 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 847,
+      "source_line": 837,
       "control_type": "display_text",
-      "label_key_or_text": "选择技能进入执行上下文的方式。",
+      "label_key_or_text": "由技能当前发布配置决定",
       "label_source": "template_expression_or_literal",
       "i18n_keys": [],
       "visibility": [
@@ -69254,7 +69037,100 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.048",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.044",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "FieldTip",
+      "source_line": 839,
+      "control_type": "fieldtip",
+      "label_key_or_text": "",
+      "label_source": "unbound",
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts",
+        "v-if=mount.capability_type === 'SKILL"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:839",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "admin-domain.FieldTip",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "label_binding_not_found_in_template",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.text.098",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "A01"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "#text",
+      "source_line": 840,
+      "control_type": "display_text",
+      "label_key_or_text": "新执行采用技能当前发布版本，激活方式随该版本生效。",
+      "label_source": "template_expression_or_literal",
+      "i18n_keys": [],
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts",
+        "v-if=mount.capability_type === 'SKILL"
+      ],
+      "enabled": "display_only_or_parent_action",
+      "repeat": "inherits_parent_loop",
+      "action": [],
+      "outcome": "display",
+      "recovery": [],
+      "contract_sources": [
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md"
+      ],
+      "binding_definition_ref": "template-display-node",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "content_states_visual_and_accessibility_require_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.elformitem.045",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69265,7 +69141,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElFormItem",
-      "source_line": 850,
+      "source_line": 843,
       "control_type": "elformitem",
       "label_key_or_text": "工具部署",
       "label_source": "literal",
@@ -69284,7 +69160,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:850",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:843",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69308,7 +69184,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elselect.049",
+      "object_id": "P12.SystemAgentDetailPage.elselect.046",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69320,7 +69196,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElSelect",
-      "source_line": 851,
+      "source_line": 844,
       "control_type": "elselect",
       "label_key_or_text": "d.tool_definition_id === mount.capability_definition_id )\" :key=\"deployment.id\" :value=\"deployment.id\" :label=\"deployment.name + ' · ' + deployment.environment\"",
       "label_source": "literal",
@@ -69344,7 +69220,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:851",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:844",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69369,7 +69245,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.dynamic.102",
+      "object_id": "P12.SystemAgentDetailPage.dynamic.101",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69377,7 +69253,7 @@
       ],
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElOption",
-      "source_line": 856,
+      "source_line": 849,
       "control_type": "dynamic_template_entry",
       "label_key_or_text": "deployment.name + ' · ' + deployment.environment",
       "label_source": "template_binding",
@@ -69408,7 +69284,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eloption.050",
+      "object_id": "P12.SystemAgentDetailPage.eloption.047",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69417,7 +69293,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElOption",
-      "source_line": 856,
+      "source_line": 849,
       "control_type": "eloption",
       "label_key_or_text": "deployment.name + ' · ' + deployment.environment",
       "label_source": "literal",
@@ -69437,7 +69313,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:856",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:849",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69461,7 +69337,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.051",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.048",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69470,7 +69346,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "FieldTip",
-      "source_line": 866,
+      "source_line": 859,
       "control_type": "fieldtip",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -69489,7 +69365,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:866",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:859",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69513,7 +69389,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.104",
+      "object_id": "P12.SystemAgentDetailPage.text.103",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69523,7 +69399,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 867,
+      "source_line": 860,
       "control_type": "display_text",
       "label_key_or_text": "仅有一个可用部署时自动选择；多个部署请自行选择。测试部署仅供调试，生产运行需使用生产部署。",
       "label_source": "template_expression_or_literal",
@@ -69554,7 +69430,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.106",
+      "object_id": "P12.SystemAgentDetailPage.text.105",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69564,7 +69440,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 881,
+      "source_line": 874,
       "control_type": "display_text",
       "label_key_or_text": "当前服务实例不在可挂载目录中；原选择已保留，请刷新或重新选择。",
       "label_source": "template_expression_or_literal",
@@ -69596,7 +69472,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.052",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.049",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69607,7 +69483,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 884,
+      "source_line": 877,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -69632,7 +69508,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:884",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:877",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69656,7 +69532,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.108",
+      "object_id": "P12.SystemAgentDetailPage.text.107",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69666,7 +69542,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 896,
+      "source_line": 889,
       "control_type": "display_text",
       "label_key_or_text": "配置此工具部署",
       "label_source": "template_expression_or_literal",
@@ -69698,7 +69574,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.110",
+      "object_id": "P12.SystemAgentDetailPage.text.109",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69708,7 +69584,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 907,
+      "source_line": 900,
       "control_type": "display_text",
       "label_key_or_text": "配置并发布部署需要系统智能体读取、工具部署读取、创建、发布及能力读取权限。",
       "label_source": "template_expression_or_literal",
@@ -69740,7 +69616,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.113",
+      "object_id": "P12.SystemAgentDetailPage.text.112",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69750,7 +69626,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 916,
+      "source_line": 909,
       "control_type": "display_text",
       "label_key_or_text": "已发布部署：{{ toolSetup.published.name }}（{{ toolSetup.published.id }} · {{ toolSetup.published.environment === 'PRODUCTION' ? '生产' : '测试' }}）。{{ mount.tool_deployment_id === toolSetup.published.id ? '已选择，请保存智能体草稿。' : '选择后仍需保存智能体草稿。' }}",
       "label_source": "template_expression_or_literal",
@@ -69782,7 +69658,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.115",
+      "object_id": "P12.SystemAgentDetailPage.text.114",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69792,7 +69668,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 924,
+      "source_line": 917,
       "control_type": "display_text",
       "label_key_or_text": "{{ toolSetup.error }}",
       "label_source": "template_expression_or_literal",
@@ -69825,7 +69701,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.053",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.050",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69836,7 +69712,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 925,
+      "source_line": 918,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -69862,7 +69738,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:925",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:918",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69886,7 +69762,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.117",
+      "object_id": "P12.SystemAgentDetailPage.text.116",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69896,7 +69772,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 931,
+      "source_line": 924,
       "control_type": "display_text",
       "label_key_or_text": "重新读取可挂载部署",
       "label_source": "template_expression_or_literal",
@@ -69929,7 +69805,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.054",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.051",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -69940,7 +69816,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 933,
+      "source_line": 926,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -69966,7 +69842,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:933",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:926",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -69990,7 +69866,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.119",
+      "object_id": "P12.SystemAgentDetailPage.text.118",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70000,7 +69876,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 934,
+      "source_line": 927,
       "control_type": "display_text",
       "label_key_or_text": "使用此部署",
       "label_source": "template_expression_or_literal",
@@ -70033,7 +69909,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elcollapse.055",
+      "object_id": "P12.SystemAgentDetailPage.elcollapse.052",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70042,7 +69918,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCollapse",
-      "source_line": 939,
+      "source_line": 932,
       "control_type": "elcollapse",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70060,7 +69936,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:939",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:932",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70084,7 +69960,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elcollapseitem.056",
+      "object_id": "P12.SystemAgentDetailPage.elcollapseitem.053",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70093,7 +69969,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCollapseItem",
-      "source_line": 940,
+      "source_line": 933,
       "control_type": "elcollapseitem",
       "label_key_or_text": "`挂载额度与顺序 · 优先级 ${mount.priority} · ${mount.token_budget == null ? '未指定 Token 预算' : mount.token_budget + ' Tokens'}`",
       "label_source": "literal",
@@ -70111,7 +69987,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:940",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:933",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70135,7 +70011,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.057",
+      "object_id": "P12.SystemAgentDetailPage.elformitem.054",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70144,7 +70020,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElFormItem",
-      "source_line": 944,
+      "source_line": 937,
       "control_type": "elformitem",
       "label_key_or_text": "优先级",
       "label_source": "literal",
@@ -70162,7 +70038,209 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:944",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:937",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElFormItem",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "literal_label_requires_i18n_review",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.elinputnumber.055",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "G31",
+        "G32",
+        "G33"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElInputNumber",
+      "source_line": 938,
+      "control_type": "elinputnumber",
+      "label_key_or_text": "",
+      "label_source": "unbound",
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [
+        {
+          "event": "v-model",
+          "expression": "mount.priority"
+        }
+      ],
+      "outcome": "local_state_or_field_update",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:938",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElInputNumber",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "label_binding_not_found_in_template",
+        "field_constraints_not_bound_in_template",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.056",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "FieldTip",
+      "source_line": 945,
+      "control_type": "fieldtip",
+      "label_key_or_text": "",
+      "label_source": "unbound",
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:945",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "admin-domain.FieldTip",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "label_binding_not_found_in_template",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.text.125",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "A01"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "#text",
+      "source_line": 946,
+      "control_type": "display_text",
+      "label_key_or_text": "设置挂载的装配优先级。",
+      "label_source": "template_expression_or_literal",
+      "i18n_keys": [],
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts"
+      ],
+      "enabled": "display_only_or_parent_action",
+      "repeat": "inherits_parent_loop",
+      "action": [],
+      "outcome": "display",
+      "recovery": [],
+      "contract_sources": [
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md"
+      ],
+      "binding_definition_ref": "template-display-node",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "content_states_visual_and_accessibility_require_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.elformitem.057",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElFormItem",
+      "source_line": 949,
+      "control_type": "elformitem",
+      "label_key_or_text": "Token 预算",
+      "label_source": "literal",
+      "visibility": [
+        "v-else-if=form",
+        "v-for=(mount, index) in form.mounts"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:949",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70198,209 +70276,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElInputNumber",
-      "source_line": 945,
-      "control_type": "elinputnumber",
-      "label_key_or_text": "",
-      "label_source": "unbound",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [
-        {
-          "event": "v-model",
-          "expression": "mount.priority"
-        }
-      ],
-      "outcome": "local_state_or_field_update",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:945",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElInputNumber",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "label_binding_not_found_in_template",
-        "field_constraints_not_bound_in_template",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.059",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "FieldTip",
-      "source_line": 952,
-      "control_type": "fieldtip",
-      "label_key_or_text": "",
-      "label_source": "unbound",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:952",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "admin-domain.FieldTip",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "label_binding_not_found_in_template",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.text.126",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "A01"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "#text",
-      "source_line": 953,
-      "control_type": "display_text",
-      "label_key_or_text": "设置挂载的装配优先级。",
-      "label_source": "template_expression_or_literal",
-      "i18n_keys": [],
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts"
-      ],
-      "enabled": "display_only_or_parent_action",
-      "repeat": "inherits_parent_loop",
-      "action": [],
-      "outcome": "display",
-      "recovery": [],
-      "contract_sources": [
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md"
-      ],
-      "binding_definition_ref": "template-display-node",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "content_states_visual_and_accessibility_require_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.060",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElFormItem",
-      "source_line": 956,
-      "control_type": "elformitem",
-      "label_key_or_text": "Token 预算",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form",
-        "v-for=(mount, index) in form.mounts"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:956",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElFormItem",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.elinputnumber.061",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "G31",
-        "G32",
-        "G33"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElInputNumber",
-      "source_line": 957,
+      "source_line": 950,
       "control_type": "elinputnumber",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70423,7 +70299,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:957",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:950",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70447,7 +70323,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.062",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.059",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70456,7 +70332,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "FieldTip",
-      "source_line": 965,
+      "source_line": 958,
       "control_type": "fieldtip",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70474,7 +70350,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:965",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:958",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70498,7 +70374,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.130",
+      "object_id": "P12.SystemAgentDetailPage.text.129",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70508,7 +70384,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 966,
+      "source_line": 959,
       "control_type": "display_text",
       "label_key_or_text": "限制该技能挂载使用的 Token 额度，不代表整次执行的累计预算。",
       "label_source": "template_expression_or_literal",
@@ -70538,7 +70414,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.063",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.060",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70547,7 +70423,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 972,
+      "source_line": 965,
       "control_type": "elbutton",
       "label_key_or_text": "移除挂载",
       "label_source": "literal",
@@ -70570,7 +70446,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:972",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:965",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70594,7 +70470,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.132",
+      "object_id": "P12.SystemAgentDetailPage.text.131",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70604,7 +70480,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 972,
+      "source_line": 965,
       "control_type": "display_text",
       "label_key_or_text": "移除挂载",
       "label_source": "template_expression_or_literal",
@@ -70634,7 +70510,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.064",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.061",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70643,7 +70519,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 975,
+      "source_line": 968,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70655,7 +70531,7 @@
       "action": [
         {
           "event": "click",
-          "expression": "\n                form.mounts.push({\n                  capability_type: 'SKILL',\n                  capability_definition_id: '',\n                  priority: 0,\n                  token_budget: null,\n                  activation_mode: 'ON_DEMAND',\n                  tool_deployment_id: null\n                })\n              "
+          "expression": "\n                form.mounts.push({\n                  capability_type: 'SKILL',\n                  capability_definition_id: '',\n                  priority: 0,\n                  token_budget: null,\n                  activation_mode: null,\n                  tool_deployment_id: null\n                })\n              "
         }
       ],
       "outcome": "page_handler_or_business_action",
@@ -70665,7 +70541,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:975",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:968",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70689,7 +70565,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.135",
+      "object_id": "P12.SystemAgentDetailPage.text.134",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70699,7 +70575,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 986,
+      "source_line": 979,
       "control_type": "display_text",
       "label_key_or_text": "添加挂载",
       "label_source": "template_expression_or_literal",
@@ -70728,7 +70604,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.065",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.062",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70739,7 +70615,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 988,
+      "source_line": 981,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70757,7 +70633,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:988",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:981",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70782,7 +70658,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.137",
+      "object_id": "P12.SystemAgentDetailPage.text.136",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70792,7 +70668,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 993,
+      "source_line": 986,
       "control_type": "display_text",
       "label_key_or_text": "保存草稿",
       "label_source": "template_expression_or_literal",
@@ -70822,7 +70698,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.066",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.063",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70833,7 +70709,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 995,
+      "source_line": 988,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -70856,7 +70732,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:995",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:988",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70880,7 +70756,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.139",
+      "object_id": "P12.SystemAgentDetailPage.text.138",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70890,7 +70766,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1007,
+      "source_line": 1000,
       "control_type": "display_text",
       "label_key_or_text": "保存并继续发布",
       "label_source": "template_expression_or_literal",
@@ -70920,7 +70796,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eltabpane.067",
+      "object_id": "P12.SystemAgentDetailPage.eltabpane.064",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70929,7 +70805,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTabPane",
-      "source_line": 1012,
+      "source_line": 1005,
       "control_type": "eltabpane",
       "label_key_or_text": "调试与运行",
       "label_source": "literal",
@@ -70946,7 +70822,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1012",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1005",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -70970,7 +70846,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elform.068",
+      "object_id": "P12.SystemAgentDetailPage.elform.065",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -70979,7 +70855,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElForm",
-      "source_line": 1013,
+      "source_line": 1006,
       "control_type": "elform",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71005,7 +70881,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1013",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1006",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71029,7 +70905,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.069",
+      "object_id": "P12.SystemAgentDetailPage.elformitem.066",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71038,7 +70914,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElFormItem",
-      "source_line": 1025,
+      "source_line": 1018,
       "control_type": "elformitem",
       "label_key_or_text": "调试来源",
       "label_source": "literal",
@@ -71055,7 +70931,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1025",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1018",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71079,7 +70955,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elradiogroup.070",
+      "object_id": "P12.SystemAgentDetailPage.elradiogroup.067",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71091,7 +70967,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElRadioGroup",
-      "source_line": 1026,
+      "source_line": 1019,
       "control_type": "elradiogroup",
       "label_key_or_text": "已保存草稿 已发布版本",
       "label_source": "literal",
@@ -71113,7 +70989,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1026",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1019",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71137,7 +71013,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elradio.071",
+      "object_id": "P12.SystemAgentDetailPage.elradio.068",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71146,7 +71022,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElRadio",
-      "source_line": 1031,
+      "source_line": 1024,
       "control_type": "elradio",
       "label_key_or_text": "已保存草稿",
       "label_source": "literal",
@@ -71163,7 +71039,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1031",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1024",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71187,7 +71063,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.145",
+      "object_id": "P12.SystemAgentDetailPage.text.144",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71197,7 +71073,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1031,
+      "source_line": 1024,
       "control_type": "display_text",
       "label_key_or_text": "已保存草稿",
       "label_source": "template_expression_or_literal",
@@ -71226,7 +71102,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elradio.072",
+      "object_id": "P12.SystemAgentDetailPage.elradio.069",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71235,7 +71111,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElRadio",
-      "source_line": 1032,
+      "source_line": 1025,
       "control_type": "elradio",
       "label_key_or_text": "已发布版本",
       "label_source": "literal",
@@ -71252,7 +71128,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1032",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1025",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71276,7 +71152,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.147",
+      "object_id": "P12.SystemAgentDetailPage.text.146",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71286,7 +71162,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1032,
+      "source_line": 1025,
       "control_type": "display_text",
       "label_key_or_text": "已发布版本",
       "label_source": "template_expression_or_literal",
@@ -71315,7 +71191,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.073",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.070",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71324,7 +71200,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "FieldTip",
-      "source_line": 1035,
+      "source_line": 1028,
       "control_type": "fieldtip",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71341,7 +71217,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1035",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1028",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71365,7 +71241,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.149",
+      "object_id": "P12.SystemAgentDetailPage.text.148",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71375,7 +71251,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1036,
+      "source_line": 1029,
       "control_type": "display_text",
       "label_key_or_text": "选择调试当前草稿或已发布配置，核对实际测试来源。",
       "label_source": "template_expression_or_literal",
@@ -71404,7 +71280,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.151",
+      "object_id": "P12.SystemAgentDetailPage.text.150",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71414,7 +71290,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1039,
+      "source_line": 1032,
       "control_type": "display_text",
       "label_key_or_text": "尚未发布版本，当前只能调试已保存草稿。",
       "label_source": "template_expression_or_literal",
@@ -71444,7 +71320,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.153",
+      "object_id": "P12.SystemAgentDetailPage.text.152",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71454,7 +71330,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1042,
+      "source_line": 1035,
       "control_type": "display_text",
       "label_key_or_text": "本次调试使用已发布版本，不包含当前未保存的草稿修改。",
       "label_source": "template_expression_or_literal",
@@ -71484,7 +71360,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elalert.074",
+      "object_id": "P12.SystemAgentDetailPage.elalert.071",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71498,7 +71374,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElAlert",
-      "source_line": 1045,
+      "source_line": 1038,
       "control_type": "elalert",
       "label_key_or_text": "记忆提取调试需要完整 JSON：schemaVersion 为 2，包含用户、带原文及时间的来源和已有事实。请核对示例后编辑本次真实输入。",
       "label_source": "literal",
@@ -71516,7 +71392,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1045",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1038",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71540,7 +71416,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.075",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.072",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71551,7 +71427,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1051,
+      "source_line": 1044,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71574,7 +71450,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1051",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1044",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71598,7 +71474,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.156",
+      "object_id": "P12.SystemAgentDetailPage.text.155",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71608,7 +71484,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1055,
+      "source_line": 1048,
       "control_type": "display_text",
       "label_key_or_text": "填入记忆输入示例",
       "label_source": "template_expression_or_literal",
@@ -71638,7 +71514,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.076",
+      "object_id": "P12.SystemAgentDetailPage.elformitem.073",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71647,7 +71523,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElFormItem",
-      "source_line": 1057,
+      "source_line": 1050,
       "control_type": "elformitem",
       "label_key_or_text": "调试输入",
       "label_source": "literal",
@@ -71664,7 +71540,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1057",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1050",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71688,7 +71564,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elinput.077",
+      "object_id": "P12.SystemAgentDetailPage.elinput.074",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71700,7 +71576,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElInput",
-      "source_line": 1058,
+      "source_line": 1051,
       "control_type": "elinput",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71722,7 +71598,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1058",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1051",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71747,7 +71623,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.078",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.075",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71756,7 +71632,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "FieldTip",
-      "source_line": 1066,
+      "source_line": 1059,
       "control_type": "fieldtip",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71773,7 +71649,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1066",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1059",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71797,7 +71673,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.160",
+      "object_id": "P12.SystemAgentDetailPage.text.159",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71807,7 +71683,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1067,
+      "source_line": 1060,
       "control_type": "display_text",
       "label_key_or_text": "填写本次调试的业务输入，提交后会发起真实执行。",
       "label_source": "template_expression_or_literal",
@@ -71836,7 +71712,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.079",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.076",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71847,7 +71723,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1070,
+      "source_line": 1063,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -71865,7 +71741,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1070",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1063",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71890,7 +71766,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.162",
+      "object_id": "P12.SystemAgentDetailPage.text.161",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71900,7 +71776,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1076,
+      "source_line": 1069,
       "control_type": "display_text",
       "label_key_or_text": "运行调试",
       "label_source": "template_expression_or_literal",
@@ -71930,7 +71806,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elform.080",
+      "object_id": "P12.SystemAgentDetailPage.elform.077",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71939,7 +71815,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElForm",
-      "source_line": 1079,
+      "source_line": 1072,
       "control_type": "elform",
       "label_key_or_text": "离开页面后可用原操作标识只读查询，不会重新发起调试。 查询原调试",
       "label_source": "literal",
@@ -71961,7 +71837,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1079",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1072",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -71985,7 +71861,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elformitem.081",
+      "object_id": "P12.SystemAgentDetailPage.elformitem.078",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -71994,7 +71870,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElFormItem",
-      "source_line": 1080,
+      "source_line": 1073,
       "control_type": "elformitem",
       "label_key_or_text": "按操作标识查询原调试",
       "label_source": "literal",
@@ -72011,7 +71887,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1080",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1073",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72035,7 +71911,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elinput.082",
+      "object_id": "P12.SystemAgentDetailPage.elinput.079",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72047,7 +71923,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElInput",
-      "source_line": 1081,
+      "source_line": 1074,
       "control_type": "elinput",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -72069,7 +71945,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1081",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1074",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72093,7 +71969,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.fieldtip.083",
+      "object_id": "P12.SystemAgentDetailPage.fieldtip.080",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72102,7 +71978,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "FieldTip",
-      "source_line": 1088,
+      "source_line": 1081,
       "control_type": "fieldtip",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -72119,7 +71995,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1088",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1081",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72143,7 +72019,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.167",
+      "object_id": "P12.SystemAgentDetailPage.text.166",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72153,7 +72029,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1089,
+      "source_line": 1082,
       "control_type": "display_text",
       "label_key_or_text": "离开页面后可用原操作标识只读查询，不会重新发起调试。",
       "label_source": "template_expression_or_literal",
@@ -72182,7 +72058,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.084",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.081",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72191,7 +72067,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1092,
+      "source_line": 1085,
       "control_type": "elbutton",
       "label_key_or_text": "查询原调试",
       "label_source": "literal",
@@ -72208,7 +72084,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1092",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1085",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72233,7 +72109,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.169",
+      "object_id": "P12.SystemAgentDetailPage.text.168",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72243,7 +72119,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1092,
+      "source_line": 1085,
       "control_type": "display_text",
       "label_key_or_text": "查询原调试",
       "label_source": "template_expression_or_literal",
@@ -72272,7 +72148,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eltable.085",
+      "object_id": "P12.SystemAgentDetailPage.eltable.082",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72285,7 +72161,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTable",
-      "source_line": 1094,
+      "source_line": 1087,
       "control_type": "eltable",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -72302,7 +72178,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1094",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1087",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72326,7 +72202,100 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.table_column.086",
+      "object_id": "P12.SystemAgentDetailPage.table_column.083",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "F09",
+        "F11",
+        "F26",
+        "F39"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElTableColumn",
+      "source_line": 1093,
+      "control_type": "table_column",
+      "label_key_or_text": "状态",
+      "label_source": "literal",
+      "visibility": [
+        "v-else-if=form"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1093",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElTableColumn",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "literal_label_requires_i18n_review",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.text.172",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "A01"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "#text",
+      "source_line": 1094,
+      "control_type": "display_text",
+      "label_key_or_text": "{{ row.error_code === 'system_agent_outcome_unknown' ? '结果未知' : statusLabel(row.status) }}",
+      "label_source": "template_expression_or_literal",
+      "i18n_keys": [],
+      "visibility": [
+        "v-else-if=form"
+      ],
+      "enabled": "display_only_or_parent_action",
+      "repeat": "inherits_parent_loop",
+      "action": [],
+      "outcome": "display",
+      "recovery": [],
+      "contract_sources": [
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md"
+      ],
+      "binding_definition_ref": "template-display-node",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "content_states_visual_and_accessibility_require_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.table_column.084",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72341,7 +72310,7 @@
       "source_symbol": "ElTableColumn",
       "source_line": 1100,
       "control_type": "table_column",
-      "label_key_or_text": "状态",
+      "label_key_or_text": "耗时 ms",
       "label_source": "literal",
       "visibility": [
         "v-else-if=form"
@@ -72380,7 +72349,169 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.173",
+      "object_id": "P12.SystemAgentDetailPage.table_column.085",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "F09",
+        "F11",
+        "F26",
+        "F39"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElTableColumn",
+      "source_line": 1101,
+      "control_type": "table_column",
+      "label_key_or_text": "输入 Token",
+      "label_source": "literal",
+      "visibility": [
+        "v-else-if=form"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1101",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElTableColumn",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "literal_label_requires_i18n_review",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.table_column.086",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "F09",
+        "F11",
+        "F26",
+        "F39"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElTableColumn",
+      "source_line": 1102,
+      "control_type": "table_column",
+      "label_key_or_text": "输出 Token",
+      "label_source": "literal",
+      "visibility": [
+        "v-else-if=form"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1102",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElTableColumn",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "literal_label_requires_i18n_review",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.table_column.087",
+      "page_id": "P12",
+      "page_title": "系统智能体详情",
+      "spec_ids": [
+        "P12",
+        "F09",
+        "F11",
+        "F26",
+        "F39"
+      ],
+      "spec_binding_status": "candidate_requires_review",
+      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
+      "source_symbol": "ElTableColumn",
+      "source_line": 1103,
+      "control_type": "table_column",
+      "label_key_or_text": "结果",
+      "label_source": "literal",
+      "visibility": [
+        "v-else-if=form"
+      ],
+      "enabled": "not_declared",
+      "repeat": "",
+      "action": [],
+      "outcome": "display_or_state_binding",
+      "recovery": [],
+      "contract_sources": [
+        "docs/03-规范与术语/06-后台逐控件规格.md",
+        "docs/02-架构与设计/09-前端视觉与交互规范.md",
+        "docs/02-架构与设计/08-前端共享层设计.md",
+        "docs/02-架构与设计/13-前端组件库.md",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1103",
+        "frontend-platform/src/api/index.ts#api.admin.models.list",
+        "frontend-platform/src/api/index.ts#api.systemAgents",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
+        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
+        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
+        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
+        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
+        "frontend-platform/src/api/index.ts#api.systemAgents.update",
+        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
+      ],
+      "binding_definition_ref": "element-plus.ElTableColumn",
+      "verification": {
+        "status": "not_executed",
+        "evidence": [],
+        "test_ids": []
+      },
+      "gaps": [
+        "literal_label_requires_i18n_review",
+        "dynamic_schema_binding_requires_contract_review"
+      ],
+      "consumed_by": []
+    },
+    {
+      "object_id": "P12.SystemAgentDetailPage.text.179",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72390,9 +72521,9 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1101,
+      "source_line": 1105,
       "control_type": "display_text",
-      "label_key_or_text": "{{ row.error_code === 'system_agent_outcome_unknown' ? '结果未知' : statusLabel(row.status) }}",
+      "label_key_or_text": "{{ row.output }}",
       "label_source": "template_expression_or_literal",
       "i18n_keys": [],
       "visibility": [
@@ -72419,60 +72550,6 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.table_column.087",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "F09",
-        "F11",
-        "F26",
-        "F39"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElTableColumn",
-      "source_line": 1107,
-      "control_type": "table_column",
-      "label_key_or_text": "耗时 ms",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1107",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElTableColumn",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
       "object_id": "P12.SystemAgentDetailPage.table_column.088",
       "page_id": "P12",
       "page_title": "系统智能体详情",
@@ -72488,7 +72565,7 @@
       "source_symbol": "ElTableColumn",
       "source_line": 1108,
       "control_type": "table_column",
-      "label_key_or_text": "输入 Token",
+      "label_key_or_text": "错误",
       "label_source": "literal",
       "visibility": [
         "v-else-if=form"
@@ -72540,63 +72617,9 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTableColumn",
-      "source_line": 1109,
-      "control_type": "table_column",
-      "label_key_or_text": "输出 Token",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1109",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElTableColumn",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.table_column.090",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "F09",
-        "F11",
-        "F26",
-        "F39"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElTableColumn",
       "source_line": 1110,
       "control_type": "table_column",
-      "label_key_or_text": "结果",
+      "label_key_or_text": "时间",
       "label_source": "literal",
       "visibility": [
         "v-else-if=form"
@@ -72635,7 +72658,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.180",
+      "object_id": "P12.SystemAgentDetailPage.text.183",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72645,154 +72668,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1112,
-      "control_type": "display_text",
-      "label_key_or_text": "{{ row.output }}",
-      "label_source": "template_expression_or_literal",
-      "i18n_keys": [],
-      "visibility": [
-        "v-else-if=form"
-      ],
-      "enabled": "display_only_or_parent_action",
-      "repeat": "inherits_parent_loop",
-      "action": [],
-      "outcome": "display",
-      "recovery": [],
-      "contract_sources": [
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md"
-      ],
-      "binding_definition_ref": "template-display-node",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "content_states_visual_and_accessibility_require_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.table_column.091",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "F09",
-        "F11",
-        "F26",
-        "F39"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElTableColumn",
-      "source_line": 1115,
-      "control_type": "table_column",
-      "label_key_or_text": "错误",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1115",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElTableColumn",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.table_column.092",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "F09",
-        "F11",
-        "F26",
-        "F39"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "ElTableColumn",
-      "source_line": 1117,
-      "control_type": "table_column",
-      "label_key_or_text": "时间",
-      "label_source": "literal",
-      "visibility": [
-        "v-else-if=form"
-      ],
-      "enabled": "not_declared",
-      "repeat": "",
-      "action": [],
-      "outcome": "display_or_state_binding",
-      "recovery": [],
-      "contract_sources": [
-        "docs/03-规范与术语/06-后台逐控件规格.md",
-        "docs/02-架构与设计/09-前端视觉与交互规范.md",
-        "docs/02-架构与设计/08-前端共享层设计.md",
-        "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1117",
-        "frontend-platform/src/api/index.ts#api.admin.models.list",
-        "frontend-platform/src/api/index.ts#api.systemAgents",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debug",
-        "frontend-platform/src/api/index.ts#api.systemAgents.debugResult",
-        "frontend-platform/src/api/index.ts#api.systemAgents.detail",
-        "frontend-platform/src/api/index.ts#api.systemAgents.mountOptions",
-        "frontend-platform/src/api/index.ts#api.systemAgents.runs",
-        "frontend-platform/src/api/index.ts#api.systemAgents.update",
-        "frontend-platform/src/api/index.ts#api.systemAgents.versions"
-      ],
-      "binding_definition_ref": "element-plus.ElTableColumn",
-      "verification": {
-        "status": "not_executed",
-        "evidence": [],
-        "test_ids": []
-      },
-      "gaps": [
-        "literal_label_requires_i18n_review",
-        "dynamic_schema_binding_requires_contract_review"
-      ],
-      "consumed_by": []
-    },
-    {
-      "object_id": "P12.SystemAgentDetailPage.text.184",
-      "page_id": "P12",
-      "page_title": "系统智能体详情",
-      "spec_ids": [
-        "P12",
-        "A01"
-      ],
-      "spec_binding_status": "candidate_requires_review",
-      "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
-      "source_symbol": "#text",
-      "source_line": 1118,
+      "source_line": 1111,
       "control_type": "display_text",
       "label_key_or_text": "{{ formatDateTime(row.created_at) }}",
       "label_source": "template_expression_or_literal",
@@ -72821,7 +72697,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.table_column.093",
+      "object_id": "P12.SystemAgentDetailPage.table_column.090",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72834,7 +72710,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTableColumn",
-      "source_line": 1120,
+      "source_line": 1113,
       "control_type": "table_column",
       "label_key_or_text": "操作",
       "label_source": "literal",
@@ -72851,7 +72727,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1120",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1113",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72875,7 +72751,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.094",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.091",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72884,7 +72760,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1122,
+      "source_line": 1115,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -72906,7 +72782,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1122",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1115",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -72930,7 +72806,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.188",
+      "object_id": "P12.SystemAgentDetailPage.text.187",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72940,7 +72816,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1123,
+      "source_line": 1116,
       "control_type": "display_text",
       "label_key_or_text": "查看结果",
       "label_source": "template_expression_or_literal",
@@ -72969,7 +72845,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eltabpane.095",
+      "object_id": "P12.SystemAgentDetailPage.eltabpane.092",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -72978,7 +72854,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTabPane",
-      "source_line": 1129,
+      "source_line": 1122,
       "control_type": "eltabpane",
       "label_key_or_text": "发布历史",
       "label_source": "literal",
@@ -72995,7 +72871,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1129",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1122",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73019,7 +72895,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.dynamic.190",
+      "object_id": "P12.SystemAgentDetailPage.dynamic.189",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73027,7 +72903,7 @@
       ],
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCard",
-      "source_line": 1130,
+      "source_line": 1123,
       "control_type": "dynamic_template_entry",
       "label_key_or_text": "",
       "label_source": "template_binding",
@@ -73056,7 +72932,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elcard.096",
+      "object_id": "P12.SystemAgentDetailPage.elcard.093",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73065,7 +72941,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCard",
-      "source_line": 1130,
+      "source_line": 1123,
       "control_type": "elcard",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -73083,7 +72959,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1130",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1123",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73107,7 +72983,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.192",
+      "object_id": "P12.SystemAgentDetailPage.text.191",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73117,7 +72993,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1131,
+      "source_line": 1124,
       "control_type": "display_text",
       "label_key_or_text": "版本 {{ version.version }} · {{ version.config.name }}",
       "label_source": "template_expression_or_literal",
@@ -73147,7 +73023,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.194",
+      "object_id": "P12.SystemAgentDetailPage.text.193",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73157,7 +73033,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1132,
+      "source_line": 1125,
       "control_type": "display_text",
       "label_key_or_text": "{{ formatDateTime(version.created_at) }}",
       "label_source": "template_expression_or_literal",
@@ -73187,7 +73063,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eltag.097",
+      "object_id": "P12.SystemAgentDetailPage.eltag.094",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73198,7 +73074,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElTag",
-      "source_line": 1133,
+      "source_line": 1126,
       "control_type": "eltag",
       "label_key_or_text": "当前发布",
       "label_source": "literal",
@@ -73217,7 +73093,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1133",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1126",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73241,7 +73117,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.196",
+      "object_id": "P12.SystemAgentDetailPage.text.195",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73251,7 +73127,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1133,
+      "source_line": 1126,
       "control_type": "display_text",
       "label_key_or_text": "当前发布",
       "label_source": "template_expression_or_literal",
@@ -73282,7 +73158,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elcollapse.098",
+      "object_id": "P12.SystemAgentDetailPage.elcollapse.095",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73291,7 +73167,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCollapse",
-      "source_line": 1134,
+      "source_line": 1127,
       "control_type": "elcollapse",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -73309,7 +73185,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1134",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1127",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73333,7 +73209,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elcollapseitem.099",
+      "object_id": "P12.SystemAgentDetailPage.elcollapseitem.096",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73342,7 +73218,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElCollapseItem",
-      "source_line": 1135,
+      "source_line": 1128,
       "control_type": "elcollapseitem",
       "label_key_or_text": "完整发布配置",
       "label_source": "literal",
@@ -73360,7 +73236,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1135",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1128",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73384,7 +73260,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.200",
+      "object_id": "P12.SystemAgentDetailPage.text.199",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73394,7 +73270,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1136,
+      "source_line": 1129,
       "control_type": "display_text",
       "label_key_or_text": "{{ JSON.stringify(version.config, null, 2) }}",
       "label_source": "template_expression_or_literal",
@@ -73424,7 +73300,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.100",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.097",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73435,7 +73311,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1139,
+      "source_line": 1132,
       "control_type": "elbutton",
       "label_key_or_text": "",
       "label_source": "unbound",
@@ -73459,7 +73335,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1139",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1132",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73483,7 +73359,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.202",
+      "object_id": "P12.SystemAgentDetailPage.text.201",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73493,7 +73369,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1145,
+      "source_line": 1138,
       "control_type": "display_text",
       "label_key_or_text": "恢复为草稿",
       "label_source": "template_expression_or_literal",
@@ -73524,7 +73400,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.eldrawer.101",
+      "object_id": "P12.SystemAgentDetailPage.eldrawer.098",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73537,7 +73413,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElDrawer",
-      "source_line": 1150,
+      "source_line": 1143,
       "control_type": "eldrawer",
       "label_key_or_text": "调试运行结果",
       "label_source": "literal",
@@ -73563,7 +73439,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1150",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1143",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73587,7 +73463,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.206",
+      "object_id": "P12.SystemAgentDetailPage.text.205",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73597,7 +73473,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1158,
+      "source_line": 1151,
       "control_type": "display_text",
       "label_key_or_text": "状态：{{ selectedRun.error_code === 'system_agent_outcome_unknown' ? '结果未知' : statusLabel(selectedRun.status) }}",
       "label_source": "template_expression_or_literal",
@@ -73626,7 +73502,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.208",
+      "object_id": "P12.SystemAgentDetailPage.text.207",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73636,7 +73512,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1165,
+      "source_line": 1158,
       "control_type": "display_text",
       "label_key_or_text": "错误：{{ selectedRun.error_code }}",
       "label_source": "template_expression_or_literal",
@@ -73666,7 +73542,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.210",
+      "object_id": "P12.SystemAgentDetailPage.text.209",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73676,7 +73552,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1166,
+      "source_line": 1159,
       "control_type": "display_text",
       "label_key_or_text": "运行标识：{{ selectedRun.id }}",
       "label_source": "template_expression_or_literal",
@@ -73705,7 +73581,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.212",
+      "object_id": "P12.SystemAgentDetailPage.text.211",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73715,7 +73591,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1167,
+      "source_line": 1160,
       "control_type": "display_text",
       "label_key_or_text": "输出",
       "label_source": "template_expression_or_literal",
@@ -73744,7 +73620,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.214",
+      "object_id": "P12.SystemAgentDetailPage.text.213",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73754,7 +73630,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1168,
+      "source_line": 1161,
       "control_type": "display_text",
       "label_key_or_text": "{{ selectedRun.output }}",
       "label_source": "template_expression_or_literal",
@@ -73784,7 +73660,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.216",
+      "object_id": "P12.SystemAgentDetailPage.text.215",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73794,7 +73670,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1169,
+      "source_line": 1162,
       "control_type": "display_text",
       "label_key_or_text": "当前记录没有输出。",
       "label_source": "template_expression_or_literal",
@@ -73824,7 +73700,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.218",
+      "object_id": "P12.SystemAgentDetailPage.text.217",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73834,7 +73710,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1172,
+      "source_line": 1165,
       "control_type": "display_text",
       "label_key_or_text": "原挂载或账号已变化，原工具部署不会自动回填。",
       "label_source": "template_expression_or_literal",
@@ -73863,7 +73739,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.102",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.099",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73872,7 +73748,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1174,
+      "source_line": 1167,
       "control_type": "elbutton",
       "label_key_or_text": "查看工具部署处理状态",
       "label_source": "literal",
@@ -73894,7 +73770,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1174",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1167",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -73918,7 +73794,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.220",
+      "object_id": "P12.SystemAgentDetailPage.text.219",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73928,7 +73804,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1174,
+      "source_line": 1167,
       "control_type": "display_text",
       "label_key_or_text": "查看工具部署处理状态",
       "label_source": "template_expression_or_literal",
@@ -73957,7 +73833,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.elbutton.103",
+      "object_id": "P12.SystemAgentDetailPage.elbutton.100",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -73966,7 +73842,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "ElButton",
-      "source_line": 1175,
+      "source_line": 1168,
       "control_type": "elbutton",
       "label_key_or_text": "结束旧处理上下文",
       "label_source": "literal",
@@ -73988,7 +73864,7 @@
         "docs/02-架构与设计/09-前端视觉与交互规范.md",
         "docs/02-架构与设计/08-前端共享层设计.md",
         "docs/02-架构与设计/13-前端组件库.md",
-        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1175",
+        "frontend-platform/src/views/platform/SystemAgentDetailPage.vue:1168",
         "frontend-platform/src/api/index.ts#api.admin.models.list",
         "frontend-platform/src/api/index.ts#api.systemAgents",
         "frontend-platform/src/api/index.ts#api.systemAgents.debug",
@@ -74012,7 +73888,7 @@
       "consumed_by": []
     },
     {
-      "object_id": "P12.SystemAgentDetailPage.text.222",
+      "object_id": "P12.SystemAgentDetailPage.text.221",
       "page_id": "P12",
       "page_title": "系统智能体详情",
       "spec_ids": [
@@ -74022,7 +73898,7 @@
       "spec_binding_status": "candidate_requires_review",
       "source_component": "frontend-platform/src/views/platform/SystemAgentDetailPage.vue",
       "source_symbol": "#text",
-      "source_line": 1175,
+      "source_line": 1168,
       "control_type": "display_text",
       "label_key_or_text": "结束旧处理上下文",
       "label_source": "template_expression_or_literal",
@@ -207792,15 +207668,15 @@
     "page_source_file_count": 60,
     "route_count": 43,
     "unmapped_route_source_file_count": 1,
-    "control_count": 4437,
+    "control_count": 4435,
     "shared_control_count": 420,
     "dynamic_template_entry_count": 147,
     "table_column_count": 330,
     "menu_action_count": 0,
     "script_binding_count": 232,
-    "text_node_count": 1525,
+    "text_node_count": 1526,
     "icon_node_count": 13,
-    "controls_with_gaps": 4436,
+    "controls_with_gaps": 4434,
     "gap_categories": [
       "action_binding_not_found_in_template",
       "content_states_visual_and_accessibility_require_review",
@@ -207814,7 +207690,7 @@
       "runtime_visibility_or_permission_requires_contract_review"
     ],
     "verification_status_counts": {
-      "not_executed": 4437
+      "not_executed": 4435
     }
   },
   "limitations": [

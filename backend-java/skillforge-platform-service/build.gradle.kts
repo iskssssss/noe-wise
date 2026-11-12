@@ -78,6 +78,7 @@ tasks.bootJar {
 }
 
 tasks.test {
+    exclude("**/SystemAgentSkillActivationBrowserE2ETest.class")
     // 系统智能体创建测试会启动真实前端；页面变化必须使该测试结果失效。
     inputs.files(
         fileTree("../../frontend-platform") { include("src/**", "e2e/system-agent-create-real.spec.ts", "playwright.system-agent-create.config.ts", "vite.config.ts", "package*.json", "index.html") },
@@ -116,4 +117,18 @@ tasks.test {
             files("../../package.json", "../../pnpm-lock.yaml", "../../pnpm-workspace.yaml")
         ).withPropertyName("sessionObservationFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
     }
+}
+
+tasks.register<Test>("systemAgentSkillActivationBrowserE2E") {
+    description = "验证系统智能体按技能发布配置冻结激活方式并执行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.platform.integration.SystemAgentSkillActivationBrowserE2ETest.publishedSkillActivationControlsSystemAgentRuntime") }
+    inputs.property("systemAgentSkillActivation", providers.environmentVariable("E2E_SYSTEM_AGENT_SKILL_ACTIVATION").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-platform") { include("src/**", "e2e/system-agent-skill-activation-real.spec.ts", "playwright.system-agent-skill-activation.config.ts", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
 }

@@ -53,9 +53,8 @@ public class SystemAgentService {
                 || mode == null || !Set.of("MODEL_TASK","AGENT_RUN").contains(mode)) {
             throw invalid("system_agent_identity_invalid");
         }
-        Config config = new Config(name, description, systemPrompt == null ? "" : systemPrompt,
-                modelConfigId, 30, "MODEL_TASK".equals(mode) ? 1 : 10, List.of());
-        validate(config, mode, false, false);
+        Config config = validate(new Config(name, description, systemPrompt == null ? "" : systemPrompt,
+                modelConfigId, 30, "MODEL_TASK".equals(mode) ? 1 : 10, List.of()), mode, false, false);
         String id = Long.toString(SnowflakeIds.nextId());
         mapper.create(id,key,null,mode,write(config));
         audit(id,1,"create",actor);
@@ -66,8 +65,8 @@ public class SystemAgentService {
     public View update(String id, long expected, Config config, String actor) {
         View current = expected(id,expected); actor(actor);
         if ("archived".equals(current.status())) throw invalid("system_agent_archived");
-        validate(config,current.executionMode(),false,false);
-        changed(mapper.save(id,expected,write(config)));
+        Config validated = validate(config,current.executionMode(),false,false);
+        changed(mapper.save(id,expected,write(validated)));
         audit(id,expected+1,"update",actor);
         return detail(id);
     }
@@ -79,12 +78,11 @@ public class SystemAgentService {
         if ("archived".equals(current.status())) throw invalid("system_agent_archived");
         switch(operation) {
             case "publish" -> {
-                validate(current.draft(),current.executionMode(),true,false);
+                String config = write(validate(current.draft(),current.executionMode(),true,false));
                 version = version == null ? 1L : version+1;
-                status = "published";
-                // 先抢占修订号，再插入版本；延迟外键保证提交时引用完整。
-                changed(mapper.state(id,expected,status,version));
-                mapper.append(id,version,write(current.draft()),actor);
+                // 同一次 CAS 同步有效草稿与发布指针；延迟外键保证提交时版本完整。
+                changed(mapper.publish(id,expected,version,config));
+                mapper.append(id,version,config,actor);
             }
             case "disable" -> {
                 if (!"published".equals(current.status())) throw invalid("system_agent_not_published");
@@ -216,7 +214,7 @@ public class SystemAgentService {
         return runView(required(mapper.run(run.id(),run.tenantId())));
     }
 
-    private void validate(Config c,String mode,boolean executable,boolean debug) {
+    private Config validate(Config c,String mode,boolean executable,boolean debug) {
         if (c==null || c.name()==null || c.name().isBlank() || c.name().codePointCount(0,c.name().length())>128
                 || (c.description()!=null && c.description().length()>2000)
                 || c.systemPrompt()==null || c.systemPrompt().length()>64000
@@ -226,10 +224,10 @@ public class SystemAgentService {
         if ("MODEL_TASK".equals(mode) && (!c.mounts().isEmpty() || c.maxBusinessModelCalls()!=1)) throw invalid("model_task_capabilities_forbidden");
         if (executable && (c.systemPrompt().isBlank() || c.modelConfigId()==null)) throw invalid("system_agent_config_incomplete");
         if (c.modelConfigId()!=null) models.requireEnabled(c.modelConfigId(),"LLM");
-        if(!c.mounts().isEmpty()) {
-            if(executable) resources.validate(c.mounts(),debug);
-            else resources.validateDraft(c.mounts());
-        }
+        if(c.mounts().isEmpty()) return c;
+        var mounts = executable ? resources.validate(c.mounts(),debug) : resources.validateDraft(c.mounts());
+        return new Config(c.name(), c.description(), c.systemPrompt(), c.modelConfigId(),
+                c.timeoutSeconds(), c.maxBusinessModelCalls(), mounts);
     }
 
     private void validateExecution(Config c,String mode) {

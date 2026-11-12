@@ -55,14 +55,14 @@ public class PlatformAgentResources {
                         .map(DeploymentOption::new).toList());
     }
 
-    /** 校验挂载引用及其当前工具部署，拒绝任何非公共或未发布 Capability。 */
+    /** 校验挂载引用并返回当前发布配置决定的有效挂载，拒绝非公共或未发布 Capability。 */
     @Transactional(readOnly = true)
-    public void validate(List<SystemAgentTypes.Mount> mounts, boolean debug) {
+    public List<SystemAgentTypes.Mount> validate(List<SystemAgentTypes.Mount> mounts, boolean debug) {
         if (mounts == null || mounts.isEmpty()) {
-            return;
+            return List.of();
         }
         platform();
-        resolve(mounts, debug, true);
+        return resolve(mounts, debug, true).stream().map(PublishedMount::mount).toList();
     }
 
     /**
@@ -72,12 +72,12 @@ public class PlatformAgentResources {
      * 因而不会阻断为 debug 准备的测试工具配置。
      */
     @Transactional(readOnly = true)
-    public void validateDraft(List<SystemAgentTypes.Mount> mounts) {
+    public List<SystemAgentTypes.Mount> validateDraft(List<SystemAgentTypes.Mount> mounts) {
         if (mounts == null || mounts.isEmpty()) {
-            return;
+            return List.of();
         }
         platform();
-        resolve(mounts, false, false);
+        return resolve(mounts, false, false).stream().map(PublishedMount::mount).toList();
     }
 
     /** 将挂载 Skill 的冻结 SKILL.md 正文按优先级拼接为模型指令。 */
@@ -156,8 +156,12 @@ public class PlatformAgentResources {
             if ("SKILL".equals(type)) {
                 Map<String, Object> capability = currentCapability(type, definitionId);
                 String versionId = string(capability.get("id"), "capability_version_id");
-                validateSkillMount(mount);
-                resolved.add(new PublishedMount(mount, skillBody(capability), null, definitionId, versionId, object(capability.get("descriptor"), "SKILL descriptor")));
+                Map<String, Object> descriptor = object(capability.get("descriptor"), "SKILL descriptor");
+                var effective = new SystemAgentTypes.Mount(type, definitionId, mount.priority(),
+                        mount.tokenBudget(), string(descriptor.get("activation_mode"), "activation_mode"),
+                        mount.toolDeploymentId());
+                validateSkillMount(effective);
+                resolved.add(new PublishedMount(effective, skillBody(capability), null, definitionId, versionId, descriptor));
                 continue;
             }
             validateToolMount(mount);
