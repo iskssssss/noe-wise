@@ -169,10 +169,12 @@ public class AgentManagementApplicationService {
         update.eq(AgentDO::getId, agent.getId())
                 .eq(AgentDO::getTenantId, agent.getTenantId());
         boolean changed = false;
-        if (request.name() != null) {
+        boolean definitionChanged = false;
+        if (request.name() != null && !java.util.Objects.equals(request.name(), agent.getName())) {
             agent.setName(request.name());
             update.set(AgentDO::getName, agent.getName());
             changed = true;
+            definitionChanged = true;
         }
         if (request.status() != null) {
             if (request.status() != AgentStatus.DRAFT
@@ -181,55 +183,73 @@ public class AgentManagementApplicationService {
                 throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "status 必须是 draft / disabled / archived，发布请使用发布接口");
             }
-            agent.setStatus(request.status().code());
-            update.set(AgentDO::getStatus, agent.getStatus());
-            changed = true;
+            if (!java.util.Objects.equals(request.status().code(), agent.getStatus())) {
+                agent.setStatus(request.status().code());
+                update.set(AgentDO::getStatus, agent.getStatus());
+                changed = true;
+            }
         }
-        if (request.systemPrompt() != null) {
+        if (request.systemPrompt() != null && !java.util.Objects.equals(request.systemPrompt(), agent.getSystemPrompt())) {
             agent.setSystemPrompt(request.systemPrompt());
             update.set(AgentDO::getSystemPrompt, agent.getSystemPrompt());
             changed = true;
+            definitionChanged = true;
         }
-        if (request.roleDescription() != null) {
+        if (request.roleDescription() != null && !java.util.Objects.equals(
+                request.roleDescription().isBlank() ? null : request.roleDescription(), agent.getRoleDescription())) {
             agent.setRoleDescription(request.roleDescription().isBlank()
                     ? null : request.roleDescription());
             update.set(AgentDO::getRoleDescription, agent.getRoleDescription());
             changed = true;
+            definitionChanged = true;
         }
         if (request.executionConfig() != null) {
             com.skillforge.core.foundation.runtimeconfig.AgentBudgetValidation.validate(request.executionConfig());
-            agent.setExecutionConfig(request.executionConfig());
-            update.set(AgentDO::getMaxBusinessModelCalls, agent.getMaxBusinessModelCalls())
-                    .set(AgentDO::getMaxToolCalls, agent.getMaxToolCalls())
-                    .set(AgentDO::getMaxKnowledgeCalls, agent.getMaxKnowledgeCalls())
-                    .set(AgentDO::getMaxTotalTokens, agent.getMaxTotalTokens())
-                    .set(AgentDO::getMaxWallTimeSeconds, agent.getMaxWallTimeSeconds());
-            changed = true;
+            if (!request.executionConfig().equals(agent.getExecutionConfig())) {
+                agent.setExecutionConfig(request.executionConfig());
+                update.set(AgentDO::getMaxBusinessModelCalls, agent.getMaxBusinessModelCalls())
+                        .set(AgentDO::getMaxToolCalls, agent.getMaxToolCalls())
+                        .set(AgentDO::getMaxKnowledgeCalls, agent.getMaxKnowledgeCalls())
+                        .set(AgentDO::getMaxTotalTokens, agent.getMaxTotalTokens())
+                        .set(AgentDO::getMaxWallTimeSeconds, agent.getMaxWallTimeSeconds());
+                changed = true;
+                definitionChanged = true;
+            }
         }
-        if (request.iconUrl() != null) {
+        if (request.iconUrl() != null && !java.util.Objects.equals(blankToNull(request.iconUrl()), agent.getIconUrl())) {
             agent.setIconUrl(blankToNull(request.iconUrl()));
             update.set(AgentDO::getIconUrl, agent.getIconUrl());
             changed = true;
+            definitionChanged = true;
         }
         if (request.config() != null) {
-            agent.setConfig(AgentConfigurationPolicy.requireConfig(request.config()));
-            update.set(AgentDO::getConfig, agent.getConfig(), JSONB_PARAMETER_MAPPING);
-            changed = true;
+            var config = AgentConfigurationPolicy.requireConfig(request.config());
+            if (!configurationForComparison(config).equals(configurationForComparison(agent.getConfig()))) {
+                agent.setConfig(config);
+                update.set(AgentDO::getConfig, agent.getConfig(), JSONB_PARAMETER_MAPPING);
+                changed = true;
+                definitionChanged = true;
+            }
         }
         if (request.modelConfigId() != null) {
-            agent.setModelConfigId(configurations.requireLlmModelId(request.modelConfigId()));
-            update.set(AgentDO::getModelConfigId, agent.getModelConfigId());
-            changed = true;
+            var modelId = configurations.requireLlmModelId(request.modelConfigId());
+            if (!java.util.Objects.equals(modelId, agent.getModelConfigId())) {
+                agent.setModelConfigId(modelId);
+                update.set(AgentDO::getModelConfigId, agent.getModelConfigId());
+                changed = true;
+                definitionChanged = true;
+            }
         }
         if (request.delegationConfig() != null) {
-            agent.setDelegationConfig(configurations.requireDelegationConfig(delegationSource(agent), request.delegationConfig()));
-            update.set(AgentDO::getDelegationConfig, agent.getDelegationConfig(),
-                    DELEGATION_CONFIG_JSONB_PARAMETER_MAPPING);
-            changed = true;
+            var delegation = configurations.requireDelegationConfig(delegationSource(agent), request.delegationConfig());
+            if (!java.util.Objects.equals(delegation, agent.getDelegationConfig())) {
+                agent.setDelegationConfig(delegation);
+                update.set(AgentDO::getDelegationConfig, agent.getDelegationConfig(),
+                        DELEGATION_CONFIG_JSONB_PARAMETER_MAPPING);
+                changed = true;
+                definitionChanged = true;
+            }
         }
-        boolean definitionChanged = request.name() != null || request.systemPrompt() != null
-                || request.roleDescription() != null || request.executionConfig() != null || request.iconUrl() != null
-                || request.config() != null || request.modelConfigId() != null || request.delegationConfig() != null;
         if (definitionChanged) {
             agent.setHasDraftChanges(true);
             update.set(AgentDO::getHasDraftChanges, true);
@@ -238,6 +258,20 @@ public class AgentManagementApplicationService {
             agentService.update(update);
         }
         return view(agent, null);
+    }
+
+    /** 缺省关闭自动提取与显式 false 等价，其他配置保持原值比较。 */
+    private static Map<String, Object> configurationForComparison(Map<String, Object> config) {
+        var result = new LinkedHashMap<String, Object>(config == null ? Map.of() : config);
+        if (result.get("memory") instanceof Map<?, ?> memory && Boolean.FALSE.equals(memory.get("automatic_extraction"))) {
+            var remaining = new LinkedHashMap<>(memory);
+            remaining.remove("automatic_extraction");
+            if (remaining.isEmpty()) result.remove("memory");
+            else result.put("memory", remaining);
+        } else if (result.get("memory") instanceof Map<?, ?> memory && memory.isEmpty()) {
+            result.remove("memory");
+        }
+        return result;
     }
 
     public void delete(AgentManagementContracts.Caller caller, String agentId) {

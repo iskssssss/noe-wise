@@ -1970,6 +1970,7 @@ describe('能力挂载关联一致性', () => {
     const fields = wrapper.findAllComponents(ElInputNumber)
     expect(wrapper.text()).toContain('继承场景与角色默认额度，任务受理时冻结')
     fields[0]!.vm.$emit('update:modelValue', 7)
+    await flushPromises()
     mocks.get.mockResolvedValueOnce({
       id: 'agent-1',
       name: '客服',
@@ -2033,8 +2034,14 @@ describe('能力挂载关联一致性', () => {
     expect(button(wrapper, '添加能力').props('disabled')).toBe(true)
     await button(wrapper, '重新读取').trigger('click')
     await flushPromises()
-    expect(button(wrapper, '保存草稿').props('disabled')).toBe(false)
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(true)
     expect(mocks.update).toHaveBeenCalledTimes(1)
+    wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === '客服')!
+      .vm.$emit('update:modelValue', '客服再次更新')
+    await flushPromises()
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(false)
   })
   it('发布历史恢复到同一工作草稿，并明确再次发布后生效', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(

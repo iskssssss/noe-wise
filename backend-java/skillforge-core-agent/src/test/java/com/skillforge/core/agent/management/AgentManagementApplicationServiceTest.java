@@ -413,6 +413,105 @@ class AgentManagementApplicationServiceTest {
         return value;
     }
 
+    @Test
+    void equivalentConfigurationKeepsPublishedStateWithoutWritingAndStillValidatesReferences() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(false);
+        stored.setModelConfigId(12L);
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        when(configurations.requireLlmModelId("12")).thenReturn(12L);
+        when(configurations.requireDelegationConfig(any(), any())).thenReturn(stored.getDelegationConfig());
+        var result = service.update(caller, "9", new AgentManagementContracts.Update(
+                "same", null, "prompt", "  ", stored.getExecutionConfig(), "12",
+                Map.of("memory", Map.of("automatic_extraction", false)), stored.getDelegationConfig(), ""));
+        assertThat(result.hasDraftChanges()).isFalse();
+        verify(agents, never()).update(any(Wrapper.class));
+        verify(agents).requireEditable(stored);
+        verify(configurations).requireLlmModelId("12");
+        verify(configurations).requireDelegationConfig(any(), any());
+    }
+
+    @Test
+    void equivalentConfigurationDoesNotClearExistingMountDraftChanges() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(true);
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        var result = service.update(caller, "9", new AgentManagementContracts.Update(
+                "same", null, null, null, null, null, Map.of(), null, null));
+        assertThat(result.hasDraftChanges()).isTrue();
+        verify(agents, never()).update(any(Wrapper.class));
+    }
+
+    @Test
+    void realMemoryConfigurationChangeMarksDraftAndPreservesOtherFields() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(false);
+        stored.setConfig(Map.of("custom", "kept"));
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        var changed = Map.<String, Object>of("custom", "kept", "memory", Map.of("automatic_extraction", true));
+        var result = service.update(caller, "9", new AgentManagementContracts.Update(
+                null, null, null, null, null, null, changed, null, null));
+        assertThat(result.hasDraftChanges()).isTrue();
+        assertThat(stored.getConfig()).isEqualTo(changed);
+        verify(agents).update(any(Wrapper.class));
+    }
+
+    @Test
+    void statusChangeDoesNotCreateConfigurationDraft() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(false);
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        var result = service.update(caller, "9", new AgentManagementContracts.Update(
+                null, com.skillforge.core.agent.enums.AgentStatus.DISABLED, null, null, null, null, null, null, null));
+        assertThat(result.hasDraftChanges()).isFalse();
+        assertThat(stored.getStatus()).isEqualTo("disabled");
+        verify(agents).update(any(Wrapper.class));
+    }
+
+    @Test
+    void sameModelReferenceStillRejectsDisabledModelWithoutWriting() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(false);
+        stored.setModelConfigId(12L);
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        var rejected = new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "model_disabled");
+        when(configurations.requireLlmModelId("12")).thenThrow(rejected);
+        assertThatThrownBy(() -> service.update(caller, "9", new AgentManagementContracts.Update(
+                "same", null, null, null, null, "12", null, null, null))).isSameAs(rejected);
+        assertThat(stored.getHasDraftChanges()).isFalse();
+        verify(agents, never()).update(any(Wrapper.class));
+    }
+
+    @Test
+    void equivalentDelegationStillRunsCurrentTargetValidation() {
+        var stored = agent("same");
+        stored.setHasDraftChanges(false);
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        var rejected = new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "target_disabled");
+        when(configurations.requireDelegationConfig(any(), any())).thenThrow(rejected);
+        assertThatThrownBy(() -> service.update(caller, "9", new AgentManagementContracts.Update(
+                null, null, null, null, null, null, null, stored.getDelegationConfig(), null))).isSameAs(rejected);
+        verify(agents, never()).update(any(Wrapper.class));
+    }
+
+    @Test
+    void invalidMemoryBooleanIsNotNormalizedIntoUnchangedConfiguration() {
+        var stored = agent("same");
+        when(agents.getOne(any(Wrapper.class))).thenReturn(stored);
+        when(agents.lockVersion(7, 9)).thenReturn(stored);
+        assertThatThrownBy(() -> service.update(caller, "9", new AgentManagementContracts.Update(
+                null, null, null, null, null, null,
+                Map.of("memory", Map.of("automatic_extraction", "false")), null, null)))
+                .isInstanceOf(ApiException.class);
+        verify(agents, never()).update(any(Wrapper.class));
+    }
+
     private CapabilityMount mount(String id, long revision) {
         return new CapabilityMount(id, 7L, 9L, new CapabilityRef(CapabilityType.SKILL, "1001", "1002"),
                 new CapabilityMount.SkillMountConfig(SkillActivationMode.ALWAYS, 2000L), 3, revision, false);

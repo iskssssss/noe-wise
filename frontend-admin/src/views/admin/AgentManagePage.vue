@@ -55,7 +55,7 @@
         v-permission="['foundation.agents.update']"
         :type="canSaveAndPublish ? undefined : 'primary'"
         :loading="busy"
-        :disabled="editingBlocked || !agent || refreshRequired"
+        :disabled="editingBlocked || !agent || refreshRequired || !dirty"
         @click="save"
         >保存草稿</ElButton
       ></template
@@ -1576,6 +1576,7 @@ async function checkPublication() {
 async function save() {
   if (
     agent.value?.definition_managed ||
+    !dirty.value ||
     refreshRequired.value ||
     publicationOperation.value ||
     publicationStorageError.value

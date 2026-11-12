@@ -486,12 +486,23 @@ function allowTrial() {
     'foundation.sessions.run'
   )
 }
+it('配置未变更时不能保存草稿，修改后可保存并在还原后再次禁用', async () => {
+  await render()
+  expect(button('保存草稿').attributes('disabled')).toBeDefined()
+  expect(mocks.update).not.toHaveBeenCalled()
+  await edit()
+  expect(button('保存草稿').attributes('disabled')).toBeUndefined()
+  await nameInput().get('input').setValue('原智能体')
+  await flushPromises()
+  expect(button('保存草稿').attributes('disabled')).toBeDefined()
+  expect(mocks.update).not.toHaveBeenCalled()
+})
 it('明确保存发布并试用后，释放忙碌状态并进入同一智能体，不创建会话', async () => {
   allowTrial()
   await render()
   await edit()
   mocks.push.mockImplementation(() => {
-    expect(button('保存草稿').attributes('disabled')).toBeUndefined()
+    expect(button('保存草稿').attributes('disabled')).toBeDefined()
   })
   await button('保存发布并试用').trigger('click')
   await flushPromises()
@@ -785,7 +796,7 @@ it('成功原receipt先存，后置GET失败仅刷新恢复不重复提交', asy
   await button('重新读取').trigger('click')
   await flushPromises()
   expect(mocks.saveAndPublish).toHaveBeenCalledOnce()
-  expect(button('保存草稿').attributes('disabled')).toBeUndefined()
+  expect(button('保存草稿').attributes('disabled')).toBeDefined()
 })
 it.each(['403', '409', '503', 'broken'])(
   '原UNKNOWN后核对/继续的%s不清原请求或换key',

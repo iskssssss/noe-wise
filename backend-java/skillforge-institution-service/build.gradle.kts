@@ -140,6 +140,7 @@ tasks.named<Test>("test") {
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
     exclude("**/AgentSavePublishTrialBrowserE2ETest.class")
+    exclude("**/AgentNoopSaveBrowserE2ETest.class")
     exclude("**/AgentLifecycleBrowserE2ETest.class")
     exclude("**/AgentNameValidationBrowserE2ETest.class")
     exclude("**/AgentTemplateBudgetBrowserE2ETest.class")
@@ -960,6 +961,21 @@ tasks.register<Test>("agentSavePublishTrialBrowserE2E") {
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.editedAgentPublicationIsUsedByRealTrial")
         includeTestsMatching("com.skillforge.institution.integration.AgentSavePublishTrialBrowserE2ETest.crossTabDelegationCatalogReachesRuntime")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentNoopSaveBrowserE2E") {
+    description = "验证未变更的已发布智能体不产生伪草稿"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentNoopSaveBrowserE2ETest.unchangedPublishedAgentDoesNotNeedDraftSave") }
+    inputs.property("agentNoopSave", providers.environmentVariable("E2E_AGENT_NOOP_SAVE").orElse("candidate"))
+    inputs.property("agentNoopApiExpectClean", providers.environmentVariable("E2E_AGENT_NOOP_API_EXPECT_CLEAN").orElse("0"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-noop-save-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 
