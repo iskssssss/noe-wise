@@ -10,5 +10,6 @@ import java.util.List;
  */
 public record KnowledgeSearchResponse(
         List<KnowledgeSearchItemResponse> items,
-        com.skillforge.core.knowledge.KnowledgeRerankStatus rerankStatus) {
+        com.skillforge.core.knowledge.KnowledgeRerankStatus rerankStatus,
+        com.skillforge.core.knowledge.KnowledgeService.SearchScope scope) {
 }

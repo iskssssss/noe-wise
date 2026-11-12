@@ -1003,11 +1003,95 @@ class KnowledgeServiceTest {
                 .mapToObj(i -> "content chunk-" + i + "-2").toList());
     }
 
+    @Test
+    void unpublishedManagementSearchReportsCurrentDocumentsEvenWithoutHits() {
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
+        when(documentMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(document()));
+        var result = service.searchWithStatus("7", "10", "q", 2,
+                new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false));
+        assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.CURRENT_DOCUMENTS, null, null), result.scope());
+        verify(documentMapper).selectList(any(LambdaQueryWrapper.class));
+        verifyNoInteractions(revisionMapper);
+    }
+
+    @Test
+    void validPublishedAndArchivedEmptyManifestsRemainPublishedScopesWithoutPreviewFallback() {
+        for (String status : List.of("published", "archived")) {
+            activeBase();
+            var revision = new KnowledgeBaseRevisionDO();
+            revision.setId(90L); revision.setTenantId(7L); revision.setKbId(10L);
+            revision.setRevision(4L); revision.setStatus(status); revision.setSourceVersions(List.of());
+            when(revisionMapper.selectById(90L)).thenReturn(revision);
+            var result = service.searchWithStatus("7", "10", "q", 2,
+                    new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false));
+            assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.PUBLISHED_REVISION, 4L, null), result.scope());
+            assertTrue(result.items().isEmpty());
+        }
+        verifyNoInteractions(documentMapper, searchIndexer);
+        verify(revisionMapper, org.mockito.Mockito.times(2)).selectById(90L);
+    }
+
+    @Test
+    void invalidActiveRevisionReportsUnavailableWithoutCurrentDocumentFallback() {
+        var base = base(); base.setActiveRevisionId(90L);
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
+        for (String invalid : List.of("missing", "tenant", "base", "status", "manifest")) {
+            var revision = new KnowledgeBaseRevisionDO();
+            revision.setTenantId(invalid.equals("tenant") ? 8L : 7L);
+            revision.setKbId(invalid.equals("base") ? 11L : 10L);
+            revision.setStatus(invalid.equals("status") ? "ready" : "published");
+            revision.setSourceVersions(invalid.equals("manifest") ? null : List.of("v1"));
+            when(revisionMapper.selectById(90L)).thenReturn(invalid.equals("missing") ? null : revision);
+            var result = service.searchWithStatus("7", "10", "q", 2,
+                    new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false));
+            assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.UNAVAILABLE, null, null), result.scope());
+            assertTrue(result.items().isEmpty());
+        }
+        verifyNoInteractions(documentMapper, searchIndexer);
+    }
+
+    @Test
+    void searchReceiptKeepsTheRevisionResolvedBeforeRetrieval() {
+        activeBase("v1");
+        var revision = new KnowledgeBaseRevisionDO();
+        revision.setTenantId(7L); revision.setKbId(10L); revision.setRevision(3L);
+        revision.setStatus("published"); revision.setSourceVersions(List.of("v1"));
+        when(revisionMapper.selectById(90L)).thenReturn(revision);
+        when(searchIndexer.searchVersions("7", "10", "q", 2, List.of("v1"))).thenAnswer(call -> {
+            revision.setRevision(4L);
+            revision.setSourceVersions(List.of("v2"));
+            return List.of(item("hit", .8, "v1"));
+        });
+        var result = service.searchWithStatus("7", "10", "q", 2,
+                new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false));
+        assertEquals(3L, result.scope().revision());
+        assertEquals("v1", result.items().getFirst().sourceVersion());
+        verify(revisionMapper).selectById(90L);
+        verify(searchIndexer).searchVersions("7", "10", "q", 2, List.of("v1"));
+    }
+
+    @Test
+    void explicitSourceBypassesRevisionPointerButInactiveBaseDoesNotSearch() {
+        var base = base(); base.setActiveRevisionId(90L);
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
+        var request = new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false, "exact-source");
+        var result = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.SOURCE_VERSION, null, "exact-source"), result.scope());
+        verifyNoInteractions(revisionMapper, documentMapper);
+        org.mockito.Mockito.clearInvocations(searchIndexer, chunkMapper);
+        base.setStatus(KnowledgeConstants.BASE_STATUS_ARCHIVED);
+        var inactive = service.searchWithStatus("7", "10", "q", 2, request);
+        assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.INACTIVE, null, null), inactive.scope());
+        assertTrue(inactive.items().isEmpty());
+        verifyNoInteractions(revisionMapper, documentMapper, searchIndexer, chunkMapper);
+    }
+
     private KnowledgeBaseDO activeBase(String... sourceVersions) {
         KnowledgeBaseDO base = base();
         base.setActiveRevisionId(90L);
         KnowledgeBaseRevisionDO revision = new KnowledgeBaseRevisionDO();
         revision.setId(90L);
+        revision.setRevision(1L);
         revision.setTenantId(7L);
         revision.setKbId(10L);
         revision.setStatus(KnowledgeConstants.REVISION_STATUS_PUBLISHED);

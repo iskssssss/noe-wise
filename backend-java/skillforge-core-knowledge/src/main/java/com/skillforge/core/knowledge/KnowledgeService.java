@@ -934,7 +934,10 @@ public class KnowledgeService {
         return searchWithStatus(tenantId, kbId, query, topK, request).items();
     }
 
-    public record SearchResult(List<KnowledgeHit> items, KnowledgeRerankStatus rerankStatus) {
+    public enum SearchScopeKind { CURRENT_DOCUMENTS, PUBLISHED_REVISION, SOURCE_VERSION, UNAVAILABLE, INACTIVE }
+    public record SearchScope(SearchScopeKind kind, Long revision, String sourceVersion) {}
+    private record SearchSelection(List<String> sources, SearchScope scope) {}
+    public record SearchResult(List<KnowledgeHit> items, KnowledgeRerankStatus rerankStatus, SearchScope scope) {
         public SearchResult { items = List.copyOf(items); }
     }
 
@@ -945,7 +948,8 @@ public class KnowledgeService {
         KnowledgeBaseDO base = requireBase(tenantId, Long.parseLong(kbId));
         boolean rerankEnabled = rerankEnabledOf(base, request);
         if (!KnowledgeConstants.BASE_STATUS_ACTIVE.equals(base.getStatus())) {
-            return new SearchResult(List.of(), rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED);
+            return new SearchResult(List.of(), rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED,
+                    new SearchScope(SearchScopeKind.INACTIVE, null, null));
         }
         int defaultTopK = base.getTopK() == null ? settings.defaultTopK() : base.getTopK();
         int effectiveTopK = request == null
@@ -959,8 +963,8 @@ public class KnowledgeService {
         double threshold = thresholdEnabled ? scoreThresholdOf(base, request, settings) : 0.0;
         double vectorWeight = vectorWeightOf(base, request, settings);
         String sourceVersion = request == null ? null : request.sourceVersion();
-        List<String> activeSourceVersions = sourceVersion == null
-                ? activeSourceVersions(base, tenantId, kbId) : null;
+        SearchSelection selection = searchSelection(base, tenantId, kbId, sourceVersion);
+        List<String> activeSourceVersions = selection.sources();
         KnowledgeBaseDO searchModel = KnowledgeConstants.RETRIEVAL_MODE_FULL_TEXT.equals(mode) ? base
                 : selectedModel(base, tenantId, kbId, sourceVersion, activeSourceVersions);
         // 一次检索共享查询向量；manifest 统一查询，失败后统一回退关键词。
@@ -999,7 +1003,7 @@ public class KnowledgeService {
                 rerankStatus = KnowledgeRerankStatus.APPLIED;
             } else rerankStatus = KnowledgeRerankStatus.DEGRADED;
         }
-        return new SearchResult(items, rerankStatus);
+        return new SearchResult(items, rerankStatus, selection.scope());
     }
 
     private List<KnowledgeHit> searchForSourceVersion(
@@ -1087,15 +1091,18 @@ public class KnowledgeService {
     }
 
     /** 解析并校验 active revision；指针损坏或 manifest 不一致时 fail closed。 */
-    private List<String> activeSourceVersions(KnowledgeBaseDO base, String tenantId, String kbId) {
+    private SearchSelection searchSelection(KnowledgeBaseDO base, String tenantId, String kbId, String sourceVersion) {
+        if (sourceVersion != null) return new SearchSelection(null,
+                new SearchScope(SearchScopeKind.SOURCE_VERSION, null, sourceVersion));
         if (base.getActiveRevisionId() == null) {
-            return documentMapper.selectList(new LambdaQueryWrapper<KnowledgeDocumentDO>()
+            var sources = documentMapper.selectList(new LambdaQueryWrapper<KnowledgeDocumentDO>()
                             .eq(KnowledgeDocumentDO::getTenantId, Long.parseLong(tenantId))
                             .eq(KnowledgeDocumentDO::getKbId, Long.parseLong(kbId))
                             .isNull(KnowledgeDocumentDO::getDeletedAt)
                             .select(KnowledgeDocumentDO::getCurrentSourceVersion))
                     .stream().map(KnowledgeDocumentDO::getCurrentSourceVersion)
                     .filter(Objects::nonNull).distinct().toList();
+            return new SearchSelection(sources, new SearchScope(SearchScopeKind.CURRENT_DOCUMENTS, null, null));
         }
         KnowledgeBaseRevisionDO revision = revisionMapper.selectById(base.getActiveRevisionId());
         if (revision == null
@@ -1103,11 +1110,12 @@ public class KnowledgeService {
                 || !Objects.equals(revision.getKbId(), Long.valueOf(kbId))
                 || !java.util.Set.of("published", "archived").contains(revision.getStatus())
                 || revision.getSourceVersions() == null) {
-            return List.of();
+            return new SearchSelection(List.of(), new SearchScope(SearchScopeKind.UNAVAILABLE, null, null));
         }
-        return revision.getSourceVersions().stream()
+        var sources = revision.getSourceVersions().stream()
                 .filter(Objects::nonNull).map(String::trim)
                 .filter(value -> !value.isEmpty()).distinct().toList();
+        return new SearchSelection(sources, new SearchScope(SearchScopeKind.PUBLISHED_REVISION, revision.getRevision(), null));
     }
 
     /**

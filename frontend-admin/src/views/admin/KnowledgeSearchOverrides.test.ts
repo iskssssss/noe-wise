@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElDialog, ElInput, ElInputNumber, ElSelect, ElSwitch } from 'element-plus'
+import { HttpClientError } from '@skillforge/shared/utils/http'
+import { reactive } from 'vue'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -11,9 +13,14 @@ const mocks = vi.hoisted(() => ({
   warning: vi.fn(),
   user: null as null | { permissions: string[] }
 }))
-vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({ user: mocks.user, identityVersion: 0 })
-}))
+const authState = reactive({
+  get user() {
+    return mocks.user
+  },
+  identityVersion: 0
+})
+const routeState = reactive({ params: { id: 'kb-1' } })
+vi.mock('../../stores/auth', () => ({ useAuthStore: () => authState }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'test-session',
   api: {
@@ -31,7 +38,7 @@ vi.mock('../../api', () => ({
   post: vi.fn()
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'kb-1' } }),
+  useRoute: () => routeState,
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
@@ -54,6 +61,8 @@ vi.mock('@skillforge/shared/feedback', async (load) => {
 let wrapper: VueWrapper
 beforeEach(() => {
   vi.resetAllMocks()
+  routeState.params.id = 'kb-1'
+  authState.identityVersion = 0
   mocks.user = { permissions: ['foundation.knowledge.read'] }
   mocks.base.mockResolvedValue({
     id: 'kb-1',
@@ -65,7 +74,8 @@ beforeEach(() => {
   mocks.search.mockResolvedValue({
     items: [
       { chunk_id: 'c1', document_id: 'd1', source_version: 'v1', content: '检索结果', score: 0.8 }
-    ]
+    ],
+    scope: { kind: 'CURRENT_DOCUMENTS' }
   })
   mocks.document.mockResolvedValue({
     id: 'd1',
@@ -115,6 +125,112 @@ function number(label: string) {
 }
 
 describe('知识检索仅本次参数覆盖', () => {
+  it.each(['知识库', '身份'])('切换%s后迟到的检索错误被接管且不显示', async (changed) => {
+    let reject!: (reason: unknown) => void
+    mocks.search.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    await open()
+    await submit()
+    if (changed === '知识库') routeState.params.id = 'kb-2'
+    else authState.identityVersion++
+    await flushPromises()
+    const failure = new HttpClientError({ status: 503, userMessage: '旧检索专有失败' })
+    const claim = vi.spyOn(failure, 'claimFeedback')
+    reject(failure)
+    await flushPromises()
+    expect(claim).toHaveBeenCalledOnce()
+    expect(failure.hasFeedbackOwner).toBe(true)
+    expect(wrapper.text()).not.toContain('旧检索专有失败')
+    expect(document.body.textContent).not.toContain('旧检索专有失败')
+  })
+  it.each(['知识库', '身份'])('切换%s后清空旧结果与范围，迟到响应不得写入', async (changed) => {
+    mocks.search.mockResolvedValueOnce({
+      items: [
+        {
+          chunk_id: 'c1',
+          document_id: 'd1',
+          source_version: 'v1',
+          content: '原范围专有正文',
+          score: 1
+        }
+      ],
+      rerank_status: 'DISABLED',
+      scope: { kind: 'CURRENT_DOCUMENTS' }
+    })
+    await open()
+    await submit()
+    expect(wrapper.text()).toContain('原范围专有正文')
+    expect(wrapper.get('[data-testid="knowledge-search-scope"]').text()).toContain('未发布')
+    let finish!: (value: unknown) => void
+    mocks.search.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await submit()
+    expect(mocks.search).toHaveBeenCalledTimes(2)
+    if (changed === '知识库') routeState.params.id = 'kb-2'
+    else authState.identityVersion++
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('原范围专有正文')
+    expect(wrapper.find('[data-testid="knowledge-search-scope"]').exists()).toBe(false)
+    finish({
+      items: [
+        {
+          chunk_id: 'old',
+          document_id: 'old',
+          source_version: 'old',
+          content: '旧响应正文',
+          score: 1
+        }
+      ],
+      rerank_status: 'DISABLED',
+      scope: { kind: 'PUBLISHED_REVISION', revision: 99 }
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧响应正文')
+    expect(wrapper.find('[data-testid="knowledge-search-scope"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('已发布修订 99')
+  })
+  it.each([
+    [{ kind: 'CURRENT_DOCUMENTS' }, '未发布的当前文档预览'],
+    [{ kind: 'PUBLISHED_REVISION', revision: 4 }, '已发布修订 4'],
+    [{ kind: 'SOURCE_VERSION', source_version: 'v1' }, '指定来源版本 v1'],
+    [{ kind: 'UNAVAILABLE' }, '检索范围不可用'],
+    [{ kind: 'INACTIVE' }, '知识库未启用']
+  ])('空结果展示服务端返回的范围 %o', async (scope, expected) => {
+    mocks.search.mockResolvedValueOnce({ items: [], rerank_status: 'DISABLED', scope })
+    await open()
+    await submit()
+    expect(wrapper.get('[data-testid="knowledge-search-scope"]').text()).toContain(expected)
+    expect(wrapper.text()).toContain('本次没有召回结果')
+  })
+  it('重新检索失败时保留上次成功结果的范围', async () => {
+    mocks.search.mockResolvedValueOnce({
+      items: [
+        { chunk_id: 'c1', document_id: 'd1', source_version: 'v1', content: '原结果', score: 1 }
+      ],
+      rerank_status: 'DISABLED',
+      scope: { kind: 'PUBLISHED_REVISION', revision: 3 }
+    })
+    mocks.search.mockRejectedValueOnce(new Error('检索暂不可用'))
+    await open()
+    await submit()
+    await wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('type') === 'textarea')!
+      .setValue('新问题')
+    await submit()
+    expect(wrapper.get('[data-testid="knowledge-search-scope"]').text()).toContain('已发布修订 3')
+    expect(wrapper.text()).toContain('上次成功检索的问题：测试问题')
+    expect(wrapper.text()).toContain('原结果')
+    expect(mocks.search).toHaveBeenCalledTimes(2)
+  })
   it('从检索结果打开当前来源文档，保留查询与召回结果', async () => {
     mocks.user = { permissions: ['foundation.knowledge.read'] }
     await open()

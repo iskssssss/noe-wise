@@ -129,6 +129,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatSessionRestoreBrowserE2ETest.class")
     exclude("**/ChatStreamUnknownBrowserE2ETest.class")
     exclude("**/ChatCancelRetryBrowserE2ETest.class")
+    exclude("**/KnowledgeSearchScopeBrowserE2ETest.class")
     exclude("**/McpResourceBrowserE2ETest.class")
     exclude("**/ChatSessionCloseReceiptBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
@@ -975,6 +976,20 @@ tasks.register<Test>("mcpResourceBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.McpResourceBrowserE2ETest.embeddedTextResourceReachesModelAndBrowser") }
     inputs.property("mcpResourceMode", providers.environmentVariable("E2E_MCP_RESOURCE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/mcp-resource-browser.mjs", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeSearchScopeBrowserE2E") {
+    description = "验证知识检索的预览与发布范围"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSearchScopeBrowserE2ETest.unpublishedPreviewAndPublishedRuntimeUseExplicitScope") }
+    inputs.property("knowledgeSearchScopeMode", providers.environmentVariable("E2E_KNOWLEDGE_SCOPE_MODE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-search-scope-real.spec.ts", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

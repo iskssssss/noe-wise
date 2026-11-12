@@ -468,13 +468,23 @@
             </ElFormItem>
             <ElFormItem label="本次来源版本">
               <ElInput v-model="sourceVersion" aria-label="本次来源版本" clearable />
-              <p class="admin-field-help">填写精确 source_version；留空检索当前已发布修订范围。</p>
+              <p class="admin-field-help">
+                填写精确 source_version；留空使用服务端确定的默认范围。
+              </p>
             </ElFormItem>
           </div>
           <ElButton type="primary" native-type="submit" :loading="busy">检索</ElButton></ElForm
         >
         <p v-if="lastSearchRequest" class="admin-muted" role="status">
           上次成功检索的问题：{{ lastSearchRequest.query }}
+        </p>
+        <p
+          v-if="lastSearchScope"
+          class="admin-muted"
+          role="status"
+          data-testid="knowledge-search-scope"
+        >
+          {{ searchScopeLabel }}
         </p>
         <details v-if="lastSearchRequest" class="admin-field-help">
           <summary>本次已提交参数 · {{ lastSearchMode }}</summary>
@@ -1022,6 +1032,7 @@ import {
   type KnowledgeUploadReceipt,
   type KnowledgeSearchParams,
   type KnowledgeSearchItem,
+  type KnowledgeSearchScope,
   type ModelSummary
 } from '../../api'
 import {
@@ -1955,8 +1966,26 @@ const query = ref(''),
   rerankMode = ref<boolean | ''>(''),
   sourceVersion = ref(''),
   lastSearchRequest = ref<KnowledgeSearchParams>(),
+  lastSearchScope = ref<KnowledgeSearchScope>(),
   lastSearchMode = ref(''),
   results = ref<KnowledgeSearchItem[]>([])
+const searchScopeLabel = computed(() => {
+  const scope = lastSearchScope.value
+  if (!scope) return ''
+  switch (scope.kind) {
+    case 'CURRENT_DOCUMENTS':
+      return '本次检索为未发布的当前文档预览，不能代表智能体已发布范围。'
+    case 'PUBLISHED_REVISION':
+      return `本次检索范围：已发布修订${scope.revision !== null && scope.revision !== undefined ? ' ' + scope.revision : ''}。`
+    case 'SOURCE_VERSION':
+      return `本次检索范围：指定来源版本${scope.source_version ? ' ' + scope.source_version : ''}。`
+    case 'UNAVAILABLE':
+      return '本次检索范围不可用，请核对知识发布状态。'
+    case 'INACTIVE':
+      return '知识库未启用，本次未检索文档。'
+  }
+  return '本次检索范围不可用，请核对知识发布状态。'
+})
 const searchSourceOpen = ref(false)
 const searchSourceTarget = ref<KnowledgeSearchItem>()
 const searchSource = useResource(async () => {
@@ -1974,9 +2003,15 @@ async function viewSearchSource(item: KnowledgeSearchItem) {
   searchSourceOpen.value = true
   await searchSource.reload()
 }
+let searchGeneration = 0
 watch([id, () => auth.identityVersion], () => {
+  searchGeneration++
   searchSourceOpen.value = false
   clearSearchSource()
+  results.value = []
+  searched.value = false
+  lastSearchRequest.value = undefined
+  lastSearchScope.value = undefined
 })
 const effectiveIndexingMode = computed(
   () => base.value?.effective_indexing_mode ?? base.value?.indexing_mode
@@ -2000,9 +2035,6 @@ watch(id, () => {
   topK.value = undefined
   scoreThreshold.value = undefined
   vectorWeight.value = undefined
-  results.value = []
-  searched.value = false
-  lastSearchRequest.value = undefined
 })
 async function search() {
   await run(async () => {
@@ -2021,12 +2053,33 @@ async function search() {
       if (rerankMode.value !== '') request.rerank_enabled = rerankMode.value
       if (sourceVersion.value.trim()) request.source_version = sourceVersion.value.trim()
     }
-    const response = await api.knowledge.search(request)
-    results.value = response.items
-    lastSearchRequest.value = request
-    lastSearchMode.value = economicalIndex.value
+    const generation = searchGeneration
+    const session = getSessionId()
+    const identity = auth.identityVersion
+    const modeLabel = economicalIndex.value
       ? '全文检索（经济索引）'
       : request.retrieval_mode || '沿用知识库设置'
+    const current = () =>
+      generation === searchGeneration &&
+      session === getSessionId() &&
+      identity === auth.identityVersion &&
+      request.kb_id === id.value &&
+      !disposed
+    let response: Awaited<ReturnType<typeof api.knowledge.search>>
+    try {
+      response = await api.knowledge.search(request)
+    } catch (reason) {
+      if (!current()) {
+        if (reason instanceof HttpClientError) reason.claimFeedback()
+        throw 'cancel'
+      }
+      throw reason
+    }
+    if (!current()) return
+    results.value = response.items
+    lastSearchRequest.value = request
+    lastSearchScope.value = response.scope
+    lastSearchMode.value = modeLabel
     searched.value = true
     if (response.rerank_status === 'DEGRADED')
       message.warning('重排暂不可用，本次结果按原检索顺序返回。')

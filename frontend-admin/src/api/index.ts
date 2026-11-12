@@ -458,6 +458,12 @@ export interface KnowledgeSearchItem {
   source_version: string
   vector_score?: number | null
 }
+export type KnowledgeSearchScope =
+  | { kind: 'CURRENT_DOCUMENTS' }
+  | { kind: 'PUBLISHED_REVISION'; revision?: number | string | null }
+  | { kind: 'SOURCE_VERSION'; source_version?: string | null }
+  | { kind: 'UNAVAILABLE' }
+  | { kind: 'INACTIVE' }
 export interface KnowledgeBaseRevision {
   id: string
   kb_id: string
@@ -2047,6 +2053,7 @@ export const api = {
       post<{
         items: KnowledgeSearchItem[]
         rerank_status: 'DISABLED' | 'NO_CANDIDATES' | 'APPLIED' | 'DEGRADED'
+        scope: KnowledgeSearchScope
       }>('/knowledge/search', data)
   },
 
