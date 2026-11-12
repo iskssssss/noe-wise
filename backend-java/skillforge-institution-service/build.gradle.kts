@@ -163,6 +163,7 @@ tasks.named<Test>("test") {
     exclude("**/ToolPlatformPermissionBrowserE2ETest.class")
     exclude("**/MemoryDirectoryLimitBrowserE2ETest.class")
     exclude("**/MemoryCorrectionStateBrowserE2ETest.class")
+    exclude("**/MemoryCorrectionUnknownBrowserE2ETest.class")
     exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
@@ -301,6 +302,20 @@ tasks.register<Test>("memoryCorrectionStateBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionStateBrowserE2ETest.forgottenFactRequiresRestorationBeforeCorrectionAndRuntimeRecall") }
     inputs.property("memoryCorrectionState", providers.environmentVariable("E2E_MEMORY_CORRECTION_STATE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-state-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("memoryCorrectionUnknownBrowserE2E") {
+    description = "验证记忆纠正结果未知后只读核对与运行召回"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.MemoryCorrectionUnknownBrowserE2ETest.lostCorrectionResponseRequiresReadOnlyStatusCheck") }
+    inputs.property("memoryCorrectionUnknown", providers.environmentVariable("E2E_MEMORY_CORRECTION_UNKNOWN").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-correction-unknown-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

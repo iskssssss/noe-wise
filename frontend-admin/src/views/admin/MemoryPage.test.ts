@@ -4,6 +4,7 @@ import { reactive } from 'vue'
 import { ElButton, ElDrawer, ElInput, ElSelect, ElSwitch } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { clearFeedback } from '@skillforge/shared/feedback'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { MemoryFact } from '../../api'
 import MemoryPage from './MemoryPage.vue'
 
@@ -46,7 +47,11 @@ vi.mock('../../api', () => ({
 }))
 vi.mock('../../stores/auth', async () => {
   const { reactive } = await import('vue')
-  const auth = reactive({ identityVersion: 0, sessionIdentity: 'session-a' })
+  const auth = reactive({
+    identityVersion: 0,
+    sessionIdentity: 'session-a',
+    user: { tenant_id: 'tenant-a', sub: 'operator-a' }
+  })
   return { useAuthStore: () => auth }
 })
 vi.mock('vue-router', () => ({
@@ -83,6 +88,7 @@ async function render() {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  sessionStorage.clear()
   fact = {
     ref: { tenant_id: { value: 'tenant-a' }, fact_id: 'fact/user' },
     scope: 'USER',
@@ -131,6 +137,116 @@ afterEach(async () => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   await flushPromises()
   document.body.innerHTML = ''
+  vi.restoreAllMocks()
+})
+
+it('多个事实的未知纠正互不覆盖，关闭重开仍禁止再次提交', async () => {
+  fact.status = 'ACTIVE'
+  const second = { ...fact, ref: { ...fact.ref, fact_id: 'fact/second' } }
+  mocks.list.mockResolvedValue([fact, second])
+  mocks.correct.mockRejectedValue(new Error('响应丢失'))
+  const wrapper = await render()
+  const editButtons = () =>
+    wrapper.findAllComponents(ElButton).filter((item) => item.text() === '纠正')
+  await editButtons()[0]!.trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '取消').trigger('click')
+  await flushPromises()
+  await editButtons()[1]!.trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(mocks.correct).toHaveBeenCalledTimes(2)
+  await button(wrapper, '取消').trigger('click')
+  await flushPromises()
+  await editButtons()[0]!.trigger('click')
+  await flushPromises()
+  expect(button(wrapper, '保存纠正').props('disabled')).toBe(true)
+  button(wrapper, '保存纠正').vm.$emit('click')
+  await flushPromises()
+  expect(mocks.correct).toHaveBeenCalledTimes(2)
+  for (const id of ['fact/user', 'fact/second'])
+    expect(
+      sessionStorage.getItem(
+        `memory-correction-unknown:${JSON.stringify(['tenant-a', 'operator-a', id])}`
+      )
+    ).toBe('1')
+})
+
+it('未知纠正核对仍为原修订时保持锁定，页面重载后仍保留', async () => {
+  fact.status = 'ACTIVE'
+  mocks.correct.mockRejectedValue(new Error('响应丢失'))
+  mocks.detail.mockResolvedValue(fact)
+  const wrapper = await render()
+  await button(wrapper, '纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '核对最新状态').trigger('click')
+  await flushPromises()
+  expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('fact/user')
+  expect(button(wrapper, '保存纠正').props('disabled')).toBe(true)
+  expect(document.body.textContent).toContain('状态未变化也不能证明原请求未受理')
+  wrapper.unmount()
+  wrappers.splice(wrappers.indexOf(wrapper), 1)
+  const reloaded = await render()
+  await button(reloaded, '纠正').trigger('click')
+  await flushPromises()
+  expect(button(reloaded, '保存纠正').props('disabled')).toBe(true)
+  expect(mocks.correct).toHaveBeenCalledTimes(1)
+})
+
+it('纠正核对标记写入失败时不发送业务请求', async () => {
+  fact.status = 'ACTIVE'
+  const wrapper = await render()
+  await button(wrapper, '纠正').trigger('click')
+  await flushPromises()
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('存储不可写')
+  })
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(mocks.correct).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('无法保存纠正核对状态，尚未发送纠正请求')
+  expect(button(wrapper, '保存纠正').props('disabled')).toBe(false)
+})
+
+it('明确业务拒绝清除临时标记，允许修改后继续纠正', async () => {
+  fact.status = 'ACTIVE'
+  mocks.correct
+    .mockRejectedValueOnce(
+      new HttpClientError({
+        status: 422,
+        code: 'VALIDATION_ERROR',
+        userMessage: '纠正内容未通过校验'
+      })
+    )
+    .mockResolvedValueOnce({})
+  const wrapper = await render()
+  await button(wrapper, '纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(button(wrapper, '保存纠正').props('disabled')).toBe(false)
+  expect(
+    sessionStorage.getItem(
+      `memory-correction-unknown:${JSON.stringify(['tenant-a', 'operator-a', 'fact/user'])}`
+    )
+  ).toBeNull()
+  const subject = wrapper
+    .findAllComponents(ElInput)
+    .find((item) => item.props('modelValue') === fact.subject)!
+  subject.vm.$emit('update:modelValue', '修正后的主体')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(mocks.correct).toHaveBeenCalledTimes(2)
+  expect(mocks.correct).toHaveBeenLastCalledWith(
+    'fact/user',
+    expect.objectContaining({ subject: '修正后的主体', expected_revision: 3 })
+  )
 })
 
 it.each(['DECAYED', 'FORGOTTEN'] as const)('%s事实显式恢复后才可按新版本纠正', async (status) => {

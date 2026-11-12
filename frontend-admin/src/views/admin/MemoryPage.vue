@@ -203,6 +203,9 @@
       class="admin-drawer"
       size="680px"
       ><div class="admin-field-help">
+        <p v-if="correctionUnknown" role="status">
+          纠正结果尚未确认，请核对最新状态；状态未变化也不能证明原请求未受理。
+        </p>
         <ElButton :loading="latestMemory.loading.value" :disabled="busy" @click="checkLatest"
           >核对最新状态</ElButton
         >
@@ -327,7 +330,9 @@
           v-permission="['foundation.memory.update']"
           type="primary"
           :loading="busy"
-          :disabled="refreshRequired || latestChanged || selected?.status !== 'ACTIVE'"
+          :disabled="
+            correctionUnknown || refreshRequired || latestChanged || selected?.status !== 'ACTIVE'
+          "
           @click="save"
           >保存纠正</ElButton
         ></template
@@ -547,8 +552,17 @@ const pageError = computed(() =>
 const { busy, error, run } = useTask(),
   open = ref(false),
   selected = ref<MemoryFact>(),
+  unknownCorrections = ref(new Set<string>()),
   saved = ref(''),
   form = reactive({ subject: '', predicate: '', object_json: '', confidence: 1, importance: 0.5 })
+const correctionKey = computed(() =>
+  selected.value && auth.user?.tenant_id && auth.user?.sub
+    ? `memory-correction-unknown:${JSON.stringify([auth.user.tenant_id, auth.user.sub, selected.value.ref.fact_id])}`
+    : ''
+)
+const correctionUnknown = computed(
+  () => !!correctionKey.value && unknownCorrections.value.has(correctionKey.value)
+)
 const latestMemory = useResource(async () => {
   const row = selected.value!
   const identity = auth.identityVersion,
@@ -569,6 +583,8 @@ const latestChanged = computed(
 async function checkLatest() {
   const result = await latestMemory.reload()
   if (result && result.revision !== selected.value?.revision) {
+    unknownCorrections.value.delete(correctionKey.value)
+    sessionStorage.removeItem(correctionKey.value)
     refreshCause.value = 'stale'
     refreshRequired.value = true
     await refresh()
@@ -617,6 +633,8 @@ function edit(row: MemoryFact) {
   latestMemory.data.value = undefined
   latestMemory.error.value = ''
   selected.value = row
+  if (correctionKey.value && sessionStorage.getItem(correctionKey.value))
+    unknownCorrections.value.add(correctionKey.value)
   Object.assign(form, {
     subject: row.subject,
     predicate: row.predicate,
@@ -630,7 +648,13 @@ function edit(row: MemoryFact) {
   open.value = true
 }
 async function save() {
-  if (refreshRequired.value || latestChanged.value || selected.value?.status !== 'ACTIVE') return
+  if (
+    correctionUnknown.value ||
+    refreshRequired.value ||
+    latestChanged.value ||
+    selected.value?.status !== 'ACTIVE'
+  )
+    return
   await run(async () => {
     if (!(await formRef.value?.validate().catch(() => false))) return
     objectError.value = ''
@@ -642,7 +666,33 @@ async function save() {
       return
     }
     const row = selected.value!
-    await api.memories.correct(row.ref.fact_id, { expected_revision: row.revision, ...form })
+    const requestKey = correctionKey.value
+    if (!requestKey) throw Error('当前身份不可用，尚未发送纠正请求')
+    try {
+      sessionStorage.setItem(requestKey, '1')
+    } catch {
+      throw Error('无法保存纠正核对状态，尚未发送纠正请求')
+    }
+    unknownCorrections.value.add(requestKey)
+    try {
+      await api.memories.correct(row.ref.fact_id, { expected_revision: row.revision, ...form })
+    } catch (reason) {
+      if (
+        reason instanceof HttpClientError &&
+        reason.code &&
+        reason.status >= 400 &&
+        reason.status < 500 &&
+        ![401, 408].includes(reason.status)
+      ) {
+        sessionStorage.removeItem(requestKey)
+        unknownCorrections.value.delete(requestKey)
+        throw reason
+      }
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      return
+    }
+    sessionStorage.removeItem(requestKey)
+    unknownCorrections.value.delete(requestKey)
     open.value = false
     refreshCause.value = 'write'
     refreshRequired.value = true
