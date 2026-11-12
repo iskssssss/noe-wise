@@ -296,6 +296,7 @@ tasks.register<Test>("agentTemplateResourcesBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.AgentTemplateResourcesBrowserE2ETest.optionalResourceReadFailureDoesNotBlockTemplateInstallation") }
     inputs.property("agentTemplateResources", providers.environmentVariable("E2E_AGENT_TEMPLATE_RESOURCES").orElse("candidate"))
+    inputs.property("templateSummary", providers.environmentVariable("E2E_TEMPLATE_SUMMARY").orElse("0"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-template-resources-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }

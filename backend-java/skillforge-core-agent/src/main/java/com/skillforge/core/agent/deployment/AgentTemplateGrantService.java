@@ -173,7 +173,7 @@ public class AgentTemplateGrantService {
         mapper.grants(tenantId).stream().filter(g->currentlyAvailable(g,"deploy")&&currentlyAvailable(g,"execute")).forEach(g->allowed.add(g.definitionId()));
         var items=allowed.stream().sorted().map(templates::requireCurrentDefinitionAvailable).map(t->{var d=t.getDefinition();
             var safe=new com.skillforge.core.agent.model.AgentTemplateDefinition("",d.roleDescription(),null,null,List.of(),d.resourceSlots(),d.delegationSlots());
-            return new AgentTemplateItemResponse(t.getId(),t.getTemplateKey(),t.getName(),t.getVersion(),t.getDescription(),t.getIconUrl(),safe);}).toList();
+            return new AgentTemplateItemResponse(t.getId(),t.getTemplateKey(),t.getName(),t.getVersion(),t.getDescription(),t.getIconUrl(),AgentTemplateItemResponse.TemplateSummary.from(safe));}).toList();
         return new AgentTemplateListResponse(items.size(),items);
     }
     private boolean currentlyAvailable(GrantRow row,String action) {

@@ -49,6 +49,18 @@ class AgentTemplateResourcesBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         Path evidence = Path.of("build/runtime-e2e/agent-template-resources-" + SnowflakeIds.nextId()).toAbsolutePath();
         Path browser = evidence.resolve("browser");
         Files.createDirectories(browser);
+        if ("candidate".equals(System.getenv("E2E_TEMPLATE_SUMMARY"))) {
+            var openapi = get("/v3/api-docs");
+            assertEquals(200, openapi.statusCode());
+            var schemas = objectMapper.readTree(openapi.body()).path("components").path("schemas");
+            var definition = schemas.path("AgentTemplateItemResponse").path("properties").path("definition");
+            assertTrue(definition.path("$ref").asText().endsWith("/TemplateSummary"), definition.toString());
+            var summary = schemas.path("TemplateSummary").path("properties");
+            assertTrue(summary.has("resource_slots"), summary.toString());
+            assertFalse(summary.has("system_prompt"), summary.toString());
+            Files.writeString(evidence.resolve("openapi-template-summary.json"),
+                    objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("definition", definition, "summary", summary)));
+        }
         System.out.println("AGENT_TEMPLATE_RESOURCES_EVIDENCE=" + evidence);
         Files.writeString(evidence.resolve("boundary.txt"), "真实隔离 Spring/PostgreSQL/Redis、Vite、浏览器、API 与 Runtime。本地受控 HTTP 模型，无外部供应商。模板前置通过正式模板保存和发布快照服务准备。资源目录响应先读取真实 HTTP 200 再受控丢弃；模板详情与安装响应不伪造。基线使用独立真实 API 空绑定安装作控制，候选由界面安装；两者均在同一安装 Agent 中通过浏览器提交一次消息。凭据、trace、video 和自动截图不落盘。", StandardCharsets.UTF_8);
         String marker = "TEMPLATE_RESOURCES_PROMPT_" + runId;
@@ -96,6 +108,9 @@ class AgentTemplateResourcesBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         env.put("E2E_ADMIN_TOKEN", accessToken);
         env.put("E2E_TEMPLATE_ID", template.getId().toString());
         env.put("E2E_TEMPLATE_NAME", template.getName());
+        env.put("E2E_TEMPLATE_PROMPT_MARKER", marker);
+        if (System.getenv("E2E_TEMPLATE_SUMMARY") != null)
+            env.put("E2E_TEMPLATE_SUMMARY", System.getenv("E2E_TEMPLATE_SUMMARY"));
         env.put("E2E_AGENT_TEMPLATE_RESOURCES", mode);
         env.put("E2E_EXPECTED_REPLY", "fixture-answer-" + runId);
         env.remove("SDK4_LIVE_MODEL_KEY");

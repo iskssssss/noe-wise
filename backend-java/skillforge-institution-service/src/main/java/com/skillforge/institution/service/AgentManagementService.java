@@ -121,7 +121,7 @@ public class AgentManagementService {
 
     private AgentTemplateItemResponse templateItem(AgentManagementContracts.Template template) {
         return new AgentTemplateItemResponse(template.id(), template.templateKey(), template.name(), template.version(),
-                template.description(), template.iconUrl(), template.definition());
+                template.description(), template.iconUrl(), AgentTemplateItemResponse.TemplateSummary.from(template.definition()));
     }
 
     private AgentItemResponse agentItem(AgentManagementContracts.Agent agent) {

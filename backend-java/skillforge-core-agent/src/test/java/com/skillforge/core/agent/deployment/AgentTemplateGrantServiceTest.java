@@ -177,6 +177,30 @@ class AgentTemplateGrantServiceTest {
         clearInvocations(mapper,templates);
         assertThrows(ApiException.class,()->service.list(7));verifyNoInteractions(mapper,templates);
     }
+    @Test void availableDirectoryKeepsItsRestrictedDefinitionProjection() {
+        var grant=row(41,7,"deploy,execute",null,false,0,null,null);
+        rows.put(41L,grant);
+        when(mapper.grants(7)).thenReturn(List.of(grant));
+        when(mapper.chainAvailable(anyString(),eq(7L),eq(31L),anyString())).thenReturn(true);
+        var template=definition();
+        var capability=new com.skillforge.core.agent.model.AgentTemplateDefinition.BaseCapability(
+                com.skillforge.core.capability.CapabilityType.TOOL,10L,11L,null,"clock",1);
+        var slot=new com.skillforge.core.agent.model.AgentTemplateDefinition.ResourceSlot(
+                "knowledge","知识","可选",com.skillforge.core.capability.CapabilityType.KNOWLEDGE_SOURCE);
+        template.setDefinition(new com.skillforge.core.agent.model.AgentTemplateDefinition("PRIVATE_PROMPT","公开角色","81",
+                new com.skillforge.core.foundation.runtimeconfig.AgentExecutionConfig(3,4,5,600L,20L),List.of(capability),List.of(slot),List.of()));
+        when(templates.requireCurrentDefinitionAvailable(31L)).thenReturn(template);
+
+        var item=service.available(7).items().getFirst();
+        var publicDefinition=json.valueToTree(item).path("definition");
+        assertFalse(publicDefinition.has("system_prompt"));
+        assertFalse(publicDefinition.toString().contains("PRIVATE_PROMPT"));
+        assertEquals("公开角色",publicDefinition.path("role_description").asText());
+        assertTrue(publicDefinition.path("model_config_id").isNull());
+        assertTrue(publicDefinition.path("capabilities").isEmpty());
+        assertTrue(publicDefinition.path("execution_config").path("max_business_model_calls").isNull());
+        assertEquals("knowledge",publicDefinition.path("resource_slots").get(0).path("key").asText());
+    }
     @Test void tenantIssuedDirectoryUsesTheSameBatchProjectionAfterCurrentAuthorization() {
         TenantContext.setTenantId("7");var subject=new FoundationAccess.Subject(false,"7","9");
         when(foundation.currentSubject()).thenReturn(subject);

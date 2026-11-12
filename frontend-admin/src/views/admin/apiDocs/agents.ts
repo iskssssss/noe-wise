@@ -63,12 +63,21 @@ export const agentEndpoints: ApiDocEndpoint[] = [
           name: '客服模板',
           version: '1.0',
           description: '客服助手初始配置',
-          definition: { system_prompt: '根据用户问题提供清晰准确的回答。' },
-          config_schema: []
+          definition: {
+            role_description: '回答客服问题',
+            model_config_id: '2001',
+            execution_config: {},
+            capabilities: [],
+            resource_slots: [],
+            delegation_slots: []
+          }
         }
       ]
     },
-    notes: ['模板仅提供创建时的初始值，后续修改模板不会自动同步到已创建的智能体。']
+    notes: [
+      '模板目录返回公开摘要，不包含系统提示词正文。',
+      '模板仅提供创建时的初始值，后续修改模板不会自动同步到已创建的智能体。'
+    ]
   },
   {
     id: 'agent-create',

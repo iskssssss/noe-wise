@@ -16,6 +16,8 @@ test('可选资源目录失败后可保留模板详情并独立安装执行', as
   test.setTimeout(170_000)
   const mode = process.env.E2E_AGENT_TEMPLATE_RESOURCES ?? 'candidate'
   expect(['baseline', 'candidate']).toContain(mode)
+  const summaryMode = process.env.E2E_TEMPLATE_SUMMARY
+  if (summaryMode) expect(['baseline', 'candidate']).toContain(summaryMode)
   const evidence = required('E2E_ARTIFACT_DIR')
   await mkdir(evidence, { recursive: true })
   const templateId = required('E2E_TEMPLATE_ID')
@@ -106,7 +108,21 @@ test('可选资源目录失败后可保留模板详情并独立安装执行', as
     await expect(drawer).toBeVisible()
     const list = await listReady
     expect(list.status()).toBe(200)
-    const items = (await list.json()).data.items
+    const listBody = await list.json()
+    await writeFile(
+      join(evidence, 'template-list.json'),
+      JSON.stringify(
+        {
+          method: list.request().method(),
+          path: new URL(list.url()).pathname,
+          status: list.status(),
+          response: listBody
+        },
+        null,
+        2
+      )
+    )
+    const items = listBody.data.items
     expect(items.some((item: { id: string | number }) => String(item.id) === templateId)).toBe(true)
     if (items.length > 1) {
       await drawer.getByLabel('模板', { exact: true }).click()
@@ -116,9 +132,37 @@ test('可选资源目录失败后可保留模板详情并独立安装执行', as
     const detailBody = await detail.json()
     await writeFile(
       join(evidence, 'template-detail.json'),
-      JSON.stringify({ status: detail.status(), response: detailBody }, null, 2)
+      JSON.stringify(
+        {
+          method: detail.request().method(),
+          path: new URL(detail.url()).pathname + new URL(detail.url()).search,
+          status: detail.status(),
+          response: detailBody
+        },
+        null,
+        2
+      )
     )
     expect(detail.status()).toBe(200)
+    if (summaryMode) {
+      const marker = required('E2E_TEMPLATE_PROMPT_MARKER')
+      const selected = items.find((item: { id: string | number }) => String(item.id) === templateId)
+      expect(selected).toBeTruthy()
+      for (const body of [selected, detailBody.data]) {
+        if (summaryMode === 'baseline') {
+          expect(body.definition.system_prompt).toContain(marker)
+        } else {
+          expect(JSON.stringify(body)).not.toContain('"system_prompt"')
+          expect(JSON.stringify(body)).not.toContain(marker)
+        }
+      }
+      if (summaryMode === 'candidate') {
+        expect(JSON.stringify(listBody)).not.toContain('"system_prompt"')
+        expect(JSON.stringify(listBody)).not.toContain(marker)
+        expect(JSON.stringify(detailBody)).not.toContain('"system_prompt"')
+        expect(JSON.stringify(detailBody)).not.toContain(marker)
+      }
+    }
     expect(detailBody.data.name).toBe(templateName)
     expect(detailBody.data.definition.resource_slots).toEqual([
       {

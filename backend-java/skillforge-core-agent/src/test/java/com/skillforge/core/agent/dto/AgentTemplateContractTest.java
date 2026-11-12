@@ -70,6 +70,28 @@ class AgentTemplateContractTest {
     }
 
     @Test
+    void publicTemplateSummaryOmitsPromptAndRetainsPublishedFields() throws Exception {
+        var capability = new AgentTemplateDefinition.BaseCapability(CapabilityType.TOOL, 10L, 11L, null, "clock", 1);
+        var resource = new AgentTemplateDefinition.ResourceSlot("knowledge", "知识", "可选", CapabilityType.KNOWLEDGE_SOURCE);
+        var delegation = new AgentTemplateDefinition.DelegationSlot("review", "审核", "审核角色");
+        var definition = new AgentTemplateDefinition("PRIVATE_PROMPT", "公开角色", "81",
+                new AgentExecutionConfig(3, 4, 5, 600L, 20L), List.of(capability), List.of(resource), List.of(delegation));
+        var item = new com.skillforge.core.agent.dto.response.AgentTemplateItemResponse(
+                1L, "key", "名称", "1", "说明", null,
+                com.skillforge.core.agent.dto.response.AgentTemplateItemResponse.TemplateSummary.from(definition));
+        var json = new ObjectMapper().valueToTree(item).path("definition");
+
+        assertThat(json.has("system_prompt")).isFalse();
+        assertThat(json.toString()).doesNotContain("PRIVATE_PROMPT");
+        assertThat(json.path("role_description").asText()).isEqualTo("公开角色");
+        assertThat(json.path("model_config_id").asText()).isEqualTo("81");
+        assertThat(json.path("execution_config").path("max_business_model_calls").asInt()).isEqualTo(3);
+        assertThat(json.path("capabilities").get(0).path("platform_tool_name").asText()).isEqualTo("clock");
+        assertThat(json.path("resource_slots").get(0).path("key").asText()).isEqualTo("knowledge");
+        assertThat(json.path("delegation_slots").get(0).path("key").asText()).isEqualTo("review");
+    }
+
+    @Test
     void typedDefinitionJsonbHandlerRejectsRemovedArbitraryFields() throws Exception {
         ResultSet resultSet = mock(ResultSet.class);
         when(resultSet.getString("definition")).thenReturn(
