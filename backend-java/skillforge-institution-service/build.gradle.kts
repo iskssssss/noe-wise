@@ -152,6 +152,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentTemplateOptionalSlotBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
+    exclude("**/JsonSchemaUnicodeBrowserE2ETest.class")
     exclude("**/ConvertDatetimeBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/KnowledgeSemanticThresholdBrowserE2ETest.class")
@@ -466,6 +467,20 @@ tasks.register<Test>("convertDatetimeBrowserE2E") {
         include("frontend-admin/src/**", "frontend-admin/e2e/convert-datetime-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("convertDatetimeFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("jsonSchemaUnicodeBrowserE2E") {
+    description = "验证 JSON Schema 字符长度的真实工具回传"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.JsonSchemaUnicodeBrowserE2ETest.unicodeLengthResultsReachNextModelAndBrowser") }
+    inputs.property("jsonSchemaUnicode", providers.environmentVariable("E2E_JSON_SCHEMA_UNICODE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/json-schema-unicode-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

@@ -127,7 +127,8 @@ public class JsonSchemaValidateToolHandler implements PlatformToolHandler {
         if (!value.isTextual()) {
             return;
         }
-        int length = value.asText().length();
+        String text = value.asText();
+        int length = text.codePointCount(0, text.length());
         if (schema.has("minLength") && length < schema.get("minLength").asInt(-1)) {
             errors.add(path + ": 长度小于 schema.minLength");
         }

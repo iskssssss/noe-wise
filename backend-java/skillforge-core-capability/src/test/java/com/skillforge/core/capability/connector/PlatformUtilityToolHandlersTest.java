@@ -176,6 +176,16 @@ class PlatformUtilityToolHandlersTest {
     }
 
     @Test
+    void schemaStringLengthCountsUnicodeCharacters() {
+        var handler = new JsonSchemaValidateToolHandler(objectMapper);
+        var one = Map.of("type", "string", "minLength", 1, "maxLength", 1);
+        assertTrue((Boolean) handler.validateValue("😀", one).get("valid"));
+        assertTrue((Boolean) handler.validateValue("中", one).get("valid"));
+        assertFalse((Boolean) handler.validateValue("😀a", one).get("valid"));
+        assertFalse((Boolean) handler.validateValue("😀", Map.of("minLength", 2)).get("valid"));
+    }
+
+    @Test
     void schemaValidatorRejectsExtraFieldsWithoutDeclaredProperties() {
         var handler = new JsonSchemaValidateToolHandler(objectMapper);
         for (var schema : List.of(
