@@ -33,6 +33,151 @@ let wrapper: VueWrapper,
   teamCatalog: unknown[],
   steerSubmit: (body: string) => Promise<Response>,
   publish: (event: StreamEvent) => void
+
+describe('未知过程后的权威Run状态', () => {
+  const unknown = (sequence = 7) =>
+    publish({
+      id: `unknown-${sequence}`,
+      event: 'process.finished',
+      data: {
+        session_id: 's',
+        process_id: 'model-step',
+        run_id: 'run',
+        root_run_id: 'run',
+        root_input_id: 'input',
+        updated_sequence: sequence,
+        sequence: 2,
+        ordinal: 0,
+        type: 'reasoning',
+        status: 'outcome_unknown',
+        presentation: { title: '模型调用', summary: '结果未知' }
+      }
+    })
+  it.each(['outcome_unknown', 'suspended'])(
+    '历史过程未知仍按权威状态%s初始化Run',
+    async (status) => {
+      await connect()
+      historyLoad = async (id) =>
+        response({
+          ...emptyHistory(),
+          session_id: id,
+          activities: [
+            {
+              node_id: 'run',
+              node_type: 'agent_runtime',
+              status: 'running',
+              render: { root_run_id: 'run', root_input_id: 'input' }
+            }
+          ],
+          processes: [
+            {
+              process_id: 'model-step',
+              run_id: 'run',
+              root_run_id: 'run',
+              root_input_id: 'input',
+              updated_sequence: 7,
+              sequence: 2,
+              ordinal: 0,
+              type: 'reasoning',
+              status: 'outcome_unknown',
+              presentation: { title: '模型调用', summary: '结果未知' }
+            }
+          ]
+        })
+      statusLoad = vi.fn(async () => response({ status }))
+      await state.openSession('s')
+      await flushPromises()
+      expect(statusLoad).toHaveBeenCalledOnce()
+      expect(state.runStates.run).toBe(status)
+      expect(state.active.value).toBe(status === 'suspended')
+      expect(posts).toHaveLength(0)
+    }
+  )
+  it.each(['outcome_unknown', 'suspended', 'running'])(
+    '权威状态%s决定是否停止该Run运行展示',
+    async (status) => {
+      await connect()
+      await state.openSession('s')
+      await flushPromises()
+      state.runStates.run = 'running'
+      statusLoad = vi.fn(async () => response({ status }))
+      unknown()
+      await flushPromises()
+      expect(statusLoad).toHaveBeenCalledOnce()
+      expect(state.runStates.run).toBe(status === 'outcome_unknown' ? 'outcome_unknown' : 'running')
+      expect(state.active.value).toBe(status !== 'outcome_unknown')
+      expect(posts).toHaveLength(0)
+    }
+  )
+  it('原Run未知不停止另一个正在运行的根Run', async () => {
+    await connect()
+    await state.openSession('s')
+    await flushPromises()
+    state.runStates.run = 'running'
+    state.runStates.other = 'running'
+    statusLoad = async () => response({ status: 'outcome_unknown' })
+    unknown()
+    await flushPromises()
+    expect(state.runStates.run).toBe('outcome_unknown')
+    expect(state.runStates.other).toBe('running')
+    expect(state.active.value).toBe(true)
+    expect(state.runId.value).toBe('other')
+  })
+  it.each(['changed-session', 'newer-process', 'completed-run'])(
+    '迟到权威查询不能覆盖%s',
+    async (scenario) => {
+      await connect()
+      await state.openSession('s')
+      await flushPromises()
+      state.runStates.run = 'running'
+      let finish!: (value: Response) => void
+      statusLoad = () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      unknown()
+      await flushPromises()
+      if (scenario === 'changed-session') await state.openSession('next')
+      else if (scenario === 'newer-process')
+        publish({
+          id: 'new-model',
+          event: 'process.started',
+          data: {
+            session_id: 's',
+            process_id: 'model-step',
+            run_id: 'run',
+            root_run_id: 'run',
+            root_input_id: 'input',
+            updated_sequence: 8,
+            sequence: 2,
+            ordinal: 0,
+            type: 'reasoning',
+            status: 'running',
+            presentation: { title: '模型调用', summary: '新调用' }
+          }
+        })
+      else
+        publish({
+          id: 'completed',
+          event: 'execution.completed',
+          data: {
+            session_id: 's',
+            run_id: 'run',
+            root_run_id: 'run',
+            root_input_id: 'input',
+            updated_sequence: 8,
+            status: 'completed'
+          }
+        })
+      await flushPromises()
+      finish(response({ status: 'outcome_unknown' }))
+      await flushPromises()
+      if (scenario === 'changed-session') expect(state.runStates.run).toBeUndefined()
+      else expect(state.runStates.run).toBe(scenario === 'completed-run' ? 'completed' : 'running')
+      expect(posts).toHaveLength(0)
+    }
+  )
+})
 beforeEach(() => {
   localStorage.clear()
   agentCatalog = [{ id: 'agent', name: '助手', is_default: true }]

@@ -174,7 +174,8 @@ export function createProjection(
   workChanged: (work: string) => void = () => {},
   runProgress: (run: string, sourceSequence: number, rootInput: string) => void = () => {},
   previews: Record<string, MessagePreview> = {},
-  previewState = createPreviewState()
+  previewState = createPreviewState(),
+  uncertainProcess: (process: Process) => void = () => {}
 ) {
   let sequence = 0
   const { terminalRuns, closedPreviews, retiredAttempts } = previewState
@@ -357,6 +358,18 @@ export function createProjection(
         typeof data.root_input_id === 'string'
       )
         runProgress(data.run_id, data.updated_sequence, data.root_input_id)
+      if (
+        event.event === 'process.finished' &&
+        data.status === 'outcome_unknown' &&
+        typeof data.process_id === 'string' &&
+        data.presentation &&
+        typeof data.run_id === 'string' &&
+        data.run_id === data.root_run_id &&
+        typeof data.root_input_id === 'string' &&
+        typeof data.updated_sequence === 'number' &&
+        Number.isSafeInteger(data.updated_sequence)
+      )
+        uncertainProcess(data as unknown as Process)
       if ((data.changes as Process['changes'])?.artifacts === true) artifactsChanged()
     } else if (event.event === 'work.updated') {
       if (typeof data.work_id === 'string') workChanged(data.work_id)

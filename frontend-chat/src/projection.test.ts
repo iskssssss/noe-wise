@@ -20,6 +20,86 @@ const process = (status: string, updated_sequence: number): Process => ({
   type: 'tool',
   presentation: { title: '查找订单', summary: status }
 })
+
+describe('过程未知只触发精确Run权威核对', () => {
+  it('根过程UNKNOWN只请求核对，不自行改Run状态；同事件重放不重复通知', () => {
+    const history = emptyHistory(),
+      changed = vi.fn(),
+      uncertain = vi.fn()
+    const receive = createProjection(
+      's',
+      history,
+      changed,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      uncertain
+    )
+    const data = { ...process('outcome_unknown', 7), session_id: 's', root_input_id: 'input' }
+    receive({ id: 'unknown', event: 'process.finished', data })
+    receive({ id: 'unknown', event: 'process.finished', data })
+    expect(uncertain).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        process_id: 'step',
+        run_id: 'run',
+        status: 'outcome_unknown',
+        updated_sequence: 7
+      })
+    )
+    expect(changed).not.toHaveBeenCalled()
+    expect(history.processes[0]?.status).toBe('outcome_unknown')
+  })
+  it('子Run过程与非权威preview未知不能触发根Run核对', () => {
+    const uncertain = vi.fn(),
+      changed = vi.fn()
+    const receive = createProjection(
+      's',
+      emptyHistory(),
+      changed,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      uncertain
+    )
+    receive({
+      id: 'member',
+      event: 'process.finished',
+      data: {
+        ...process('outcome_unknown', 7),
+        session_id: 's',
+        run_id: 'member',
+        root_run_id: 'run',
+        root_input_id: 'input'
+      }
+    })
+    receive({
+      id: 'preview',
+      event: 'message.preview',
+      data: {
+        session_id: 's',
+        run_id: 'run',
+        root_input_id: 'input',
+        input_id: 'input',
+        preview_message_id: 'preview',
+        attempt_id: 'attempt',
+        ordinal: 1,
+        preview_sequence: 1,
+        role: 'assistant',
+        content: '',
+        state: 'unknown',
+        authoritative: false
+      }
+    })
+    expect(uncertain).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+  })
+})
 describe('会话公开投影', () => {
   it('模型流进展完成时保留首次过程位置和开始时间', () => {
     const first = { ...process('running', 3), sequence: 3, started_at: '2026-10-22T09:00:00+08:00' }

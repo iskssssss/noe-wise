@@ -571,7 +571,8 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
     /** 查询仅返回已保存状态，不触发wake或恢复。 */
     @Override public ChatResult chatRunStatus(SessionView session, String runId) {
         var run = requireOwned(session, runId);
-        return new ChatResult(status(run), session.getSessionId(), runId, null, null, null);
+        String observed = run.phase() == ExecutionStore.Phase.UNCERTAIN ? "outcome_unknown" : status(run);
+        return new ChatResult(observed, session.getSessionId(), runId, null, null, null);
     }
 
     @Override public AgentRuntimeExecutionSteering.Snapshot steerChat(SessionView session, String runId, String inputId, String text) {

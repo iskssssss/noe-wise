@@ -127,6 +127,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/ChatInputRetryBrowserE2ETest.class")
     exclude("**/ChatSessionRestoreBrowserE2ETest.class")
+    exclude("**/ChatStreamUnknownBrowserE2ETest.class")
     exclude("**/ChatSessionCloseReceiptBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
@@ -571,6 +572,19 @@ tasks.register<Test>("knowledgeCreateBrowserE2E") {
     outputs.upToDateWhen { false }
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-create-real.spec.ts", "playwright.knowledge-create.config.ts", "vite.config.*", "package*.json", "index.html") })
         .withPropertyName("knowledgeCreateFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("chatStreamUnknownBrowserE2E") {
+    description = "验证模型流中断后的原运行状态和页面恢复"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatStreamUnknownBrowserE2ETest.incompleteStreamPreservesUnknownAndClearsPreview") }
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/stream-unknown-browser.mjs", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("sessionDirectoryBrowserE2E") {

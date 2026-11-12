@@ -985,7 +985,33 @@ export function useConversation() {
         void checkProgress(run, sourceSequence, rootInput)
       },
       previews.value,
-      previewState
+      previewState,
+      (process) => {
+        void (async () => {
+          try {
+            const value = await api.json<{ status: string }>(
+              `/chat/runs/status?${query({ session_id: id, run_id: process.run_id })}`,
+              'GET',
+              undefined,
+              signal
+            )
+            const current = history.value.processes.find(
+              (item) => item.process_id === process.process_id
+            )
+            if (
+              version === selection &&
+              !signal.aborted &&
+              current?.updated_sequence === process.updated_sequence &&
+              current.status === 'outcome_unknown' &&
+              !runIsTerminal(runStates[process.run_id] ?? '') &&
+              value.status === 'outcome_unknown'
+            )
+              rememberRun(process.run_id, value.status)
+          } catch (cause) {
+            if (version === selection && !signal.aborted) fail(cause)
+          }
+        })()
+      }
     )
     void observe(
       api,
