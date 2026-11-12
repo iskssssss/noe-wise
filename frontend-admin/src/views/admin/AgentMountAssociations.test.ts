@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   publications: vi.fn(),
   revisionDetail: vi.fn(),
   restore: vi.fn(),
+  restoreResult: vi.fn(),
   templates: vi.fn(),
   templateDetail: vi.fn(),
   installTemplate: vi.fn(),
@@ -90,6 +91,7 @@ vi.mock('../../api', () => ({
       revisions: mocks.publications,
       revisionDetail: mocks.revisionDetail,
       restoreRevision: mocks.restore,
+      restoreRevisionResult: mocks.restoreResult,
       templates: mocks.templates,
       templateDetail: mocks.templateDetail,
       installTemplate: mocks.installTemplate,
@@ -2044,6 +2046,7 @@ describe('能力挂载关联一致性', () => {
     expect(button(wrapper, '保存草稿').props('disabled')).toBe(false)
   })
   it('发布历史恢复到同一工作草稿，并明确再次发布后生效', async () => {
+    mocks.permissions.push('foundation.agents.update')
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
       'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
     )
@@ -2058,7 +2061,7 @@ describe('能力挂载关联一致性', () => {
         }
       ]
     })
-    mocks.restore.mockResolvedValue({ id: 'agent-1' })
+    mocks.restore.mockImplementation(async (command) => command)
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
     wrappers.push(wrapper)
     await flushPromises()
@@ -2069,7 +2072,11 @@ describe('能力挂载关联一致性', () => {
     await flushPromises()
     await button(wrapper, '恢复为草稿').trigger('click')
     await flushPromises()
-    expect(mocks.restore).toHaveBeenCalledWith('agent-1', 1)
+    expect(mocks.restore).toHaveBeenCalledWith({
+      agent_id: 'agent-1',
+      revision: 1,
+      request_id: expect.any(String)
+    })
     expect(mocks.publish).not.toHaveBeenCalled()
     expect(mocks.get).toHaveBeenLastCalledWith('agent-1')
     expect(ElMessageBox.confirm).toHaveBeenCalledWith(
@@ -2078,6 +2085,207 @@ describe('能力挂载关联一致性', () => {
       expect.objectContaining({ confirmButtonText: '恢复为草稿' }),
       undefined
     )
+  })
+  it('历史恢复未知后刷新保留原身份，204 不解锁，继续使用同一请求', async () => {
+    mocks.permissions.push(
+      'foundation.agents.read',
+      'foundation.agents.update',
+      'foundation.agents.publish'
+    )
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocks.publications.mockResolvedValue({
+      items: [
+        {
+          revision_id: 9,
+          revision: 1,
+          name: '原始客服',
+          published_at: '2026-10-08',
+          current: false
+        }
+      ]
+    })
+    mocks.restore
+      .mockRejectedValueOnce(new Error('回执丢失'))
+      .mockImplementationOnce(async (command) => command)
+    mocks.restoreResult.mockResolvedValueOnce(undefined)
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '发布历史')!
+      .trigger('click')
+    await flushPromises()
+    await button(wrapper, '恢复为草稿').trigger('click')
+    await flushPromises()
+    const command = mocks.restore.mock.calls[0]![0]
+    expect(command).toEqual({ agent_id: 'agent-1', revision: 1, request_id: expect.any(String) })
+    expect(wrapper.text()).toContain('历史恢复结果尚未确认')
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(true)
+    expect(button(wrapper, '添加能力').props('disabled')).toBe(true)
+    wrapper.unmount()
+    wrappers.splice(wrappers.indexOf(wrapper), 1)
+    const reloaded = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(reloaded)
+    await flushPromises()
+    expect(reloaded.text()).toContain(command.request_id)
+    await button(reloaded, '核对原恢复').trigger('click')
+    await flushPromises()
+    expect(mocks.restoreResult).toHaveBeenCalledExactlyOnceWith('agent-1', command.request_id)
+    expect(reloaded.text()).toContain('尚未查询到原恢复回执')
+    expect(button(reloaded, '保存草稿').props('disabled')).toBe(true)
+    await button(reloaded, '继续原恢复').trigger('click')
+    await flushPromises()
+    expect(mocks.restore).toHaveBeenCalledTimes(2)
+    expect(mocks.restore.mock.calls[1]![0]).toEqual(command)
+    expect(reloaded.text()).not.toContain('历史恢复结果尚未确认')
+    expect(mocks.get).toHaveBeenLastCalledWith('agent-1')
+  })
+  it('原恢复回执身份不符不解锁或刷新草稿', async () => {
+    mocks.permissions.push('foundation.agents.read', 'foundation.agents.update')
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocks.publications.mockResolvedValue({
+      items: [
+        {
+          revision_id: 9,
+          revision: 1,
+          name: '原始客服',
+          published_at: '2026-10-08',
+          current: false
+        }
+      ]
+    })
+    mocks.restore.mockResolvedValue({ agent_id: 'agent-1', revision: 2, request_id: 'different' })
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '发布历史')!
+      .trigger('click')
+    await flushPromises()
+    const reads = mocks.get.mock.calls.length
+    await button(wrapper, '恢复为草稿').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('历史恢复结果尚未确认')
+    expect(mocks.get).toHaveBeenCalledTimes(reads)
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(true)
+  })
+  it('原恢复成功回执迟到时不覆盖已切换的浏览器会话', async () => {
+    mocks.permissions.push('foundation.agents.read', 'foundation.agents.update')
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocks.publications.mockResolvedValue({
+      items: [
+        {
+          revision_id: 9,
+          revision: 1,
+          name: '原始客服',
+          published_at: '2026-10-08',
+          current: false
+        }
+      ]
+    })
+    let finish!: (value: unknown) => void
+    mocks.restore.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '发布历史')!
+      .trigger('click')
+    await flushPromises()
+    await button(wrapper, '恢复为草稿').trigger('click')
+    await flushPromises()
+    const command = mocks.restore.mock.calls[0]![0],
+      reads = mocks.get.mock.calls.length
+    mocks.browserSession = 'new-browser-session'
+    finish(command)
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledTimes(reads)
+    expect(wrapper.text()).toContain('历史恢复结果尚未确认')
+    expect(sessionStorage.length).toBeGreaterThan(0)
+  })
+  it('恢复请求记录写入失败时不发送请求', async () => {
+    mocks.permissions.push('foundation.agents.update')
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocks.publications.mockResolvedValue({
+      items: [
+        {
+          revision_id: 9,
+          revision: 1,
+          name: '原始客服',
+          published_at: '2026-10-08',
+          current: false
+        }
+      ]
+    })
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '发布历史')!
+      .trigger('click')
+    await flushPromises()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('存储失败')
+    })
+    await button(wrapper, '恢复为草稿').trigger('click')
+    await flushPromises()
+    expect(mocks.restore).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('尚未发送恢复请求')
+  })
+  it('首次恢复明确拒绝时清除待核对请求', async () => {
+    mocks.permissions.push('foundation.agents.update')
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocks.publications.mockResolvedValue({
+      items: [
+        {
+          revision_id: 9,
+          revision: 1,
+          name: '原始客服',
+          published_at: '2026-10-08',
+          current: false
+        }
+      ]
+    })
+    mocks.restore.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 422,
+        code: 'VALIDATION_ERROR',
+        traceId: 'trace',
+        userMessage: '恢复被拒绝'
+      })
+    )
+    const wrapper = mount(AgentManagePage, { attachTo: document.body })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '发布历史')!
+      .trigger('click')
+    await flushPromises()
+    await button(wrapper, '恢复为草稿').trigger('click')
+    await flushPromises()
+    expect(mocks.restore).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).not.toContain('历史恢复结果尚未确认')
+    expect(button(wrapper, '恢复为草稿').props('disabled')).toBe(false)
   })
   it.each(['SKILL', 'TOOL', 'KNOWLEDGE_SOURCE'] as const)(
     '%s 已挂载时避免重复添加',
@@ -2706,12 +2914,17 @@ describe('能力挂载关联一致性', () => {
     )
   })
   it('模板工具只有一个服务时自动绑定', async () => {
+    mocks.requirementOptions.mockResolvedValue([
+      { id: '10', name: '查询订单', versionId: '21', versionKey: '1' }
+    ])
     mocks.listDefinitions.mockResolvedValue([
       { id: '10', defaultVersionId: '21', name: '查询订单', capabilityType: 'TOOL' },
       { id: '11', defaultVersionId: '22', name: '无关流程', capabilityType: 'WORKFLOW' }
     ])
     mocks.versions.mockResolvedValue([{ id: '21', definitionId: '10', capabilityType: 'TOOL' }])
-    mocks.deployments.mockResolvedValue([{ deploymentKey: 'order-service', toolVersionId: '21' }])
+    mocks.deployments.mockResolvedValue([
+      { deploymentKey: 'order-service', toolVersionId: '21', toolDefinitionId: '10' }
+    ])
     mocks.templateDetail.mockResolvedValue({
       name: '客服模板',
       definition: { resource_slots: [{ key: 'order', label: '订单查询', capability_type: 'TOOL' }] }
@@ -2734,7 +2947,7 @@ describe('能力挂载关联一致性', () => {
     template.vm.$emit('update:modelValue', 'template-1')
     template.vm.$emit('change', 'template-1')
     await flushPromises()
-    expect(mocks.versions).toHaveBeenCalledExactlyOnceWith('10', 'PUBLISHED')
+    expect(mocks.versions).not.toHaveBeenCalled()
     expect(mocks.instances).not.toHaveBeenCalled()
     const slot = drawer
       .findAllComponents(ElFormItem)
@@ -2763,13 +2976,18 @@ describe('能力挂载关联一致性', () => {
     )
   })
   it('模板安装期间接入工具后刷新目录，保留名称和槽位并继续安装', async () => {
+    mocks.requirementOptions.mockResolvedValue([
+      { id: '10', name: '查询订单', versionId: '21', versionKey: '1' }
+    ])
     mocks.listDefinitions.mockResolvedValue([
       { id: '10', defaultVersionId: '21', name: '查询订单', capabilityType: 'TOOL' }
     ])
     mocks.versions.mockResolvedValue([{ id: '21', definitionId: '10', capabilityType: 'TOOL' }])
     mocks.deployments
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ deploymentKey: 'order-service', toolVersionId: '21' }])
+      .mockResolvedValueOnce([
+        { deploymentKey: 'order-service', toolVersionId: '21', toolDefinitionId: '10' }
+      ])
     mocks.templateDetail.mockResolvedValue({
       name: '客服模板',
       definition: { resource_slots: [{ key: 'order', label: '订单查询', capability_type: 'TOOL' }] }
@@ -2822,17 +3040,20 @@ describe('能力挂载关联一致性', () => {
   })
 
   it('刷新失败保留原槽位，原已选服务消失时不自动改绑到剩余实例', async () => {
+    mocks.requirementOptions.mockResolvedValue([
+      { id: '10', name: '查询订单', versionId: '21', versionKey: '1' }
+    ])
     mocks.listDefinitions.mockResolvedValue([
       { id: '10', defaultVersionId: '21', name: '查询订单', capabilityType: 'TOOL' }
     ])
     mocks.versions.mockResolvedValue([{ id: '21', definitionId: '10', capabilityType: 'TOOL' }])
     mocks.deployments
       .mockResolvedValueOnce([
-        { deploymentKey: 'a', toolVersionId: '21' },
-        { deploymentKey: 'b', toolVersionId: '21' }
+        { deploymentKey: 'a', toolVersionId: '21', toolDefinitionId: '10' },
+        { deploymentKey: 'b', toolVersionId: '21', toolDefinitionId: '10' }
       ])
       .mockRejectedValueOnce(new Error('目录不可读'))
-      .mockResolvedValueOnce([{ deploymentKey: 'b', toolVersionId: '21' }])
+      .mockResolvedValueOnce([{ deploymentKey: 'b', toolVersionId: '21', toolDefinitionId: '10' }])
     mocks.templateDetail.mockResolvedValue({
       name: '客服模板',
       definition: { resource_slots: [{ key: 'order', label: '订单查询', capability_type: 'TOOL' }] }

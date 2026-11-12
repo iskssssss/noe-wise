@@ -11,6 +11,7 @@ public class IdempotencyInterceptor extends HostIdempotencyInterceptor {
     public IdempotencyInterceptor(StringRedisTemplate redis) {
         super(redis, Set.of(
                 "/api/v1/teams/save-and-publish",
+                "/api/v1/agents/restore-revision",
                 "/api/v1/teams/publish-with-receipt",
                 "/api/v1/knowledge/bases/revisions/prepare-and-publish",
                 "/api/v1/knowledge/bases/revisions/publish-with-receipt",

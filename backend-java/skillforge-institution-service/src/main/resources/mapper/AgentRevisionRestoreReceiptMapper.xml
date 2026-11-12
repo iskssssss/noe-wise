@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.skillforge.institution.service.AgentRevisionRestoreReceiptMapper">
+  <insert id="claim">
+    INSERT INTO nw_agent_revision_restore_receipts(tenant_id,request_id,actor_ref,agent_id,revision)
+    VALUES(#{tenant},CAST(#{requestId} AS uuid),#{actor},CAST(#{agentId} AS bigint),#{revision})
+    ON CONFLICT (tenant_id,request_id) DO NOTHING
+  </insert>
+  <select id="find" resultType="com.skillforge.institution.service.AgentRevisionRestoreReceiptMapper$Row">
+    SELECT actor_ref,agent_id::text AS agent_id,revision FROM nw_agent_revision_restore_receipts
+    WHERE tenant_id=#{tenant} AND request_id=CAST(#{requestId} AS uuid)
+  </select>
+</mapper>

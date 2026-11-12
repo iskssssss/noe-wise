@@ -565,6 +565,11 @@ export interface AgentSaveAndPublishReceipt {
   revision: number
   published_at: string
 }
+export interface AgentRestoreReceipt {
+  request_id: string
+  agent_id: string
+  revision: number
+}
 export interface AgentPublication {
   revision_id: number
   revision: number
@@ -1254,9 +1259,13 @@ export const api = {
       get<AgentDetailWire>(
         `/agents/revisions/detail?agentId=${encodeURIComponent(id)}&revision=${revision}`
       ).then(mapAgentDetail),
-    restoreRevision: (id: string, revision: number) =>
-      post<AgentItemWire>('/agents/restore-revision', { agent_id: id, revision }).then(
-        mapAgentItem
+    restoreRevision: (command: { agent_id: string; revision: number; request_id: string }) =>
+      post<AgentRestoreReceipt>('/agents/restore-revision', command, {
+        retryOnUnauthorized: false
+      }),
+    restoreRevisionResult: (agentId: string, requestId: string) =>
+      get<AgentRestoreReceipt | undefined>(
+        `/agents/restore-revision/result?agentId=${encodeURIComponent(agentId)}&requestId=${encodeURIComponent(requestId)}`
       ),
     publish: (id: string) =>
       post<{ status: string; agent_id: string }>(`/agents/publish`, { agent_id: id }),

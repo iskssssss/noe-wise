@@ -11,7 +11,7 @@
       ><ElButton
         v-if="loadError || refreshRequired"
         :loading="loading"
-        :disabled="busy || !!publicationOperation"
+        :disabled="busy || !!publicationOperation || !!restoreOperation || !!restoreStorageError"
         @click="refreshAgent"
         >重新读取</ElButton
       ><ElButton
@@ -20,6 +20,8 @@
           busy ||
           !!publicationOperation ||
           !!publicationStorageError ||
+          !!restoreOperation ||
+          !!restoreStorageError ||
           refreshRequired ||
           agent?.status !== 'published'
         "
@@ -113,6 +115,19 @@
       >
     </section>
     <p v-if="publicationStorageError" role="status">{{ publicationStorageError }}</p>
+    <section v-if="restoreOperation" class="admin-card" aria-label="恢复结果核对">
+      <p role="status">
+        历史恢复结果尚未确认，配置已锁定。原修订 {{ restoreOperation.revision }} · 请求号
+        <code>{{ restoreOperation.requestId }}</code>
+      </p>
+      <p class="admin-field-help">核对只读取原操作回执；继续使用相同请求号，不会另建恢复操作。</p>
+      <p v-if="restoreCheck" role="status">{{ restoreCheck }}</p>
+      <ElButton :disabled="busy" @click="checkRestore">核对原恢复</ElButton>
+      <ElButton v-if="can('foundation.agents.update')" :disabled="busy" @click="continueRestore"
+        >继续原恢复</ElButton
+      >
+    </section>
+    <p v-if="restoreStorageError" role="status">{{ restoreStorageError }}</p>
     <p v-if="publicationReceipt" class="admin-field-help" role="status">
       {{ publicationReceiptKind === 'publish' ? '发布' : '保存并发布' }}已确认：修订
       {{ publicationReceipt.revision }} · 发布记录 {{ publicationReceipt.publication_id }} · 请求号
@@ -933,6 +948,7 @@ import {
   type AgentDetail,
   type AgentSaveAndPublishCommand,
   type AgentSaveAndPublishReceipt,
+  type AgentRestoreReceipt,
   type AgentItem,
   type AgentPublication,
   type AgentExecutionConfig,
@@ -1127,6 +1143,46 @@ const publicationReceiptKind = ref<'save-and-publish' | 'publish'>('save-and-pub
 const publicationCheck = ref('')
 const publicationOwner = computed(() => `${auth.identityVersion}:${id.value}`)
 let publicationDisposed = false
+const restoreOperation = shallowRef<{ requestId: string; agentId: string; revision: number }>()
+const restoreStorageError = ref('')
+const restoreCheck = ref('')
+const restoreStorageKey = () =>
+  auth.user?.tenant_id && auth.user?.sub
+    ? `skillforge.agent-restore:${encodeURIComponent(JSON.stringify([auth.user.tenant_id, auth.user.sub, id.value]))}`
+    : ''
+function loadRestoreOperation() {
+  restoreOperation.value = undefined
+  restoreStorageError.value = ''
+  restoreCheck.value = ''
+  const key = restoreStorageKey()
+  if (!key) return
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return
+    const value = JSON.parse(raw) as { requestId: string; agentId: string; revision: number }
+    if (
+      value.agentId !== id.value ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+      !Number.isSafeInteger(value.revision) ||
+      value.revision < 1
+    )
+      throw Error('invalid')
+    restoreOperation.value = value
+  } catch {
+    restoreStorageError.value = '无法读取原恢复请求记录，请恢复浏览器存储后重新进入。'
+  }
+}
+function clearRestoreOperation(key: string) {
+  try {
+    sessionStorage.removeItem(key)
+    restoreOperation.value = undefined
+    restoreStorageError.value = ''
+    return true
+  } catch {
+    restoreStorageError.value = '无法清除原恢复请求记录，请恢复浏览器存储后重新核对。'
+    return false
+  }
+}
 let pendingKnowledgeNotice = ''
 function refreshAfterKnowledgeNotice(owner: string) {
   const current =
@@ -1167,6 +1223,8 @@ const editingBlocked = computed(
     busy.value ||
     !!publicationOperation.value ||
     !!publicationStorageError.value ||
+    !!restoreOperation.value ||
+    !!restoreStorageError.value ||
     agent.value?.definition_managed
 )
 const mountVersionNames = ref<Record<string, string>>({})
@@ -1257,7 +1315,7 @@ const form = reactive({
 })
 const dirty = computed(() => !!agent.value && JSON.stringify(form) !== saved.value)
 useUnsavedChanges({
-  dirty: () => dirty.value || !!publicationOperation.value,
+  dirty: () => dirty.value || !!publicationOperation.value || !!restoreOperation.value,
   busy: () => busy.value,
   leaveMessage: () =>
     publicationOperation.value
@@ -1274,6 +1332,7 @@ watch(
     mountNames.error.value = ''
     mountVersionNames.value = {}
     loadPublicationOperation()
+    loadRestoreOperation()
     publicationReceipt.value = undefined
     publicationCheck.value = ''
     error.value = ''
@@ -1442,7 +1501,9 @@ async function saveAndPublish(trial = false) {
     !dirty.value ||
     refreshRequired.value ||
     publicationOperation.value ||
-    publicationStorageError.value
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
   )
     return
   if (
@@ -1579,7 +1640,9 @@ async function save() {
     !dirty.value ||
     refreshRequired.value ||
     publicationOperation.value ||
-    publicationStorageError.value
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
   )
     return
   await run(async () => {
@@ -1601,7 +1664,9 @@ async function publish() {
     !can('foundation.agents.publish') ||
     refreshRequired.value ||
     publicationOperation.value ||
-    publicationStorageError.value
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
   )
     return
   const owner = publicationOwner.value
@@ -1688,8 +1753,131 @@ async function viewPublication(publication: AgentPublication) {
     publicationOpen.value = true
   })
 }
+function restoreCurrent(
+  operation: NonNullable<typeof restoreOperation.value>,
+  owner: string,
+  session: string | null,
+  identity: string | undefined
+) {
+  return () =>
+    !publicationDisposed &&
+    publicationOwner.value === owner &&
+    getSessionId() === session &&
+    auth.sessionIdentity === identity &&
+    restoreOperation.value === operation
+}
+async function acceptRestore(
+  receipt: AgentRestoreReceipt,
+  operation: NonNullable<typeof restoreOperation.value>,
+  current: () => boolean,
+  key: string
+) {
+  if (
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    receipt.agent_id !== operation.agentId ||
+    receipt.revision !== operation.revision
+  )
+    throw Error('恢复回执不完整，请核对原操作')
+  const owner = publicationOwner.value,
+    session = getSessionId(),
+    identity = auth.sessionIdentity
+  if (!current() || !clearRestoreOperation(key)) return
+  restoreCheck.value = ''
+  refreshRequired.value = true
+  const readCurrent = () =>
+    !publicationDisposed &&
+    owner === publicationOwner.value &&
+    key === restoreStorageKey() &&
+    session === getSessionId() &&
+    identity === auth.sessionIdentity
+  publicationReadGuard = readCurrent
+  let next: AgentDetail | undefined
+  try {
+    next = await reload()
+  } finally {
+    if (publicationReadGuard === readCurrent) publicationReadGuard = undefined
+  }
+  if (!readCurrent()) return
+  if (next) {
+    fill(next)
+    message.success('历史配置已恢复为草稿，发布后生效')
+  }
+}
+async function dispatchRestore(
+  operation: NonNullable<typeof restoreOperation.value>,
+  retry: boolean
+) {
+  const owner = publicationOwner.value,
+    key = restoreStorageKey(),
+    session = getSessionId(),
+    identity = auth.sessionIdentity
+  const current = restoreCurrent(operation, owner, session, identity)
+  try {
+    const receipt = await api.agents.restoreRevision({
+      agent_id: operation.agentId,
+      revision: operation.revision,
+      request_id: operation.requestId
+    })
+    if (current()) await acceptRestore(receipt, operation, current, key)
+  } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      throw 'cancel'
+    }
+    if (
+      !retry &&
+      cause instanceof HttpClientError &&
+      cause.status >= 400 &&
+      cause.status < 500 &&
+      ![401, 408, 409].includes(cause.status) &&
+      cause.code &&
+      cause.traceId
+    )
+      clearRestoreOperation(key)
+    throw cause
+  }
+}
+async function checkRestore() {
+  const operation = restoreOperation.value
+  if (!operation) return
+  const owner = publicationOwner.value,
+    key = restoreStorageKey(),
+    session = getSessionId(),
+    identity = auth.sessionIdentity
+  const current = restoreCurrent(operation, owner, session, identity)
+  await run(async () => {
+    try {
+      const receipt = await api.agents.restoreRevisionResult(operation.agentId, operation.requestId)
+      if (!current()) return
+      if (receipt) await acceptRestore(receipt, operation, current, key)
+      else restoreCheck.value = '尚未查询到原恢复回执，结果仍未确认。'
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    }
+  })
+}
+async function continueRestore() {
+  const operation = restoreOperation.value
+  if (!operation || !can('foundation.agents.update')) return
+  await run(() => dispatchRestore(operation, true))
+}
 async function restorePublication(publication: AgentPublication) {
-  if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  if (
+    refreshRequired.value ||
+    publicationOperation.value ||
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
+  )
+    return
+  const owner = publicationOwner.value,
+    session = getSessionId(),
+    identity = auth.sessionIdentity
   await run(async () => {
     if (dirty.value) throw Error('请先保存当前修改')
     if (
@@ -1701,11 +1889,32 @@ async function restorePublication(publication: AgentPublication) {
       }))
     )
       return
-    await api.agents.restoreRevision(id.value, publication.revision)
-    refreshRequired.value = true
-    message.success('历史配置已恢复为草稿，发布后生效')
-    const next = await reload()
-    if (next) fill(next)
+    if (
+      publicationDisposed ||
+      owner !== publicationOwner.value ||
+      session !== getSessionId() ||
+      identity !== auth.sessionIdentity ||
+      !can('foundation.agents.update') ||
+      restoreOperation.value ||
+      restoreStorageError.value
+    )
+      return
+    const key = restoreStorageKey()
+    if (!key) throw Error('当前身份不可用，尚未发送恢复请求')
+    const operation = {
+      requestId: crypto.randomUUID(),
+      agentId: id.value,
+      revision: publication.revision
+    }
+    try {
+      sessionStorage.setItem(key, JSON.stringify(operation))
+    } catch {
+      restoreStorageError.value = '无法保存原恢复请求记录，尚未发送恢复请求。'
+      throw Error(restoreStorageError.value)
+    }
+    restoreOperation.value = operation
+    restoreCheck.value = ''
+    await dispatchRestore(operation, false)
   })
 }
 const mountSaved = ref('')
@@ -2323,7 +2532,14 @@ async function toggleWorkflowOnboarding() {
   onboardingUnknown.value = false
 }
 async function openMount() {
-  if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  if (
+    refreshRequired.value ||
+    publicationOperation.value ||
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
+  )
+    return
   const owner = publicationOwner.value
   const session = auth.sessionIdentity
   const browserSession =
@@ -2439,7 +2655,14 @@ async function addMount() {
   })
 }
 async function removeMount(mount: CapabilityMount) {
-  if (refreshRequired.value || publicationOperation.value || publicationStorageError.value) return
+  if (
+    refreshRequired.value ||
+    publicationOperation.value ||
+    publicationStorageError.value ||
+    restoreOperation.value ||
+    restoreStorageError.value
+  )
+    return
   if (
     await confirm({
       title: '移除能力',
