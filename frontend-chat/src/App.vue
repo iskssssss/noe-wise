@@ -1356,6 +1356,14 @@ const formTipId = useId()
             >
           </ChatAlert>
           <ChatAlert
+            v-if="c.cancelUnconfirmed"
+            title="取消结果尚未确认；可以继续取消原运行。"
+            type="warning"
+            :closable="false"
+          >
+            <ChatButton :disabled="c.cancelRetrying" @click="c.retryCancel()">继续取消</ChatButton>
+          </ChatAlert>
+          <ChatAlert
             v-if="c.pendingInput && !c.sending"
             title="上次提交结果尚未确认。请先恢复观察；仍需重试时，使用下方的原请求入口。"
             type="warning"

@@ -155,6 +155,8 @@ function createState() {
     sending: false,
     connecting: false,
     cancelling: false,
+    cancelUnconfirmed: false,
+    cancelRetrying: false,
     loading: false,
     loadEarlier: vi.fn(async () => {}),
     openSession: vi.fn(),
@@ -164,6 +166,7 @@ function createState() {
     submit: vi.fn(),
     ensureSession: vi.fn(async () => 's'),
     cancel: vi.fn(),
+    retryCancel: vi.fn(),
     newSession: vi.fn(),
     changeTarget: vi.fn(),
     disconnect: vi.fn(),
@@ -193,6 +196,34 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it('未知取消显示显式继续入口，在途禁用且确认后移除', async () => {
+    holder.state.target = 'agent:a'
+    holder.state.sessionId = 's'
+    holder.state.cancelling = true
+    holder.state.cancelUnconfirmed = true
+    const wrapper = mount(App, { attachTo: document.body })
+    try {
+      await flushPromises()
+      const retry = () => wrapper.findAll('button').find((item) => item.text() === '继续取消')!
+      expect(wrapper.text()).toContain('取消结果尚未确认')
+      expect(holder.state.retryCancel).not.toHaveBeenCalled()
+      await retry().trigger('click')
+      expect(holder.state.retryCancel).toHaveBeenCalledOnce()
+      expect(holder.state.cancel).not.toHaveBeenCalled()
+      holder.state.cancelRetrying = true
+      await flushPromises()
+      expect(retry().attributes('disabled')).toBeDefined()
+      await retry().trigger('click')
+      expect(holder.state.retryCancel).toHaveBeenCalledOnce()
+      holder.state.cancelRetrying = false
+      holder.state.cancelUnconfirmed = false
+      holder.state.cancelling = false
+      await flushPromises()
+      expect(retry()).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it.each(['pending', 'sending'])(
     '补充处于 %s 时锁定导航，原命令恢复入口保持可用',
     async (mode) => {

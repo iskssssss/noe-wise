@@ -128,6 +128,7 @@ tasks.named<Test>("test") {
     exclude("**/ChatInputRetryBrowserE2ETest.class")
     exclude("**/ChatSessionRestoreBrowserE2ETest.class")
     exclude("**/ChatStreamUnknownBrowserE2ETest.class")
+    exclude("**/ChatCancelRetryBrowserE2ETest.class")
     exclude("**/ChatSessionCloseReceiptBrowserE2ETest.class")
     exclude("**/ChatTeamDisableBrowserE2ETest.class")
     exclude("**/ChannelRuntimeBrowserE2ETest.class")
@@ -659,6 +660,20 @@ tasks.register<Test>("chatStreamUnknownBrowserE2E") {
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.ChatStreamUnknownBrowserE2ETest.incompleteStreamPreservesUnknownAndClearsPreview") }
     inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/stream-unknown-browser.mjs", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("chatCancelRetryBrowserE2E") {
+    description = "验证未到达的取消可显式继续并核验原运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatCancelRetryBrowserE2ETest.cancelNotArrivedCanBeExplicitlyContinued") }
+    inputs.property("chatCancelRetry", providers.environmentVariable("E2E_CHAT_CANCEL_RETRY").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/cancel-retry-browser.mjs", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

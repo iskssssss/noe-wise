@@ -67,6 +67,8 @@ export function useConversation() {
     sending = ref(false),
     uploading = ref(false),
     cancelling = ref(false),
+    cancelUnconfirmed = ref(false),
+    cancelRetrying = ref(false),
     draft = ref('')
   const runId = ref(''),
     runStatus = ref(''),
@@ -165,6 +167,7 @@ export function useConversation() {
   const profileRefs = new Map<string, { client_ref: string; identity_token: string }>()
   let createPromise: Promise<string> | undefined,
     cancelPoll: ReturnType<typeof setTimeout> | undefined,
+    cancelObservation = 0,
     steeringPoll: ReturnType<typeof setTimeout> | undefined,
     submissionRequest = 0,
     steeringRequest = 0,
@@ -580,6 +583,9 @@ export function useConversation() {
     sending.value = false
     uploading.value = false
     cancelling.value = false
+    cancelObservation++
+    cancelUnconfirmed.value = false
+    cancelRetrying.value = false
     cancellingRun.value = ''
     createPromise = undefined
     connection.value = '未观察会话'
@@ -765,6 +771,9 @@ export function useConversation() {
         if (cancelPoll) clearTimeout(cancelPoll)
         cancelPoll = undefined
         cancelling.value = false
+        cancelObservation++
+        cancelUnconfirmed.value = false
+        cancelRetrying.value = false
         cancellingRun.value = ''
       }
       const other = Object.entries(runStates).find(
@@ -1430,7 +1439,7 @@ export function useConversation() {
       if (version === selection) loading.value = false
     }
   }
-  async function cancel(targetRun?: string) {
+  async function cancel(targetRun?: string, retry = false) {
     const api = client.value,
       id = sessionId.value,
       run =
@@ -1440,12 +1449,30 @@ export function useConversation() {
         ) ??
         runId.value,
       version = selection
-    if (!api || !id || !run || cancelling.value) return
+    if (
+      !api ||
+      !id ||
+      !run ||
+      (cancelling.value && !retry) ||
+      (retry && (!cancelUnconfirmed.value || cancelRetrying.value || run !== cancellingRun.value))
+    )
+      return
+    if (retry) {
+      cancelRetrying.value = true
+      if (cancelPoll) clearTimeout(cancelPoll)
+      cancelPoll = undefined
+    }
+    const observation = ++cancelObservation
     cancelling.value = true
     cancellingRun.value = run
     error.value = ''
     const poll = async () => {
-      if (version !== selection || runIsTerminal(runStates[run] ?? '')) return
+      if (
+        version !== selection ||
+        observation !== cancelObservation ||
+        runIsTerminal(runStates[run] ?? '')
+      )
+        return
       try {
         const result = await api.json<{ status: string }>(
           `/chat/runs/status?${query({ session_id: id, run_id: run })}`,
@@ -1453,11 +1480,20 @@ export function useConversation() {
           undefined,
           sessionAbort.signal
         )
-        if (version !== selection || runIsTerminal(runStates[run] ?? '')) return
+        if (
+          version !== selection ||
+          observation !== cancelObservation ||
+          runIsTerminal(runStates[run] ?? '')
+        )
+          return
         rememberRun(run, result.status)
         if (!runIsTerminal(runStates[run] ?? '')) cancelPoll = setTimeout(() => void poll(), 1500)
       } catch (cause) {
-        if (version === selection && !runIsTerminal(runStates[run] ?? '')) {
+        if (
+          version === selection &&
+          observation === cancelObservation &&
+          !runIsTerminal(runStates[run] ?? '')
+        ) {
           fail(cause)
           cancelPoll = setTimeout(() => void poll(), 5000)
         }
@@ -1470,12 +1506,23 @@ export function useConversation() {
         { session_id: id, run_id: run },
         sessionAbort.signal
       )
-      if (version !== selection || runIsTerminal(runStates[run] ?? '')) return
+      if (
+        version !== selection ||
+        observation !== cancelObservation ||
+        runIsTerminal(runStates[run] ?? '')
+      )
+        return
+      cancelUnconfirmed.value = false
       rememberRun(run, result.status)
       if (!runIsTerminal(runStates[run] ?? '')) cancelPoll = setTimeout(() => void poll(), 1000)
     } catch (cause) {
-      if (version === selection && !runIsTerminal(runStates[run] ?? '')) {
+      if (
+        version === selection &&
+        observation === cancelObservation &&
+        !runIsTerminal(runStates[run] ?? '')
+      ) {
         if (
+          !retry &&
           cause instanceof RequestError &&
           cause.status === 403 &&
           cause.code === 'foundation.permission.denied'
@@ -1485,10 +1532,15 @@ export function useConversation() {
           error.value = '取消请求未获授权，运行状态以实际结果为准。'
           return
         }
-        fail(cause)
+        cancelUnconfirmed.value = true
         void poll()
       }
+    } finally {
+      if (version === selection && observation === cancelObservation) cancelRetrying.value = false
     }
+  }
+  function retryCancel() {
+    return cancel(cancellingRun.value, true)
   }
   /** 上传只准备下一条消息草稿；运行中仍可添加资料，不会自动发送。 */
   async function upload(files: File[]): Promise<ConfirmedUpload[]> {
@@ -1867,6 +1919,9 @@ export function useConversation() {
     sending,
     uploading,
     cancelling,
+    cancelUnconfirmed,
+    cancelRetrying,
+    retryCancel,
     draft,
     supplementDraft,
     inputMode,

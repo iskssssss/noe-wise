@@ -2495,6 +2495,164 @@ describe('独立会话交互状态', () => {
     expect(statusLoad).not.toHaveBeenCalled()
     expect(posts).toHaveLength(1)
   })
+  it('显式重试后迟到的旧状态读取不覆盖状态或增加轮询', async () => {
+    await connect()
+    state.draft.value = '原请求'
+    await state.submit()
+    const originalFetch = globalThis.fetch
+    let releaseOld!: (value: Response) => void
+    const cancelRead = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('响应未知'))
+      .mockResolvedValueOnce(response({ status: 'suspended' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}) =>
+        new URL(input).pathname === '/api/v1/chat/runs/cancel'
+          ? cancelRead()
+          : originalFetch(input, init)
+      )
+    )
+    statusLoad = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseOld = resolve
+          })
+      )
+      .mockImplementation(async () => response({ status: 'suspended' }))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await state.cancel()
+      await flushPromises()
+      expect(statusLoad).toHaveBeenCalledOnce()
+      await state.retryCancel()
+      expect(state.runStates.run).toBe('suspended')
+      expect(state.cancelUnconfirmed.value).toBe(false)
+      const timers = vi.getTimerCount()
+      releaseOld(response({ status: 'running' }))
+      await flushPromises()
+      expect(state.runStates.run).toBe('suspended')
+      expect(vi.getTimerCount()).toBe(timers)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(statusLoad).toHaveBeenCalledTimes(2)
+      expect(cancelRead).toHaveBeenCalledTimes(2)
+    } finally {
+      state.disconnect()
+      vi.useRealTimers()
+    }
+  })
+  it('未知取消仅显式重试原Run，在途重复点击不增加请求', async () => {
+    await connect()
+    state.draft.value = '原请求'
+    await state.submit()
+    const originalFetch = globalThis.fetch
+    let finish!: (value: Response) => void
+    const cancelBodies: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}) => {
+        if (new URL(input).pathname !== '/api/v1/chat/runs/cancel')
+          return originalFetch(input, init)
+        cancelBodies.push(JSON.parse(String(init.body)))
+        if (cancelBodies.length === 1) throw new TypeError('响应未知')
+        return new Promise<Response>((resolve) => {
+          finish = resolve
+        })
+      })
+    )
+    statusLoad = vi.fn(async () => response({ status: 'running' }))
+    await state.cancel()
+    await flushPromises()
+    expect(state.cancelUnconfirmed.value).toBe(true)
+    expect(cancelBodies).toHaveLength(1)
+    const pending = state.retryCancel()
+    await flushPromises()
+    expect(state.cancelRetrying.value).toBe(true)
+    await state.retryCancel()
+    await state.cancel('other-run')
+    expect(cancelBodies).toEqual([
+      { session_id: 's', run_id: 'run' },
+      { session_id: 's', run_id: 'run' }
+    ])
+    finish(response({ status: 'cancelled' }))
+    await pending
+    expect(state.cancelUnconfirmed.value).toBe(false)
+    expect(state.cancelRetrying.value).toBe(false)
+    expect(state.cancelling.value).toBe(false)
+    expect(posts).toHaveLength(1)
+  })
+  it('未知取消后的明确权限拒绝不能抹去原未知', async () => {
+    await connect()
+    state.draft.value = '原请求'
+    await state.submit()
+    const originalFetch = globalThis.fetch
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}) => {
+        if (new URL(input).pathname !== '/api/v1/chat/runs/cancel')
+          return originalFetch(input, init)
+        if (++calls === 1) throw new TypeError('响应未知')
+        return new Response(
+          JSON.stringify({
+            code: 'foundation.permission.denied',
+            message: '没有操作权限',
+            data: null,
+            trace_id: 'test'
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+      })
+    )
+    statusLoad = vi.fn(async () => response({ status: 'running' }))
+    await state.cancel()
+    await state.retryCancel()
+    await flushPromises()
+    expect(calls).toBe(2)
+    expect(state.cancelUnconfirmed.value).toBe(true)
+    expect(state.cancelling.value).toBe(true)
+    expect(state.cancelRetrying.value).toBe(false)
+    expect(state.runStates.run).toBe('running')
+  })
+  it.each(['terminal', 'switch'] as const)('未知取消在%s后清理且不再重试旧Run', async (mode) => {
+    await connect()
+    state.draft.value = '原请求'
+    await state.submit()
+    const originalFetch = globalThis.fetch
+    const cancelRead = vi.fn(async () => {
+      throw new TypeError('响应未知')
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}) =>
+        new URL(input).pathname === '/api/v1/chat/runs/cancel'
+          ? cancelRead()
+          : originalFetch(input, init)
+      )
+    )
+    statusLoad = vi.fn(async () => response({ status: 'running' }))
+    await state.cancel()
+    await flushPromises()
+    expect(state.cancelUnconfirmed.value).toBe(true)
+    if (mode === 'terminal') {
+      publish({
+        event: 'execution.completed',
+        id: 'cancel-terminal',
+        data: { run_id: 'run', status: 'cancelled' }
+      })
+      await flushPromises()
+    } else await state.openSession('other-session')
+    expect(state.cancelUnconfirmed.value).toBe(false)
+    expect(state.cancelRetrying.value).toBe(false)
+    expect(state.cancelling.value).toBe(false)
+    await state.retryCancel()
+    expect(cancelRead).toHaveBeenCalledOnce()
+  })
   it('取消连接中断时继续只读查询原运行，不重新发送取消', async () => {
     await connect()
     state.draft.value = '原请求'
