@@ -1687,6 +1687,7 @@ const documentOpen = ref(false),
   content = ref(''),
   title = ref(''),
   saved = ref(''),
+  sourcePredatesChunkWrite = ref(false),
   chunks = ref<KnowledgeChunkItem[]>([]),
   chunksLoaded = ref(false),
   chunkPage = ref(1),
@@ -1771,6 +1772,7 @@ async function editDocument(documentId: string) {
     content.value = document.value.content
     title.value = document.value.title
     saved.value = JSON.stringify([title.value, content.value])
+    sourcePredatesChunkWrite.value = false
     chunkPage.value = 1
     chunks.value = []
     chunkTotal.value = 0
@@ -1782,13 +1784,16 @@ async function editDocument(documentId: string) {
 }
 async function saveDocument() {
   if (documentRefresh.value || rebuildPublicationLocked.value) return
+  const [, savedContent] = JSON.parse(saved.value) as [string, string]
+  const overwritesSavedChunks = sourcePredatesChunkWrite.value && content.value !== savedContent
   if (
-    JSON.stringify(chunks.value) !== savedChunks.value &&
+    (overwritesSavedChunks || JSON.stringify(chunks.value) !== savedChunks.value) &&
     !(await confirm({
       title: '保存文档',
-      content:
-        '保存文档会重新生成分块，当前未保存的分块修改将丢弃。请先保存需要保留的分块修改，或确认继续。',
-      confirmText: '丢弃分块修改并保存'
+      content: overwritesSavedChunks
+        ? '原文草稿早于已保存的分块修改。保存原文会重新生成分块并覆盖这些修改，未保存的分块修改也会丢弃。请确认是否继续。'
+        : '保存文档会重新生成分块，当前未保存的分块修改将丢弃。请先保存需要保留的分块修改，或确认继续。',
+      confirmText: overwritesSavedChunks ? '确认覆盖并保存' : '丢弃分块修改并保存'
     }))
   )
     return
@@ -1800,6 +1805,7 @@ async function saveDocument() {
     const submitted = { title: title.value, content: content.value }
     document.value = await api.knowledge.updateDocument(doc.id, doc.source_version, submitted)
     saved.value = JSON.stringify([submitted.title, submitted.content])
+    sourcePredatesChunkWrite.value = false
     message.success('文档已保存')
     documentRefresh.value = async () => {
       if (chunksLoaded.value) await loadChunks()
@@ -1873,6 +1879,7 @@ async function refreshAfterChunkWrite(
   if (nextChunks.items.some((item) => item.source_version !== nextDocument.source_version))
     throw Error('文档内容已更新，当前编辑仍保留。请先备份未保存内容，再重新打开文档核对最新版本。')
   const [savedTitle, savedContent] = JSON.parse(saved.value) as [string, string]
+  if (content.value !== savedContent) sourcePredatesChunkWrite.value = true
   if (title.value === savedTitle) title.value = nextDocument.title
   if (content.value === savedContent) content.value = nextDocument.content
   saved.value = JSON.stringify([nextDocument.title, nextDocument.content])

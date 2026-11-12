@@ -134,6 +134,7 @@ tasks.named<Test>("test") {
     exclude("**/ChannelBindingRoutingBrowserE2ETest.class")
     exclude("**/SessionCitationBrowserE2ETest.class")
     exclude("**/KnowledgeTitleReuseBrowserE2ETest.class")
+    exclude("**/KnowledgeSourceChunkConflictBrowserE2ETest.class")
     exclude("**/SkillPackageEncodingBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
@@ -214,6 +215,20 @@ tasks.register<Test>("knowledgeTitleReuseBrowserE2E") {
         include("frontend-admin/src/**", "frontend-admin/e2e/knowledge-title-reuse-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("knowledgeTitleReuseFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("knowledgeSourceChunkConflictBrowserE2E") {
+    description = "验证正文草稿与已保存分块的覆盖确认"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSourceChunkConflictBrowserE2ETest.sourceDraftDoesNotSilentlyOverwriteSavedChunk") }
+    inputs.property("knowledgeSourceChunk", providers.environmentVariable("E2E_KNOWLEDGE_SOURCE_CHUNK").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-source-chunk-conflict-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("sessionCitationBrowserE2E") {
