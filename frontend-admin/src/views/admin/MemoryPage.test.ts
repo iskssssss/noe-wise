@@ -71,7 +71,7 @@ function button(wrapper: VueWrapper, label: string) {
 function confirmationButton(label: string) {
   const found = [
     ...document.querySelectorAll<HTMLButtonElement>('.el-message-box__btns button')
-  ].find((item) => item.textContent?.trim() === label)
+  ].findLast((item) => item.textContent?.trim() === label)
   if (!found) throw Error('未找到确认框按钮 ' + label)
   return found
 }
@@ -84,6 +84,14 @@ async function render() {
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
+}
+
+async function forgetFrom(wrapper: VueWrapper, index = 0) {
+  const actions = wrapper.findAllComponents(ElButton).filter((item) => item.text() === '遗忘')
+  await actions[index]!.trigger('click')
+  await flushPromises()
+  confirmationButton('遗忘记忆').click()
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -138,6 +146,141 @@ afterEach(async () => {
   await flushPromises()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+})
+
+it('旧页面遗忘回执迟到不能清除新页面另一事实的未知记录', async () => {
+  fact.status = 'ACTIVE'
+  const second = {
+    ...fact,
+    ref: { ...fact.ref, fact_id: 'fact/second' },
+    revision: 7,
+    predicate: 'second-fact'
+  }
+  mocks.list.mockResolvedValue([fact, second])
+  let finish!: (value: unknown) => void
+  mocks.forget.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const old = await render()
+  await forgetFrom(old, 0)
+  expect(mocks.forget).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  old.unmount()
+  wrappers.splice(wrappers.indexOf(old), 1)
+  mocks.forget.mockRejectedValueOnce(new Error('第二事实回执丢失'))
+  const current = await render()
+  await forgetFrom(current, 1)
+  expect(mocks.forget).toHaveBeenNthCalledWith(2, 'fact/second', 7)
+  finish({ ...fact, revision: 4, status: 'FORGOTTEN' })
+  await flushPromises()
+  current.unmount()
+  wrappers.splice(wrappers.indexOf(current), 1)
+  const reloaded = await render()
+  const cards = reloaded.findAll('[aria-label="记忆状态结果核对"]')
+  expect(
+    cards.some((card) => card.text().includes('fact/second') && card.text().includes('原修订 7'))
+  ).toBe(true)
+  expect(mocks.forget).toHaveBeenCalledTimes(2)
+})
+
+it('多个事实的遗忘未知互不覆盖，重载保留各自原修订', async () => {
+  fact.status = 'ACTIVE'
+  const second = {
+    ...fact,
+    ref: { ...fact.ref, fact_id: 'fact/second' },
+    revision: 7,
+    predicate: 'second-fact'
+  }
+  mocks.list.mockResolvedValue([fact, second])
+  mocks.forget.mockRejectedValue(new Error('响应丢失'))
+  const wrapper = await render()
+  await forgetFrom(wrapper, 0)
+  const actions = wrapper.findAllComponents(ElButton).filter((item) => item.text() === '遗忘')
+  expect(actions[0]!.props('disabled')).toBe(true)
+  expect(actions[1]!.props('disabled')).toBe(false)
+  await forgetFrom(wrapper, 1)
+  expect(mocks.forget).toHaveBeenCalledTimes(2)
+  expect(mocks.forget).toHaveBeenNthCalledWith(1, 'fact/user', 3)
+  expect(mocks.forget).toHaveBeenNthCalledWith(2, 'fact/second', 7)
+  wrapper.unmount()
+  wrappers.splice(wrappers.indexOf(wrapper), 1)
+  const reloaded = await render()
+  const cards = reloaded.findAll('[aria-label="记忆状态结果核对"]')
+  expect(cards).toHaveLength(2)
+  expect(cards[0]!.text()).toContain('fact/user')
+  expect(cards[0]!.text()).toContain('原修订 3')
+  expect(cards[1]!.text()).toContain('fact/second')
+  expect(cards[1]!.text()).toContain('原修订 7')
+  expect(
+    reloaded
+      .findAllComponents(ElButton)
+      .filter((item) => item.text() === '遗忘')
+      .every((item) => item.props('disabled'))
+  ).toBe(true)
+  expect(mocks.forget).toHaveBeenCalledTimes(2)
+})
+
+it('遗忘未知时同修订核对不解锁，更高修订只读核对后解锁', async () => {
+  fact.status = 'ACTIVE'
+  mocks.forget.mockRejectedValue(new Error('响应丢失'))
+  mocks.detail
+    .mockResolvedValueOnce(fact)
+    .mockResolvedValueOnce({ ...fact, revision: 4, status: 'FORGOTTEN' })
+  const wrapper = await render()
+  await forgetFrom(wrapper)
+  await button(wrapper, '核对最新状态').trigger('click')
+  await flushPromises()
+  expect(button(wrapper, '遗忘').props('disabled')).toBe(true)
+  expect(wrapper.text()).toContain('遗忘结果尚未确认')
+  mocks.list.mockResolvedValueOnce([{ ...fact, revision: 4, status: 'FORGOTTEN' }])
+  await button(wrapper, '核对最新状态').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('遗忘结果尚未确认')
+  expect(button(wrapper, '恢复').props('disabled')).toBe(false)
+  expect(mocks.detail).toHaveBeenCalledTimes(2)
+  expect(mocks.forget).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  expect(mocks.restore).not.toHaveBeenCalled()
+})
+
+it('遗忘核对记录写入失败时不发送请求', async () => {
+  fact.status = 'ACTIVE'
+  const wrapper = await render()
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('存储不可写')
+  })
+  await forgetFrom(wrapper)
+  expect(mocks.forget).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('尚未发送')
+})
+
+it('遗忘明确业务拒绝后允许用户再次操作', async () => {
+  fact.status = 'ACTIVE'
+  mocks.forget.mockRejectedValueOnce(
+    new HttpClientError({ status: 422, code: 'VALIDATION_ERROR', userMessage: '遗忘被拒绝' })
+  )
+  const wrapper = await render()
+  await forgetFrom(wrapper)
+  expect(mocks.forget).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  expect(button(wrapper, '遗忘').props('disabled')).toBe(false)
+  expect(document.body.textContent).toContain('遗忘被拒绝')
+})
+
+it('遗忘成功后列表读取失败只重读，不重复遗忘', async () => {
+  fact.status = 'ACTIVE'
+  mocks.forget.mockResolvedValue({ ...fact, status: 'FORGOTTEN', revision: 4 })
+  const wrapper = await render()
+  mocks.list.mockRejectedValueOnce(new Error('列表暂不可读'))
+  await forgetFrom(wrapper)
+  expect(mocks.forget).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+  expect(wrapper.text()).toContain('操作已完成，但当前列表尚未更新')
+  expect(button(wrapper, '遗忘').props('disabled')).toBe(true)
+  mocks.list.mockResolvedValueOnce([{ ...fact, status: 'FORGOTTEN', revision: 4 }])
+  await button(wrapper, '查询').trigger('click')
+  await flushPromises()
+  expect(mocks.forget).toHaveBeenCalledTimes(1)
+  expect(button(wrapper, '恢复').props('disabled')).toBe(false)
 })
 
 it('多个事实的未知纠正互不覆盖，关闭重开仍禁止再次提交', async () => {

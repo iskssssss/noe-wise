@@ -1,6 +1,21 @@
 <template>
   <AdminPage title="记忆管理" description="查询、审核、纠正或撤回机构内的记忆事实。"
     ><FeedbackNotice v-if="pageError" :title="pageError" :closable="false" type="error" />
+    <p v-if="stateStorageError" class="admin-field-help" role="status">{{ stateStorageError }}</p>
+    <section
+      v-for="operation in unknownStateChanges"
+      :key="operation.factId"
+      class="admin-card"
+      aria-label="记忆状态结果核对"
+    >
+      <p role="status">
+        事实 {{ operation.factId }} 的{{
+          operation.operation === 'FORGET' ? '遗忘' : '恢复'
+        }}结果尚未确认（原修订
+        {{ operation.expectedRevision }}）。状态未变化也不能证明原请求未受理，请勿重复操作。
+      </p>
+      <ElButton :disabled="busy" @click="checkStateChange(operation)">核对最新状态</ElButton>
+    </section>
     <div v-if="agentDirectory.error.value || userDirectory.error.value" class="admin-toolbar">
       <ElButton
         v-if="agentDirectory.error.value"
@@ -131,14 +146,19 @@
           ><ElButton
             link
             @click="edit(row as MemoryFact)"
-            :disabled="busy || refreshRequired || row.status !== 'ACTIVE'"
+            :disabled="
+              busy ||
+              refreshRequired ||
+              stateWriteLocked(row.ref.fact_id) ||
+              row.status !== 'ACTIVE'
+            "
             >纠正</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
             v-if="row.status === 'PENDING_CONFIRM'"
             link
             @click="review(row as MemoryFact, true)"
-            :disabled="busy || refreshRequired"
+            :disabled="busy || refreshRequired || stateWriteLocked(row.ref.fact_id)"
             >批准</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
@@ -146,13 +166,13 @@
             link
             type="danger"
             @click="review(row as MemoryFact, false)"
-            :disabled="busy || refreshRequired"
+            :disabled="busy || refreshRequired || stateWriteLocked(row.ref.fact_id)"
             >拒绝</ElButton
           ><ElButton
             v-permission="['foundation.memory.update']"
             v-if="row.status !== 'REJECTED' && row.status !== 'ARCHIVED'"
             link
-            :disabled="busy || refreshRequired"
+            :disabled="busy || refreshRequired || stateWriteLocked(row.ref.fact_id)"
             @click="changeState(row as MemoryFact)"
             >{{ ['FORGOTTEN', 'DECAYED'].includes(row.status) ? '恢复' : '遗忘' }}</ElButton
           ><ElText
@@ -331,7 +351,12 @@
           type="primary"
           :loading="busy"
           :disabled="
-            correctionUnknown || refreshRequired || latestChanged || selected?.status !== 'ACTIVE'
+            correctionUnknown ||
+            refreshRequired ||
+            latestChanged ||
+            !selected ||
+            stateWriteLocked(selected.ref.fact_id) ||
+            selected.status !== 'ACTIVE'
           "
           @click="save"
           >保存纠正</ElButton
@@ -378,6 +403,95 @@ const scope = ref<MemoryListQuery['scope']>(),
   reviews = ref(false),
   query = ref('')
 const auth = useAuthStore()
+type StateChange = { factId: string; operation: 'FORGET' | 'RESTORE'; expectedRevision: number }
+const unknownStateChanges = ref<StateChange[]>([])
+const stateStorageError = ref('')
+let stateChangesDisposed = false
+onScopeDispose(() => {
+  stateChangesDisposed = true
+})
+const stateStorageKey = computed(() =>
+  auth.user?.tenant_id && auth.user?.sub
+    ? `memory-state-unknown:${JSON.stringify([auth.user.tenant_id, auth.user.sub])}`
+    : ''
+)
+watch(
+  stateStorageKey,
+  (key) => {
+    unknownStateChanges.value = []
+    stateStorageError.value = ''
+    if (!key) return
+    try {
+      const stored: unknown = JSON.parse(sessionStorage.getItem(key) ?? '[]')
+      if (
+        !Array.isArray(stored) ||
+        !stored.every(
+          (item) =>
+            item &&
+            typeof item.factId === 'string' &&
+            item.factId &&
+            ['FORGET', 'RESTORE'].includes(item.operation) &&
+            Number.isSafeInteger(item.expectedRevision) &&
+            item.expectedRevision > 0
+        )
+      )
+        throw Error('invalid_state_record')
+      unknownStateChanges.value = stored
+    } catch {
+      stateStorageError.value =
+        '无法读取原记忆状态操作记录，请恢复浏览器存储后重新进入；当前写入已锁定。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
+function stateWriteLocked(factId: string) {
+  return (
+    !!stateStorageError.value || unknownStateChanges.value.some((item) => item.factId === factId)
+  )
+}
+function persistStateChanges(key: string, operations: StateChange[]) {
+  if (stateChangesDisposed) return
+  sessionStorage.setItem(key, JSON.stringify(operations))
+  if (key === stateStorageKey.value) unknownStateChanges.value = operations
+}
+async function checkStateChange(operation: StateChange) {
+  const key = stateStorageKey.value,
+    identity = auth.identityVersion
+  await run(async () => {
+    let latest: MemoryFact
+    try {
+      latest = await api.memories.detail(operation.factId)
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (
+        stateChangesDisposed ||
+        key !== stateStorageKey.value ||
+        identity !== auth.identityVersion
+      )
+        return
+      throw reason
+    }
+    if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
+      return
+    if (latest.revision <= operation.expectedRevision) {
+      message.warning('当前修订尚未前进，原操作结果仍未确认，请勿重复操作。')
+      return
+    }
+    persistStateChanges(
+      key,
+      unknownStateChanges.value.filter(
+        (item) =>
+          item.factId !== operation.factId || item.expectedRevision !== operation.expectedRevision
+      )
+    )
+    refreshCause.value = 'stale'
+    refreshRequired.value = true
+    message.info(
+      `当前状态为${statusLabel(latest.status)}，修订 ${latest.revision}；原操作回执未单独确认。`
+    )
+    await refresh()
+  })
+}
 let moreGeneration = 0
 let firstReadGeneration = 0
 let moreController: AbortController | undefined
@@ -628,7 +742,7 @@ const { requestClose } = useDrawerClose({
   }
 })
 function edit(row: MemoryFact) {
-  if (refreshRequired.value || row.status !== 'ACTIVE') return
+  if (refreshRequired.value || stateWriteLocked(row.ref.fact_id) || row.status !== 'ACTIVE') return
   latestMemory.invalidate()
   latestMemory.data.value = undefined
   latestMemory.error.value = ''
@@ -652,6 +766,8 @@ async function save() {
     correctionUnknown.value ||
     refreshRequired.value ||
     latestChanged.value ||
+    !selected.value ||
+    stateWriteLocked(selected.value.ref.fact_id) ||
     selected.value?.status !== 'ACTIVE'
   )
     return
@@ -712,7 +828,7 @@ function confirmationMemoryContent(row: MemoryFact): string {
   return content?.revisionProposal ? memoryContentText(content) : original
 }
 async function review(row: MemoryFact, approved: boolean) {
-  if (refreshRequired.value) return
+  if (refreshRequired.value || stateWriteLocked(row.ref.fact_id)) return
   const factId = row.ref.fact_id
   const expectedRevision = row.revision
   const confirmSharing = approved && requiresSharingConfirmation(row)
@@ -752,7 +868,9 @@ async function review(row: MemoryFact, approved: boolean) {
   })
 }
 async function changeState(row: MemoryFact) {
-  if (refreshRequired.value) return
+  if (refreshRequired.value || stateWriteLocked(row.ref.fact_id)) return
+  const key = stateStorageKey.value,
+    identity = auth.identityVersion
   const restoring = row.status === 'FORGOTTEN' || row.status === 'DECAYED'
   if (
     !(await confirm({
@@ -764,10 +882,59 @@ async function changeState(row: MemoryFact) {
     }))
   )
     return
+  if (
+    stateChangesDisposed ||
+    key !== stateStorageKey.value ||
+    identity !== auth.identityVersion ||
+    stateWriteLocked(row.ref.fact_id)
+  )
+    return
   await run(async () => {
-    const result = await (restoring ? api.memories.restore : api.memories.forget)(
-      row.ref.fact_id,
-      row.revision
+    if (!key) throw Error('当前身份不可用，尚未发送记忆状态请求')
+    const operation: StateChange = {
+      factId: row.ref.fact_id,
+      operation: restoring ? 'RESTORE' : 'FORGET',
+      expectedRevision: row.revision
+    }
+    try {
+      persistStateChanges(key, [...unknownStateChanges.value, operation])
+    } catch {
+      throw Error('无法保存记忆状态核对记录，尚未发送请求')
+    }
+    let result
+    try {
+      result = await (restoring ? api.memories.restore : api.memories.forget)(
+        operation.factId,
+        operation.expectedRevision
+      )
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (
+        stateChangesDisposed ||
+        key !== stateStorageKey.value ||
+        identity !== auth.identityVersion
+      )
+        return
+      if (
+        reason instanceof HttpClientError &&
+        reason.code &&
+        reason.status >= 400 &&
+        reason.status < 500 &&
+        ![401, 408].includes(reason.status)
+      ) {
+        persistStateChanges(
+          key,
+          unknownStateChanges.value.filter((item) => item.factId !== operation.factId)
+        )
+        throw reason
+      }
+      return
+    }
+    if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
+      return
+    persistStateChanges(
+      key,
+      unknownStateChanges.value.filter((item) => item.factId !== operation.factId)
     )
     refreshRequired.value = true
     if (await refresh())
