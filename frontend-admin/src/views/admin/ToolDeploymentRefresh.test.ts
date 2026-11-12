@@ -168,7 +168,9 @@ it('不可见版本保留部署行且不影响其他部署名称筛选', async (
 const permissions = ref<string[]>([])
 function mountWithPermissions(codes: string[]) {
   permissions.value = codes
-  authState.user.permissions = [...new Set([...codes, 'foundation.capabilities.read'])]
+  authState.user.permissions = [
+    ...new Set([...codes, 'foundation.capabilities.read', 'foundation.connectors.read'])
+  ]
   wrapper = mount(ToolDeploymentsPage, {
     attachTo: document.body,
     global: { directives: { permission: createPermissionDirective(() => permissions) } }

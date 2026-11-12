@@ -159,6 +159,7 @@ tasks.named<Test>("test") {
     exclude("**/ConversationTaskRecoveryBrowserE2ETest.class")
     exclude("**/TeamMemberCrossTabBrowserE2ETest.class")
     exclude("**/ToolDeploymentRecoveryBrowserE2ETest.class")
+    exclude("**/ToolPlatformPermissionBrowserE2ETest.class")
     exclude("**/MemoryDirectoryLimitBrowserE2ETest.class")
     exclude("**/MemoryCorrectionStateBrowserE2ETest.class")
     exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
@@ -447,6 +448,20 @@ tasks.register<Test>("toolDeploymentRecoveryBrowserE2E") {
         includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostCreateResponseLeavesOriginalResultUnknownAndRuntimeUsesDeployment")
         includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostStopResponseKeepsOldPageWhileRuntimeRejectsDeployment")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("toolPlatformPermissionBrowserE2E") {
+    description = "验证无连接器读取权限时的平台工具部署与运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ToolPlatformPermissionBrowserE2ETest.platformDeploymentDoesNotRequireConnectorRead") }
+    inputs.property("toolPlatformPermission", providers.environmentVariable("E2E_TOOL_PLATFORM_PERMISSION").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/tool-platform-permission-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

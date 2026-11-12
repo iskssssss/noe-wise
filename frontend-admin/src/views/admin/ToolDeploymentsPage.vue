@@ -191,8 +191,9 @@
             :aria-describedby="formTipId + '-field-2'"
             v-model="form.providerType"
             ><ElOption value="PLATFORM" label="平台内置工具" /><ElOption
+              v-if="canReadConnectors"
               value="MCP"
-              label="MCP" /><ElOption value="CONNECTOR" label="连接器"
+              label="MCP" /><ElOption v-if="canReadConnectors" value="CONNECTOR" label="连接器"
           /></ElSelect>
           <FieldTip :id="formTipId + '-field-2'"
             >选择实际提供工具的平台能力或 MCP 连接器。</FieldTip
@@ -278,6 +279,9 @@ const canRead = computed(
 )
 const canCreate = computed(
   () => auth.user?.permissions.includes('foundation.capabilities.create') === true
+)
+const canReadConnectors = computed(
+  () => auth.user?.permissions.includes('foundation.connectors.read') === true
 )
 let disposed = false
 let directoryRequest = 0
@@ -705,7 +709,9 @@ async function openCreate() {
       ;[defs, tools, instances] = await Promise.all([
         api.capabilities.definitions('TOOL', 'PUBLISHED'),
         api.capabilities.platformTools(),
-        api.connectors.instances()
+        canReadConnectors.value
+          ? api.connectors.instances()
+          : Promise.resolve({ total: 0, items: [] })
       ])
       loadedVersions = await Promise.all(
         defs
@@ -725,7 +731,7 @@ async function openCreate() {
     versions.value = loadedVersions
     Object.assign(form, {
       toolVersionId: '',
-      providerType: 'MCP',
+      providerType: canReadConnectors.value ? 'MCP' : 'PLATFORM',
       providerRef: '',
       environment: 'DEVELOPMENT'
     })
