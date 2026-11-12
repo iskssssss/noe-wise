@@ -1729,7 +1729,12 @@ const mountOpen = ref(false),
       }
     >
   >([]),
-  definitions = ref<CapabilityDefinition[]>([]),
+  definitions = ref<
+    Pick<
+      CapabilityDefinition,
+      'id' | 'capabilityType' | 'capabilityKey' | 'name' | 'description' | 'defaultVersionId'
+    >[]
+  >([]),
   definitionId = ref<string>(),
   versionId = ref<string>(),
   priority = ref(0),
@@ -2020,18 +2025,16 @@ async function readCurrentOptions(type: 'SKILL' | 'WORKFLOW', current?: () => bo
       }
       throw cause
     })
-  const [defs, options] = await Promise.all([
-    guard(api.capabilities.definitions(type, 'PUBLISHED')),
-    guard(api.capabilities.listRequirementOptions(type))
-  ])
-  const byDefinition = new Map(options.map((option) => [option.id, option]))
+  const options = await guard(api.capabilities.listRequirementOptions(type))
   return {
-    definitions: defs.flatMap((definition) => {
-      const option = byDefinition.get(definition.id)
-      return option
-        ? [{ ...definition, name: option.name, defaultVersionId: option.versionId }]
-        : []
-    }),
+    definitions: options.map((option) => ({
+      id: option.id,
+      capabilityType: type,
+      capabilityKey: option.capabilityKey,
+      name: option.name,
+      description: option.description,
+      defaultVersionId: option.versionId
+    })),
     versions: options.map((option) => ({
       id: option.versionId,
       definitionId: option.id,

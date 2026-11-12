@@ -150,6 +150,7 @@ tasks.named<Test>("test") {
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/KnowledgeSemanticThresholdBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
+    exclude("**/AgentSkillOptionsBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
     exclude("**/LegacyKnowledgeRebuildBrowserE2ETest.class")
@@ -901,6 +902,20 @@ tasks.register<Test>("agentSkillCrossTabBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.AgentSkillCrossTabBrowserE2ETest.publishedSkillAppearsInOriginalMountDrawerAndRuntime")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentSkillOptionsBrowserE2E") {
+    description = "验证技能候选摘要读取、挂载与运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentSkillOptionsBrowserE2ETest.skillMountUsesSinglePublishedOptions") }
+    inputs.property("agentSkillOptions", providers.environmentVariable("E2E_AGENT_SKILL_OPTIONS").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-skill-options-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

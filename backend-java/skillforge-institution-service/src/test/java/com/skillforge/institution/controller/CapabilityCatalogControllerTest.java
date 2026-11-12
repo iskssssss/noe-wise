@@ -171,17 +171,19 @@ class CapabilityCatalogControllerTest {
     void requirementOptionsReturnExactIdentitiesAndSkillEstimateUsingAuthenticatedScope() throws Exception {
         when(catalog.listRequirementOptions(CapabilityCatalogScope.tenant(7L), CapabilityType.SKILL))
                 .thenReturn(List.of(new CapabilityRequirementOption(9007199254740993L,
-                        "可选技能", 9007199254740995L, "release-2", 31L)));
+                        "可选技能", 9007199254740995L, "release-2", 31L, "test-key", "test-description")));
         var access = mock(FoundationAccess.class);
         requirementMvc(access).perform(get("/api/v1/capabilities/requirements/options")
                         .param("capability_type", " skill ").param("tenant_id", "999"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].length()").value(5))
+                .andExpect(jsonPath("$.data[0].length()").value(7))
                 .andExpect(jsonPath("$.data[0].definition_id").value("9007199254740993"))
                 .andExpect(jsonPath("$.data[0].version_id").value("9007199254740995"))
                 .andExpect(jsonPath("$.data[0].name").value("可选技能"))
                 .andExpect(jsonPath("$.data[0].version_key").value("release-2"))
+                .andExpect(jsonPath("$.data[0].capability_key").value("test-key"))
+                .andExpect(jsonPath("$.data[0].description").value("test-description"))
                 .andExpect(jsonPath("$.data[0].skill_estimated_tokens").value(31))
                 .andExpect(jsonPath("$.data[0].descriptor").doesNotExist())
                 .andExpect(jsonPath("$.data[0].files").doesNotExist());

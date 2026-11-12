@@ -53,9 +53,9 @@ class CapabilityCatalogWireContractTest {
         long id=9007199254740993L;
         for (Long estimate : new Long[]{null, 31L}) {
             var value=com.skillforge.institution.dto.capability.CapabilityRequirementOptionResponse.from(
-                    new com.skillforge.core.capability.CapabilityRequirementOption(id,"当前发布",id+2,"v2",estimate));
+                    new com.skillforge.core.capability.CapabilityRequirementOption(id,"当前发布",id+2,"v2",estimate, "test-key", "test-description"));
             var tree=json.readTree(json.writeValueAsString(value));
-            assertEquals(5,tree.size());assertId(tree,"definition_id",id);assertId(tree,"version_id",id+2);
+            assertEquals(7,tree.size());assertEquals("test-key",tree.path("capability_key").asText());assertEquals("test-description",tree.path("description").asText());assertId(tree,"definition_id",id);assertId(tree,"version_id",id+2);
             assertEquals("当前发布",tree.path("name").asText());assertEquals("v2",tree.path("version_key").asText());
             assertTrue(tree.has("skill_estimated_tokens"));
             if (estimate == null) assertTrue(tree.get("skill_estimated_tokens").isNull());

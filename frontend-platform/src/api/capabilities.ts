@@ -308,6 +308,8 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
           Array<{
             definition_id: string
             name: string
+            capability_key: string
+            description: string | null
             version_id: string
             version_key: string
             skill_estimated_tokens: number | null
@@ -320,6 +322,8 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
           items.map((item): CapabilityRequirementOption => ({
             id: catalogDecimalIdentity(item.definition_id, 'definition_id'),
             name: item.name,
+            capabilityKey: item.capability_key,
+            description: item.description ?? '',
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
             versionKey: item.version_key,
             skillEstimatedTokens: item.skill_estimated_tokens

@@ -1200,6 +1200,8 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
           Array<{
             definition_id: string
             name: string
+            capability_key: string
+            description: string
             version_id: string
             version_key: string
             skill_estimated_tokens: number | null
@@ -1209,6 +1211,11 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
           items.map((item): CapabilityRequirementOption => ({
             id: catalogDecimalIdentity(item.definition_id, 'definition_id'),
             name: item.name,
+            capabilityKey: textValue(item.capability_key, 'capability_key'),
+            description:
+              typeof item.description === 'string'
+                ? item.description
+                : fail('description must be a string'),
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
             versionKey: item.version_key,
             skillEstimatedTokens: item.skill_estimated_tokens

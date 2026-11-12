@@ -216,7 +216,6 @@ beforeEach(() => {
   )
   mocks.models.mockResolvedValue([{ id: 'model-1', name: '模型', kind: 'LLM' }])
   mocks.agents.mockResolvedValue({ items: [] })
-  mocks.definitions.mockResolvedValue([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
   mocks.listDefinitions.mockResolvedValue([
     { id: '10', defaultVersionId: '21', name: '服务流程', capabilityType: 'WORKFLOW' }
   ])
@@ -745,10 +744,6 @@ describe('按挂载类型加载实际关联', () => {
     expect(selected.props('modelValue')).toBe('10')
     const instance = drawer.findAllComponents(ElSelect)[2]!
     instance.vm.$emit('update:modelValue', '9223372036854775807')
-    mocks.definitions.mockResolvedValue([
-      { id: '10', defaultVersionId: '23', name: '已有工作流' },
-      { id: '11', defaultVersionId: '22', name: '新工作流' }
-    ])
     mocks.requirementOptions.mockResolvedValue([
       { id: '10', name: '已有工作流', versionId: '23', versionKey: '3' },
       { id: '11', name: '新工作流', versionId: '22', versionKey: '1' }
@@ -1387,7 +1382,8 @@ describe('按挂载类型加载实际关联', () => {
     expect(mocks.workflowOptions).toHaveBeenCalledTimes(type === 'WORKFLOW' ? 1 : 0)
     if (type === 'WORKFLOW') expect(mocks.versions).not.toHaveBeenCalled()
     expect(mocks.bases).toHaveBeenCalledTimes(bases)
-    expect(mocks.definitions.mock.calls.map((call) => call[0])).toEqual(
+    expect(mocks.definitions).not.toHaveBeenCalled()
+    expect(mocks.requirementOptions.mock.calls.map((call) => call[0])).toEqual(
       type === 'SKILL' || type === 'TOOL' || type === 'KNOWLEDGE_SOURCE'
         ? ['SKILL']
         : ['SKILL', type]
@@ -1406,9 +1402,6 @@ describe('按挂载类型加载实际关联', () => {
   })
   it('无工作流读取权限仍能挂载Skill，不发工作流或工具关联请求', async () => {
     mocks.instances.mockRejectedValue(new Error('403 foundation.workflows.read'))
-    mocks.versions.mockResolvedValue([
-      { id: '21', definitionId: '10', capabilityType: 'SKILL', name: '技能', versionKey: '1' }
-    ])
     const { drawer } = await open('SKILL')
     drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '10')
     await flushPromises()
@@ -1425,7 +1418,7 @@ describe('按挂载类型加载实际关联', () => {
   })
   it('没有已发布技能时提供工作台入口，发布后原地刷新并选择', async () => {
     mocks.permissions.push('foundation.skills.read')
-    mocks.definitions.mockResolvedValueOnce([])
+    mocks.requirementOptions.mockResolvedValueOnce([])
     const { drawer } = await open('SKILL')
     expect(document.body.textContent).toContain('当前没有可选的已发布技能')
     expect(document.querySelector('a[href="/admin/skills"]')).not.toBeNull()
@@ -1442,7 +1435,7 @@ describe('按挂载类型加载实际关联', () => {
     )
   })
   it('没有技能工作台读取权限时提示联系管理员', async () => {
-    mocks.definitions.mockResolvedValueOnce([])
+    mocks.requirementOptions.mockResolvedValueOnce([])
     await open('SKILL')
     expect(document.body.textContent).toContain('请联系管理员创建并发布技能')
     expect(document.querySelector('a[href="/admin/skills"]')).toBeNull()
@@ -1460,18 +1453,18 @@ describe('按挂载类型加载实际关联', () => {
     }
     vi.stubGlobal('BroadcastChannel', FakeChannel)
     try {
-      mocks.definitions.mockResolvedValueOnce([])
+      mocks.requirementOptions.mockResolvedValueOnce([])
       const { drawer } = await open('SKILL')
       const channel = channels.find((item) => item.name === 'skillforge.skill.published')!
       expect(channel).toBeDefined()
       expect(document.body.textContent).toContain('当前没有可选的已发布技能')
-      const before = mocks.definitions.mock.calls.length
+      const before = mocks.requirementOptions.mock.calls.length
       channel.onmessage!({ data: JSON.stringify(['other', 'actor-1']) })
       await flushPromises()
-      expect(mocks.definitions).toHaveBeenCalledTimes(before)
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(before)
       channel.onmessage!({ data: JSON.stringify(['1', 'actor-1']) })
       await flushPromises()
-      expect(mocks.definitions).toHaveBeenCalledTimes(before + 1)
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(before + 1)
       expect(drawer.findAllComponents(ElOption).some((item) => item.props('value') === '10')).toBe(
         true
       )
@@ -1495,21 +1488,21 @@ describe('按挂载类型加载实际关联', () => {
     try {
       const { drawer } = await open('SKILL')
       let finish!: (value: unknown) => void
-      mocks.definitions.mockReturnValueOnce(
+      mocks.requirementOptions.mockReturnValueOnce(
         new Promise((resolve) => {
           finish = resolve
         })
       )
       await button(drawer, '刷新技能选项').trigger('click')
       await flushPromises()
-      const before = mocks.definitions.mock.calls.length
+      const before = mocks.requirementOptions.mock.calls.length
       channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
         data: JSON.stringify(['1', 'actor-1'])
       })
-      expect(mocks.definitions).toHaveBeenCalledTimes(before)
-      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(before)
+      finish([{ id: '10', versionId: '21', versionKey: '2', name: '服务流程' }])
       await flushPromises()
-      expect(mocks.definitions).toHaveBeenCalledTimes(before + 1)
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(before + 1)
       expect(mocks.create).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -1530,21 +1523,21 @@ describe('按挂载类型加载实际关联', () => {
     try {
       const { drawer } = await open('SKILL')
       let finish!: (value: unknown) => void
-      mocks.definitions.mockReturnValueOnce(
+      mocks.requirementOptions.mockReturnValueOnce(
         new Promise((resolve) => {
           finish = resolve
         })
       )
       await button(drawer, '刷新技能选项').trigger('click')
       await flushPromises()
-      const before = mocks.definitions.mock.calls.length
+      const before = mocks.requirementOptions.mock.calls.length
       channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
         data: JSON.stringify(['1', 'actor-1'])
       })
       mocks.browserSession = 'another-session'
-      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      finish([{ id: '10', versionId: '21', versionKey: '2', name: '服务流程' }])
       await flushPromises()
-      expect(mocks.definitions).toHaveBeenCalledTimes(before)
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(before)
       expect(mocks.create).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -1578,9 +1571,6 @@ describe('按挂载类型加载实际关联', () => {
     )
   })
   it('手动刷新目录保留选择与预算，版本变化后需确认', async () => {
-    mocks.versions.mockResolvedValue([
-      { id: '21', definitionId: '10', capabilityType: 'SKILL', name: '技能', versionKey: '1' }
-    ])
     const { drawer } = await open('SKILL')
     drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '10')
     await flushPromises()
@@ -1588,22 +1578,9 @@ describe('按挂载类型加载实际关联', () => {
       .findAllComponents(ElInputNumber)
       .find((item) => item.props('modelValue') === 2000)!
     budget.vm.$emit('update:modelValue', 3000)
-    mocks.definitions.mockResolvedValueOnce([
-      { id: '10', defaultVersionId: '22', name: '技能' },
-      { id: '11', defaultVersionId: '23', name: '新技能' }
-    ])
     mocks.requirementOptions.mockResolvedValueOnce([
       { id: '10', name: '技能', versionId: '22', versionKey: '2' },
       { id: '11', name: '新技能', versionId: '23', versionKey: '2' }
-    ])
-    mocks.versions.mockImplementation(async (id: string) => [
-      {
-        id: id === '10' ? '22' : '23',
-        definitionId: id,
-        capabilityType: 'SKILL',
-        name: '技能',
-        versionKey: '2'
-      }
     ])
     await button(drawer, '刷新技能选项').trigger('click')
     await flushPromises()
@@ -1640,7 +1617,7 @@ describe('按挂载类型加载实际关联', () => {
     vi.stubGlobal('BroadcastChannel', FakeChannel)
     try {
       const { drawer } = await open('SKILL')
-      mocks.definitions.mockRejectedValueOnce(new Error('目录读取失败'))
+      mocks.requirementOptions.mockRejectedValueOnce(new Error('目录读取失败'))
       channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
         data: JSON.stringify(['1', 'actor-1'])
       })
@@ -1663,7 +1640,7 @@ describe('按挂载类型加载实际关联', () => {
   })
   it('首次读取技能目录期间浏览器会话改变时不采用迟到结果', async () => {
     let finish!: (value: unknown) => void
-    mocks.definitions.mockReturnValueOnce(
+    mocks.requirementOptions.mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve
       })
@@ -1677,7 +1654,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(wrapper, '添加能力').trigger('click')
     await flushPromises()
     mocks.browserSession = 'another-session'
-    finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+    finish([{ id: '10', versionId: '21', versionKey: '2', name: '服务流程' }])
     await flushPromises()
     expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
     expect(mocks.create).not.toHaveBeenCalled()
@@ -1696,7 +1673,7 @@ describe('按挂载类型加载实际关联', () => {
     vi.stubGlobal('BroadcastChannel', FakeChannel)
     try {
       let finish!: (value: unknown) => void
-      mocks.definitions.mockReturnValueOnce(
+      mocks.requirementOptions.mockReturnValueOnce(
         new Promise((resolve) => {
           finish = resolve
         })
@@ -1715,9 +1692,9 @@ describe('按挂载类型加载实际关联', () => {
       mocks.requirementOptions.mockResolvedValueOnce([
         { id: '10', name: '服务流程', versionId: '22', versionKey: '3' }
       ])
-      finish([{ id: '10', defaultVersionId: '21', name: '服务流程' }])
+      finish([{ id: '10', versionId: '21', versionKey: '2', name: '服务流程' }])
       await flushPromises()
-      expect(mocks.definitions).toHaveBeenCalledTimes(2)
+      expect(mocks.requirementOptions).toHaveBeenCalledTimes(2)
       expect(document.body.textContent).toContain('所选技能的当前发布版本已变化')
       expect(button(wrapper.findComponent(ElDrawer), '添加能力').props('disabled')).toBe(true)
       expect(mocks.create).not.toHaveBeenCalled()
@@ -1738,33 +1715,25 @@ describe('按挂载类型加载实际关联', () => {
     }
     vi.stubGlobal('BroadcastChannel', FakeChannel)
     try {
-      mocks.definitions.mockResolvedValueOnce([
-        { id: '10', defaultVersionId: '21', name: '技能一' },
-        { id: '11', defaultVersionId: '23', name: '技能二' }
-      ])
       mocks.requirementOptions.mockResolvedValueOnce([
         { id: '10', name: '技能一', versionId: '21', versionKey: '1' },
         { id: '11', name: '技能二', versionId: '23', versionKey: '1' }
       ])
       const { drawer } = await open('SKILL')
       let finish!: (value: unknown) => void
-      mocks.definitions.mockReturnValueOnce(
+      mocks.requirementOptions.mockReturnValueOnce(
         new Promise((resolve) => {
           finish = resolve
         })
       )
-      mocks.requirementOptions.mockResolvedValueOnce([
-        { id: '10', name: '技能一', versionId: '21', versionKey: '1' },
-        { id: '11', name: '技能二', versionId: '24', versionKey: '2' }
-      ])
       channels.find((item) => item.name === 'skillforge.skill.published')!.onmessage!({
         data: JSON.stringify(['1', 'actor-1'])
       })
       drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '11')
       await flushPromises()
       finish([
-        { id: '10', name: '技能一' },
-        { id: '11', name: '技能二' }
+        { id: '10', name: '技能一', versionId: '21', versionKey: '1' },
+        { id: '11', name: '技能二', versionId: '24', versionKey: '2' }
       ])
       await flushPromises()
       expect(drawer.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe('11')
@@ -1781,7 +1750,7 @@ describe('按挂载类型加载实际关联', () => {
     const { drawer } = await open('SKILL')
     drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '10')
     await flushPromises()
-    mocks.definitions.mockRejectedValueOnce(new Error('目录读取失败'))
+    mocks.requirementOptions.mockRejectedValueOnce(new Error('目录读取失败'))
     await button(drawer, '刷新技能选项').trigger('click')
     await flushPromises()
     expect(drawer.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe('10')
@@ -1792,32 +1761,21 @@ describe('按挂载类型加载实际关联', () => {
   })
   it('技能选择可按用途和标识搜索同名能力，挂载选中的身份', async () => {
     mocks.requirementOptions.mockResolvedValue([
-      { id: '10', name: '服务技能', versionId: '21', versionKey: '1' },
-      { id: '11', name: '服务技能', versionId: '22', versionKey: '1' }
-    ])
-    mocks.definitions.mockResolvedValue([
       {
         id: '10',
-        defaultVersionId: '21',
+        versionId: '21',
+        versionKey: '1',
         name: '服务技能',
         capabilityKey: 'orders',
         description: '查询订单'
       },
       {
         id: '11',
-        defaultVersionId: '22',
+        versionId: '22',
+        versionKey: '1',
         name: '服务技能',
         capabilityKey: 'patients',
         description: '查询患者'
-      }
-    ])
-    mocks.versions.mockImplementation(async (id: string) => [
-      {
-        id: id === '10' ? '21' : '22',
-        definitionId: id,
-        capabilityType: 'SKILL',
-        name: '服务技能',
-        versionKey: '1'
       }
     ])
     const { drawer } = await open('SKILL')
@@ -1843,7 +1801,7 @@ describe('按挂载类型加载实际关联', () => {
   })
 
   it('首次准备挂载失败保留顶部错误，不打开抽屉或继续下一批读取清错', async () => {
-    mocks.definitions.mockRejectedValueOnce(new Error('能力目录读取失败'))
+    mocks.requirementOptions.mockRejectedValueOnce(new Error('能力目录读取失败'))
     const wrapper = mount(AgentManagePage, { attachTo: document.body })
     wrappers.push(wrapper)
     await flushPromises()
@@ -1880,7 +1838,7 @@ describe('按挂载类型加载实际关联', () => {
       mocks.get.mock.calls.length,
       mocks.models.mock.calls.length,
       mocks.agents.mock.calls.length,
-      mocks.definitions.mock.calls.length
+      mocks.requirementOptions.mock.calls.length
     ]
     mocks.availableTools.mockResolvedValueOnce({
       items: [
@@ -1903,7 +1861,7 @@ describe('按挂载类型加载实际关联', () => {
       mocks.get.mock.calls.length,
       mocks.models.mock.calls.length,
       mocks.agents.mock.calls.length,
-      mocks.definitions.mock.calls.length
+      mocks.requirementOptions.mock.calls.length
     ]).toEqual(reads)
     expect(name.props('modelValue')).toBe('尚未保存的名称')
     expect(priority.props('modelValue')).toBe(7)
@@ -2212,10 +2170,6 @@ describe('能力挂载关联一致性', () => {
         }
       ]
     })
-    mocks.definitions.mockResolvedValue([
-      { id: '10', defaultVersionId: '21', name: '已挂载' },
-      { id: '11', defaultVersionId: '22', name: '未挂载' }
-    ])
     mocks.requirementOptions.mockResolvedValue([
       { id: '10', name: '已挂载', versionId: '21', versionKey: '1' },
       { id: '11', name: '未挂载', versionId: '22', versionKey: '1' }
@@ -2253,14 +2207,6 @@ describe('能力挂载关联一致性', () => {
     )
   })
   it('仅有一个可挂载工作流时自动选择，过滤未安装的工作流', async () => {
-    mocks.definitions.mockImplementation(async (type: string) =>
-      type === 'WORKFLOW'
-        ? [
-            { id: '10', defaultVersionId: '21', name: '已安装' },
-            { id: '11', defaultVersionId: '22', name: '未安装' }
-          ]
-        : [{ id: '10', defaultVersionId: '21', name: '技能' }]
-    )
     mocks.requirementOptions.mockImplementation(async (type: string) =>
       type === 'WORKFLOW'
         ? [
@@ -2296,10 +2242,6 @@ describe('能力挂载关联一致性', () => {
     )
   })
   it('多个可挂载工作流时由用户选择', async () => {
-    mocks.definitions.mockResolvedValue([
-      { id: '10', defaultVersionId: '21', name: '一' },
-      { id: '11', defaultVersionId: '22', name: '二' }
-    ])
     mocks.requirementOptions.mockResolvedValue([
       { id: '10', name: '一', versionId: '21', versionKey: '1' },
       { id: '11', name: '二', versionId: '22', versionKey: '1' }
@@ -3323,7 +3265,8 @@ describe('能力挂载关联一致性', () => {
     ])
     expect(mocks.mountOption).toHaveBeenCalledTimes(3)
     expect(mocks.mountOption).toHaveBeenLastCalledWith('kb-1')
-    expect(mocks.definitions.mock.calls.map((call) => call[0])).toEqual(['SKILL'])
+    expect(mocks.definitions).not.toHaveBeenCalled()
+    expect(mocks.requirementOptions.mock.calls.map((call) => call[0])).toEqual(['SKILL'])
     expect(mocks.versions).not.toHaveBeenCalled()
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()

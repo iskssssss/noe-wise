@@ -6,6 +6,8 @@ export type SkillActivationMode = 'ALWAYS' | 'ON_DEMAND'
 export interface CapabilityRequirementOption {
   id: string
   name: string
+  capabilityKey: string
+  description: string
   versionId: string
   versionKey: string
   skillEstimatedTokens: number | null

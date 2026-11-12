@@ -10,10 +10,13 @@ public record CapabilityRequirementOptionResponse(
         @io.swagger.v3.oas.annotations.media.Schema(type="string",pattern="[1-9][0-9]*")
         @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long versionId,
         String versionKey,
-        Long skillEstimatedTokens) {
+        Long skillEstimatedTokens,
+        String capabilityKey,
+        String description) {
 
     public static CapabilityRequirementOptionResponse from(CapabilityRequirementOption value) {
         return new CapabilityRequirementOptionResponse(value.definitionId(), value.name(),
-                value.versionId(), value.versionKey(), value.skillEstimatedTokens());
+                value.versionId(), value.versionKey(), value.skillEstimatedTokens(),
+                value.capabilityKey(), value.description());
     }
 }

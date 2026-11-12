@@ -646,6 +646,8 @@ it('requirement options use a scoped type GET and preserve exact published ident
       {
         definition_id: '9223372036854775807',
         name: '当前工具',
+        capability_key: 'tool:current',
+        description: '工具说明',
         version_id: '9223372036854775806',
         version_key: 'current',
         skill_estimated_tokens: null
@@ -662,11 +664,35 @@ it('requirement options use a scoped type GET and preserve exact published ident
     {
       id: '9223372036854775807',
       name: '当前工具',
+      capabilityKey: 'tool:current',
+      description: '工具说明',
       versionId: '9223372036854775806',
       versionKey: 'current',
       skillEstimatedTokens: null
     }
   ])
+})
+
+it.each([
+  { capability_key: '', description: '说明' },
+  { capability_key: 'skill:current', description: null }
+])('requirement options reject invalid definition text at the API boundary', async (text) => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+    response([
+      {
+        definition_id: '1',
+        name: '技能',
+        ...text,
+        version_id: '2',
+        version_key: 'current',
+        skill_estimated_tokens: 31
+      }
+    ])
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  await expect(
+    createCapabilityCatalogApi(client()).listRequirementOptions('SKILL')
+  ).rejects.toThrow()
 })
 
 it('Skill history summaries use exact definition identity and map only three scalar fields', async () => {

@@ -290,6 +290,8 @@ it('platform requirement options use the fixed platform type scope and exact pub
     {
       definition_id: '9223372036854775807',
       name: '当前技能',
+      capability_key: 'skill:current',
+      description: '技能说明',
       version_id: '9223372036854775806',
       version_key: 'current',
       skill_estimated_tokens: 31
@@ -300,6 +302,8 @@ it('platform requirement options use the fixed platform type scope and exact pub
     {
       id: '9223372036854775807',
       name: '当前技能',
+      capabilityKey: 'skill:current',
+      description: '技能说明',
       versionId: '9223372036854775806',
       versionKey: 'current',
       skillEstimatedTokens: 31
