@@ -78,15 +78,17 @@ class CapabilityCatalogWireContractTest {
         assertId(versionTree,"id",ID);assertId(versionTree,"definition_id",ID+2);assertId(versionTree,"tenant_id",ID+4);
         for (String name : java.util.Arrays.asList("工具名称", null)) {
             var deployment=new CapabilityDeploymentResponse(ID,ID+2,"target-tool",ID+4,name,name==null?null:"v1",
-                    ToolDeployment.ProviderType.PLATFORM,"tool",ToolDeployment.Environment.PRODUCTION,"ACTIVE",5L,null,null);
+                    ToolDeployment.ProviderType.PLATFORM,"tool",ToolDeployment.Environment.PRODUCTION,"ACTIVE",5L,null,null, name == null ? null : ID + 6);
             var tree=wire(deployment);
             assertId(tree,"id",ID);assertId(tree,"tenant_id",ID+2);assertId(tree,"tool_version_id",ID+4);
             assertTrue(tree.get("revision").isIntegralNumber());assertEquals(5,tree.get("revision").longValue());
-            assertEquals(13,tree.size());
+            assertEquals(14,tree.size());
             assertTrue(tree.has("tool_name"));assertTrue(tree.has("tool_version_key"));
             if(name==null) {
+                assertTrue(tree.get("definition_id").isNull());
                 assertTrue(tree.get("tool_name").isNull());assertTrue(tree.get("tool_version_key").isNull());
             } else {
+                assertId(tree,"definition_id",ID+6);
                 assertEquals(name,tree.get("tool_name").textValue());assertEquals("v1",tree.get("tool_version_key").textValue());
             }
             assertFalse(tree.has("descriptor"));assertFalse(tree.has("schema"));

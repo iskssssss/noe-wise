@@ -171,6 +171,7 @@ tasks.named<Test>("test") {
     exclude("**/MemoryCorrectionStateBrowserE2ETest.class")
     exclude("**/MemoryCorrectionUnknownBrowserE2ETest.class")
     exclude("**/MemoryForgetUnknownBrowserE2ETest.class")
+    exclude("**/AgentTemplateToolOptionsBrowserE2ETest.class")
     exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
@@ -1005,6 +1006,20 @@ tasks.register<Test>("knowledgeSearchScopeBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSearchScopeBrowserE2ETest.unpublishedPreviewAndPublishedRuntimeUseExplicitScope") }
     inputs.property("knowledgeSearchScopeMode", providers.environmentVariable("E2E_KNOWLEDGE_SCOPE_MODE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-search-scope-real.spec.ts", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentTemplateToolOptionsBrowserE2E") {
+    description = "验证模板工具槽目录及运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentTemplateToolOptionsBrowserE2ETest.toolSlotUsesAvailableDeploymentWithoutVersionFanout") }
+    inputs.property("templateToolOptionsMode", providers.environmentVariable("E2E_TEMPLATE_TOOL_MODE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-template-tool-options-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

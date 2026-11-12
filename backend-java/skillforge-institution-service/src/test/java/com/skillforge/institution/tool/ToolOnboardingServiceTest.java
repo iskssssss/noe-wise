@@ -161,7 +161,7 @@ class ToolOnboardingServiceTest {
         when(catalog.createDeployment(any(), any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
             deployment.set(new CapabilityDeploymentView(30L, 7L, invocation.getArgument(1), 21L, null, null,
                     ToolDeployment.ProviderType.MCP, "inst-owned", ToolDeployment.Environment.DEVELOPMENT,
-                    "ACTIVE", 1L, null, null));
+                    "ACTIVE", 1L, null, null, null));
             return deployment.get();
         });
         when(catalog.getVersion(any(), any())).thenAnswer(ignored -> version.get());

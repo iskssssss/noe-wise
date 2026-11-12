@@ -6,7 +6,15 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import { clearFeedback, confirm } from '@skillforge/shared/feedback'
 import AgentsPage from './AgentsPage.vue'
 
-const mocks = vi.hoisted(() => ({ install: vi.fn(), receipt: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  install: vi.fn(),
+  receipt: vi.fn(),
+  detail: vi.fn(),
+  options: vi.fn(),
+  deployments: vi.fn(),
+  versions: vi.fn(),
+  definitions: vi.fn()
+}))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     identityVersion: 1,
@@ -18,11 +26,16 @@ vi.mock('../../api', () => ({
     agents: {
       list: async () => ({ items: [] }),
       templates: async () => ({ items: [{ id: 'template-1', name: '客服模板', version: '1' }] }),
-      templateDetail: async () => ({ name: '客服模板', definition: {} }),
+      templateDetail: mocks.detail,
       installTemplate: mocks.install,
       installationResult: mocks.receipt
     },
-    capabilities: { listDefinitions: async () => [], deployments: async () => [] },
+    capabilities: {
+      listDefinitions: mocks.definitions,
+      deployments: mocks.deployments,
+      listRequirementOptions: mocks.options,
+      versions: mocks.versions
+    },
     workflowDrafts: { instances: async () => ({ items: [] }) }
   }
 }))
@@ -34,6 +47,11 @@ let wrapper: VueWrapper | undefined
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  mocks.detail.mockResolvedValue({ name: '客服模板', definition: {} })
+  mocks.definitions.mockResolvedValue([])
+  mocks.options.mockResolvedValue([])
+  mocks.deployments.mockResolvedValue([])
+  mocks.versions.mockResolvedValue([])
   mocks.install.mockRejectedValue(new HttpClientError({ status: 0, userMessage: '结果尚未确认' }))
   vi.mocked(confirm).mockResolvedValue(false)
 })
@@ -45,6 +63,59 @@ afterEach(() => {
 function button(label: string) {
   return wrapper!.findAllComponents(ElButton).find((item) => item.text() === label)!
 }
+
+it('模板工具槽使用发布摘要和部署定义投影，不逐定义读取版本', async () => {
+  mocks.detail.mockResolvedValue({
+    name: '客服模板',
+    definition: { resource_slots: [{ key: 'tool', label: '工具槽', capability_type: 'TOOL' }] }
+  })
+  mocks.options.mockResolvedValue([
+    { id: '10', name: '工具甲', versionId: '12' },
+    { id: '20', name: '工具乙', versionId: '22' }
+  ])
+  mocks.deployments.mockResolvedValue([
+    { deploymentKey: 'old-published', toolVersionId: '11', toolDefinitionId: '10' },
+    { deploymentKey: 'archived', toolVersionId: '9', toolDefinitionId: null },
+    { deploymentKey: 'other', toolVersionId: '22', toolDefinitionId: '20' }
+  ])
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/agents', component: AgentsPage }]
+  })
+  await router.push('/agents')
+  await router.isReady()
+  wrapper = mount(RouterView, { attachTo: document.body, global: { plugins: [router] } })
+  await flushPromises()
+  await button('从模板安装').trigger('click')
+  await flushPromises()
+  const drawer = wrapper
+    .findAllComponents(ElDrawer)
+    .find((item) => item.props('title') === '从模板安装')!
+  const slot = drawer
+    .findAllComponents(ElFormItem)
+    .find((item) => item.props('label') === '工具槽')!
+    .getComponent(ElSelect)
+  slot.vm.$emit('update:modelValue', '10')
+  slot.vm.$emit('change', '10')
+  await flushPromises()
+  expect(document.body.textContent).toContain('old-published')
+  expect(document.body.textContent).not.toContain('archived')
+  expect(mocks.options).toHaveBeenCalledExactlyOnceWith('TOOL')
+  expect(mocks.definitions).not.toHaveBeenCalled()
+  expect(mocks.versions).not.toHaveBeenCalled()
+  await button('安装并配置').trigger('click')
+  await flushPromises()
+  expect(mocks.install.mock.calls[0]![0].resource_bindings).toEqual([
+    {
+      slot_key: 'tool',
+      mount: {
+        capability_type: 'TOOL',
+        capability_definition_id: '10',
+        tool_config: { tool_deployment_id: 'old-published' }
+      }
+    }
+  ])
+})
 
 it('真实 RouterView 导航对未决安装只确认一次，取消保留原核对，确认后允许离开', async () => {
   const router = createRouter({

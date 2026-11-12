@@ -21,12 +21,14 @@ public record CapabilityDeploymentResponse(
         String status,
         Long revision,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        @io.swagger.v3.oas.annotations.media.Schema(type="string", nullable=true, description="精确绑定版本已发布且可见时的定义ID，否则为空")
+        @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long definitionId) {
 
     public static CapabilityDeploymentResponse from(CapabilityDeploymentView value) {
         return new CapabilityDeploymentResponse(value.id(), value.tenantId(), value.deploymentKey(),
                 value.toolVersionId(), value.toolName(), value.toolVersionKey(),
                 value.providerType(), value.providerRef(), value.environment(),
-                value.status(), value.revision(), value.createdAt(), value.updatedAt());
+                value.status(), value.revision(), value.createdAt(), value.updatedAt(), value.definitionId());
     }
 }

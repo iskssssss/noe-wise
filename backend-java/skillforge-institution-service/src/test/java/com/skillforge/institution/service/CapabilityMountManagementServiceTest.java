@@ -260,7 +260,7 @@ class CapabilityMountManagementServiceTest {
         CapabilityDeploymentView foreignDeployment = new CapabilityDeploymentView(
                 600L, 8L, "deploy-1", 201L, null, null,
                 ToolDeployment.ProviderType.TEST_MOCK, "fixture",
-                ToolDeployment.Environment.TEST, "ACTIVE", 2L, null, null);
+                ToolDeployment.Environment.TEST, "ACTIVE", 2L, null, null, null);
         when(catalog.getDeployment(any(CapabilityCatalogScope.class), eq("deploy-1")))
                 .thenReturn(foreignDeployment);
         assertStatus(HttpStatus.NOT_FOUND,
@@ -374,7 +374,7 @@ class CapabilityMountManagementServiceTest {
     private CapabilityDeploymentView deployment(long versionId, long revision, String status) {
         return new CapabilityDeploymentView(600L, 7L, "deploy-1", versionId, null, null,
                 ToolDeployment.ProviderType.TEST_MOCK, "fixture", ToolDeployment.Environment.TEST,
-                status, revision, null, null);
+                status, revision, null, null, null);
     }
 
     private CapabilityMountSetResult emptyMountSet(long generation) {

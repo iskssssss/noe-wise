@@ -336,6 +336,7 @@ describe('CapabilityMount API wire contract', () => {
               tenant_id: '9',
               deployment_key: 'calendar-prod',
               tool_version_id: '201',
+              definition_id: '200',
               tool_name: 'Calendar v1',
               tool_version_key: '1.0.0',
               provider_type: 'MCP',
@@ -373,6 +374,7 @@ describe('CapabilityMount API wire contract', () => {
       id: '301',
       deploymentKey: 'calendar-prod',
       toolVersionId: '201',
+      toolDefinitionId: '200',
       toolName: 'Calendar v1',
       toolVersionKey: '1.0.0',
       revision: 5
@@ -382,6 +384,33 @@ describe('CapabilityMount API wire contract', () => {
       '/api/v1/capabilities/definitions/versions?definitionId=200&status=PUBLISHED',
       '/api/v1/capabilities/deployments?status=ACTIVE'
     ])
+  })
+
+  it('部署投影按精确字符串读取能力定义，空值不猜测关联', async () => {
+    const wire = {
+      id: '301',
+      tenant_id: '9',
+      deployment_key: 'd',
+      tool_version_id: '201',
+      definition_id: null,
+      tool_name: null,
+      tool_version_key: null,
+      provider_type: 'MCP',
+      provider_ref: 'c',
+      environment: 'DEVELOPMENT',
+      status: 'ACTIVE',
+      revision: 1
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response([wire]))
+      .mockResolvedValueOnce(response([{ ...wire, definition_id: '9007199254740993' }]))
+      .mockResolvedValueOnce(response([{ ...wire, definition_id: 'invalid' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const catalog = createCapabilityCatalogApi(client())
+    expect((await catalog.deployments('ACTIVE'))[0]!.toolDefinitionId).toBeNull()
+    expect((await catalog.deployments('ACTIVE'))[0]!.toolDefinitionId).toBe('9007199254740993')
+    await expect(catalog.deployments('ACTIVE')).rejects.toThrow()
   })
 
   it('covers authoring, validation, publish CAS, lifecycle CAS and canonical platform providers', async () => {
@@ -404,6 +433,7 @@ describe('CapabilityMount API wire contract', () => {
       tenant_id: '9',
       deployment_key: 'calendar-prod',
       tool_version_id: '202',
+      definition_id: '200',
       tool_name: 'Calendar v1',
       tool_version_key: '1.0.0',
       provider_type: 'PLATFORM',
@@ -556,6 +586,7 @@ describe('CapabilityMount API wire contract', () => {
       tenant_id: '9',
       deployment_key: 'calendar-dev',
       tool_version_id: '211',
+      definition_id: null,
       tool_name: null,
       tool_version_key: null,
       provider_type: 'CONNECTOR',

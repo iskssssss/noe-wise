@@ -823,7 +823,9 @@ const templateOpen = ref(false),
   templateDetail = ref<AgentTemplate>(),
   templateResourcesLoaded = ref(false),
   versions = ref<Array<Pick<CapabilityVersion, 'id' | 'definitionId' | 'capabilityType'>>>([]),
-  definitions = ref<CapabilityDefinition[]>([])
+  definitions = ref<
+    Array<Pick<CapabilityDefinition, 'id' | 'name' | 'capabilityType' | 'defaultVersionId'>>
+  >([])
 const deployments = ref<CapabilityDeployment[]>([]),
   instances = ref<BuilderWorkflowInstance[]>([])
 const resourceSlots = ref<
@@ -994,20 +996,37 @@ async function loadTemplate() {
 }
 async function readTemplateResources(types: string[]) {
   if (!types.length) return { definitions: [], versions: [], deployments: [], instances: [] }
-  const definitions = (await api.capabilities.listDefinitions({ status: 'PUBLISHED' })).filter(
-    (definition) => definition.defaultVersionId && types.includes(definition.capabilityType)
-  )
-  const [versions, currentOptions, deployments, workflows] = await Promise.all([
+  const [allDefinitions, toolOptions, deployments, workflows] = await Promise.all([
+    types.some((type) => type !== 'TOOL')
+      ? api.capabilities.listDefinitions({ status: 'PUBLISHED' })
+      : Promise.resolve([]),
+    types.includes('TOOL') ? api.capabilities.listRequirementOptions('TOOL') : Promise.resolve([]),
+    types.includes('TOOL') ? api.capabilities.deployments('ACTIVE') : Promise.resolve([]),
+    types.includes('WORKFLOW') ? api.workflowDrafts.instances() : Promise.resolve({ items: [] })
+  ])
+  const definitions = [
+    ...allDefinitions.filter(
+      (definition) =>
+        definition.defaultVersionId &&
+        definition.capabilityType !== 'TOOL' &&
+        types.includes(definition.capabilityType)
+    ),
+    ...toolOptions.map((option) => ({
+      id: option.id,
+      name: option.name,
+      capabilityType: 'TOOL' as const,
+      defaultVersionId: option.versionId
+    }))
+  ]
+  const [versions, currentOptions] = await Promise.all([
     Promise.all(
       definitions
-        .filter((definition) => definition.capabilityType !== 'KNOWLEDGE_SOURCE')
+        .filter((definition) => definition.capabilityType === 'WORKFLOW')
         .map((definition) => api.capabilities.versions(definition.id, 'PUBLISHED'))
     ),
     definitions.some((definition) => definition.capabilityType === 'KNOWLEDGE_SOURCE')
       ? api.capabilities.listRequirementOptions('KNOWLEDGE_SOURCE')
-      : Promise.resolve([]),
-    types.includes('TOOL') ? api.capabilities.deployments('ACTIVE') : Promise.resolve([]),
-    types.includes('WORKFLOW') ? api.workflowDrafts.instances() : Promise.resolve({ items: [] })
+      : Promise.resolve([])
   ])
   const current = currentOptions
     .filter((option) =>
@@ -1025,7 +1044,15 @@ async function readTemplateResources(types: string[]) {
     }))
   return {
     definitions,
-    versions: [...versions.flat(), ...current],
+    versions: [
+      ...versions.flat(),
+      ...current,
+      ...toolOptions.map((option) => ({
+        id: option.versionId,
+        definitionId: option.id,
+        capabilityType: 'TOOL' as const
+      }))
+    ],
     deployments,
     instances: workflows.items
   }
@@ -1099,9 +1126,7 @@ function versionDefinition(versionId: string | null) {
   return versions.value.find((v) => v.id === versionId)?.definitionId
 }
 function matchingDeployments(definitionId?: string) {
-  return definitionId
-    ? deployments.value.filter((d) => versionDefinition(d.toolVersionId) === definitionId)
-    : []
+  return definitionId ? deployments.value.filter((d) => d.toolDefinitionId === definitionId) : []
 }
 function matchingInstances(definitionId?: string) {
   return definitionId

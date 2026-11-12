@@ -257,7 +257,7 @@ class CapabilityCatalogControllerTest {
         ToolDeployment.Environment environment = ToolDeployment.Environment.TEST;
         CapabilityDeploymentView view = new CapabilityDeploymentView(
                 11L, 7L, "deployment-1", 9L, "工具名称", "v1", providerType, "inst-1", environment,
-                "ACTIVE", 1L, Instant.now(), Instant.now());
+                "ACTIVE", 1L, Instant.now(), Instant.now(), null);
         when(catalog.createDeployment(eq(scope), eq("deployment-1"), eq(9L), eq(providerType),
                 eq("inst-1"), eq(environment), eq("ACTIVE"))).thenReturn(view);
 

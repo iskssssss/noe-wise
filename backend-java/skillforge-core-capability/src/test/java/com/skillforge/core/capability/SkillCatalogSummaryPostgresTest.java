@@ -184,18 +184,27 @@ class SkillCatalogSummaryPostgresTest {
                         if (List.of(20411L, 20412L, 20413L).contains(version)) {
                             assertNull(deployment.toolName());
                             assertNull(deployment.toolVersionKey());
+                            assertNull(deployment.definitionId());
                             assertEquals(HttpStatus.NOT_FOUND, assertThrows(ApiException.class,
                                     () -> service.getVersion(scope, version)).getStatus());
                         } else {
                             var visible = service.getVersion(scope, version);
                             assertEquals(visible.name(), deployment.toolName());
                             assertEquals(visible.versionKey(), deployment.toolVersionKey());
+                            assertEquals("PUBLISHED".equals(visible.status()) ? visible.definitionId() : null,
+                                    deployment.definitionId());
                         }
                         assertEquals(deployment, service.getDeployment(scope, deployment.deploymentKey()));
                     }
                     var anchored = service.getDeployment(scope, "directory-42");
                     assertEquals("版本-42", anchored.toolName());
                     assertEquals("v42", anchored.toolVersionKey());
+                    assertEquals(4L, anchored.definitionId());
+                    assertEquals(10L, service.getDeployment(scope, "directory-102").definitionId());
+                    var ownDraft = service.getDeployment(scope, "directory-21011");
+                    assertNotNull(ownDraft.toolName());
+                    assertNotNull(ownDraft.toolVersionKey());
+                    assertNull(ownDraft.definitionId());
                     assertEquals(41L, service.getCurrentPublishedVersion(scope, 4L).id());
                     assertTrue(service.listDeployments(scope, "DISABLED").isEmpty());
                     var stopped = service.setDeploymentActive(scope, anchored.deploymentKey(), anchored.revision(), false);
@@ -211,6 +220,7 @@ class SkillCatalogSummaryPostgresTest {
                     assertEquals(anchored.revision() + 1, stopped.revision());
                     assertEquals(anchored.toolName(), stopped.toolName());
                     assertEquals(anchored.toolVersionKey(), stopped.toolVersionKey());
+                    assertEquals(anchored.definitionId(), stopped.definitionId());
                     assertEquals(List.of(stopped), service.listDeployments(scope, "DISABLED"));
                     try (var cursorSession = managedTenantFactory.openSession()) {
                         assertSame(session.getConnection(), cursorSession.getConnection());

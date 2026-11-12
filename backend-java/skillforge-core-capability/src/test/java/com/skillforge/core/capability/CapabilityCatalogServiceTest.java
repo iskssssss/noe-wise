@@ -99,9 +99,10 @@ class CapabilityCatalogServiceTest {
         when(deployments.selectList(any())).thenReturn(rows);
         var label = new CapabilityVersionDO();
         label.setId(2L); label.setName("工具"); label.setVersionKey("v1");
+        label.setDefinitionId(71L); label.setStatus("PUBLISHED");
         when(versions.selectList(any())).thenAnswer(invocation -> {
             LambdaQueryWrapper<CapabilityVersionDO> query = invocation.getArgument(0);
-            assertEquals("id,name,version_key", query.getSqlSelect());
+            assertEquals("id,name,version_key,definition_id,status", query.getSqlSelect());
             return List.of(label);
         });
         var result = service.listDeployments(CapabilityCatalogScope.tenant(7L), null);
@@ -109,10 +110,45 @@ class CapabilityCatalogServiceTest {
                 result.stream().map(CapabilityDeploymentView::deploymentKey).toList());
         assertEquals("工具", result.get(0).toolName());
         assertEquals("v1", result.get(1).toolVersionKey());
+        assertEquals(71L, result.get(0).definitionId());
+        assertEquals(71L, result.get(1).definitionId());
+        assertEquals(null, result.get(2).definitionId());
         assertEquals(null, result.get(2).toolName());
         assertEquals(null, result.get(2).toolVersionKey());
         verify(versions).selectList(any());
         verify(versions, never()).selectOne(any());
+    }
+
+    @Test
+    void deploymentDefinitionIdentityRequiresItsExactVersionToRemainPublished() {
+        var row = new ToolDeploymentRecordDO();
+        row.setId(1L); row.setTenantId(7L); row.setDeploymentKey("historical-deployment");
+        row.setToolVersionId(2L); row.setProviderType("PLATFORM"); row.setProviderRef("fixture");
+        row.setEnvironment("TEST"); row.setStatus("ACTIVE"); row.setRevision(1L);
+        when(deployments.selectList(any())).thenReturn(List.of(row));
+        when(deployments.selectOne(any())).thenReturn(row);
+        var version = new CapabilityVersionDO();
+        version.setId(2L); version.setDefinitionId(71L); version.setName("historical-name"); version.setVersionKey("v1");
+        when(versions.selectList(any())).thenReturn(List.of(version));
+        when(versions.selectOne(any())).thenAnswer(invocation -> {
+            LambdaQueryWrapper<CapabilityVersionDO> query = invocation.getArgument(0);
+            assertEquals("id,name,version_key,definition_id,status", query.getSqlSelect());
+            return version;
+        });
+        for (String status : List.of("PUBLISHED", "DRAFT", "ARCHIVED", "DEPRECATED")) {
+            version.setStatus(status);
+            var result = service.listDeployments(CapabilityCatalogScope.tenant(7L), "ACTIVE").getFirst();
+            assertEquals("PUBLISHED".equals(status) ? 71L : null, result.definitionId());
+            assertEquals("historical-name", result.toolName());
+            assertEquals("v1", result.toolVersionKey());
+            assertEquals(2L, result.toolVersionId());
+            assertEquals(result.definitionId(), service.getDeployment(CapabilityCatalogScope.tenant(7L), "historical-deployment").definitionId());
+        }
+        org.mockito.Mockito.doReturn(null).when(versions).selectOne(any());
+        var hidden = service.getDeployment(CapabilityCatalogScope.tenant(7L), "historical-deployment");
+        assertEquals(null, hidden.definitionId());
+        assertEquals(null, hidden.toolName());
+        assertEquals(null, hidden.toolVersionKey());
     }
 
     @Test

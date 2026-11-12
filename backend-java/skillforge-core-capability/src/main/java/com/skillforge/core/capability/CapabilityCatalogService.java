@@ -705,7 +705,8 @@ public class CapabilityCatalogService {
         var versionIds = deployments.stream().map(ToolDeploymentRecordDO::getToolVersionId).distinct().toList();
         var versions = new LinkedHashMap<Long, CapabilityVersionDO>();
         versionMapper.selectList(versionVisibility(scope)
-                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey)
+                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey,
+                        CapabilityVersionDO::getDefinitionId, CapabilityVersionDO::getStatus)
                 .in(CapabilityVersionDO::getId, versionIds)).forEach(version -> versions.put(version.getId(), version));
         return deployments.stream().map(value -> deploymentView(value, versions.get(value.getToolVersionId()))).toList();
     }
@@ -904,7 +905,8 @@ public class CapabilityCatalogService {
 
     private CapabilityDeploymentView deploymentView(CapabilityCatalogScope scope, ToolDeploymentRecordDO value) {
         var version = versionMapper.selectOne(versionVisibility(scope)
-                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey)
+                .select(CapabilityVersionDO::getId, CapabilityVersionDO::getName, CapabilityVersionDO::getVersionKey,
+                        CapabilityVersionDO::getDefinitionId, CapabilityVersionDO::getStatus)
                 .eq(CapabilityVersionDO::getId, value.getToolVersionId()));
         return deploymentView(value, version);
     }
@@ -915,7 +917,8 @@ public class CapabilityCatalogService {
                 version == null ? null : version.getVersionKey(),
                 providerType(value.getProviderType()), value.getProviderRef(),
                 environment(value.getEnvironment()), value.getStatus(), value.getRevision(),
-                value.getCreatedAt(), value.getUpdatedAt());
+                value.getCreatedAt(), value.getUpdatedAt(),
+                version != null && PUBLISHED.equals(version.getStatus()) ? version.getDefinitionId() : null);
     }
 
     private Map<String, Object> immutableDescriptor(Map<String, Object> descriptor) {
