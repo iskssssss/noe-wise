@@ -126,6 +126,7 @@ tasks.named<Test>("test") {
     // 真实浏览器需要前端依赖与 Chromium，由独立 browser lane 验收。
     exclude("**/ChatExecutionProcessBrowserE2ETest.class")
     exclude("**/ChatInputRetryBrowserE2ETest.class")
+    exclude("**/ChatAcceptedHistoryBrowserE2ETest.class")
     exclude("**/ChatSessionRestoreBrowserE2ETest.class")
     exclude("**/ChatStreamUnknownBrowserE2ETest.class")
     exclude("**/ChatCancelRetryBrowserE2ETest.class")
@@ -752,6 +753,20 @@ tasks.register<Test>("chatSessionRestoreBrowserE2E") {
     inputs.property("sessionRestore", providers.environmentVariable("E2E_CHAT_SESSION_RESTORE").orElse("candidate"))
     inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/session-restore-browser.mjs", "vite.config.*", "package*.json", "index.html") })
         .withPropertyName("sessionRestoreFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("chatAcceptedHistoryBrowserE2E") {
+    description = "验证消息受理后历史读取失败的页面与运行事实"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.ChatAcceptedHistoryBrowserE2ETest.acceptedInputRemainsObservableWhenHistoryReadFails") }
+    inputs.property("acceptedHistoryMode", providers.environmentVariable("E2E_CHAT_ACCEPTED_HISTORY").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-chat") { include("src/**", "e2e/accepted-history-browser.mjs", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 

@@ -34,6 +34,60 @@ let wrapper: VueWrapper,
   steerSubmit: (body: string) => Promise<Response>,
   publish: (event: StreamEvent) => void
 
+describe('已受理消息的历史补读反馈', () => {
+  it('受理后历史失败提示只读恢复且不恢复原输入重试', async () => {
+    await connect()
+    await state.ensureSession()
+    historyLoad = async () => {
+      throw new TypeError('Failed to fetch')
+    }
+    state.draft.value = '已受理原文'
+    await state.submit()
+    expect(posts).toHaveLength(1)
+    expect(state.pendingInput.value).toBeUndefined()
+    expect(state.draft.value).toBe('')
+    expect(state.error.value).toBe('消息已受理，但会话记录读取失败，请重新连接。')
+    expect(state.error.value).toContain('重新连接')
+    expect(state.error.value).not.toContain('Failed to fetch')
+    historyLoad = async (id) => response({ ...emptyHistory(), session_id: id })
+    await state.reconnect()
+    expect(posts).toHaveLength(1)
+    expect(state.pendingInput.value).toBeUndefined()
+    expect(state.error.value).toBe('')
+  })
+
+  it('成功受理和补读不显示失败提示', async () => {
+    await connect()
+    state.draft.value = '正常消息'
+    await state.submit()
+    expect(posts).toHaveLength(1)
+    expect(state.error.value).toBe('')
+    expect(state.pendingInput.value).toBeUndefined()
+  })
+
+  it('旧会话受理后历史迟到失败不污染新会话', async () => {
+    await connect()
+    await state.ensureSession()
+    let rejectHistory!: (reason: Error) => void
+    historyLoad = () =>
+      new Promise<Response>((_resolve, reject) => {
+        rejectHistory = reject
+      })
+    state.draft.value = '旧会话消息'
+    const sending = state.submit()
+    await flushPromises()
+    expect(posts).toHaveLength(1)
+    historyLoad = async (id) => response({ ...emptyHistory(), session_id: id })
+    await state.openSession('new-session')
+    rejectHistory(new TypeError('Failed to fetch'))
+    await sending
+    expect(state.sessionId.value).toBe('new-session')
+    expect(state.error.value).toBe('')
+    expect(state.pendingInput.value).toBeUndefined()
+    expect(posts).toHaveLength(1)
+  })
+})
+
 describe('未知过程后的权威Run状态', () => {
   const unknown = (sequence = 7) =>
     publish({

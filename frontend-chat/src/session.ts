@@ -1391,7 +1391,11 @@ export function useConversation() {
       if (result.collaboration) history.value.collaboration = result.collaboration
       confirmInput(body, false, result.execution_id)
       notice.value = result.message ?? ''
-      await refreshMessageHistory(id, version)
+      try {
+        await refreshMessageHistory(id, version)
+      } catch {
+        throw new Error('消息已受理，但会话记录读取失败，请重新连接。')
+      }
       if (version !== selection || request !== submissionRequest) return
       await refreshSessions()
     } catch (cause) {
