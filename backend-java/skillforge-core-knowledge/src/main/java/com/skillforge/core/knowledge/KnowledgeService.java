@@ -1038,8 +1038,14 @@ public class KnowledgeService {
             }
             if (vectors.isEmpty()) {
                 try {
-                    vectors = decodeSearchRows(chunkMapper.vectorSearchVersions(tenantId, kbId,
-                            queryVec, pool, thresholdEnabled ? threshold : null, activeSourceVersions), kbId, true);
+                    var rows = chunkMapper.vectorSearchVersions(tenantId, kbId,
+                            queryVec, pool, hybrid && thresholdEnabled ? threshold : null, activeSourceVersions);
+                    if (!hybrid && !rows.isEmpty()) {
+                        return decodeSearchRows(rows.stream()
+                                .filter(row -> !thresholdEnabled || ((Number) row.get("score")).doubleValue() >= threshold)
+                                .toList(), kbId, true);
+                    }
+                    vectors = decodeSearchRows(rows, kbId, true);
                 } catch (RuntimeException exception) {
                     log.warn("授权来源向量检索不可用，回退关键词 tenantId={} kbId={}", tenantId, kbId, exception);
                 }
@@ -1105,7 +1111,8 @@ public class KnowledgeService {
     }
 
     /**
-     * 向量检索（语义）：优先 ES kNN，空/异常回退 pgvector，再空回退关键词。
+     * 向量检索（语义）：优先 ES kNN，空/异常回退 pgvector；无向量候选时回退关键词。
+     * 已取得的候选即使全部低于阈值，也不再转换为关键词命中。
      */
     private List<KnowledgeHit> semanticSearch(
             String tenantId, String kbId, String query, int topK,
@@ -1126,12 +1133,12 @@ public class KnowledgeService {
             }
             try {
                 List<Map<String, Object>> rows = sourceVersion == null
-                        ? chunkMapper.vectorSearch(tenantId, kbId, queryVec, topK,
-                                thresholdEnabled ? threshold : null)
-                        : chunkMapper.vectorSearchPinned(tenantId, kbId, queryVec, topK,
-                                thresholdEnabled ? threshold : null, sourceVersion);
+                        ? chunkMapper.vectorSearch(tenantId, kbId, queryVec, topK, null)
+                        : chunkMapper.vectorSearchPinned(tenantId, kbId, queryVec, topK, null, sourceVersion);
                 if (!rows.isEmpty()) {
-                    return decodeSearchRows(rows, kbId, true);
+                    return decodeSearchRows(rows.stream()
+                            .filter(row -> !thresholdEnabled || ((Number) row.get("score")).doubleValue() >= threshold)
+                            .toList(), kbId, true);
                 }
             } catch (Exception e) {
                 log.warn("向量检索不可用，回退关键词检索: {}", e.getMessage(), e);

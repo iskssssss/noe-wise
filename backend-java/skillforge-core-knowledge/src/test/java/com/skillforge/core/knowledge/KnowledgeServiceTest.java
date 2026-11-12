@@ -605,6 +605,32 @@ class KnowledgeServiceTest {
         assertEquals(2, pinned.size());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"active", "pinned"})
+    void semanticThresholdDoesNotTurnRejectedVectorCandidatesIntoKeywordHits(String scope) {
+        activeBase("v1");
+        when(embeddingProvider.embed("7", "81", 3L, "q")).thenReturn(new float[]{.1f, .2f});
+        var source = scope.equals("pinned") ? "v1" : null;
+        var request = new KnowledgeSearchRequest("10", "q", 2, "semantic", true, .5, null, false, source);
+        if (source == null) {
+            when(chunkMapper.vectorSearchVersions(eq("7"), eq("10"), anyString(), eq(2), eq(null), eq(List.of("v1"))))
+                    .thenReturn(List.of(item("below", .49999, "v1")), List.of(item("above", .50001, "v1")), List.of());
+        } else {
+            when(chunkMapper.vectorSearchPinned(eq("7"), eq("10"), anyString(), eq(2), eq(null), eq("v1")))
+                    .thenReturn(List.of(item("below", .49999, "v1")), List.of(item("above", .50001, "v1")), List.of());
+        }
+        var keyword = chunk();
+        when(chunkMapper.searchKeyword("7", "10", "q", 2, List.of("v1"))).thenReturn(List.of(keyword));
+
+        assertTrue(service.search("7", "10", "q", 2, request).isEmpty());
+        verify(chunkMapper, never()).searchKeyword(anyString(), anyString(), anyString(), anyInt(), any());
+        assertEquals(List.of("above"), service.search("7", "10", "q", 2, request).stream()
+                .map(KnowledgeHit::chunkId).toList());
+        assertEquals(List.of(String.valueOf(keyword.getId())), service.search("7", "10", "q", 2, request).stream()
+                .map(KnowledgeHit::chunkId).toList());
+        verify(chunkMapper).searchKeyword("7", "10", "q", 2, List.of("v1"));
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource(value = {
             "active,2,NULL,0,true,2",

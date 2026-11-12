@@ -145,6 +145,7 @@ tasks.named<Test>("test") {
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
     exclude("**/ConvertDatetimeBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
+    exclude("**/KnowledgeSemanticThresholdBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
     exclude("**/EconomicalKnowledgeRebuildBrowserE2ETest.class")
@@ -338,6 +339,20 @@ tasks.register<Test>("memoryDirectoryLimitBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.MemoryDirectoryLimitBrowserE2ETest.oldestFactOutsideFirstHundredRemainsRuntimeSearchable")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeSemanticThresholdBrowserE2E") {
+    description = "验证语义阈值与真实向量检索结果"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSemanticThresholdBrowserE2ETest.healthyLowSimilarityCannotBypassSemanticThreshold") }
+    inputs.property("semanticThreshold", providers.environmentVariable("E2E_SEMANTIC_THRESHOLD").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-semantic-threshold-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }
 
