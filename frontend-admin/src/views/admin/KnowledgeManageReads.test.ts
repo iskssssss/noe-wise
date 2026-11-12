@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElFormItem, ElSelect, ElTabs } from 'element-plus'
+import { createPermissionDirective } from '@skillforge/shared/directives/permission'
 import { HttpClientError } from '@skillforge/shared/utils/http'
-import { nextTick, reactive } from 'vue'
+import { computed, nextTick, reactive } from 'vue'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   chunks: vi.fn(),
   updateDocument: vi.fn(),
   reindex: vi.fn(),
+  repairProjection: vi.fn(),
   removeDocument: vi.fn(),
   rebuild: vi.fn(),
   post: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock('../../api', () => ({
       getDocument: mocks.document,
       listChunks: mocks.chunks,
       reindexDocument: mocks.reindex,
+      repairProjection: mocks.repairProjection,
       removeDocument: mocks.removeDocument,
       updateDocument: mocks.updateDocument
     },
@@ -145,6 +148,62 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it.each([
+    { permission: true, mode: 'high_quality', status: 'ready', source: 'v1', visible: true },
+    { permission: false, mode: 'high_quality', status: 'ready', source: 'v1', visible: false },
+    { permission: true, mode: 'economical', status: 'ready', source: 'v1', visible: false },
+    { permission: true, mode: 'high_quality', status: 'failed', source: 'v1', visible: false },
+    { permission: true, mode: 'high_quality', status: 'ready', source: '', visible: false }
+  ])('投影修复入口遵循权限、索引方式与来源状态：$mode $status', async (scenario) => {
+    authState.user.permissions = scenario.permission
+      ? ['foundation.knowledge.read', 'foundation.knowledge.run']
+      : ['foundation.knowledge.read']
+    mocks.base.mockResolvedValue({ id: 'kb-1', name: '知识库', indexing_mode: scenario.mode })
+    mocks.documents.mockResolvedValue({
+      items: [
+        {
+          ...documentFixture,
+          status: scenario.status,
+          source_version: scenario.source,
+          chunk_count: 1
+        }
+      ],
+      total: 1
+    })
+    wrapper = mount(KnowledgeManagePage, {
+      attachTo: document.body,
+      global: {
+        directives: {
+          permission: createPermissionDirective(() => computed(() => authState.user.permissions))
+        }
+      }
+    })
+    await flushPromises()
+    const visible = Array.from(document.body.querySelectorAll('button')).some(
+      (button) => button.textContent?.trim() === '修复检索投影'
+    )
+    expect(visible).toBe(scenario.visible)
+    expect(mocks.repairProjection).not.toHaveBeenCalled()
+  })
+
+  it('修复返回 503 后由用户显式重试同一来源，不重新索引或发布', async () => {
+    mocks.repairProjection
+      .mockRejectedValueOnce(new HttpClientError({ status: 503, userMessage: '投影修复未完成' }))
+      .mockResolvedValueOnce({ source_version: 'v1', chunk_count: 1 })
+    await open()
+    await click('修复检索投影')
+    expect(mocks.repairProjection).toHaveBeenCalledExactlyOnceWith('kb-1', 'v1')
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.reindex).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+    await click('修复检索投影')
+    expect(mocks.repairProjection).toHaveBeenCalledTimes(2)
+    expect(mocks.repairProjection).toHaveBeenLastCalledWith('kb-1', 'v1')
+    expect(mocks.success).toHaveBeenCalledWith('检索投影已修复')
+    expect(mocks.reindex).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+
   it('失败且无分块时引导补充正文并在详情持续解释，不提供无效索引重试', async () => {
     const emptyDocument = { ...documentFixture, content: ' ', status: 'failed', chunk_count: 0 }
     mocks.documents.mockResolvedValue({ items: [emptyDocument], total: 1 })

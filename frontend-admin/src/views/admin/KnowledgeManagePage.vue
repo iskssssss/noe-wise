@@ -300,7 +300,11 @@
                 : statusLabel(row.status)
             }}</template></ElTableColumn
           ><ElTableColumn width="96" prop="chunk_count" label="分块"></ElTableColumn
-          ><ElTableColumn width="240" class-name="admin-table-actions" prop="actions" label="操作"
+          ><ElTableColumn
+            min-width="340"
+            class-name="admin-table-actions"
+            prop="actions"
+            label="操作"
             ><template #default="{ row }"
               ><ElButton
                 link
@@ -322,6 +326,19 @@
                 "
                 @click="reindex(row as KnowledgeDocumentItem)"
                 >{{ row.status === 'failed' ? '重试索引' : '重新索引' }}</ElButton
+              ><ElButton
+                v-if="!economicalIndex && row.status === 'ready' && row.source_version"
+                v-permission="['foundation.knowledge.run']"
+                link
+                :disabled="
+                  busy ||
+                  documentMutationRefresh ||
+                  rebuildRefresh ||
+                  rebuildPublicationLocked ||
+                  rebuild?.write_locked
+                "
+                @click="repairProjection(row as KnowledgeDocumentItem)"
+                >修复检索投影</ElButton
               ><ElButton
                 v-permission="['foundation.knowledge.delete']"
                 link
@@ -1829,6 +1846,14 @@ async function reindex(row: KnowledgeDocumentItem) {
     message.success('文档重建已提交')
     documentMutationRefresh.value = true
     await refreshDocumentList()
+  })
+}
+async function repairProjection(row: KnowledgeDocumentItem) {
+  const sourceVersion = row.source_version
+  if (!sourceVersion) return
+  await run(async () => {
+    await api.knowledge.repairProjection(id.value, sourceVersion)
+    message.success('检索投影已修复')
   })
 }
 async function removeDocument(row: KnowledgeDocumentItem) {

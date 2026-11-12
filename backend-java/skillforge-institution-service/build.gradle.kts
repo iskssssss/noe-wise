@@ -149,6 +149,7 @@ tasks.named<Test>("test") {
     exclude("**/ConvertDatetimeBrowserE2ETest.class")
     exclude("**/KnowledgeChunkOverlapBrowserE2ETest.class")
     exclude("**/KnowledgeSemanticThresholdBrowserE2ETest.class")
+    exclude("**/KnowledgeProjectionRepairBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
     exclude("**/AgentSkillOptionsBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
@@ -401,6 +402,20 @@ tasks.register<Test>("knowledgeSemanticThresholdBrowserE2E") {
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSemanticThresholdBrowserE2ETest.healthyLowSimilarityCannotBypassSemanticThreshold") }
     inputs.property("semanticThreshold", providers.environmentVariable("E2E_SEMANTIC_THRESHOLD").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-semantic-threshold-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("knowledgeProjectionRepairBrowserE2E") {
+    description = "验证知识来源投影页面修复及运行引用"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeProjectionRepairBrowserE2ETest.publishedSourceProjectionCanBeRepairedFromDocumentPage") }
+    inputs.property("knowledgeProjectionRepair", providers.environmentVariable("E2E_KNOWLEDGE_PROJECTION_REPAIR").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-projection-repair-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

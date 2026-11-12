@@ -1989,6 +1989,11 @@ export const api = {
       get<string[]>(
         `/knowledge/bases/documents/latest-ready-sources?kbId=${encodeURIComponent(kbId)}`
       ),
+    repairProjection: (kbId: string, sourceVersion: string) =>
+      post<{ kb_id: string; source_version: string; chunk_count: number }>(
+        '/knowledge/bases/projections/repair',
+        { kb_id: kbId, source_version: sourceVersion }
+      ),
     uploadFile: (kbId: string, form: FormData, requestId: string) => {
       const query = new URLSearchParams({ kb_id: kbId, request_id: requestId })
       return post<KnowledgeUploadReceipt>(`/knowledge/bases/documents/upload?${query}`, form, {
