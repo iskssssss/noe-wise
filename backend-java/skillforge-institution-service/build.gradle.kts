@@ -142,6 +142,7 @@ tasks.named<Test>("test") {
     exclude("**/AgentNameValidationBrowserE2ETest.class")
     exclude("**/AgentTemplateBudgetBrowserE2ETest.class")
     exclude("**/AgentTemplateResourcesBrowserE2ETest.class")
+    exclude("**/AgentTemplateOptionalSlotBrowserE2ETest.class")
     exclude("**/JsonQueryBrowserE2ETest.class")
     exclude("**/JsonSchemaPropertiesBrowserE2ETest.class")
     exclude("**/ConvertDatetimeBrowserE2ETest.class")
@@ -299,6 +300,20 @@ tasks.register<Test>("agentTemplateResourcesBrowserE2E") {
     inputs.property("agentTemplateResources", providers.environmentVariable("E2E_AGENT_TEMPLATE_RESOURCES").orElse("candidate"))
     inputs.property("templateSummary", providers.environmentVariable("E2E_TEMPLATE_SUMMARY").orElse("0"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-template-resources-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("agentTemplateOptionalSlotBrowserE2E") {
+    description = "验证已选可选资源清空后安装并执行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentTemplateOptionalSlotBrowserE2ETest.selectedOptionalResourceCanBeClearedBeforeInstallation") }
+    inputs.property("optionalSlotMode", providers.environmentVariable("E2E_OPTIONAL_SLOT_MODE").orElse("candidate"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/agent-template-optional-slot-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
     outputs.upToDateWhen { false }
 }

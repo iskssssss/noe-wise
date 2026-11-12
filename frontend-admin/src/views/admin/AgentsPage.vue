@@ -296,6 +296,7 @@
             :aria-describedby="formTipId + '-field-5' + '-' + encodeURIComponent(String(slot.key))"
             v-model="slot.definitionId"
             :disabled="!templateResourcesLoaded"
+            clearable
             @change="
               () => {
                 slot.deploymentKey = undefined
@@ -427,6 +428,7 @@
             v-described-by="formTipId + '-field-6' + '-' + encodeURIComponent(String(slot.key))"
             :aria-describedby="formTipId + '-field-6' + '-' + encodeURIComponent(String(slot.key))"
             v-model="slot.agentId"
+            clearable
             ><ElOption
               v-for="agent in data?.items ?? []"
               :key="agent.id"
