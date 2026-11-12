@@ -665,6 +665,19 @@ public final class AgentExecutionCodec {
         if (structured != null) result.add(new ModelContent.Text(structured));
         if (!value.path("content").isArray()) throw invalid();
         for (var part : value.get("content")) {
+            if ("resource".equals(string(part, "type"))) {
+                var resource = part.get("resource");
+                if (resource == null || !resource.isObject() || resource.has("blob")) throw invalid();
+                String uri = string(resource, "uri");
+                if (uri.isBlank()) throw invalid();
+                var projection = object();
+                projection.put("type", "resource");
+                projection.put("uri", uri);
+                if (resource.has("mimeType")) projection.put("mimeType", string(resource, "mimeType"));
+                projection.put("text", string(resource, "text"));
+                result.add(new ModelContent.Text(SessionRuntimePayloadJson.write(projection)));
+                continue;
+            }
             var content = readContent(part);
             // 仅省略与已展示结构化正文逐字一致的文本，保留说明、不同数据及多模态内容。
             if (content instanceof ModelContent.Text text && text.text().equals(structured)) continue;
