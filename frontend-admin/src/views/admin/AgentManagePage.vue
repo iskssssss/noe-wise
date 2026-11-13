@@ -540,6 +540,20 @@
           >
             可用工具均已挂载，可在能力列表中查看。
           </p>
+          <p
+            v-if="mountOptionsState === 'ready' && !advancedToolMount && !availableTools.length"
+            class="admin-field-help"
+            role="status"
+          >
+            当前还没有已启用的工具。平台默认工具需要先在工具中心启用，才会出现在这里。
+            <RouterLink
+              v-if="can('foundation.capabilities.read')"
+              to="/admin/tools"
+              target="_blank"
+              rel="noopener noreferrer"
+              >去工具中心启用工具（新标签页）</RouterLink
+            >
+          </p>
           <ElCheckbox v-model="advancedToolMount" @change="loadVersions"
             >高级：按能力与部署选择</ElCheckbox
           >

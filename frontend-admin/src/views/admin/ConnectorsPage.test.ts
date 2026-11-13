@@ -175,7 +175,7 @@ it('创建连接器后直接以返回的业务标识进入工具接入', async (
       .find((item) => item.props('label') === label)!
       .findComponent(ElInput)
       .setValue(value)
-  await button('保存并接入工具').trigger('click')
+  await button('保存并选择工具').trigger('click')
   await flushPromises()
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(calls.push).toHaveBeenCalledExactlyOnceWith({
@@ -207,7 +207,7 @@ it('跨标签页通知不可用时保留已确认创建结果', async () => {
         .find((item) => item.props('label') === label)!
         .findComponent(ElInput)
         .setValue(value)
-    await button('保存并接入工具').trigger('click')
+    await button('保存并选择工具').trigger('click')
     await flushPromises()
     expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
     expect(calls.push).toHaveBeenCalledExactlyOnceWith({
@@ -227,7 +227,7 @@ it('缺少工具接入权限时仍可单独创建连接器', async () => {
   await button('新增连接器').trigger('click')
   await flushPromises()
   expect(
-    wrapper!.findAllComponents(ElButton).some((item) => item.text() === '保存并接入工具')
+    wrapper!.findAllComponents(ElButton).some((item) => item.text() === '保存并选择工具')
   ).toBe(false)
   expect(button('保存').exists()).toBe(true)
 })
@@ -248,7 +248,7 @@ it('跳转及列表刷新失败时保留原连接器的工具接入入口', asyn
       .findComponent(ElInput)
       .setValue(value)
   calls.instances.mockRejectedValueOnce(new Error('目录不可用'))
-  await button('保存并接入工具').trigger('click')
+  await button('保存并选择工具').trigger('click')
   await flushPromises()
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(document.body.textContent).toContain('连接器已保存，未能进入工具接入')
@@ -470,7 +470,7 @@ it('创建结果未知时保留原请求且不持久化凭据，核对后继续�
     .find((item) => item.props('label') === '访问凭据')!
     .findComponent(ElInput)
     .setValue('test-secret-never-stored')
-  await button('保存并接入工具').trigger('click')
+  await button('保存并选择工具').trigger('click')
   await flushPromises()
   const requestId = calls.createInstanceWithReceipt.mock.calls[0]![0]
   const stored = sessionStorage.getItem('skillforge.connector-create:1:member-1')!

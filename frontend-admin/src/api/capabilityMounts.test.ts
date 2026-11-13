@@ -485,6 +485,7 @@ describe('CapabilityMount API wire contract', () => {
           [
             {
               name: 'get_current_time',
+              title: '查询当前时间',
               description: 'Returns time',
               content_hash: 'sha256:time',
               descriptor: { input_schema: { type: 'object' } }
@@ -549,6 +550,7 @@ describe('CapabilityMount API wire contract', () => {
     expect((startCall[1].headers as Headers).get('If-Match')).toBe('2')
     expect(platformTools[0]).toEqual({
       name: 'get_current_time',
+      title: '查询当前时间',
       description: 'Returns time',
       contentHash: 'sha256:time',
       descriptor: { input_schema: { type: 'object' } }

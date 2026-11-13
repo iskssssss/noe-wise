@@ -15,6 +15,13 @@ vi.mock('../../api', () => ({
         items: [{ instance_id: 'server', name: '服务', executor_type: 'mcp' }]
       }),
       mcpTools: async () => ({ items: [{ name: 'read_alpha' }] })
+    },
+    capabilities: {
+      platformTools: async () => [],
+      definitions: async () => [],
+      getVersion: vi.fn(),
+      createDeploymentWithReceipt: vi.fn(),
+      deploymentCreateReceipt: vi.fn()
     }
   }
 }))

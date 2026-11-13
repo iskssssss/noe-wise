@@ -11,12 +11,13 @@ import java.util.Map;
  */
 public record PlatformToolResponse(
         String name,
+        String title,
         String description,
         String contentHash,
         Map<String, Object> descriptor) {
 
     public static PlatformToolResponse from(PlatformToolCatalog.Entry entry) {
         return new PlatformToolResponse(
-                entry.name(), entry.description(), entry.contentHash(), entry.descriptor());
+                entry.name(), entry.title(), entry.description(), entry.contentHash(), entry.descriptor());
     }
 }

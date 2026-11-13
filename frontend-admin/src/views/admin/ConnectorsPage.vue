@@ -198,7 +198,7 @@
         ><ElButton @click="closeDrawer0" :disabled="busy">取消</ElButton
         ><ElButton
           v-permission="[editing ? 'foundation.connectors.update' : 'foundation.connectors.create']"
-          type="primary"
+          :type="editing ? 'primary' : undefined"
           :loading="busy"
           :disabled="!!pendingCreate || !!pendingUpdate || !!pendingDelete || !!storageError"
           @click="save()"
@@ -210,7 +210,7 @@
           :loading="busy"
           :disabled="!!pendingCreate || !!pendingUpdate || !!pendingDelete || !!storageError"
           @click="save(true)"
-          >保存并接入工具</ElButton
+          >保存并选择工具</ElButton
         ></template
       ></ElDrawer
     >

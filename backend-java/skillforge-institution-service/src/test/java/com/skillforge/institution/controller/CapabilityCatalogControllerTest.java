@@ -309,7 +309,7 @@ class CapabilityCatalogControllerTest {
         assertEquals(new com.skillforge.core.capability.connector.PlatformToolCatalog(new com.skillforge.core.chat.contract.ChatToolSchemaContributor()).entries().size(), result.size());
         PlatformToolCatalog.Entry entry = new com.skillforge.core.capability.connector.PlatformToolCatalog(new com.skillforge.core.chat.contract.ChatToolSchemaContributor()).entries().get(0);
         assertEquals(new PlatformToolResponse(
-                entry.name(), entry.description(), entry.contentHash(), entry.descriptor()), result.get(0));
+                entry.name(), entry.title(), entry.description(), entry.contentHash(), entry.descriptor()), result.get(0));
         assertEquals(false, java.util.Arrays.stream(PlatformToolResponse.class.getRecordComponents())
                 .anyMatch(component -> {
                     String name = component.getName().toLowerCase();

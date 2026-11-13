@@ -13,10 +13,24 @@ const calls = vi.hoisted(() => ({
   onboarding: vi.fn(),
   connectors: vi.fn(),
   discover: vi.fn(),
+  platformTools: vi.fn(),
+  definitions: vi.fn(),
+  getVersion: vi.fn(),
+  createDeploymentWithReceipt: vi.fn(),
+  deploymentCreateReceipt: vi.fn(),
   routeConnector: 'server'
 }))
 vi.mock('../../api', () => ({
-  api: { connectors: { instances: calls.connectors, mcpTools: calls.discover } }
+  api: {
+    connectors: { instances: calls.connectors, mcpTools: calls.discover },
+    capabilities: {
+      platformTools: calls.platformTools,
+      definitions: calls.definitions,
+      getVersion: calls.getVersion,
+      createDeploymentWithReceipt: calls.createDeploymentWithReceipt,
+      deploymentCreateReceipt: calls.deploymentCreateReceipt
+    }
+  }
 }))
 vi.mock('../../api/tools', () => ({
   toolsApi: { available: calls.available, onboard: calls.onboard, onboarding: calls.onboarding }
@@ -75,13 +89,16 @@ beforeEach(() => {
   })
   calls.discover.mockResolvedValue({ items: [alpha] })
   calls.onboard.mockImplementation(async (request_id: string) => success(request_id))
+  calls.platformTools.mockResolvedValue([])
+  calls.definitions.mockResolvedValue([])
+  calls.deploymentCreateReceipt.mockResolvedValue(undefined)
 })
 
 it('只有一个连接器时自动选择并读取，多个连接器时等待用户选择', async () => {
   calls.routeConnector = ''
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
-  await button('接入工具').trigger('click')
+  await button('接入 MCP 工具').trigger('click')
   await flushPromises()
   expect(wrapper.findComponent(ToolOnboarding).props('connectorId')).toBe('server')
   expect(calls.discover).toHaveBeenCalledExactlyOnceWith('server')
@@ -95,7 +112,7 @@ it('只有一个连接器时自动选择并读取，多个连接器时等待用�
   })
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
-  await button('接入工具').trigger('click')
+  await button('接入 MCP 工具').trigger('click')
   await flushPromises()
   expect(wrapper.findComponent(ToolOnboarding).props('connectorId')).toBe('')
   expect(calls.discover).not.toHaveBeenCalled()
@@ -104,7 +121,7 @@ it('唯一工具读取后可直接确认接入', async () => {
   calls.routeConnector = ''
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
-  await button('接入工具').trigger('click')
+  await button('接入 MCP 工具').trigger('click')
   await flushPromises()
   expect(wrapper.text()).toContain('已预选唯一可接入工具“read_alpha”')
   expect(calls.onboard).not.toHaveBeenCalled()
@@ -124,7 +141,7 @@ it('选择其他连接器时自动读取其目录，未确认前不接入', asyn
   calls.discover.mockImplementation(async (id: string) => ({ items: [{ name: id + '_tool' }] }))
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
-  await button('接入工具').trigger('click')
+  await button('接入 MCP 工具').trigger('click')
   const onboarding = wrapper.findComponent(ToolOnboarding)
   onboarding.vm.$emit('update:connectorId', 'server')
   await flushPromises()
@@ -174,7 +191,7 @@ it('没有 MCP 连接器时引导至连接设置，返回后自动读取工具',
   })
   await flushPromises()
   expect(wrapper.text()).toContain('当前没有可选的 MCP 连接器')
-  expect(wrapper.get('a[href="/admin/connectors"]').attributes('target')).toBe('_blank')
+  expect(wrapper.get('a[href="/admin/connectors"]').attributes('target')).toBeUndefined()
   await wrapper.get('a[href="/admin/connectors"]').trigger('click')
   window.dispatchEvent(new Event('focus'))
   await flushPromises()
@@ -376,7 +393,7 @@ it('区分首次读取失败、成功空目录和已有目录刷新失败', asyn
 
   await button('刷新工具').trigger('click')
   await flushPromises()
-  expect(wrapper.text()).toContain('尚无可用工具')
+  expect(wrapper.text()).toContain('尚无已启用工具')
 
   const tool: AvailableTool = {
     definition_id: '30',
@@ -715,5 +732,84 @@ it('searches available names, original names, descriptions and service sources a
   calls.available.mockResolvedValue({ items: [] })
   await button('刷新工具').trigger('click')
   await flushPromises()
-  expect(table.text()).toContain('尚无可用工具')
+  expect(table.text()).toContain('尚无已启用工具')
+})
+
+const platformTime = {
+  name: 'get_current_time',
+  title: '查询当前时间',
+  description: '返回当前时间',
+  contentHash: 'sha256:time',
+  descriptor: { effect: 'READ_ONLY', confirmation_policy: 'NEVER', tool_name: 'get_current_time' }
+}
+const platformTimeDefinition = {
+  id: '10',
+  tenantId: null,
+  capabilityType: 'TOOL' as const,
+  capabilityKey: 'tool:get_current_time',
+  name: 'get_current_time',
+  description: '返回当前时间',
+  trustLevel: 'PLATFORM',
+  status: 'PUBLISHED' as const,
+  revision: 1,
+  defaultVersionId: '11'
+}
+
+it('lists platform tools with readable risk and enables one only after explicit action', async () => {
+  calls.platformTools.mockResolvedValue([platformTime])
+  calls.definitions.mockResolvedValue([platformTimeDefinition])
+  calls.getVersion.mockResolvedValue({ id: '11', descriptor: { tool_name: 'get_current_time' } })
+  calls.createDeploymentWithReceipt.mockResolvedValue({
+    request_id: 'request-1',
+    status: 'SUCCEEDED',
+    deployment_id: '20',
+    deployment_key: 'platform-get_current_time'
+  })
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.text()).toContain('平台工具')
+  expect(wrapper.text()).toContain('查询当前时间')
+  expect(wrapper.text()).toContain('只读 · 无需确认')
+  expect(calls.createDeploymentWithReceipt).not.toHaveBeenCalled()
+  await button('启用').trigger('click')
+  await flushPromises()
+  expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
+  expect(calls.createDeploymentWithReceipt).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({
+      deploymentKey: 'platform-get_current_time',
+      toolVersionId: '11',
+      providerType: 'PLATFORM',
+      providerRef: 'get_current_time',
+      environment: 'PRODUCTION',
+      status: 'ACTIVE'
+    })
+  )
+  expect(calls.available).toHaveBeenCalledTimes(2)
+  expect(document.body.textContent).toContain('已启用，智能体可以选择该工具')
+})
+
+it('keeps platform enable pending when the write result is unknown and resolves it from the receipt', async () => {
+  calls.platformTools.mockResolvedValue([platformTime])
+  calls.definitions.mockResolvedValue([platformTimeDefinition])
+  calls.getVersion.mockResolvedValue({ id: '11', descriptor: { tool_name: 'get_current_time' } })
+  calls.createDeploymentWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  await button('启用').trigger('click')
+  await flushPromises()
+  const requestId = calls.createDeploymentWithReceipt.mock.calls[0]![0] as string
+  expect(wrapper.text()).toContain('结果尚未确定')
+  expect(button('核对结果').exists()).toBe(true)
+  calls.deploymentCreateReceipt.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_id: '20',
+    deployment_key: 'platform-get_current_time'
+  })
+  await button('核对结果').trigger('click')
+  await flushPromises()
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledWith(requestId)
+  expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).not.toContain('结果尚未确定')
 })

@@ -209,6 +209,7 @@ export interface DeploymentCreateReceipt {
 /** 唯一事实源 PlatformToolCatalog 的公开只读投影。 */
 export interface PlatformTool {
   name: string
+  title: string
   description: string
   contentHash: string
   descriptor: Record<string, unknown>
@@ -367,6 +368,7 @@ export type CapabilityDeploymentWire = {
 
 export type PlatformToolWire = {
   name: string
+  title?: string | null
   description?: string | null
   content_hash: string
   descriptor: Record<string, unknown>
@@ -657,6 +659,7 @@ function mapPlatformTool(wire: PlatformToolWire): PlatformTool {
   if (!wire || typeof wire !== 'object') return fail('platform tool must be an object')
   return {
     name: textValue(wire.name, 'name'),
+    title: wire.title === null || wire.title === undefined ? '' : textValue(wire.title, 'title'),
     description:
       wire.description === null || wire.description === undefined
         ? ''
