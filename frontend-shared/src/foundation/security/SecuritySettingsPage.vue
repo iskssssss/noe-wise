@@ -56,6 +56,37 @@ const publicError = (cause: unknown, fallback: string) => {
   return cause instanceof Error ? cause.message : fallback
 }
 
+/** 库中保留原始 UA；界面只展示可读的设备与客户端名称。 */
+function deviceLabel(value: string) {
+  if (!value) return '未知设备'
+  if (!/Mozilla|Chrome|Safari|Firefox|PowerShell/i.test(value)) return value
+  const os = /Windows/i.test(value)
+    ? 'Windows'
+    : /Macintosh|Mac OS X/i.test(value)
+      ? 'macOS'
+      : /Android/i.test(value)
+        ? 'Android'
+        : /iPhone|iPad/i.test(value)
+          ? 'iOS'
+          : /Linux/i.test(value)
+            ? 'Linux'
+            : ''
+  const client = /PowerShell/i.test(value)
+    ? '命令行客户端'
+    : /HeadlessChrome/i.test(value)
+      ? '自动化浏览器'
+      : /Edg\//i.test(value)
+        ? 'Edge'
+        : /Chrome\//i.test(value)
+          ? 'Chrome'
+          : /Firefox\//i.test(value)
+            ? 'Firefox'
+            : /Safari\//i.test(value)
+              ? 'Safari'
+              : '浏览器'
+  return [os, client].filter(Boolean).join(' · ')
+}
+
 /** 状态、设备和策略保留各自的读取失败；刷新不覆盖尚未保存的策略草稿。 */
 async function load() {
   const request = ++generation
@@ -170,7 +201,11 @@ async function bound(tokens: SecurityAuthTokens) {
 
 /** 只撤销确认的设备；当前设备与其他设备的退出影响必须明确。 */
 async function revoke(device: SecurityDevice) {
-  const target = { id: device.id, current: device.current, label: device.device_label }
+  const target = {
+    id: device.id,
+    current: device.current,
+    label: deviceLabel(device.device_label)
+  }
   if (
     !(await ask(
       '撤销登录设备',
@@ -376,7 +411,11 @@ onMounted(load)
         v-loading="loading"
         empty-text="暂无登录设备"
       >
-        <ElTableColumn prop="device_label" label="设备" min-width="180" show-overflow-tooltip />
+        <ElTableColumn label="设备" min-width="180"
+          ><template #default="{ row }"
+            ><span :title="row.device_label">{{ deviceLabel(row.device_label) }}</span></template
+          ></ElTableColumn
+        >
         <ElTableColumn label="登录时间" min-width="180" show-overflow-tooltip
           ><template #default="{ row }"
             ><span :title="row.created_at">{{ formatDateTime(row.created_at) }}</span></template

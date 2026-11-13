@@ -23,7 +23,8 @@ const fullStatus: SecurityStatus = {
 const sessions = [
   {
     id: '9007199254740993',
-    device_label: '当前浏览器',
+    device_label:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
     created_at: '2026-10-11T10:03:04.123456Z',
     expires_at: '2026-10-12T10:03:04Z',
     current: true
@@ -166,8 +167,15 @@ describe('账号安全页确认、草稿与读取状态', () => {
     const rows = page.wrapper.findAll('.el-table__row')
     expect(rows[0]!.text()).toContain('当前设备')
     expect(rows[1]!.text()).toContain('其他设备')
+    expect(rows[0]!.text()).toContain('Windows · Chrome')
     expect(rows[0]!.text()).toContain('2026-10-11 18:03:04')
-    expect(rows[0]!.get('span[title]').attributes('title')).toBe(sessions[0]!.created_at)
+    const titledSpans = rows[0]!.findAll('span[title]')
+    expect(titledSpans.some((span) => span.attributes('title') === sessions[0]!.created_at)).toBe(
+      true
+    )
+    expect(titledSpans.some((span) => span.attributes('title') === sessions[0]!.device_label)).toBe(
+      true
+    )
     writes(page).forEach((write) => expect(write).not.toHaveBeenCalled())
   })
 
