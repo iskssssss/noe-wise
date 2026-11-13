@@ -22,6 +22,21 @@ import java.util.Set;
 final class KnowledgeExecution {
     private KnowledgeExecution() { }
 
+    /** 原实际披露闭包独立于之后的引用资格；目录元数据也属于外发材料。 */
+    static List<com.skillforge.runtime.api.KnowledgeSourceVersion> disclosedSources(EvidenceBundle bundle, List<String> injected) {
+        var sources = new ArrayList<com.skillforge.runtime.api.KnowledgeSourceVersion>();
+        for (var item : bundle.items()) if (injected.contains(item.itemId()))
+            sources.add(new com.skillforge.runtime.api.KnowledgeSourceVersion(item.sourceId(), item.sourceVersion()));
+        bundle.documentResult().ifPresent(result -> {
+            var documents = result instanceof com.skillforge.runtime.api.KnowledgeDocumentResult.CatalogPage page
+                    ? page.documents() : List.of(((com.skillforge.runtime.api.KnowledgeDocumentResult.DocumentSlice) result).document());
+            for (var document : documents) sources.add(new com.skillforge.runtime.api.KnowledgeSourceVersion(document.sourceId(), document.sourceVersion()));
+        });
+        return sources.stream().distinct().sorted(java.util.Comparator
+                .comparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceId)
+                .thenComparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceVersion)).toList();
+    }
+
     static TypedPayload arguments(AgentAction.KnowledgeAccess query, Optional<String> commentary, AgentExecutionCodec codec) {
         var value = AgentExecutionCodec.object(); value.put("knowledge_handle", query.knowledgeHandle());
         switch (query.operation()) {

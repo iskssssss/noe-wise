@@ -154,6 +154,19 @@ public final class AgentRuntimeExecutionSources implements AgentExecutionProgram
         return memoryRecall.prepare(context, configuration.initialMessages(), history);
     }
 
+    /** 仅校验本次已注入来源，不扩大到同一挂载内未使用的文档。 */
+    @Override public boolean knowledgeSourcesAllowed(ExecutionStore.Run run, List<com.skillforge.runtime.api.KnowledgeSourceVersion> sources) {
+        var frame = requireLoaded(run);
+        if (!knownKnowledgeSources(frame.configuration, sources)) return false;
+        return knowledge.currentSourcesAvailable(run.identity().runRef().tenantId(), sources);
+    }
+
+    private static boolean knownKnowledgeSources(AgentExecutionProgram.Configuration configuration,
+            List<com.skillforge.runtime.api.KnowledgeSourceVersion> sources) {
+        return sources.stream().allMatch(source -> configuration.knowledge().stream()
+                .anyMatch(policy -> policy.target().sourceVersions().contains(source)));
+    }
+
     /** 辅助摘要沿用父Run预算作用域、剩余活动时间和可信取消信号，不另开无限执行窗口。 */
     @Override public SessionContextSummary.Outcome summarizeContext(ExecutionStore.Run run,
             AgentExecutionProgram.Configuration configuration, List<ModelMessage> history, List<ModelMessage> currentContext,
@@ -529,7 +542,11 @@ public final class AgentRuntimeExecutionSources implements AgentExecutionProgram
         final String action; final TypedPayload resource;
         if (prepared.kind() == ExecutionStore.Kind.MODEL) {
             if (!memoryRecall.allowed(session, run, actor)) return false;
-            var request = codec.decodeModelRequest(prepared).request();
+            var modelCall = codec.decodeModelRequest(prepared);
+            if (!modelCall.knowledgeSourcesDeclared()) return false;
+            if (!modelCall.knowledgeSources().isEmpty() && (!knownKnowledgeSources(loaded, modelCall.knowledgeSources())
+                    || !knowledge.currentSourcesAvailable(session, run.identity().runRef().tenantId(), modelCall.knowledgeSources()))) return false;
+            var request = modelCall.request();
             if (!request.target().equals(loaded.target()) || !request.requestedStrategy().equals(loaded.profile().strategy())
                     || !prepared.target().equals(request.target().effectiveModelId())
                     || !prepared.capability().equals(loaded.target().capabilities().capabilityFactRef())) return false;

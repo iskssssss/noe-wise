@@ -295,6 +295,10 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
 
     /** 只在首次领取/恢复读取权威材料；计量与活动 getter 不重建执行来源。 */
     public interface Sources {
+        /** 同Run实际已披露知识在新模型及辅助摘要外发前的当前来源核验，不产生检索或执行权。 */
+        default boolean knowledgeSourcesAllowed(Run run, List<com.skillforge.runtime.api.KnowledgeSourceVersion> sources) {
+            return sources.isEmpty();
+        }
         /** 仅从冻结工具及本次规范参数分类，恢复时使用原已保存结果。 */
         default boolean currentRead(SessionToolDirectory.Entry frozen, TypedPayload arguments) { return false; }
         /** 读取 run.configuration 指向的原冻结配置及该 Run 的原输入，只调用一次。 */
@@ -410,8 +414,12 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     /** 私有完整结果只引用原material；实际注入集合由同次结果业务提交冻结。 */
-    public record KnowledgeObservation(KnowledgeCallRequest request, ResultRef result, EvidenceBundle bundle, List<String> injected) {
-        public KnowledgeObservation { Objects.requireNonNull(request); Objects.requireNonNull(result); Objects.requireNonNull(bundle); injected = List.copyOf(injected); }
+    public record KnowledgeObservation(KnowledgeCallRequest request, ResultRef result, EvidenceBundle bundle, List<String> injected,
+            List<com.skillforge.runtime.api.KnowledgeSourceVersion> disclosedSources) {
+        public KnowledgeObservation(KnowledgeCallRequest request, ResultRef result, EvidenceBundle bundle, List<String> injected) {
+            this(request, result, bundle, injected, KnowledgeExecution.disclosedSources(bundle, injected));
+        }
+        public KnowledgeObservation { Objects.requireNonNull(request); Objects.requireNonNull(result); Objects.requireNonNull(bundle); injected = List.copyOf(injected); disclosedSources = List.copyOf(disclosedSources); }
         @Override public String toString() { return "ExecutionKnowledgeObservation[REDACTED]"; }
     }
 
@@ -470,7 +478,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     @Override public Prepared restorePrepared(Run run, Prepared prepared) {
-        if (!AgentExecutionCodec.MODEL_MANIFEST_SCHEMA.equals(prepared.request().content().schemaId())) return prepared;
+        if (!AgentExecutionCodec.isModelManifest(prepared.request().content().schemaId())) return prepared;
         var parts=sources.materials(run,codec.modelRequestReferences(prepared.request().content())).stream()
                 .map(value -> value.orElseThrow(AgentExecutionProgram::invalid)).toList();
         var restored=new Prepared(prepared.action(),prepared.ordinal(),prepared.kind(),prepared.target(),prepared.capability(),
@@ -845,6 +853,11 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
 
     /** 下一次模型请求的实际消息可以包含原安全反馈复用，仍只登记这一次真实模型外调。 */
     private Step model(Run run, Materials materials, List<ModelMessage> messages) {
+        var knowledgeSources = materials.knowledge().stream().flatMap(item -> item.disclosedSources().stream()).distinct()
+                .sorted(java.util.Comparator.comparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceId)
+                        .thenComparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceVersion)).toList();
+        if (!knowledgeSources.isEmpty() && !sources.knowledgeSourcesAllowed(run, knowledgeSources))
+            return finish(run, RunStatus.FAILED, "", "knowledge_source_unavailable", materials.lastResult());
         var progress = AgentToolProgress.evaluate(pendingProgress(run, materials), materials.steering().appliedThrough());
         if (progress.level() == AgentToolProgress.Level.STOP) return progressStop(run, materials, progress);
         var limited = BudgetGuard.evaluate(materials.configuration().budget(), materials.usage(), BudgetGuard.Operation.BUSINESS_MODEL_CALL, sources.elapsed(run));
@@ -918,7 +931,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         var request=new FrozenModelRequest(configuration.profile().strategy(),configuration.target(),messages,
                 modelTools,toolChoice,
                 configuration.profile().response(),configuration.profile().generation(),configuration.profile().reasoning());
-        var modelMaterials=codec.encodeModelRequestMaterials(new AgentExecutionCodec.ModelCallRequest(request,preparedMedia.transformations(),materials.steering().appliedThrough(),output,Optional.of(AgentToolProgress.encode(progress,codec))));
+        var modelMaterials=codec.encodeModelRequestMaterials(new AgentExecutionCodec.ModelCallRequest(request,preparedMedia.transformations(),materials.steering().appliedThrough(),output,Optional.of(AgentToolProgress.encode(progress,codec)),knowledgeSources));
         var prepared=prepare(run,materials,ExecutionStore.Kind.MODEL,Math.incrementExact(materials.ordinal()),
                 modelMaterials.root(),modelMaterials.parts());
         var dispatched=dispatch(run,materials,prepared,ExecutionBudgetPort.Category.BUSINESS_MODEL,
@@ -1010,6 +1023,12 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         if (prepared.kind() == ExecutionStore.Kind.MODEL) {
             if (before.pendingTool().isPresent() || before.pendingHuman().isPresent()) throw invalid();
             var modelRequest = codec.decodeModelRequest(prepared); var request = modelRequest.request();
+            if (modelRequest.knowledgeSourcesDeclared()) {
+                var expectedSources = before.knowledge().stream().flatMap(item -> item.disclosedSources().stream()).distinct()
+                        .sorted(java.util.Comparator.comparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceId)
+                                .thenComparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceVersion)).toList();
+                if (!expectedSources.equals(modelRequest.knowledgeSources())) throw invalid();
+            }
             var expectedMessages = before.messages();
             if (before.decision().isPresent()) {
                 var prior = before.decision().orElseThrow();
@@ -1926,7 +1945,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
                         // 重读仍重新授权及派发；相同稳定片段只由最近一次真实结果提供可引用身份。
                         var replaced = java.util.Set.copyOf(injected);
                         observations.replaceAll(previous -> new KnowledgeObservation(previous.request(), previous.result(), previous.bundle(),
-                                previous.injected().stream().filter(id -> !replaced.contains(id)).toList()));
+                                previous.injected().stream().filter(id -> !replaced.contains(id)).toList(), previous.disclosedSources()));
                     }
                     observations.add(new KnowledgeObservation(request, actual.result().reference(), retrieved.bundle(), injected));
                 }
@@ -2048,7 +2067,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
 
     /** 同一实际请求只保存一份材料，动作身份从 Run 与序号确定，指纹由这份完整材料计算。 */
     private Prepared prepare(Run run, Materials materials, ExecutionStore.Kind kind, long ordinal, Material request) {
-        var parts = kind == ExecutionStore.Kind.MODEL && AgentExecutionCodec.MODEL_MANIFEST_SCHEMA.equals(request.content().schemaId())
+        var parts = kind == ExecutionStore.Kind.MODEL && AgentExecutionCodec.isModelManifest(request.content().schemaId())
                 ? sources.materials(run,codec.modelRequestReferences(request.content())).stream()
                     .map(value -> value.orElseThrow(AgentExecutionProgram::invalid)).toList() : List.<Material>of();
         return prepare(run,materials,kind,ordinal,request,parts);

@@ -88,12 +88,17 @@ class JdbcKnowledgeDocumentReadTest {
                 new KnowledgeSourceVersion(retained.source_id(), retained.source_version()));
         var tenant = new TenantId(suite.oracles().catalog_tenant_id());
         var control = new InvocationControl(Instant.now().plusSeconds(30), () -> false);
+        assertTrue(bindings.currentSourcesAvailable(tenant, List.copyOf(versions)));
+        assertFalse(bindings.currentSourcesAvailable(new TenantId("910602"), List.copyOf(versions)));
+        assertFalse(bindings.currentSourcesAvailable(tenant, List.of(new KnowledgeSourceVersion(removed.source_id(), "missing"))));
         var before = bindings.keyword(tenant, target, versions, "住宿", 50, asOf, Optional.empty(), control);
         assertTrue(before.stream().anyMatch(hit -> hit.documentId().equals(removed.document_id())));
         assertTrue(before.stream().anyMatch(hit -> hit.documentId().equals(retained.document_id())));
         try {
             KnowledgeBindingDatabaseFixture.sql(admin, "UPDATE nw_knowledge_documents SET deleted_at=clock_timestamp() WHERE tenant_id="
                     + removed.tenant_id() + " AND id=" + removed.document_id());
+            assertFalse(bindings.currentSourcesAvailable(tenant, List.copyOf(versions)));
+            assertTrue(bindings.currentSourcesAvailable(tenant, List.of(new KnowledgeSourceVersion(retained.source_id(), retained.source_version()))));
             var after = bindings.keyword(tenant, target, versions, "住宿", 50, asOf, Optional.empty(), control);
             assertFalse(after.stream().anyMatch(hit -> hit.documentId().equals(removed.document_id())));
             assertTrue(after.stream().anyMatch(hit -> hit.documentId().equals(retained.document_id())));

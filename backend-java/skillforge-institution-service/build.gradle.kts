@@ -908,6 +908,18 @@ tasks.register<Test>("agentKnowledgeSingleBrowserE2E") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("knowledgeDeletedReuseBrowserE2E") {
+    description = "验证运行中删除来源后的知识复用"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeDeletedReuseBrowserE2ETest.repeatedQueryAfterDelete") }
+    inputs.property("deletedReuseMode", providers.environmentVariable("E2E_KNOWLEDGE_DELETED_REUSE").orElse("baseline"))
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("knowledgeSoftDeletedSourceBrowserE2E") {
     description = "验证删除来源后的检索与引用边界"
     group = "verification"

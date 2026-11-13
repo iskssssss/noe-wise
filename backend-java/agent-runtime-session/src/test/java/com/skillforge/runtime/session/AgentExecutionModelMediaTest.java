@@ -38,7 +38,7 @@ class AgentExecutionModelMediaTest {
         var codec = new AgentExecutionCodec(LIMITS);
         var request = new AgentExecutionCodec.ModelCallRequest(request(prepared.messages()), MAPPINGS, 0, Optional.empty());
         var actual = codec.encodeModelRequest(request);
-        assertEquals("skillforge.runtime.execution.prepared-model-request.v3", actual.schemaId());
+        assertEquals("skillforge.runtime.execution.prepared-model-request.v4", actual.schemaId());
         assertEquals(request, codec.decodeModelRequest(actual));
         assertDoesNotThrow(() -> codec.decodeModelRequest(actual).requireCorrespondence(ORIGINALS));
         var bundle=codec.encodeModelRequestMaterials(request);
@@ -50,6 +50,39 @@ class AgentExecutionModelMediaTest {
         assertDoesNotThrow(()->restored.requireCorrespondence(ORIGINALS));
         assertThrows(IllegalArgumentException.class, () -> codec.decodeModelRequest(request.request().encode()),
                 "原raw FrozenModelRequest不属于新封套，也不能作为兼容回退");
+    }
+
+    @Test
+    void freezesKnowledgeSourcesWithTheRequestWhileLegacyMaterialsRemainExplicitlyUndeclared() {
+        var codec = new AgentExecutionCodec(LIMITS);
+        var source = new com.skillforge.runtime.api.KnowledgeSourceVersion("10", "source-version");
+        var messages = List.of(new ModelMessage("user", ModelRole.USER, List.of(new ModelContent.Text("knowledge query")),
+                List.of(), Optional.empty(), Optional.empty()));
+        var current = new AgentExecutionCodec.ModelCallRequest(request(messages), List.of(), 0,
+                Optional.empty(), Optional.empty(), List.of(source));
+        var materials = codec.encodeModelRequestMaterials(current);
+        var parts = materials.parts().stream().collect(java.util.stream.Collectors.toMap(
+                com.skillforge.runtime.session.spi.ExecutionStore.Material::reference, java.util.function.Function.identity()));
+        var restored = codec.decodeModelRequest(materials.root().content(), refs -> refs.stream().map(ref -> Optional.ofNullable(parts.get(ref))).toList());
+        assertEquals(current, restored);
+        assertTrue(restored.knowledgeSourcesDeclared());
+        assertEquals(List.of(source), restored.knowledgeSources());
+        var full = codec.encodeModelRequest(current);
+        var missing = (com.fasterxml.jackson.databind.node.ObjectNode) codec.parse(full, full.schemaId());
+        missing.remove("knowledgeSources");
+        assertThrows(IllegalArgumentException.class, () -> codec.decodeModelRequest(codec.encode(full.schemaId(), missing)));
+        var legacy = new AgentExecutionCodec.ModelCallRequest(request(messages), List.of(), 0,
+                Optional.empty(), Optional.empty(), List.of(), false);
+        var legacyPayload = codec.encodeModelRequest(legacy);
+        assertEquals("skillforge.runtime.execution.prepared-model-request.v3", legacyPayload.schemaId());
+        assertEquals(legacyPayload, codec.encodeModelRequest(codec.decodeModelRequest(legacyPayload)));
+        var oldMaterials = codec.encodeModelRequestMaterials(legacy);
+        assertEquals("skillforge.runtime.execution.model-request-manifest.v2", oldMaterials.root().content().schemaId());
+        var oldParts = oldMaterials.parts().stream().collect(java.util.stream.Collectors.toMap(
+                com.skillforge.runtime.session.spi.ExecutionStore.Material::reference, java.util.function.Function.identity()));
+        var oldRead = codec.decodeModelRequest(oldMaterials.root().content(), refs -> refs.stream().map(ref -> Optional.ofNullable(oldParts.get(ref))).toList());
+        assertFalse(oldRead.knowledgeSourcesDeclared());
+        assertEquals(oldMaterials.root(), codec.encodeModelRequestMaterials(oldRead).root());
     }
 
     @Test

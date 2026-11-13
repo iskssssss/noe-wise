@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.skillforge.runtime.api.TenantId;
+import com.skillforge.runtime.api.KnowledgeSourceVersion;
+import java.util.List;
 import javax.sql.DataSource;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
@@ -36,4 +38,22 @@ class JdbcKnowledgeSameSessionBindingTest {
         verify(session,never()).commit();verify(session,never()).rollback();verify(session,never()).close();
         verify(mapper,never()).bindTenant(anyString());verifyNoInteractions(source);
     }
+    @Test void currentSourceCheckUsesCallerTenantAndOnlyRequestedSources() {
+        var bindings = new JdbcKnowledgeBindings(mock(DataSource.class));
+        var session = mock(SqlSession.class);
+        var configuration = new Configuration();
+        when(session.getConfiguration()).thenReturn(configuration);
+        var mapper = mock(KnowledgeBindingMapper.class);
+        when(session.getMapper(KnowledgeBindingMapper.class)).thenReturn(mapper);
+        var source = new KnowledgeSourceVersion("10", "v1");
+        when(mapper.currentTenant()).thenReturn("1");
+        when(mapper.sourcesAvailable("1", List.of(source))).thenReturn(true);
+        assertTrue(bindings.currentSourcesAvailable(session, new TenantId("1"), List.of(source)));
+        verify(mapper).sourcesAvailable("1", List.of(source));
+        when(mapper.currentTenant()).thenReturn("2");
+        assertThrows(IllegalArgumentException.class, () -> bindings.currentSourcesAvailable(session, new TenantId("1"), List.of(source)));
+        verify(mapper, times(2)).currentTenant();
+        verifyNoMoreInteractions(mapper);
+    }
+
 }

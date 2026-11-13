@@ -66,8 +66,13 @@ public final class AgentExecutionCodec {
     public static final String TOOL_RESPONSES_SCHEMA = "skillforge.runtime.execution.tool-responses.v1";
     public static final String HUMAN_RESPONSE_SCHEMA = "skillforge.runtime.execution.human-response.v1";
     public static final String KNOWLEDGE_REQUEST_SCHEMA = "skillforge.runtime.execution.knowledge-request.v1";
-    public static final String MODEL_REQUEST_SCHEMA = "skillforge.runtime.execution.prepared-model-request.v3";
-    public static final String MODEL_MANIFEST_SCHEMA = "skillforge.runtime.execution.model-request-manifest.v2";
+    public static final String MODEL_REQUEST_SCHEMA = "skillforge.runtime.execution.prepared-model-request.v4";
+    public static final String MODEL_MANIFEST_SCHEMA = "skillforge.runtime.execution.model-request-manifest.v3";
+    private static final String LEGACY_MODEL_REQUEST_SCHEMA = "skillforge.runtime.execution.prepared-model-request.v3";
+    private static final String LEGACY_MODEL_MANIFEST_SCHEMA = "skillforge.runtime.execution.model-request-manifest.v2";
+    public static boolean isModelManifest(String schema) {
+        return MODEL_MANIFEST_SCHEMA.equals(schema) || LEGACY_MODEL_MANIFEST_SCHEMA.equals(schema);
+    }
     public static final String MODEL_MESSAGE_SCHEMA = "skillforge.runtime.execution.model-message.v1";
     public static final String MODEL_TOOL_SET_SCHEMA = "skillforge.runtime.execution.model-tool-set.v1";
     private final CodecLimits limits;
@@ -143,12 +148,26 @@ public final class AgentExecutionCodec {
 
     /** 实际模型请求及每个图片位置的来源到变体对应；恢复不依赖媒体服务或当前配置。 */
     public record ModelCallRequest(FrozenModelRequest request, List<MediaTransformation> transformations, long supplementalIncludedThrough,
-            Optional<AgentExecutionOutputs.Directive> output, Optional<TypedPayload> progress) {
+            Optional<AgentExecutionOutputs.Directive> output, Optional<TypedPayload> progress,
+            List<com.skillforge.runtime.api.KnowledgeSourceVersion> knowledgeSources, boolean knowledgeSourcesDeclared) {
+        public ModelCallRequest(FrozenModelRequest request, List<MediaTransformation> transformations, long supplementalIncludedThrough,
+                Optional<AgentExecutionOutputs.Directive> output, Optional<TypedPayload> progress) {
+            this(request, transformations, supplementalIncludedThrough, output, progress, List.of(), true);
+        }
+        public ModelCallRequest(FrozenModelRequest request, List<MediaTransformation> transformations, long supplementalIncludedThrough,
+                Optional<AgentExecutionOutputs.Directive> output, Optional<TypedPayload> progress,
+                List<com.skillforge.runtime.api.KnowledgeSourceVersion> knowledgeSources) {
+            this(request, transformations, supplementalIncludedThrough, output, progress, knowledgeSources, true);
+        }
         public ModelCallRequest(FrozenModelRequest request, List<MediaTransformation> transformations, long supplementalIncludedThrough,
                 Optional<AgentExecutionOutputs.Directive> output) { this(request, transformations, supplementalIncludedThrough, output, Optional.empty()); }
         public ModelCallRequest {
             Objects.requireNonNull(request, "request"); transformations = List.copyOf(transformations);
             Objects.requireNonNull(output,"output"); Objects.requireNonNull(progress,"progress");
+            knowledgeSources = knowledgeSources.stream().distinct().sorted(java.util.Comparator
+                    .comparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceId)
+                    .thenComparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceVersion)).toList();
+            if (!knowledgeSourcesDeclared && !knowledgeSources.isEmpty()) throw invalid();
             if (supplementalIncludedThrough < 0) throw invalid();
             new AgentExecutionModelMedia.Prepared(request.messages(), transformations);
         }
@@ -164,12 +183,18 @@ public final class AgentExecutionCodec {
         value.put("supplementalIncludedThrough", Long.toString(request.supplementalIncludedThrough())); var transformations = value.putArray("transformations");
         request.output().ifPresentOrElse(output->value.set("output",AgentExecutionOutputs.encode(output)),()->value.putNull("output"));
         request.progress().ifPresentOrElse(progress->value.set("progress",payload(progress)),()->value.putNull("progress"));
+        if (request.knowledgeSourcesDeclared()) {
+            var sources = value.putArray("knowledgeSources");
+            for (var source : request.knowledgeSources()) {
+                var item = sources.addObject(); item.put("sourceId", source.sourceId()); item.put("sourceVersion", source.sourceVersion());
+            }
+        }
         for (var transformation : request.transformations()) {
             var item = transformations.addObject(); item.put("messageIndex", Integer.toString(transformation.messageIndex()));
             item.put("contentIndex", Integer.toString(transformation.contentIndex()));
             item.set("source", modelMedia(transformation.source())); item.set("prepared", modelMedia(transformation.prepared()));
         }
-        return encode(MODEL_REQUEST_SCHEMA, value);
+        return encode(request.knowledgeSourcesDeclared() ? MODEL_REQUEST_SCHEMA : LEGACY_MODEL_REQUEST_SCHEMA, value);
     }
 
     /** 固定一层正文分片；同内容message/tool-set仅持久保存一次，不形成递归前缀链。 */
@@ -179,7 +204,7 @@ public final class AgentExecutionCodec {
 
     public ModelRequestMaterials encodeModelRequestMaterials(ModelCallRequest request) {
         var full = encodeModelRequest(request);
-        var envelope = parse(full, MODEL_REQUEST_SCHEMA);
+        var envelope = parse(full, full.schemaId());
         var frozen = (ObjectNode) parse(request.request().encode(), FrozenModelRequest.SCHEMA);
         var root = object();
         var messages = frozen.remove("messages"); var tools = frozen.remove("tools");
@@ -195,7 +220,8 @@ public final class AgentExecutionCodec {
         parts.putIfAbsent(material.reference(),material); root.put("toolsRef",material.reference().value());
         root.set("transformations",envelope.get("transformations"));
         root.set("supplementalIncludedThrough",envelope.get("supplementalIncludedThrough")); root.set("output",envelope.get("output")); root.set("progress",envelope.get("progress"));
-        var payload = encode(MODEL_MANIFEST_SCHEMA,root);
+        if (request.knowledgeSourcesDeclared()) root.set("knowledgeSources", envelope.get("knowledgeSources"));
+        var payload = encode(request.knowledgeSourcesDeclared() ? MODEL_MANIFEST_SCHEMA : LEGACY_MODEL_MANIFEST_SCHEMA,root);
         return new ModelRequestMaterials(new Material(reference(payload),payload),List.copyOf(parts.values()));
     }
 
@@ -207,7 +233,7 @@ public final class AgentExecutionCodec {
     /** 恢复和诊断一次批读固定一层叶；完整重建请求仍应用原总解析限额。 */
     public ModelCallRequest decodeModelRequest(Prepared prepared,
             Function<List<ResultRef>,List<Optional<Material>>> loader) {
-        if (MODEL_MANIFEST_SCHEMA.equals(prepared.request().content().schemaId())
+        if (isModelManifest(prepared.request().content().schemaId())
                 && !reference(prepared.request().content()).equals(prepared.request().reference())) throw invalid();
         if (prepared.requestParts().isEmpty()) return decodeModelRequest(prepared.request().content(),loader);
         var parts = new LinkedHashMap<ResultRef,Material>();
@@ -221,8 +247,11 @@ public final class AgentExecutionCodec {
     }
 
     public List<ResultRef> modelRequestReferences(TypedPayload payload) {
-        var root = parse(payload,MODEL_MANIFEST_SCHEMA);
-        fields(root,"request","messageRefs","toolsRef","transformations","supplementalIncludedThrough","output","progress");
+        if (!isModelManifest(payload.schemaId())) throw invalid();
+        var root = parse(payload,payload.schemaId());
+        if (MODEL_MANIFEST_SCHEMA.equals(payload.schemaId()))
+            fields(root,"request","messageRefs","toolsRef","transformations","supplementalIncludedThrough","output","progress","knowledgeSources");
+        else fields(root,"request","messageRefs","toolsRef","transformations","supplementalIncludedThrough","output","progress");
         if (!root.get("messageRefs").isArray()) throw invalid();
         var refs = new LinkedHashSet<ResultRef>();
         for (var item : root.get("messageRefs")) { if (!item.isTextual()) throw invalid(); refs.add(new ResultRef(item.textValue())); }
@@ -231,8 +260,8 @@ public final class AgentExecutionCodec {
 
     public ModelCallRequest decodeModelRequest(TypedPayload payload,
             Function<List<ResultRef>,List<Optional<Material>>> loader) {
-        if (!MODEL_MANIFEST_SCHEMA.equals(payload.schemaId())) return decodeModelRequest(payload);
-        var root = parse(payload,MODEL_MANIFEST_SCHEMA); var refs = modelRequestReferences(payload);
+        if (!isModelManifest(payload.schemaId())) return decodeModelRequest(payload);
+        var root = parse(payload,payload.schemaId()); var refs = modelRequestReferences(payload);
         var loaded = loader.apply(refs); if (loaded.size()!=refs.size()) throw invalid();
         var parts = new LinkedHashMap<ResultRef,Material>();
         for (int index=0;index<refs.size();index++) {
@@ -255,14 +284,28 @@ public final class AgentExecutionCodec {
         var envelope=object(); envelope.set("request",payload(new TypedPayload(FrozenModelRequest.SCHEMA,json)));
         envelope.set("supplementalIncludedThrough",root.get("supplementalIncludedThrough"));
         envelope.set("transformations",root.get("transformations")); envelope.set("output",root.get("output")); envelope.set("progress",root.get("progress"));
-        var result=decodeModelRequest(encode(MODEL_REQUEST_SCHEMA,envelope));
+        boolean declared = MODEL_MANIFEST_SCHEMA.equals(payload.schemaId());
+        if (declared) envelope.set("knowledgeSources", root.get("knowledgeSources"));
+        var result=decodeModelRequest(encode(declared ? MODEL_REQUEST_SCHEMA : LEGACY_MODEL_REQUEST_SCHEMA,envelope));
         if (!encodeModelRequestMaterials(result).root().content().equals(payload)) throw invalid();
         return result;
     }
 
     /** 精确恢复原实际请求和对应关系；旧raw请求和未知字段均明确拒绝。 */
     public ModelCallRequest decodeModelRequest(TypedPayload payload) {
-        var value = parse(payload, MODEL_REQUEST_SCHEMA); fields(value, "request", "supplementalIncludedThrough", "transformations","output","progress");
+        boolean declared = MODEL_REQUEST_SCHEMA.equals(payload.schemaId());
+        if (!declared && !LEGACY_MODEL_REQUEST_SCHEMA.equals(payload.schemaId())) throw invalid();
+        var value = parse(payload, payload.schemaId());
+        if (declared) fields(value, "request", "supplementalIncludedThrough", "transformations","output","progress","knowledgeSources");
+        else fields(value, "request", "supplementalIncludedThrough", "transformations","output","progress");
+        var sources = new ArrayList<com.skillforge.runtime.api.KnowledgeSourceVersion>();
+        if (declared) {
+            if (!value.get("knowledgeSources").isArray()) throw invalid();
+            for (var item : value.get("knowledgeSources")) {
+                fields(item, "sourceId", "sourceVersion");
+                sources.add(new com.skillforge.runtime.api.KnowledgeSourceVersion(string(item,"sourceId"), string(item,"sourceVersion")));
+            }
+        }
         if (!value.get("transformations").isArray()) throw invalid();
         var transformations = new ArrayList<MediaTransformation>();
         for (var item : value.get("transformations")) {
@@ -272,7 +315,7 @@ public final class AgentExecutionCodec {
         }
         var result = new ModelCallRequest(FrozenModelRequest.decode(readPayload(value.get("request")), limits), transformations, number(value, "supplementalIncludedThrough"),
                 value.get("output").isNull()?Optional.empty():Optional.of(AgentExecutionOutputs.decode(value.get("output"))),
-                value.get("progress").isNull()?Optional.empty():Optional.of(readPayload(value.get("progress"))));
+                value.get("progress").isNull()?Optional.empty():Optional.of(readPayload(value.get("progress"))), sources, declared);
         if (!encodeModelRequest(result).equals(payload)) throw invalid();
         return result;
     }

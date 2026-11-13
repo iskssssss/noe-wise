@@ -2542,6 +2542,8 @@ class AgentExecutionProgramTest {
         assertEquals(measurements, f.measurements);
         var second = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
         var messages = requestHistory(f,second);
+        assertEquals(List.of(new com.skillforge.runtime.api.KnowledgeSourceVersion("source-1", "version-1")),
+                f.codec.decodeModelRequest(second.action()).knowledgeSources());
         var assistant = messages.get(messages.size() - 2); var feedback = messages.getLast();
         assertEquals("knowledge_query", assistant.toolCalls().getFirst().wireName());
         assertEquals(assistant.toolCalls().getFirst().callId(), feedback.toolCallId().orElseThrow());
@@ -2553,6 +2555,26 @@ class AgentExecutionProgramTest {
         assertEquals("actual-selected", AgentExecutionCodec.string(evidence, "itemId")); assertEquals("version-1", AgentExecutionCodec.string(evidence, "sourceVersion"));
         assertEquals(actual.result().reference().value(), AgentExecutionCodec.string(evidence, "resultRef"));
         assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
+    }
+
+    @Test
+    void withdrawnInjectedSourceStopsBeforeModelPreparationOrContextSummary() {
+        var f = new Fixture(new KnowledgeBudget(1, 3, 1_000, 50, 1_000));
+        var first = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        f.commit(first, f.model(new AgentAction.KnowledgeQuery("knowledge:docs", "actual query"), 1));
+        var access = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        f.commit(access, f.knowledge(f.bundle(f.codec.decodeKnowledgeRequest(access.action().request().content()))));
+        var original = f.materials;
+        int saved = f.saved.size(), measured = f.measurements, sampled = f.timeSamples;
+        f.knowledgeAllowed = false;
+        var stopped = assertInstanceOf(Step.Finish.class, f.program.next(f.run, f.materials));
+        assertEquals(RunStatus.FAILED, stopped.status());
+        assertTrue(stopped.events().stream().anyMatch(event -> event.data().canonicalJson().contains("knowledge_source_unavailable")));
+        assertEquals(saved, f.saved.size());
+        assertEquals(measured, f.measurements);
+        assertEquals(sampled, f.timeSamples);
+        assertEquals(original, f.materials);
+        assertEquals(List.of(new com.skillforge.runtime.api.KnowledgeSourceVersion("source-1", "version-1")), f.checkedKnowledge);
     }
 
     /** 同一知识查询复用原证据；未实际注入的候选ID不能作为最终引用。 */
@@ -2585,6 +2607,10 @@ class AgentExecutionProgramTest {
         assertFalse(metadata.toString().contains(corpus.getFirst().path("text").asText()));
         assertTrue(f.materials.knowledge().getFirst().injected().isEmpty());
         var finalModel = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        assertEquals(documents.stream().map(document -> new com.skillforge.runtime.api.KnowledgeSourceVersion(document.sourceId(), document.sourceVersion()))
+                .distinct().sorted(java.util.Comparator.comparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceId)
+                        .thenComparing(com.skillforge.runtime.api.KnowledgeSourceVersion::sourceVersion)).toList(),
+                f.codec.decodeModelRequest(finalModel.action()).knowledgeSources());
         f.commit(finalModel, f.model(new AgentAction.Respond("本页目录包含：" + documents.getFirst().title(), List.of()), finalModel.action().ordinal()));
         var finish = assertInstanceOf(Step.Finish.class, f.program.next(f.run, f.materials));
         assertEquals(RunStatus.COMPLETED, finish.status());
@@ -2639,6 +2665,8 @@ class AgentExecutionProgramTest {
         }
         assertEquals(2, f.materials.usage().knowledgeCalls()); assertEquals(2, f.materials.knowledge().size());
         assertTrue(f.materials.knowledge().getFirst().injected().isEmpty()); assertEquals(1, f.materials.knowledge().getLast().injected().size());
+        assertFalse(f.materials.knowledge().getFirst().disclosedSources().isEmpty());
+        assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
         var latest = f.materials.knowledge().getLast(); var model = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
         f.commit(model, f.model(new AgentAction.Respond("根据同一冻结文档重新核对。", latest.injected()), model.action().ordinal()));
         var finish = assertInstanceOf(Step.Finish.class, f.program.next(f.run, f.materials)); assertEquals(RunStatus.COMPLETED, finish.status());
@@ -3118,6 +3146,12 @@ class AgentExecutionProgramTest {
     }
 
     private static final class Fixture implements AgentExecutionProgram.Sources {
+        private boolean knowledgeAllowed = true;
+        private List<com.skillforge.runtime.api.KnowledgeSourceVersion> checkedKnowledge = List.of();
+        @Override public boolean knowledgeSourcesAllowed(ExecutionStore.Run run, List<com.skillforge.runtime.api.KnowledgeSourceVersion> sources) {
+            checkedKnowledge = List.copyOf(sources);
+            return knowledgeAllowed;
+        }
         private static final CodecLimits LIMITS = new CodecLimits(1_000_000, 100_000, 128);
         private final SessionRuntimePayloads payloads = new SessionRuntimePayloads();
         private final CoreRuntime core = new CoreRuntime(LIMITS, payloads);

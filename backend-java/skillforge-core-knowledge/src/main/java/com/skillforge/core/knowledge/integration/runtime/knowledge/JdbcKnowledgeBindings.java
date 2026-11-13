@@ -95,6 +95,24 @@ public final class JdbcKnowledgeBindings {
         return Optional.ofNullable(mapper.find(bindingId(tenant, target))).flatMap(row -> restore(mapper, row, target));
     }
 
+    /** 只核本次实际使用的精确来源，未使用的冻结来源不影响当前调用。 */
+    public boolean currentSourcesAvailable(TenantId tenant, List<KnowledgeSourceVersion> sources) {
+        Objects.requireNonNull(tenant); sources = List.copyOf(sources);
+        if (sources.isEmpty()) return true;
+        var selected = sources;
+        return transaction(tenant, false, mapper -> mapper.sourcesAvailable(tenant.value(), selected));
+    }
+
+    /** 派发事务内沿用原租户和连接，不修改冻结目标或读取结果正文。 */
+    public boolean currentSourcesAvailable(SqlSession session, TenantId tenant, List<KnowledgeSourceVersion> sources) {
+        Objects.requireNonNull(session); Objects.requireNonNull(tenant); sources = List.copyOf(sources);
+        if (sources.isEmpty()) return true;
+        configure(session.getConfiguration());
+        var mapper = session.getMapper(KnowledgeBindingMapper.class);
+        if (!tenant.value().equals(mapper.currentTenant())) throw rejected("knowledge_transaction_tenant_mismatch");
+        return mapper.sourcesAvailable(tenant.value(), sources);
+    }
+
     /** 对一个来源的授权版本集合执行一次字面查询；文档数量不消耗额外查询预算。 */
     public List<ChunkHit> keyword(TenantId tenant, FrozenKnowledgeTarget target, Set<KnowledgeSourceVersion> versions,
             String query, int limit, Instant asOf, Optional<Instant> freshnessAfter, InvocationControl control) {
@@ -284,6 +302,7 @@ interface KnowledgeBindingMapper {
     List<KnowledgeKeywordRow> keyword(Map<String,Object> parameters);
     List<KnowledgeDocumentRow> documentList(JdbcKnowledgeBindings.DocumentListSelection selection);
     List<KnowledgeDocumentRow> documentSlice(JdbcKnowledgeBindings.DocumentReadSelection selection);
+    boolean sourcesAvailable(@Param("tenant") String tenant, @Param("versions") List<KnowledgeSourceVersion> versions);
     String bindTenant(@Param("tenant")String tenant);
     String currentTenant();
     String lockBinding(@Param("id")String id);

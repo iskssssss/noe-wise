@@ -66,6 +66,23 @@
             ORDER BY CASE WHEN lower(c.content)=lower(#{query}) THEN 0 ELSE 1 END,r.source_id,r.source_version,r.document_id,r.chunk_index,r.chunk_id LIMIT #{limit}
         ) hit ON true WHERE b.tenant_id=#{tenant} AND b.binding_id=#{id} AND b.target_digest=#{digest}
     </select>
+    <select id="sourcesAvailable" resultType="boolean">
+        SELECT NOT EXISTS (
+            SELECT 1 FROM (VALUES
+              <foreach collection="versions" item="version" separator=",">
+                (#{version.sourceId}, #{version.sourceVersion})
+              </foreach>
+            ) AS selected(source_id, source_version)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.nw_knowledge_document_versions version
+                JOIN public.nw_knowledge_documents document
+                  ON document.tenant_id=version.tenant_id AND document.kb_id=version.kb_id
+                 AND document.id=version.document_id AND document.deleted_at IS NULL
+                WHERE version.tenant_id::text=#{tenant} AND version.kb_id::text=selected.source_id
+                  AND version.source_version=selected.source_version AND version.status='ready'
+            )
+        )
+    </select>
     <select id="lockBinding" resultType="string">SELECT pg_advisory_xact_lock(hashtextextended('knowledge-binding:'||#{id},0))::text</select>
     <select id="find" resultType="com.skillforge.core.knowledge.integration.runtime.knowledge.KnowledgeBindingRow">
         SELECT tenant_id, binding_id, target_digest, handle, descriptor_id, descriptor_revision, capability_id, version_id,

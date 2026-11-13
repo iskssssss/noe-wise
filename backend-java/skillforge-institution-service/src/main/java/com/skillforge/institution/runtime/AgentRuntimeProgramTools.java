@@ -88,7 +88,7 @@ public final class AgentRuntimeProgramTools implements ProgramToolInvoker,Progra
         if (!attempt.run().equals(model.run()) || !attempt.action().equals(model.reference())
                 || !attempt.adopted() || attempt.result().isEmpty()) throw rejected("program_child_source_rejected");
         var modelRequest = material(parent.run(), attempt.request());
-        if(AgentExecutionCodec.MODEL_MANIFEST_SCHEMA.equals(modelRequest.content().schemaId())
+        if(AgentExecutionCodec.isModelManifest(modelRequest.content().schemaId())
                 &&!AgentExecutionCodec.reference(modelRequest.content()).equals(modelRequest.reference()))throw rejected("program_child_source_rejected");
         return codec.programTools(modelRequest.content(),refs -> store.materials(parent.run().identity().runRef().tenantId(),refs));
     }
