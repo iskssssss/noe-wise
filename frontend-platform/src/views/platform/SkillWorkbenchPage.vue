@@ -53,14 +53,24 @@ const route = useRoute(),
   publicationReadPending = ref(false)
 type Pending = { requestId: string; draftId: string; definitionId: string; revision: number }
 const pending = ref<Pending>()
+type DirectPending = {
+  draftId: string
+  definitionId: string
+  revision: number
+  definitionRevision: number
+}
+const directPending = ref<DirectPending>()
 const receiptRequestId = ref('')
 const manualReceipt = ref<SkillSaveAndPublishReceipt>()
 const storageError = ref('')
 const showDirtyIssues = ref(false)
 const owner = computed(() => (auth.user?.sub ? JSON.stringify([auth.user.sub, id]) : ''))
 const storageKey = (subject: string) => `skillforge.platform.skill-publication.${subject}`
+const directStorageKey = (subject: string) =>
+  `skillforge.platform.skill-direct-publication.${subject}`
 const writeLocked = computed(
-  () => publicationReadPending.value || !!pending.value || !!storageError.value
+  () =>
+    publicationReadPending.value || !!pending.value || !!directPending.value || !!storageError.value
 )
 let disposed = false
 onScopeDispose(() => {
@@ -70,11 +80,28 @@ watch(
   owner,
   (subject) => {
     pending.value = undefined
+    directPending.value = undefined
     receiptRequestId.value = ''
     manualReceipt.value = undefined
     storageError.value = ''
     if (!subject) return
     try {
+      const directRaw = sessionStorage.getItem(directStorageKey(subject))
+      if (directRaw) {
+        const record = JSON.parse(directRaw) as DirectPending
+        if (
+          !record ||
+          typeof record.draftId !== 'string' ||
+          !record.draftId ||
+          record.definitionId !== id ||
+          !Number.isSafeInteger(record.revision) ||
+          record.revision < 1 ||
+          !Number.isSafeInteger(record.definitionRevision) ||
+          record.definitionRevision < 1
+        )
+          throw Error('invalid')
+        directPending.value = record
+      }
       const raw = sessionStorage.getItem(storageKey(subject))
       if (!raw) return
       const record = JSON.parse(raw) as Pending
@@ -104,12 +131,14 @@ watch(
   { deep: true }
 )
 useUnsavedChanges({
-  dirty: () => dirty.value || !!pending.value,
+  dirty: () => dirty.value || !!pending.value || !!directPending.value,
   busy: () => action.busy.value,
   leaveMessage: () =>
-    pending.value
-      ? `发布结果未知，请记录原请求 ID：${pending.value.requestId}。离开后未保存内容将丢失。`
-      : undefined
+    directPending.value
+      ? '技能发布结果尚未确认；离开后请继续原发布。'
+      : pending.value
+        ? `发布结果未知，请记录原请求 ID：${pending.value.requestId}。离开后未保存内容将丢失。`
+        : undefined
 })
 function accept(value: SkillDraftContent) {
   draft.value = value
@@ -403,71 +432,169 @@ function lookupPublication() {
 }
 function publish() {
   if (
+    !owner.value ||
     !allowed('foundation.skills.update') ||
     !allowed('foundation.skills.publish') ||
     writeLocked.value
   )
     return
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = auth.sessionIdentity
   void action.run(async () => {
-    if (versionView.value) return
+    const current = draft.value,
+      target = definition.value
+    if (!current || !target || versionView.value) return
     if (dirty.value) throw new Error('请先保存草稿')
     if (
       !(await confirm({
         title: '发布 Skill',
-        content: `发布 Skill ${draft.value!.versionKey} 并设为默认版本？已固定版本的 Agent 需显式更新挂载，正在执行的任务继续原版本；发布版本不可修改。`,
+        content: `发布 Skill ${current.versionKey} 并设为默认版本？已固定版本的 Agent 需显式更新挂载，正在执行的任务继续原版本；发布版本不可修改。`,
         confirmText: '发布 Skill',
         cancelText: '取消',
         danger: false
       }))
     )
       return
-    let result
+    if (
+      disposed ||
+      owner.value !== subject ||
+      auth.identityVersion !== identity ||
+      auth.sessionIdentity !== session ||
+      writeLocked.value ||
+      !allowed('foundation.skills.publish')
+    )
+      return
+    const operation: DirectPending = {
+      draftId: current.id,
+      definitionId: id,
+      revision: current.revision,
+      definitionRevision: target.revision
+    }
     try {
-      result = await checked('foundation.skills.publish', () =>
-        api.skillDrafts.publish(
-          draft.value!.id,
-          draft.value!.revision,
-          definition.value!.revision,
-          { silent: true }
-        )
-      )
-    } catch (reason) {
-      if (reason instanceof HttpClientError && reason.code === 'CAPABILITY_DESCRIPTOR_INVALID') {
-        const validation = await checked('foundation.skills.update', () =>
-          api.skillDrafts.validate(draft.value!.id, draft.value!.revision)
-        )
-        issues.value = validation.issues
-      }
-      throw reason
+      sessionStorage.setItem(directStorageKey(subject), JSON.stringify(operation))
+    } catch {
+      storageError.value = '无法保存原发布记录，未发送发布请求；请恢复浏览器存储。'
+      return
     }
-    issues.value = result.validation?.issues ?? []
-    publicationReadPending.value = true
-    definition.value = {
-      ...definition.value!,
-      revision: result.definitionRevision,
-      defaultVersionId: result.versionId
-    }
-    versionView.value = false
-    baseline.value = JSON.stringify(draft.value)
-    message.success('Skill 已发布')
-    const value = await api.skillDrafts.getActive(id).catch((reason) => {
-      if (reason instanceof HttpClientError) reason.claimFeedback()
-      publicationReadFailure = new Error(
-        'Skill 已发布，但当前草稿读取失败；请点击“重新读取已保存内容”，不要重复发布',
-        { cause: reason }
-      )
-      throw publicationReadFailure
-    })
-    if (!value) return
-    if (value.definitionId !== id)
-      throw new Error('读取的草稿与当前能力不匹配，已停止采用该内容；请通过版本管理核对能力身份')
-    accept(value)
-    issues.value = result.validation?.issues ?? []
-    displayedVersionId.value = undefined
-    versionView.value = false
-    publicationReadPending.value = false
+    directPending.value = operation
+    await submitDirectPublish(directPending.value!, subject, identity, session, false)
   })
 }
+function continueDirectPublish() {
+  const operation = directPending.value,
+    subject = owner.value,
+    identity = auth.identityVersion,
+    session = auth.sessionIdentity
+  if (!operation || !subject || !allowed('foundation.skills.publish')) return
+  void action.run(() => submitDirectPublish(operation, subject, identity, session, true))
+}
+async function submitDirectPublish(
+  operation: DirectPending,
+  subject: string,
+  identity: number,
+  session: string,
+  retry: boolean
+) {
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    auth.sessionIdentity === session &&
+    directPending.value === operation
+  let result
+  try {
+    result = await checked('foundation.skills.publish', () =>
+      api.skillDrafts.publish(operation.draftId, operation.revision, operation.definitionRevision, {
+        silent: true
+      })
+    )
+  } catch (reason) {
+    if (!current()) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      throw 'cancel'
+    }
+    if (
+      !retry &&
+      reason instanceof HttpClientError &&
+      reason.status >= 400 &&
+      reason.status < 500 &&
+      reason.status !== 408 &&
+      reason.status !== 429
+    ) {
+      try {
+        sessionStorage.removeItem(directStorageKey(subject))
+        directPending.value = undefined
+      } catch {
+        storageError.value = '无法清除原发布记录，请恢复浏览器存储后继续核对。'
+      }
+    }
+    if (
+      !retry &&
+      reason instanceof HttpClientError &&
+      reason.code === 'CAPABILITY_DESCRIPTOR_INVALID' &&
+      allowed('foundation.skills.update') &&
+      !directPending.value
+    ) {
+      const validation = await checked('foundation.skills.update', () =>
+        api.skillDrafts.validate(operation.draftId, operation.revision)
+      )
+      if (
+        !disposed &&
+        owner.value === subject &&
+        auth.identityVersion === identity &&
+        auth.sessionIdentity === session
+      )
+        issues.value = validation.issues
+    }
+    throw reason
+  }
+  if (!current()) return
+  if (!result.versionId || !Number.isSafeInteger(result.definitionRevision))
+    throw Error('原发布回执不完整，结果仍未确认')
+  try {
+    sessionStorage.removeItem(directStorageKey(subject))
+  } catch {
+    storageError.value = '无法清除原发布记录，请恢复浏览器存储后继续核对。'
+    return
+  }
+  directPending.value = undefined
+  storageError.value = ''
+  issues.value = result.validation?.issues ?? []
+  publicationReadPending.value = true
+  definition.value = {
+    ...definition.value!,
+    revision: result.definitionRevision,
+    defaultVersionId: result.versionId
+  }
+  versionView.value = false
+  baseline.value = JSON.stringify(draft.value)
+  message.success('Skill 已发布')
+  const value = await api.skillDrafts.getActive(id).catch((reason) => {
+    if (reason instanceof HttpClientError) reason.claimFeedback()
+    publicationReadFailure = new Error(
+      'Skill 已发布，但当前草稿读取失败；请点击“重新读取已保存内容”，不要重复发布',
+      { cause: reason }
+    )
+    throw publicationReadFailure
+  })
+  if (
+    disposed ||
+    owner.value !== subject ||
+    auth.identityVersion !== identity ||
+    auth.sessionIdentity !== session
+  )
+    return
+  if (!value) return
+  if (value.definitionId !== id)
+    throw new Error('读取的草稿与当前能力不匹配，已停止采用该内容；请通过版本管理核对能力身份')
+  accept(value)
+  issues.value = result.validation?.issues ?? []
+  displayedVersionId.value = undefined
+  versionView.value = false
+  publicationReadPending.value = false
+}
+
 async function importZip(selected: UploadFile) {
   if (!allowed('foundation.skills.create') || writeLocked.value) return
   const file = selected.raw
@@ -556,6 +683,19 @@ const formTipId = useId()
         >
       </template>
     </template>
+    <section v-if="directPending" class="admin-card" aria-label="直接发布结果核对">
+      <p role="status">
+        技能发布结果尚未确认，写入已锁定。草稿 {{ directPending.draftId }} · 修订
+        {{ directPending.revision }}
+      </p>
+      <p>继续原发布会使用原草稿和修订重新提交，需要当前发布权限。</p>
+      <ElButton
+        v-if="allowed('foundation.skills.publish')"
+        :loading="action.busy.value"
+        @click="continueDirectPublish"
+        >继续原发布</ElButton
+      >
+    </section>
     <section v-if="pending" class="admin-card" aria-label="技能发布结果核对">
       <p role="status">
         保存并发布结果未知，写入已锁定。请求 ID：<code>{{ pending.requestId }}</code>

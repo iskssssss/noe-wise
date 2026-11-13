@@ -564,6 +564,87 @@ describe('平台 Element Plus 控件收口', () => {
       undefined
     )
   })
+  it('Skill 直接发布未知后显式使用原身份继续，拒绝不解锁', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocked.publishDraft.mockRejectedValueOnce(new Error('回执丢失'))
+    const first = await open(
+      SkillWorkbenchPage,
+      '/platform/skills/3',
+      '/platform/skills/:definitionId'
+    )
+    await flushPromises()
+    await first
+      .findAll('button')
+      .find((button) => button.text() === '发布')!
+      .trigger('click')
+    await flushPromises()
+    expect(first.text()).toContain('技能发布结果尚未确认')
+    const original = mocked.publishDraft.mock.calls[0]
+    first.unmount()
+    const restored = await open(
+      SkillWorkbenchPage,
+      '/platform/skills/3',
+      '/platform/skills/:definitionId'
+    )
+    await flushPromises()
+    expect(restored.text()).toContain('技能发布结果尚未确认')
+    mocked.publishDraft.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, code: 'CONFLICT', userMessage: '冲突' })
+    )
+    await restored
+      .findAll('button')
+      .find((button) => button.text() === '继续原发布')!
+      .trigger('click')
+    await flushPromises()
+    expect(restored.text()).toContain('技能发布结果尚未确认')
+    expect(mocked.publishDraft.mock.calls[1]).toEqual(original)
+    mocked.publishDraft.mockResolvedValueOnce({ versionId: '44', definitionRevision: 2 })
+    await restored
+      .findAll('button')
+      .find((button) => button.text() === '继续原发布')!
+      .trigger('click')
+    await flushPromises()
+    expect(restored.text()).not.toContain('技能发布结果尚未确认')
+    expect(mocked.publishDraft.mock.calls[2]).toEqual(original)
+  })
+  it('Skill 发布确认后存储恢复清除错误并解锁', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    mocked.publishDraft.mockResolvedValue({ versionId: '44', definitionRevision: 2 })
+    const wrapper = await open(
+      SkillWorkbenchPage,
+      '/platform/skills/3',
+      '/platform/skills/:definitionId'
+    )
+    await flushPromises()
+    const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '发布')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('无法清除原发布记录')
+    expect(wrapper.text()).toContain('技能发布结果尚未确认')
+    remove.mockRestore()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '继续原发布')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('无法清除原发布记录')
+    expect(wrapper.text()).not.toContain('技能发布结果尚未确认')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '保存草稿')!
+        .attributes('disabled')
+    ).toBeUndefined()
+  })
   it('Skill发布已成功但读取失败时保留成功身份并阻止重复发布', async () => {
     mocked.validateDraft.mockResolvedValue({ valid: true, issues: [] })
     mocked.publishDraft.mockResolvedValue({

@@ -121,6 +121,84 @@ async function edit(text = '编辑文件') {
   await flushPromises()
 }
 describe('技能保存并发布', () => {
+  it('直接发布未知后刷新保留身份，继续拒绝仍锁定，成功才解锁', async () => {
+    mocks.publish.mockRejectedValueOnce(Error('回执丢失'))
+    await open()
+    await click('发布')
+    expect(mocks.publish).toHaveBeenCalledWith('12', 2, 7, { silent: true })
+    expect(wrapper.text()).toContain('技能发布结果尚未确认')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '保存草稿')
+        ?.props('disabled')
+    ).toBe(true)
+    wrapper.unmount()
+    await open()
+    expect(wrapper.text()).toContain('技能发布结果尚未确认')
+    mocks.publish.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, code: 'CONFLICT', userMessage: '冲突' })
+    )
+    await click('继续原发布')
+    expect(wrapper.text()).toContain('技能发布结果尚未确认')
+    expect(mocks.publish).toHaveBeenLastCalledWith('12', 2, 7, { silent: true })
+    mocks.publish.mockResolvedValueOnce({ versionId: '42', definitionRevision: 8 })
+    await click('继续原发布')
+    expect(wrapper.text()).not.toContain('技能发布结果尚未确认')
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.publish).toHaveBeenCalledTimes(3)
+  })
+  it('确认发布后存储恢复可继续原发布并清除锁定错误', async () => {
+    mocks.publish.mockResolvedValue({ versionId: '42', definitionRevision: 8 })
+    await open()
+    const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await click('发布')
+    expect(wrapper.text()).toContain('技能发布结果尚未确认')
+    expect(document.body.textContent).toContain('无法清除原发布记录')
+    remove.mockRestore()
+    await click('继续原发布')
+    expect(wrapper.text()).not.toContain('技能发布结果尚未确认')
+    expect(document.body.textContent).not.toContain('无法清除原发布记录')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '保存草稿')
+        ?.props('disabled')
+    ).toBe(false)
+  })
+  it('发布确认后读取定义失败保留锁，重新读取成功才解锁', async () => {
+    mocks.publish.mockResolvedValue({ versionId: '42', definitionRevision: 8 })
+    await open()
+    mocks.definition.mockRejectedValueOnce(Error('定义读取失败'))
+    await click('发布')
+    expect(wrapper.text()).toContain('已发布 · 待更新显示')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '保存草稿')
+        ?.props('disabled')
+    ).toBe(true)
+    expect(mocks.active).toHaveBeenCalledTimes(1)
+    await click('读取发布结果')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '保存草稿')
+        ?.props('disabled')
+    ).toBe(false)
+  })
+  it('存储不可用时不发送直接发布', async () => {
+    await open()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('storage')
+    })
+    await click('发布')
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('未发送发布请求')
+  })
+
   it('成功回执已确认但存储清理失败时仍通知，并保留待核对记录防止重复提交', async () => {
     mocks.combine.mockImplementation(async (request_id: string) => ({
       request_id,
@@ -149,7 +227,7 @@ describe('技能保存并发布', () => {
     await click('发布')
     expect(mocks.notify).not.toHaveBeenCalled()
     mocks.publish.mockResolvedValueOnce({ versionId: '42', definitionRevision: 8 })
-    await click('发布')
+    await click('继续原发布')
     expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
   })
   it('设为当前发布只有确认同一技能与版本后通知', async () => {
