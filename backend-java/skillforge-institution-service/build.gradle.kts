@@ -564,6 +564,7 @@ tasks.register<Test>("toolDeploymentRecoveryBrowserE2E") {
         includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostCreateResponseLeavesOriginalResultUnknownAndRuntimeUsesDeployment")
         includeTestsMatching("com.skillforge.institution.integration.ToolDeploymentRecoveryBrowserE2ETest.lostStopResponseKeepsOldPageWhileRuntimeRejectsDeployment")
     }
+    inputs.property("toolStopMode", providers.environmentVariable("E2E_TOOL_STOP_MODE").orElse("candidate"))
     outputs.upToDateWhen { false }
 }
 

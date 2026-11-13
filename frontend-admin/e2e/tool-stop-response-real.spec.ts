@@ -11,8 +11,9 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
   const agent = required('E2E_AGENT_ID'),
     key = required('E2E_DEPLOYMENT_KEY'),
     evidence = required('E2E_ARTIFACT_DIR')
-  const notArrived = process.env.E2E_TOOL_STOP_MODE === 'not-arrived'
-  const candidate = process.env.E2E_TOOL_STOP_MODE === 'candidate' || notArrived
+  const mode = process.env.E2E_TOOL_STOP_MODE ?? 'candidate'
+  if (!['candidate', 'not-arrived'].includes(mode)) throw Error(`E2E_TOOL_STOP_MODE: ${mode}`)
+  const notArrived = mode === 'not-arrived'
   await page.goto(`/login?redirect=${encodeURIComponent('/admin/agents/' + agent)}`)
   await page.locator('input[autocomplete="organization"]').fill(required('E2E_TENANT_SLUG'))
   await page.locator('input[autocomplete="username"]').fill(required('E2E_USERNAME'))
@@ -53,7 +54,6 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
   let requestId = '',
     originalReceipt: unknown,
     recoveredReceipt: unknown
-  let unknownVisible = ''
   let upstreamStops = 0,
     missingReceipt: unknown
   const stopCommands: unknown[] = []
@@ -62,24 +62,20 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
     complete = resolve
   })
   await deployments.route(
-    candidate
-      ? '**/api/v1/capabilities/deployments/state-with-receipt'
-      : '**/api/v1/capabilities/deployments/stop',
+    '**/api/v1/capabilities/deployments/state-with-receipt',
     async (route) => {
       stops++
       sourceCommand = route.request().postDataJSON()
       stopCommands.push(sourceCommand)
       if (stops > 1) expect(sourceCommand).toEqual(stopCommands[0])
       sourceRevision = route.request().headers()['if-match']
-      if (candidate) {
-        const command = route.request().postDataJSON()
-        requestId = command.request_id
-        expect(command.deployment_key).toBe(key)
-        expect(command.active).toBe(false)
-        expect(command.expected_revision).toBe(1)
-        expect(sourceRevision).toBeUndefined()
-        sourceRevision = String(command.expected_revision)
-      }
+      const command = route.request().postDataJSON()
+      requestId = command.request_id
+      expect(command.deployment_key).toBe(key)
+      expect(command.active).toBe(false)
+      expect(command.expected_revision).toBe(1)
+      expect(sourceRevision).toBeUndefined()
+      sourceRevision = String(command.expected_revision)
       if (notArrived && stops === 1) {
         await route.abort('failed')
         complete()
@@ -89,16 +85,14 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
       const response = await route.fetch({ maxRetries: 0 })
       expect(response.status()).toBe(200)
       sourceResponse = await response.json()
-      if (candidate) {
-        originalReceipt = (sourceResponse as { data: unknown }).data
-        expect(originalReceipt).toMatchObject({
-          request_id: requestId,
-          status: 'SUCCEEDED',
-          deployment_key: key,
-          deployment_status: 'DISABLED',
-          revision: 2
-        })
-      }
+      originalReceipt = (sourceResponse as { data: unknown }).data
+      expect(originalReceipt).toMatchObject({
+        request_id: requestId,
+        status: 'SUCCEEDED',
+        deployment_key: key,
+        deployment_status: 'DISABLED',
+        revision: 2
+      })
       if (notArrived) await route.fulfill({ response })
       else {
         await route.abort('failed')
@@ -108,68 +102,67 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
   )
   await row.getByRole('button', { name: '停用', exact: true }).click()
   await dropped
-  if (candidate) {
-    await expect(deployments.getByText(requestId, { exact: false }).first()).toBeVisible()
-    await expect(
-      deployments
-        .getByText('当前部署状态不能代替原请求回执，请勿重复提交。', { exact: false })
-        .first()
-    ).toBeVisible()
-    unknownVisible = await deployments.locator('body').innerText()
+  await expect(deployments.getByText(requestId, { exact: false }).first()).toBeVisible()
+  await expect(
+    deployments
+      .getByText('当前部署状态不能代替原请求回执，请勿重复提交。', { exact: false })
+      .first()
+  ).toBeVisible()
+  await writeFile(
+    join(evidence, 'tool-stop-unknown.txt'),
+    await deployments.locator('body').innerText()
+  )
+  await expect(row.getByRole('button', { name: '停用', exact: true })).toBeDisabled()
+  const lookup = deployments.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/v1/capabilities/deployments/state-with-receipt/result' &&
+      url.searchParams.get('request_id') === requestId
+    )
+  })
+  if (notArrived) {
+    await deployments.getByRole('button', { name: '核对原启停结果', exact: true }).click()
+    const response = await lookup
+    expect(response.status()).toBe(204)
+    missingReceipt = { status: response.status() }
+    expect(stops).toBe(1)
+    expect(upstreamStops).toBe(0)
     await expect(row.getByRole('button', { name: '停用', exact: true })).toBeDisabled()
-    const lookup = deployments.waitForResponse((response) => {
-      const url = new URL(response.url())
-      return (
-        url.pathname === '/api/v1/capabilities/deployments/state-with-receipt/result' &&
-        url.searchParams.get('request_id') === requestId
+    const continued = deployments.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          '/api/v1/capabilities/deployments/state-with-receipt' &&
+        response.request().method() === 'POST'
+    )
+    await deployments.getByRole('button', { name: '继续原启停操作', exact: true }).click()
+    expect((await continued).status()).toBe(200)
+    const read = await deployments.evaluate(async (requestId) => {
+      const response = await fetch(
+        `/api/v1/capabilities/deployments/state-with-receipt/result?request_id=${requestId}`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+        }
       )
-    })
-    if (notArrived) {
-      await deployments.getByRole('button', { name: '核对原启停结果', exact: true }).click()
-      const response = await lookup
-      expect(response.status()).toBe(204)
-      missingReceipt = { status: response.status() }
-      expect(stops).toBe(1)
-      expect(upstreamStops).toBe(0)
-      await expect(row.getByRole('button', { name: '停用', exact: true })).toBeDisabled()
-      const continued = deployments.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname ===
-            '/api/v1/capabilities/deployments/state-with-receipt' &&
-          response.request().method() === 'POST'
-      )
-      await deployments.getByRole('button', { name: '继续原启停操作', exact: true }).click()
-      expect((await continued).status()).toBe(200)
-      const read = await deployments.evaluate(async (requestId) => {
-        const response = await fetch(
-          `/api/v1/capabilities/deployments/state-with-receipt/result?request_id=${requestId}`,
-          {
-            headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
-          }
-        )
-        return { status: response.status, body: await response.json() }
-      }, requestId)
-      expect(read.status).toBe(200)
-      recoveredReceipt = read.body.data
-    } else {
-      deployments.once('dialog', (dialog) => dialog.accept())
-      await deployments.reload()
-      const response = await lookup
-      expect(response.status()).toBe(200)
-      recoveredReceipt = (await response.json()).data
-    }
-    expect(recoveredReceipt).toEqual(originalReceipt)
-    await expect(deployments.getByText('原启停回执：请求', { exact: false }).first()).toBeVisible()
-    await expect(
-      deployments.getByText('此回执不代表当前状态，当前部署以列表为准。', { exact: false }).first()
-    ).toBeVisible()
-    await expect(row.getByRole('button', { name: '启用', exact: true })).toBeEnabled()
-    await expect(
-      deployments
-        .getByText('原停用请求已确认（修订 2）；当前状态以列表为准', { exact: true })
-        .first()
-    ).toBeVisible()
-  } else await expect(row.getByRole('button', { name: '停用', exact: true })).toBeEnabled()
+      return { status: response.status, body: await response.json() }
+    }, requestId)
+    expect(read.status).toBe(200)
+    recoveredReceipt = read.body.data
+  } else {
+    deployments.once('dialog', (dialog) => dialog.accept())
+    await deployments.reload()
+    const response = await lookup
+    expect(response.status()).toBe(200)
+    recoveredReceipt = (await response.json()).data
+  }
+  expect(recoveredReceipt).toEqual(originalReceipt)
+  await expect(deployments.getByText('原启停回执：请求', { exact: false }).first()).toBeVisible()
+  await expect(
+    deployments.getByText('此回执不代表当前状态，当前部署以列表为准。', { exact: false }).first()
+  ).toBeVisible()
+  await expect(row.getByRole('button', { name: '启用', exact: true })).toBeEnabled()
+  await expect(
+    deployments.getByText('原停用请求已确认（修订 2）；当前状态以列表为准', { exact: true }).first()
+  ).toBeVisible()
   const current = await deployments.evaluate(async (key) => {
     const response = await fetch(`/api/v1/capabilities/deployments/detail?deploymentKey=${key}`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
@@ -256,11 +249,11 @@ test('停用响应丢失后页面状态与真实工具派发', async ({ page, co
         originalReceipt,
         recoveredReceipt,
         requestId,
-        unknownVisible,
         upstreamStops,
         missingReceipt,
         stopCommands,
         notArrived,
+        mode,
         actualStatus,
         statusReads,
         runtimeVisible
