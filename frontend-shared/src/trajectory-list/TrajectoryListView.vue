@@ -2,7 +2,7 @@
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { guardFormEnter, statusLabel, useResource } from '../admin'
+import { EntitySelect, guardFormEnter, statusLabel, useResource, type EntityOption } from '../admin'
 import FieldTip from '../components/FieldTip.vue'
 import { formatDateTime, toBeijingDateTime } from '../utils/datetime'
 import type { RequestOptions } from '../utils/http'
@@ -22,11 +22,18 @@ const props = defineProps<{
   identity: string
   detailPath: string
   showTenant?: boolean
+  loadTenants?: (query: string, signal?: AbortSignal) => Promise<EntityOption[]>
+  resolveTenant?: (id: string) => Promise<EntityOption | undefined>
 }>()
 const helpId = useId()
 const advancedOpen = ref(false)
 const validation = ref('')
 const dateRange = ref<[string, string] | null>(null)
+const traceOptions = ref<EntityOption[]>([])
+const selectedTrace = ref<EntityOption>()
+const traceLoading = ref(false)
+const traceError = ref('')
+let traceGeneration = 0
 let defaultRange: [string, string]
 let appliedDefaultRange = true
 const filters = reactive({
@@ -67,6 +74,88 @@ const statuses = [
   'CANCELLED',
   'OUTCOME_UNKNOWN'
 ]
+const traceChoices = computed(() => {
+  const selected = selectedTrace.value
+  return selected && !traceOptions.value.some((item) => item.id === selected.id)
+    ? [selected, ...traceOptions.value]
+    : traceOptions.value
+})
+function shortIdentifier(value: string) {
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
+}
+function traceChoicesFrom(pages: TrajectoryListPage[]) {
+  const values = new Map<string, EntityOption>()
+  for (const row of pages.flatMap((page) => page.items)) {
+    for (const traceId of row.trace_ids) {
+      if (!traceId || values.has(traceId)) continue
+      values.set(traceId, {
+        id: traceId,
+        label: row.input || '未记录输入',
+        description: [
+          row.tenant_name ?? row.tenant_id,
+          formatDateTime(row.started_at),
+          shortIdentifier(traceId)
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      })
+    }
+  }
+  return [...values.values()]
+}
+async function loadTraceOptions(query = '', signal?: AbortSignal) {
+  const current = ++traceGeneration
+  const keyword = query.trim()
+  if (!keyword && traceOptions.value.length) {
+    traceLoading.value = false
+    traceError.value = ''
+    return
+  }
+  traceLoading.value = true
+  traceError.value = ''
+  try {
+    const exact = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(keyword)
+    const requests = exact
+      ? [props.load({ page: 1, page_size: 20, trace_id: keyword }, { signal, silent: true })]
+      : keyword
+        ? [
+            props.load(
+              { page: 1, page_size: 20, input_keyword: keyword },
+              { signal, silent: true }
+            ),
+            props.load({ page: 1, page_size: 100 }, { signal, silent: true })
+          ]
+        : [props.load({ page: 1, page_size: 100 }, { signal, silent: true })]
+    const pages = await Promise.all(requests)
+    if (current !== traceGeneration) return
+    const values = traceChoicesFrom(pages)
+    traceOptions.value = keyword
+      ? values.filter(
+          (item) =>
+            item.id.toLowerCase().includes(keyword.toLowerCase()) ||
+            item.label.toLowerCase().includes(keyword.toLowerCase())
+        )
+      : values
+  } catch (cause) {
+    if (current === traceGeneration)
+      traceError.value = cause instanceof Error ? cause.message : 'TraceID 选项读取失败'
+  } finally {
+    if (current === traceGeneration) traceLoading.value = false
+  }
+}
+function selectTrace(value: string) {
+  filters.trace_id = value
+  selectedTrace.value = value
+    ? (traceOptions.value.find((item) => item.id === value) ?? { id: value, label: value })
+    : undefined
+}
+watch(
+  () => result.data.value,
+  (page) => {
+    if (page && !traceOptions.value.length) traceOptions.value = traceChoicesFrom([page])
+  },
+  { immediate: true }
+)
 
 /** 查询输入保持字符串；翻页只采用上一次提交的筛选快照。 */
 function candidate(): TrajectoryListQuery {
@@ -199,6 +288,9 @@ function reset() {
   result.error.value = ''
   validation.value = ''
   for (const key of Object.keys(filters) as Array<keyof typeof filters>) filters[key] = ''
+  selectedTrace.value = undefined
+  traceOptions.value = []
+  traceError.value = ''
   updateDefaultRange()
   appliedDefaultRange = true
   advancedOpen.value = false
@@ -261,11 +353,47 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
       @submit.prevent="submit"
       @keydown.capture="guardFormEnter"
     >
-      <ElFormItem v-if="showTenant" label="机构 ID">
-        <ElInput v-model="filters.tenant_id" clearable aria-label="机构 ID" />
+      <ElFormItem v-if="showTenant" label="机构">
+        <EntitySelect
+          v-if="loadTenants && resolveTenant"
+          v-model="filters.tenant_id"
+          :load="loadTenants"
+          :resolve="resolveTenant"
+          placeholder="搜索并选择机构"
+          aria-label="机构"
+        />
+        <ElInput v-else v-model="filters.tenant_id" clearable aria-label="机构 ID" />
       </ElFormItem>
       <ElFormItem label="TraceID">
-        <ElInput v-model="filters.trace_id" clearable aria-label="TraceID" />
+        <ElSelect
+          :model-value="filters.trace_id || undefined"
+          filterable
+          remote
+          clearable
+          :remote-method="loadTraceOptions"
+          :loading="traceLoading"
+          placeholder="搜索输入内容或选择 TraceID"
+          aria-label="TraceID"
+          data-testid="trajectory-trace"
+          @update:model-value="selectTrace"
+          @visible-change="
+            (visible: boolean) => {
+              if (visible && !traceOptions.length) void loadTraceOptions()
+            }
+          "
+        >
+          <ElOption
+            v-for="option in traceChoices"
+            :key="option.id"
+            :value="option.id"
+            :label="option.label"
+          >
+            <span>{{ option.label }}</span>
+            <small v-if="option.description" class="trace-option-description">{{
+              option.description
+            }}</small>
+          </ElOption>
+        </ElSelect>
       </ElFormItem>
       <ElFormItem label="输入关键词">
         <ElInput v-model="filters.input_keyword" clearable aria-label="输入关键词" />
@@ -318,6 +446,13 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
         <ElButton @click="reset">重置</ElButton>
         <span v-if="pendingFilters" class="muted">条件已修改，点击查询后生效</span>
       </div>
+      <FeedbackNotice
+        v-if="traceError"
+        class="trajectory-help"
+        :title="'TraceID 选项读取失败：' + traceError"
+        type="error"
+        :closable="false"
+      />
       <FieldTip :id="helpId" class="trajectory-help">
         多个条件同时匹配；TraceID、SessionID、模型与工具名精确查找，输入与输出按关键词匹配。默认查询近七天，耗时包含主执行的排队和等待，未记录耗时不匹配耗时范围。
       </FieldTip>
@@ -369,7 +504,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
         :data="rows"
         :row-key="rowKey"
         v-loading="result.loading.value"
-        table-layout="auto"
+        table-layout="fixed"
         class="trajectory-table"
         :empty-text="
           result.loading.value
@@ -379,26 +514,22 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
               : '当前查询范围没有轨迹，可清空关键词或调整时间范围后查询'
         "
       >
-        <ElTableColumn label="输入与结果" min-width="330">
+        <ElTableColumn label="输入与结果" width="240">
           <template #default="{ row }">
             <RouterLink :to="target(row as TrajectorySummary)" class="trajectory-input">{{
               row.input || '输入未记录'
             }}</RouterLink>
             <div class="trajectory-output">{{ row.output || '尚无公开结果' }}</div>
-            <code class="trajectory-root">{{ row.root_input_id }}</code>
+            <div class="trajectory-root" :title="row.root_input_id">
+              <template v-if="showTenant">{{ row.tenant_name ?? row.tenant_id }} · </template>
+              <code>{{ shortIdentifier(row.root_input_id) }}</code>
+            </div>
           </template>
         </ElTableColumn>
-        <ElTableColumn v-if="showTenant" label="机构" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.tenant_name ?? row.tenant_id }}</template>
-        </ElTableColumn>
-        <ElTableColumn label="Agent / 模型" min-width="180">
+        <ElTableColumn label="执行" width="170">
           <template #default="{ row }">
             <div>{{ row.agent_name ?? row.agent_id ?? '未记录' }}</div>
             <div class="muted">{{ row.models.length ? row.models.join('、') : '模型未记录' }}</div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="执行情况" width="145">
-          <template #default="{ row }">
             <ElTag
               size="small"
               :type="
@@ -410,7 +541,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
             <div class="muted">{{ row.tool_calls }} 工具调用</div>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="Token" min-width="145" align="right">
+        <ElTableColumn label="用量 / 时间" width="120" align="right">
           <template #default="{ row }">
             <div class="numeric">{{ tokens(row as TrajectorySummary) }}</div>
             <span class="muted">{{
@@ -420,15 +551,11 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
                   ? '无模型调用'
                   : '部分或未知用量'
             }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="耗时 / 开始时间" min-width="185">
-          <template #default="{ row }">
             <div class="numeric">{{ formatObservationDuration(row.duration_ms) }}</div>
             <span class="muted">{{ formatDateTime(row.started_at) }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="100" fixed="right">
+        <ElTableColumn label="操作" width="90" fixed="right">
           <template #default="{ row }"
             ><RouterLink :to="target(row as TrajectorySummary)">查看轨迹</RouterLink></template
           >
@@ -506,8 +633,8 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
   max-width: 100%;
   overflow-x: auto;
 }
-.trajectory-table {
-  min-width: 1100px;
+.trajectory-table :deep(.el-table__cell > .cell) {
+  white-space: normal;
 }
 .trajectory-table-region:focus-visible,
 .trajectory-advanced summary:focus-visible {
@@ -528,6 +655,12 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
 .trajectory-root {
   display: block;
   margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.trace-option-description {
+  display: block;
+  color: var(--admin-muted);
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 .muted,

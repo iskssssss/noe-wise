@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import ElementPlus, { ElPagination } from 'element-plus'
+import ElementPlus, { ElPagination, ElSelect } from 'element-plus'
 import TrajectoryListView from './TrajectoryListView.vue'
 import type {
   TrajectoryListPage,
@@ -99,6 +99,17 @@ function button(wrapper: VueWrapper, text: string) {
   if (!value) throw new Error(`找不到按钮：${text}`)
   return value
 }
+function traceSelect(wrapper: VueWrapper) {
+  const value = wrapper
+    .findAllComponents(ElSelect)
+    .find((component) => component.attributes('data-testid') === 'trajectory-trace')
+  if (!value) throw new Error('找不到 TraceID 选择器')
+  return value
+}
+async function setTrace(wrapper: VueWrapper, value: string) {
+  traceSelect(wrapper).vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
 
 describe('轨迹列表查询与身份隔离', () => {
   it('刷新默认近七天时推进时间窗口并回到第一页，保留未提交的筛选', async () => {
@@ -107,7 +118,7 @@ describe('轨迹列表查询与身份隔离', () => {
     const wrapper = render(load)
     await flushPromises()
     await wrapper.get('.btn-next').trigger('click')
-    await wrapper.get('input[aria-label="TraceID"]').setValue('未提交')
+    await setTrace(wrapper, '未提交')
     now.mockReturnValue(Date.parse('2026-10-26T00:00:00Z'))
     await button(wrapper, '刷新').trigger('click')
     await flushPromises()
@@ -157,11 +168,21 @@ describe('轨迹列表查询与身份隔离', () => {
     )
   })
 
+  it('TraceID 空关键词复用当前结果，不重复读取整页轨迹', async () => {
+    const load = vi.fn<Loader>(async () => result())
+    const wrapper = render(load)
+    await flushPromises()
+    expect(load).toHaveBeenCalledTimes(1)
+    await traceSelect(wrapper).props('remoteMethod')('')
+    await flushPromises()
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
   it('翻页使用已提交条件，查询后采用新关键词并保持大ID和毫秒字符串', async () => {
     const load = vi.fn<Loader>(async (query) => result([row], query.page))
     const wrapper = render(load)
     await flushPromises()
-    await wrapper.get('input[aria-label="TraceID"]').setValue('trace-new')
+    await setTrace(wrapper, 'trace-new')
     await wrapper.get('input[aria-label="Agent ID"]').setValue('9223372036854775806')
     await wrapper.get('input[aria-label="最短耗时（毫秒）"]').setValue('9007199254740993')
     await wrapper.get('.btn-next').trigger('click')
@@ -186,7 +207,7 @@ describe('轨迹列表查询与身份隔离', () => {
       .mockResolvedValueOnce(result([{ ...row, input: '新筛选结果' }]))
     const wrapper = render(load)
     await flushPromises()
-    await wrapper.get('input[aria-label="TraceID"]').setValue('trace-new')
+    await setTrace(wrapper, 'trace-new')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('如何做评估')

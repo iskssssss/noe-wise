@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { AdminPage } from '@skillforge/shared/admin'
 import TrajectoryListView from '@skillforge/shared/trajectory-list/TrajectoryListView.vue'
 import { api } from '../../api'
+import { loadTenantOptions, resolveTenantOption } from '../../api/entityOptions'
 import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
@@ -15,6 +16,8 @@ const identity = computed(() => `${auth.sessionIdentity}:${auth.identityVersion}
       :load="api.trajectories.list"
       :identity="auth.sessionIdentity ? identity : ''"
       detail-path="/platform/trajectories/detail"
+      :load-tenants="loadTenantOptions"
+      :resolve-tenant="resolveTenantOption"
       show-tenant
     />
   </AdminPage>
