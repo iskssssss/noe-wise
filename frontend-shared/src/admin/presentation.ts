@@ -81,7 +81,9 @@ const labels: Record<string, string> = {
   'media.transcription': '语音识别',
   'media.speech': '语音合成',
   'knowledge.source': '知识来源调用',
-  'workflow.external': '外部工作流'
+  'workflow.external': '外部工作流',
+  file: '文件',
+  projection: '平台投影'
 }
 /** 未知状态保留原值，不推断业务状态。 */
 export function statusLabel(value: unknown): string {

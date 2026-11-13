@@ -308,27 +308,23 @@
                   ? '没有符合当前筛选的文档，请调整条件或清空筛选'
                   : '尚无文档，点击“上传文件”添加知识内容'
           "
-          ><ElTableColumn
-            min-width="200"
-            show-overflow-tooltip
-            prop="title"
-            label="文档"
-          ></ElTableColumn
-          ><ElTableColumn
-            min-width="140"
-            show-overflow-tooltip
-            prop="source_type"
-            label="来源"
-          ></ElTableColumn
-          ><ElTableColumn width="128" show-overflow-tooltip label="状态"
+          ><ElTableColumn min-width="190" label="文档 / 来源"
+            ><template #default="{ row }"
+              ><div>{{ (row as KnowledgeDocumentItem).title }}</div>
+              <div class="admin-field-help">
+                来源：{{ statusLabel((row as KnowledgeDocumentItem).source_type) }}
+              </div></template
+            ></ElTableColumn
+          ><ElTableColumn width="96" show-overflow-tooltip label="状态"
             ><template #default="{ row }">{{
               needsDocumentContent(row as KnowledgeDocumentItem)
                 ? '无可检索正文'
                 : statusLabel(row.status)
             }}</template></ElTableColumn
-          ><ElTableColumn width="96" prop="chunk_count" label="分块"></ElTableColumn
+          ><ElTableColumn width="56" prop="chunk_count" label="分块"></ElTableColumn
           ><ElTableColumn
-            min-width="340"
+            width="294"
+            fixed="right"
             class-name="admin-table-actions"
             prop="actions"
             label="操作"

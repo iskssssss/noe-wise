@@ -3,7 +3,12 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElInput, ElSelect, ElPagination, ElTabs, ElUpload } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
 const mocks = vi.hoisted(() => ({ documents: vi.fn(), upload: vi.fn() }))
-vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ user: { tenant_id: 'tenant', sub: 'user', permissions: [] }, identityVersion: 1 }) }))
+vi.mock('../../stores/auth', () => ({
+  useAuthStore: () => ({
+    user: { tenant_id: 'tenant', sub: 'user', permissions: [] },
+    identityVersion: 1
+  })
+}))
 vi.mock('../../api', () => ({
   api: {
     knowledge: {
@@ -15,6 +20,7 @@ vi.mock('../../api', () => ({
     settings: { availableModels: async () => [] }
   },
   get: async () => ({ status: 'IDLE' }),
+  getSessionId: () => 'test-session',
   post: vi.fn()
 }))
 vi.mock('vue-router', () => ({
@@ -63,7 +69,9 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.documents.mockResolvedValue(result('原文档'))
   mocks.upload.mockImplementation(async (_kb: string, _file: FormData, requestId: string) => ({
-    request_id: requestId, status: 'SUCCEEDED', document: { document_id: 'new', source_version: 'new-v', chunks: 1 }
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    document: { document_id: 'new', source_version: 'new-v', chunks: 1 }
   }))
 })
 afterEach(() => {

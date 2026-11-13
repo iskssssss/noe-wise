@@ -14,6 +14,7 @@ vi.mock('../../api', () => ({
     settings: { availableModels: async () => [] }
   },
   get: async () => ({ status: 'IDLE' }),
+  getSessionId: () => 'test-session',
   post: vi.fn()
 }))
 vi.mock('vue-router', () => ({

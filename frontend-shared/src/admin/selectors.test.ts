@@ -193,6 +193,8 @@ describe('关联选择表单', () => {
   })
   it('未知状态不伪装成正常状态', () => {
     expect(statusLabel('PUBLISHED')).toBe('已发布')
+    expect(statusLabel('file')).toBe('文件')
+    expect(statusLabel('projection')).toBe('平台投影')
     expect(statusLabel('future_state')).toBe('future_state')
   })
   it('失效引用保留原始标识并提示重新选择，不自动改绑第一个候选', async () => {

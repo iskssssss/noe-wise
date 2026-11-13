@@ -66,23 +66,26 @@
               ? '没有匹配的知识库，请调整关键词'
               : '尚无知识库，创建后上传文档并验证检索效果'
       "
-      ><ElTableColumn min-width="200" show-overflow-tooltip prop="name" label="知识库"
+      ><ElTableColumn min-width="200" prop="name" label="知识库"
         ><template #default="{ row }"
-          ><RouterLink :to="'/admin/knowledge/' + row.id">{{ row.name }}</RouterLink></template
+          ><RouterLink :to="'/admin/knowledge/' + row.id">{{ row.name }}</RouterLink>
+          <div class="admin-field-help">
+            {{ row.document_count }} 个文档 · {{ row.chunk_count }} 个分块 ·
+            {{ row.status === 'archived' ? '已归档' : '启用' }}
+          </div></template
         ></ElTableColumn
       ><ElTableColumn
-        min-width="280"
+        min-width="220"
         show-overflow-tooltip
         prop="description"
         label="说明"
       ></ElTableColumn
-      ><ElTableColumn width="96" prop="document_count" label="文档"></ElTableColumn
-      ><ElTableColumn width="96" prop="chunk_count" label="分块"></ElTableColumn
-      ><ElTableColumn width="88" prop="status" label="状态"
-        ><template #default="{ row }">{{
-          row.status === 'archived' ? '已归档' : '启用'
-        }}</template></ElTableColumn
-      ><ElTableColumn width="184" class-name="admin-table-actions" prop="actions" label="操作"
+      ><ElTableColumn
+        width="184"
+        fixed="right"
+        class-name="admin-table-actions"
+        prop="actions"
+        label="操作"
         ><template #default="{ row }"
           ><ElButton
             v-permission="['foundation.knowledge.update']"
