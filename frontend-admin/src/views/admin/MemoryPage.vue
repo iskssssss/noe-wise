@@ -10,7 +10,13 @@
     >
       <p role="status">
         事实 {{ operation.factId }} 的{{
-          operation.operation === 'FORGET' ? '遗忘' : '恢复'
+          operation.operation === 'FORGET'
+            ? '遗忘'
+            : operation.operation === 'RESTORE'
+              ? '恢复'
+              : operation.operation === 'APPROVE'
+                ? '批准'
+                : '拒绝'
         }}结果尚未确认（原修订
         {{ operation.expectedRevision }}）。状态未变化也不能证明原请求未受理，请勿重复操作。
       </p>
@@ -403,7 +409,11 @@ const scope = ref<MemoryListQuery['scope']>(),
   reviews = ref(false),
   query = ref('')
 const auth = useAuthStore()
-type StateChange = { factId: string; operation: 'FORGET' | 'RESTORE'; expectedRevision: number }
+type StateChange = {
+  factId: string
+  operation: 'FORGET' | 'RESTORE' | 'APPROVE' | 'REJECT'
+  expectedRevision: number
+}
 const unknownStateChanges = ref<StateChange[]>([])
 const stateStorageError = ref('')
 let stateChangesDisposed = false
@@ -430,7 +440,7 @@ watch(
             item &&
             typeof item.factId === 'string' &&
             item.factId &&
-            ['FORGET', 'RESTORE'].includes(item.operation) &&
+            ['FORGET', 'RESTORE', 'APPROVE', 'REJECT'].includes(item.operation) &&
             Number.isSafeInteger(item.expectedRevision) &&
             item.expectedRevision > 0
         )
@@ -454,6 +464,17 @@ function persistStateChanges(key: string, operations: StateChange[]) {
   sessionStorage.setItem(key, JSON.stringify(operations))
   if (key === stateStorageKey.value) unknownStateChanges.value = operations
 }
+function validStateFact(value: MemoryFact | undefined, factId: string): value is MemoryFact {
+  return (
+    value?.ref?.fact_id === factId &&
+    value.ref.tenant_id?.value === auth.user?.tenant_id &&
+    Number.isSafeInteger(value.revision) &&
+    value.revision > 0 &&
+    ['ACTIVE', 'PENDING_CONFIRM', 'REJECTED', 'FORGOTTEN', 'DECAYED', 'ARCHIVED'].includes(
+      value.status
+    )
+  )
+}
 async function checkStateChange(operation: StateChange) {
   const key = stateStorageKey.value,
     identity = auth.identityVersion
@@ -473,6 +494,8 @@ async function checkStateChange(operation: StateChange) {
     }
     if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
       return
+    if (!validStateFact(latest, operation.factId))
+      throw Error('读取的记忆状态无效，原操作结果仍未确认。')
     if (latest.revision <= operation.expectedRevision) {
       message.warning('当前修订尚未前进，原操作结果仍未确认，请勿重复操作。')
       return
@@ -829,8 +852,10 @@ function confirmationMemoryContent(row: MemoryFact): string {
 }
 async function review(row: MemoryFact, approved: boolean) {
   if (refreshRequired.value || stateWriteLocked(row.ref.fact_id)) return
-  const factId = row.ref.fact_id
-  const expectedRevision = row.revision
+  const factId = row.ref.fact_id,
+    expectedRevision = row.revision,
+    key = stateStorageKey.value,
+    identity = auth.identityVersion
   const confirmSharing = approved && requiresSharingConfirmation(row)
   const replacement = approved ? replacementNotice(row) : undefined
   const confirmationContent = [
@@ -845,28 +870,83 @@ async function review(row: MemoryFact, approved: boolean) {
     `内容：${confirmationMemoryContent(row)}`
   ].join('\n')
   await run(async () => {
-    if (confirmSharing || replacement) {
+    if (
+      (confirmSharing || replacement) &&
+      !(await confirm({
+        title: replacement ? '批准记忆修订' : '确认跨助手共享',
+        content: confirmationContent,
+        confirmText: replacement ? '确认替换' : '确认跨助手共享'
+      }))
+    )
+      return
+    if (
+      stateChangesDisposed ||
+      key !== stateStorageKey.value ||
+      identity !== auth.identityVersion ||
+      stateWriteLocked(factId)
+    )
+      return
+    if (!key) throw Error('当前身份不可用，尚未发送记忆审核请求')
+    const operation: StateChange = {
+      factId,
+      expectedRevision,
+      operation: approved ? 'APPROVE' : 'REJECT'
+    }
+    try {
+      persistStateChanges(key, [...unknownStateChanges.value, operation])
+    } catch {
+      throw Error('无法保存记忆状态核对记录，尚未发送请求')
+    }
+    try {
+      const result =
+        confirmSharing || replacement
+          ? await api.memories.review(
+              factId,
+              expectedRevision,
+              approved,
+              confirmSharing ? 'USER' : undefined
+            )
+          : await api.memories.review(factId, expectedRevision, approved)
       if (
-        !(await confirm({
-          title: replacement ? '批准记忆修订' : '确认跨助手共享',
-          content: confirmationContent,
-          confirmText: replacement ? '确认替换' : '确认跨助手共享'
-        }))
+        !validStateFact(result, factId) ||
+        result.revision !== expectedRevision + 1 ||
+        result.status !== (approved ? 'ACTIVE' : 'REJECTED')
+      )
+        throw Error('审核回执无效，原操作结果仍未确认。')
+    } catch (reason) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      if (
+        stateChangesDisposed ||
+        key !== stateStorageKey.value ||
+        identity !== auth.identityVersion
       )
         return
-      await api.memories.review(
-        factId,
-        expectedRevision,
-        approved,
-        confirmSharing ? 'USER' : undefined
-      )
-    } else {
-      await api.memories.review(factId, expectedRevision, approved)
+      if (
+        reason instanceof HttpClientError &&
+        reason.code &&
+        reason.status >= 400 &&
+        reason.status < 500 &&
+        ![401, 408].includes(reason.status)
+      ) {
+        persistStateChanges(
+          key,
+          unknownStateChanges.value.filter((item) => item.factId !== factId)
+        )
+        throw reason
+      }
+      return
     }
+    if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
+      return
+    persistStateChanges(
+      key,
+      unknownStateChanges.value.filter((item) => item.factId !== factId)
+    )
     refreshRequired.value = true
     if (await refresh()) message.success(approved ? '记忆已批准' : '记忆已拒绝')
   })
 }
+
 async function changeState(row: MemoryFact) {
   if (refreshRequired.value || stateWriteLocked(row.ref.fact_id)) return
   const key = stateStorageKey.value,

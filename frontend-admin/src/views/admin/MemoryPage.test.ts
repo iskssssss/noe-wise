@@ -7,6 +7,7 @@ import { clearFeedback } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { MemoryFact } from '../../api'
 import MemoryPage from './MemoryPage.vue'
+import { useAuthStore } from '../../stores/auth'
 
 const mocks = vi.hoisted(() => ({
   page: vi.fn(),
@@ -137,7 +138,11 @@ beforeEach(() => {
   )
   mocks.agents.mockResolvedValue({ items: [{ id: 'agent-a', name: '客服助手' }] })
   mocks.users.mockResolvedValue([{ id: 'user-a', display_name: '客户甲' }])
-  mocks.review.mockResolvedValue({})
+  mocks.review.mockImplementation(async (_id: string, revision: number, approved: boolean) => ({
+    ...fact,
+    revision: revision + 1,
+    status: approved ? 'ACTIVE' : 'REJECTED'
+  }))
 })
 
 afterEach(async () => {
@@ -706,6 +711,167 @@ describe('记忆筛选辅助目录独立恢复', () => {
   })
 })
 
+describe('记忆审核结果未知', () => {
+  it.each([
+    { label: '批准', operation: '批准', approved: true },
+    { label: '拒绝', operation: '拒绝', approved: false }
+  ])(
+    '$label 丢失回执后同事实锁定，重载与核对只按原修订收敛',
+    async ({ label, operation, approved }) => {
+      fact.scope = 'USER_AGENT'
+      mocks.review.mockRejectedValueOnce(new Error('连接中断'))
+      const first = await render()
+      await button(first, label).trigger('click')
+      await flushPromises()
+      expect(mocks.review).toHaveBeenCalledExactlyOnceWith('fact/user', 3, approved)
+      expect(first.text()).toContain(`${operation}结果尚未确认`)
+      expect(button(first, '批准').props('disabled')).toBe(true)
+      expect(button(first, '拒绝').props('disabled')).toBe(true)
+      first.unmount()
+      const restored = await render()
+      expect(restored.text()).toContain(`${operation}结果尚未确认`)
+      mocks.detail
+        .mockRejectedValueOnce(new Error('读取失败'))
+        .mockResolvedValueOnce({ ...fact })
+        .mockResolvedValueOnce({ ...fact, revision: 4, status: approved ? 'ACTIVE' : 'REJECTED' })
+      await button(restored, '核对最新状态').trigger('click')
+      await flushPromises()
+      expect(restored.text()).toContain(`${operation}结果尚未确认`)
+      await button(restored, '核对最新状态').trigger('click')
+      await flushPromises()
+      expect(restored.text()).toContain(`${operation}结果尚未确认`)
+      await button(restored, '核对最新状态').trigger('click')
+      await flushPromises()
+      expect(restored.text()).not.toContain(`${operation}结果尚未确认`)
+      expect(document.body.textContent).toContain('原操作回执未单独确认')
+      expect(mocks.review).toHaveBeenCalledTimes(1)
+    }
+  )
+  it('修订提案按提案事实而非被替换事实核对', async () => {
+    fact.scope = 'USER_AGENT'
+    fact.object = {
+      schema_id: 'skillforge.memory.preference.v2',
+      canonical_json: JSON.stringify({
+        value: { text: '晚上联系' },
+        conditions: [],
+        temporal: { kind: 'stable', from: null, to: null },
+        revisionProposal: { factId: 'fact/original', expectedRevision: 7 }
+      })
+    }
+    mocks.review.mockRejectedValueOnce(new Error('连接中断'))
+    const wrapper = await render()
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    confirmationButton('确认替换').click()
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    mocks.detail.mockResolvedValueOnce({ ...fact, revision: 4, status: 'ACTIVE' })
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('fact/user')
+    expect(mocks.review).toHaveBeenCalledExactlyOnceWith('fact/user', 3, true, undefined)
+  })
+  it.each([
+    { label: '缺失修订', response: { revision: undefined } },
+    { label: '原修订', response: { revision: 3 } },
+    { label: '错误状态', response: { revision: 4, status: 'REJECTED' } },
+    {
+      label: '错误事实',
+      response: {
+        revision: 4,
+        status: 'ACTIVE',
+        ref: { tenant_id: { value: 'tenant-a' }, fact_id: 'other' }
+      }
+    },
+    {
+      label: '错误租户',
+      response: {
+        revision: 4,
+        status: 'ACTIVE',
+        ref: { tenant_id: { value: 'other' }, fact_id: 'fact/user' }
+      }
+    }
+  ])('审核响应$label时保持未知与写锁', async ({ response }) => {
+    fact.scope = 'USER_AGENT'
+    mocks.review.mockResolvedValueOnce({ ...fact, ...response })
+    const wrapper = await render()
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    expect(button(wrapper, '拒绝').props('disabled')).toBe(true)
+    expect(mocks.review).toHaveBeenCalledOnce()
+  })
+  it('核对响应缺失修订或事实身份不匹配时保持锁', async () => {
+    fact.scope = 'USER_AGENT'
+    mocks.review.mockRejectedValueOnce(new Error('连接中断'))
+    const wrapper = await render()
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    mocks.detail
+      .mockResolvedValueOnce({ ...fact, revision: undefined })
+      .mockResolvedValueOnce({ ...fact, revision: 4, ref: { ...fact.ref, fact_id: 'other' } })
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    await button(wrapper, '核对最新状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    expect(button(wrapper, '批准').props('disabled')).toBe(true)
+  })
+  it('共享确认期间身份变化不会发送旧事实审核', async () => {
+    const auth = useAuthStore()
+    const wrapper = await render()
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    auth.identityVersion++
+    confirmationButton('确认跨助手共享').click()
+    await flushPromises()
+    expect(mocks.review).not.toHaveBeenCalled()
+  })
+  it('审核在途时切换成员，迟到成功不清除原成员的未知记录', async () => {
+    const auth = useAuthStore()
+    fact.scope = 'USER_AGENT'
+    let finish!: (value: unknown) => void
+    mocks.review.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const wrapper = await render()
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    const originalKey = `memory-state-unknown:${JSON.stringify(['tenant-a', 'operator-a'])}`
+    expect(sessionStorage.getItem(originalKey)).toContain('APPROVE')
+    auth.user!.sub = 'operator-b'
+    auth.identityVersion++
+    finish({ ...fact, revision: 4, status: 'ACTIVE' })
+    await flushPromises()
+    expect(sessionStorage.getItem(originalKey)).toContain('APPROVE')
+    expect(wrapper.text()).not.toContain('批准结果尚未确认')
+    auth.user!.sub = 'operator-a'
+    auth.identityVersion++
+  })
+  it('存储写入失败不审核，明确业务拒绝释放锁', async () => {
+    fact.scope = 'USER_AGENT'
+    const wrapper = await render()
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    expect(mocks.review).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('尚未发送请求')
+    set.mockRestore()
+    mocks.review.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, code: 'CONFLICT', userMessage: '审核冲突' })
+    )
+    await button(wrapper, '批准').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('批准结果尚未确认')
+    expect(button(wrapper, '批准').props('disabled')).toBe(false)
+  })
+})
 describe('记忆共享范围审核', () => {
   it('审核成功后列表读取失败保留旧数据并锁定写入，查询成功后使用新修订', async () => {
     fact.scope = 'USER_AGENT'

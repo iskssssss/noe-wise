@@ -179,6 +179,7 @@ tasks.named<Test>("test") {
     exclude("**/MemoryForgetUnknownBrowserE2ETest.class")
     exclude("**/AgentTemplateToolOptionsBrowserE2ETest.class")
     exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
+    exclude("**/MemoryApprovalUnknownBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
     exclude("**/WorkflowToolOptionsBrowserE2ETest.class")
@@ -403,6 +404,20 @@ tasks.register<Test>("sessionCloseReceiptBrowserE2E") {
     inputs.property("sessionCloseReceipt", providers.environmentVariable("E2E_SESSION_CLOSE_RECEIPT").orElse("candidate"))
     inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/session-close-receipt-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
             fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("memoryApprovalUnknownBrowserE2E") {
+    description = "观察记忆批准回执丢失和后续召回"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.MemoryApprovalUnknownBrowserE2ETest.approvalResponseLossPreservesActualFactAndRuntimeRecall") }
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/memory-approval-unknown-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    inputs.property("memoryApprovalUnknown", providers.environmentVariable("E2E_MEMORY_APPROVAL_UNKNOWN").orElse("baseline"))
     outputs.upToDateWhen { false }
 }
 
