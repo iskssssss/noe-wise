@@ -18,10 +18,17 @@ public class AgentQueryService {
                 .eq(AgentDO::getTenantId, tenantId).eq(AgentDO::getId, agentId)));
     }
 
+    public AgentView findPublished(long tenantId, long agentId) {
+        return view(agents.selectOne(new LambdaQueryWrapper<AgentDO>()
+                .eq(AgentDO::getTenantId, tenantId).eq(AgentDO::getId, agentId)
+                .eq(AgentDO::getStatus, "published").isNotNull(AgentDO::getPublishedRevisionId)));
+    }
+
     public AgentView findPublishedByKey(long tenantId, String key) {
         return view(agents.selectOne(new LambdaQueryWrapper<AgentDO>()
                 .eq(AgentDO::getTenantId, tenantId).eq(AgentDO::getAgentKey, key)
-                .eq(AgentDO::getStatus, "published").orderByDesc(AgentDO::getRevision).last("LIMIT 1")));
+                .eq(AgentDO::getStatus, "published").isNotNull(AgentDO::getPublishedRevisionId)
+                .orderByDesc(AgentDO::getRevision).last("LIMIT 1")));
     }
 
     private AgentView view(AgentDO row) {

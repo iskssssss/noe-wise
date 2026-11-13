@@ -325,8 +325,8 @@ public class ChatController {
      * 创建空会话（外部集成方主动建会话）。
      *
      * <p>供外部业务系统桥接"先建会话再推送主动消息"：工作流必须经 Agent 调用，
-     * 会话目标为 agent_id（支持数字 ID 或 agent_key），目标不可解析返回 404，
-     * 缺失返回 422。end_user_id 必须由入口显式提供；服务端不创建或选择默认用户。
+     * 会话目标为当前机构已发布 Agent 的数字 ID 或 agent_key；不存在、跨机构或未发布
+     * 返回 404，缺失返回 422。end_user_id 必须由入口显式提供；服务端不创建或选择默认用户。
      *
      * @param request 建会话请求
      * @return 会话结果（仅含明确命名的 session_id）

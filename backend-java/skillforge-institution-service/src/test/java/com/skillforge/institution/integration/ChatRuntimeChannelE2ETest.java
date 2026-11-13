@@ -67,6 +67,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -277,6 +278,63 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         } finally {
             LiveGradleAttemptMeter.snapshot(liveMeterDataSource, tenantId);
         }
+    }
+
+    /** 数字 Agent 标识与 agent_key 使用同一条发布目标校验，失败不得产生不可执行会话。 */
+    @Test
+    void unpublishedNumericAgentIsRejectedBeforeSessionCreation() throws Exception {
+        AgentDO draft = new AgentDO();
+        draft.setId(SnowflakeIds.nextId());
+        draft.setTenantId(Long.parseLong(tenantId));
+        draft.setAgentKey("runtime-e2e-draft-agent-" + draft.getId());
+        draft.setName("未发布目标");
+        draft.setSystemPrompt("此智能体尚未发布。");
+        draft.setConfig(Map.of());
+        draft.setStatus("draft");
+        draft.setCreatedAt(Instant.now());
+        draft.setUpdatedAt(Instant.now());
+        TenantContext.setTenantId(tenantId);
+        try {
+            agentMapper.insert(draft);
+        } finally {
+            TenantContext.clear();
+        }
+
+        UUID requestId = UUID.randomUUID();
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("agent_id", draft.getId().toString());
+        payload.put("end_user_id", endUserId);
+        var response = send("/api/v1/chat/sessions/create-with-receipt", "POST",
+                Map.of("request_id", requestId, "payload", payload), accessToken);
+
+        Path evidence = Path.of("build", "runtime-e2e", "session-target-" + SnowflakeIds.nextId()).toAbsolutePath();
+        Files.createDirectories(evidence);
+        var facts = new LinkedHashMap<String, Object>();
+        facts.put("requestId", requestId);
+        facts.put("agentId", draft.getId());
+        facts.put("createStatus", response.statusCode());
+        facts.put("createBody", objectMapper.readTree(response.body()));
+        facts.put("sessions", countRuntime(
+                "SELECT count(*) FROM nw_chat_sessions WHERE tenant_id=? AND agent_id=?",
+                Long.valueOf(tenantId), draft.getId()));
+        facts.put("creationReceipts", countRuntime(
+                "SELECT count(*) FROM nw_chat_sessions WHERE tenant_id=? AND create_request_id=?",
+                Long.valueOf(tenantId), requestId.toString()));
+        if (response.statusCode() == 200) {
+            String rejectedSession = successData(response).path("session_id").asText();
+            this.sessionId = rejectedSession;
+            this.agentId = draft.getId().toString();
+            runId = "runtime-e2e-draft-" + SnowflakeIds.nextId();
+            var rejected = send("/api/v1/chat", "POST", chatPayload("未发布目标不能执行"), accessToken);
+            facts.put("runtimeStatus", rejected.statusCode());
+            facts.put("runtimeBody", objectMapper.readTree(rejected.body()));
+        }
+        Files.writeString(evidence.resolve("result.json"),
+                objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(facts));
+
+        assertEquals(404, response.statusCode(), evidence.toString());
+        assertEquals(0L, facts.get("sessions"));
+        assertEquals(0L, facts.get("creationReceipts"));
     }
 
     /** 固定本地 Provider，记录冷态及独立会话热态的 HTTP/SSE 完整耗时，不含外部模型推理。 */

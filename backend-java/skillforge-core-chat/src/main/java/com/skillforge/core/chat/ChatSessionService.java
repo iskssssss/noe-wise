@@ -148,10 +148,10 @@ public class ChatSessionService {
                     tenantId, ChatLogIds.tag(session.getSessionId()), ChatLogIds.tag(request.teamId()));
             return Map.of(ChatConstants.SESSION_ID, session.getSessionId());
         }
-        Long agentId = resolveAgentId(tenantId, request.agentId());
+        Long agentId = resolvePublishedAgentId(tenantId, request.agentId());
         if (agentId == null) {
-            // key 解析失败在创建 Session 前拒绝，避免产生无法归属的空会话。
-            throw new ApiException(HttpStatus.NOT_FOUND, "Agent 不存在: " + request.agentId());
+            // 数字 ID 与 key 共用发布目标边界，避免产生无法执行的空会话。
+            throw new ApiException(HttpStatus.NOT_FOUND, "当前机构已发布 Agent 不存在: " + request.agentId());
         }
         SessionView session = requestId == null ? sessionService.getOrCreate(
                 tenantId, endUserId, null, agentId, request.scopeId(), request.scopeType())
@@ -220,16 +220,29 @@ public class ChatSessionService {
         return result;
     }
 
-    /** 将数字 Agent ID 或租户内 Agent key 解析为持久化数字 ID。 */
+    /** 将数字 Agent ID 或租户内 Agent key 解析为持久化数字 ID，发布授权由执行入口判定。 */
     Long resolveAgentId(String tenantId, String agentId) {
         if (agentId == null || agentId.isBlank()) {
             return null;
         }
         try {
-            // 数字标识无需查询；非数字值才在当前租户内按 agent_key 查询。
-            return Long.parseLong(agentId);
+            return Long.parseLong(agentId.trim());
         } catch (NumberFormatException ignored) {
-            var agent = agentQuery.findPublishedByKey(Long.parseLong(tenantId), agentId);
+            var agent = agentQuery.findPublishedByKey(Long.parseLong(tenantId), agentId.trim());
+            return agent == null ? null : agent.id();
+        }
+    }
+
+    /** 空会话创建必须在写入前确认目标属于当前机构且已经发布。 */
+    Long resolvePublishedAgentId(String tenantId, String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return null;
+        }
+        try {
+            var agent = agentQuery.findPublished(Long.parseLong(tenantId), Long.parseLong(agentId.trim()));
+            return agent == null ? null : agent.id();
+        } catch (NumberFormatException ignored) {
+            var agent = agentQuery.findPublishedByKey(Long.parseLong(tenantId), agentId.trim());
             return agent == null ? null : agent.id();
         }
     }

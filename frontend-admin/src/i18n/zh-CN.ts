@@ -1336,7 +1336,7 @@ export const adminZhCN = {
         sessionCreate: {
           title: '创建空会话',
           summary: '先创建会话，再发送对话或主动推送消息。',
-          agentDescription: 'Agent 数字 ID 或 agent_key。',
+          agentDescription: '当前机构已发布 Agent 的数字 ID 或 agent_key。',
           endUserDescription: '终端用户正整数十进制字符串；不自动选择默认用户。',
           scopeDescription: '可选业务作用域。',
           responseType: 'application/json'

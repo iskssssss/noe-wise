@@ -63,6 +63,7 @@ class ChatServiceCoverageTest {
     private final ChatRuntimeHistory runtimeHistory = mock(ChatRuntimeHistory.class);
 
     private ChatService service;
+    private ChatSessionService chatSessions;
     private String tenantId;
     private Long endUserId;
     private SessionView session;
@@ -70,7 +71,7 @@ class ChatServiceCoverageTest {
     /** 为每个用例建立与生产装配一致的组件图和冻结身份夹具。 */
     @BeforeEach
     void setUp() {
-        ChatSessionService chatSessions = new ChatSessionService(
+        chatSessions = new ChatSessionService(
                 agents, memory, sessions, mailbox, runtimeHistory, teamGateway,
                 new com.skillforge.core.chat.integration.publicread.PublicOutputGuard("./data/artifacts"));
         ChatConversationDirector director = new ChatConversationDirector(
@@ -421,6 +422,9 @@ class ChatServiceCoverageTest {
         ChatHistoryResponse history = service.history(tenantId, "sess-1");
         assertEquals("历史", history.messages().getFirst().content());
 
+        assertEquals(7100L, chatSessions.resolveAgentId(tenantId, "7100"));
+        when(agents.findPublished(org.mockito.ArgumentMatchers.anyLong(), eq(7100L)))
+                .thenReturn(new AgentView(7100L, Long.parseLong(tenantId), "agent", "published", null, "7100"));
         Map<String, Object> created = service.createSession(
                 new CreateSessionRequest("7100", null, null, endUserId), tenantId);
         assertEquals("sess-1", created.get("session_id"));
