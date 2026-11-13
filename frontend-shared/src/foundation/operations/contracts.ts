@@ -41,6 +41,18 @@ export interface AuditSummaryPage {
   page: number
   page_size: number
 }
+export interface AuditFilterOption {
+  value: string
+  label: string
+}
+/** 当前机构审计中实际出现且可解释的筛选值。 */
+export interface AuditOptions {
+  actions: AuditFilterOption[]
+  actors: AuditFilterOption[]
+  categories: AuditFilterOption[]
+  outcomes: AuditFilterOption[]
+  resource_types: AuditFilterOption[]
+}
 /** 从1开始的审计分页。 */
 export interface AuditPage {
   items: AuditEvent[]

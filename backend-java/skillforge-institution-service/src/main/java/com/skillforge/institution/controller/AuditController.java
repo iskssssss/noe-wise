@@ -81,30 +81,35 @@ public class AuditController {
     @GetMapping("/options")
     public ApiResponse<AuditFilterOptions> options() {
         long tenant = Long.parseLong(TenantIds.requireTenantId());
-        List<String> actions = auditLogService.listObjs(new QueryWrapper<AuditLogDO>()
-                        .select("DISTINCT action")
-                        .eq("tenant_id", tenant)
-                        .isNotNull("action")
-                        .ne("action", "")
-                        .orderByAsc("action"))
-                .stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
+        List<AuditFilterOption> actions = distinct(tenant, "action").stream()
+                .map(action -> new AuditFilterOption(action, auditActionLabel(action))).toList();
         Map<Long, String> names = new LinkedHashMap<>();
         tenantMembers.selectList(new LambdaQueryWrapper<TenantMemberDO>()
                         .eq(TenantMemberDO::getTenantId, tenant))
                 .forEach(member -> names.put(member.getId(), member.getUsername()));
-        List<AuditFilterOption> actors = auditLogService.listObjs(new QueryWrapper<AuditLogDO>()
-                        .select("DISTINCT actor_id")
-                        .eq("tenant_id", tenant)
-                        .isNotNull("actor_id")
-                        .orderByAsc("actor_id"))
-                .stream().filter(java.util.Objects::nonNull).map(value -> {
-                    String id = value.toString();
-                    String label = names.get(Long.parseLong(id));
-                    return new AuditFilterOption(id, label == null ? "操作者 #" + id : label);
-                }).toList();
+        List<AuditFilterOption> actors = distinct(tenant, "actor_id").stream().map(id -> {
+            String label = names.get(Long.parseLong(id));
+            return new AuditFilterOption(id, label == null ? "平台或历史操作者" : label);
+        }).toList();
         return ApiResponses.wrap(new AuditFilterOptions(
-                actions.stream().map(action -> new AuditFilterOption(action, auditActionLabel(action))).toList(),
-                actors));
+                actions,
+                actors,
+                distinct(tenant, "category").stream()
+                        .map(value -> new AuditFilterOption(value, auditCategoryLabel(value))).toList(),
+                distinct(tenant, "outcome").stream()
+                        .map(value -> new AuditFilterOption(value, auditOutcomeLabel(value))).toList(),
+                distinct(tenant, "resource_type").stream()
+                        .map(value -> new AuditFilterOption(value, auditResourceLabel(value))).toList()));
+    }
+
+    private List<String> distinct(long tenant, String column) {
+        return auditLogService.listObjs(new QueryWrapper<AuditLogDO>()
+                        .select("DISTINCT " + column)
+                        .eq("tenant_id", tenant)
+                        .isNotNull(column)
+                        .ne(column, "")
+                        .orderByAsc(column))
+                .stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
     }
 
     private String auditActionLabel(String action) {
@@ -126,9 +131,51 @@ public class AuditController {
         };
     }
 
+    private String auditCategoryLabel(String category) {
+        return switch (category) {
+            case "authentication" -> "认证";
+            case "authorization" -> "授权";
+            case "sensitive" -> "敏感访问";
+            case "export" -> "导出";
+            case "operation" -> "业务操作";
+            default -> category;
+        };
+    }
+
+    private String auditOutcomeLabel(String outcome) {
+        return switch (outcome) {
+            case "success" -> "成功";
+            case "failure" -> "失败";
+            case "denied" -> "拒绝";
+            default -> outcome;
+        };
+    }
+
+    private String auditResourceLabel(String resource) {
+        return switch (resource) {
+            case "security_session" -> "安全会话";
+            case "session" -> "会话";
+            case "tenant" -> "机构";
+            case "tenant_member" -> "机构成员";
+            case "platform_member" -> "平台成员";
+            case "agent" -> "智能体";
+            case "agent_definition" -> "公共定义";
+            case "agent_definition_grant" -> "定义授权";
+            case "knowledge_base" -> "知识库";
+            case "knowledge_document" -> "知识文档";
+            case "browser_authorization" -> "浏览器授权";
+            case "audit_query" -> "审计查询";
+            case "account" -> "账号";
+            case "member" -> "成员";
+            default -> resource;
+        };
+    }
+
     public record AuditFilterOption(String value, String label) { }
 
-    public record AuditFilterOptions(List<AuditFilterOption> actions, List<AuditFilterOption> actors) { }
+    public record AuditFilterOptions(List<AuditFilterOption> actions, List<AuditFilterOption> actors,
+            List<AuditFilterOption> categories, List<AuditFilterOption> outcomes,
+            List<AuditFilterOption> resourceTypes) { }
 
     /**
      * 构建日志响应项。

@@ -50,6 +50,23 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 function read(path: string) {
+  if (path.endsWith('/audit/options'))
+    return {
+      actions: [
+        { value: 'auth.login', label: '登录' },
+        { value: 'permissions.update', label: '更新权限' }
+      ],
+      actors: [{ value: 'actor-0', label: '演示管理员' }],
+      categories: [
+        { value: 'authentication', label: '认证' },
+        { value: 'authorization', label: '授权' }
+      ],
+      outcomes: [
+        { value: 'success', label: '成功' },
+        { value: 'denied', label: '拒绝' }
+      ],
+      resource_types: [{ value: 'member', label: '成员' }]
+    }
   if (path.endsWith('/retention')) return policy
   if (path.endsWith('/runs')) return []
   if (path.endsWith('/holds'))
@@ -69,9 +86,13 @@ function read(path: string) {
     page_size: 50
   }
 }
-async function render(request: OperationsRequest, apiBase = '/tenant/foundation/operations') {
+async function render(
+  request: OperationsRequest,
+  apiBase = '/tenant/foundation/operations',
+  auditOptionsPath?: string
+) {
   const wrapper = mount(OperationsPage, {
-    props: { request, apiBase, permissions },
+    props: { request, apiBase, permissions, auditOptionsPath },
     attachTo: document.body,
     global: { plugins: [ElementPlus] }
   })
@@ -145,6 +166,20 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     expect(calls.at(-1)).toContain('/audit/summaries?')
     expect(calls.at(-1)).toContain('action=auth.login')
     expect(calls.every((path) => path.includes('/audit/summaries?'))).toBe(true)
+  })
+
+  it('机构宿主使用服务端审计枚举并在列表中展示可读值', async () => {
+    const request: OperationsRequest = async <T>(_method: string, path: string) => read(path) as T
+    const wrapper = await render(request, '/tenant/foundation/operations', '/tenant/audit/options')
+    expect(wrapper.text()).toContain('登录')
+    expect(wrapper.text()).toContain('认证')
+    expect(wrapper.text()).toContain('成功')
+    expect(wrapper.text()).toContain('成员')
+    await button(wrapper, '更多条件').trigger('click')
+    expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('操作类型')
+    expect(wrapper.text()).toContain('操作者')
+    expect(wrapper.text()).toContain('资源类型')
   })
 
   it('默认四个条件，展开后八个条件及保护表单均有可见说明', async () => {

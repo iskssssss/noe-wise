@@ -12,6 +12,8 @@ import { vDescribedBy } from '../../directives/describedBy'
 import { saveAuditCsv } from './contracts'
 import type {
   AuditSummaryPage,
+  AuditFilterOption,
+  AuditOptions,
   AuditHold,
   CleanupRun,
   OperationsRequest,
@@ -23,6 +25,7 @@ import type {
 const props = defineProps<{
   request: OperationsRequest
   apiBase: string
+  auditOptionsPath?: string
   permissions: readonly string[]
 }>()
 const tabs = computed(() =>
@@ -85,6 +88,14 @@ const audit = useResource((signal) =>
     }
   )
 )
+const auditOptions = useResource((signal) =>
+  props.auditOptionsPath
+    ? props.request<AuditOptions>('GET', props.auditOptionsPath, undefined, false, {
+        signal,
+        silent: true
+      })
+    : Promise.resolve(undefined)
+)
 const retention = useResource(async (signal) => {
   const [current, runs, holds] = await Promise.all([
     props.request<RetentionPolicy>('GET', `${props.apiBase}/retention`, undefined, false, {
@@ -120,6 +131,15 @@ const outcomes = [
   { value: 'failure', label: '失败' },
   { value: 'denied', label: '拒绝' }
 ]
+const categoryChoices = computed<AuditFilterOption[]>(
+  () => auditOptions.data.value?.categories ?? categories
+)
+const outcomeChoices = computed<AuditFilterOption[]>(
+  () => auditOptions.data.value?.outcomes ?? outcomes
+)
+const actionChoices = computed(() => auditOptions.data.value?.actions ?? [])
+const actorChoices = computed(() => auditOptions.data.value?.actors ?? [])
+const resourceChoices = computed(() => auditOptions.data.value?.resource_types ?? [])
 const stateNames: Record<string, string> = {
   ready: '待执行',
   succeeded: '已完成',
@@ -129,6 +149,36 @@ const stateNames: Record<string, string> = {
 /** 显示权限直接来自当前me，服务端仍重新检查。 */
 function can(action: string) {
   return props.permissions.includes(`foundation.operations.${action}`)
+}
+function optionLabel(
+  choices: AuditFilterOption[] | undefined,
+  value: string | null | undefined,
+  fallback = '—'
+) {
+  if (!value) return fallback
+  return choices?.find((option) => option.value === value)?.label ?? value
+}
+function actionLabel(row: AuditSummaryPage['items'][number]) {
+  return optionLabel(actionChoices.value, row.action, row.action)
+}
+function categoryLabel(row: AuditSummaryPage['items'][number]) {
+  return optionLabel(categoryChoices.value, row.category, row.category)
+}
+function outcomeLabel(row: AuditSummaryPage['items'][number]) {
+  return optionLabel(outcomeChoices.value, row.outcome, row.outcome)
+}
+function resourceLabel(row: AuditSummaryPage['items'][number]) {
+  return optionLabel(resourceChoices.value, row.resource_type, '无特定资源')
+}
+function actorLabel(row: AuditSummaryPage['items'][number]) {
+  return optionLabel(
+    actorChoices.value,
+    row.actor_id,
+    row.actor_id ? '平台或历史操作者' : '系统或未知来源'
+  )
+}
+function shortIdentifier(value: string) {
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
 }
 /** 页码与已提交条件保持同一查询快照。 */
 function query() {
@@ -141,7 +191,9 @@ function query() {
 /** 只加载当前权限内的选项卡，不请求隐藏能力。 */
 async function load() {
   const generation = viewGeneration
-  if (active.value === 'audit' && can('audit_read')) await audit.reload()
+  if (active.value === 'audit' && can('audit_read')) {
+    await Promise.all([audit.reload(), props.auditOptionsPath ? auditOptions.reload() : undefined])
+  }
   if (active.value === 'retention' && can('retention_read')) {
     const value = await retention.reload()
     if (value && generation === viewGeneration && !policyDirty.value) {
@@ -333,7 +385,7 @@ watch(
   () => [props.apiBase, props.request, props.permissions.join(',')],
   () => {
     viewGeneration++
-    for (const resource of [audit, retention, status]) {
+    for (const resource of [audit, auditOptions, retention, status]) {
       resource.invalidate()
       resource.data.value = undefined
     }
@@ -351,7 +403,7 @@ watch(
 )
 watch(active, () => {
   viewGeneration++
-  for (const resource of [audit, retention, status]) resource.invalidate()
+  for (const resource of [audit, auditOptions, retention, status]) resource.invalidate()
   feedback.value = ''
   void load()
 })
@@ -379,17 +431,51 @@ watch(active, () => {
     <template v-if="active === 'audit' && can('audit_read')">
       <form class="filters" v-described-by="formTipId + '-filters'" @submit.prevent="search">
         <template v-if="advancedFilters"
+          ><template v-if="auditOptionsPath"
+            ><label
+              >操作类型<el-select v-model="filters.action" clearable filterable
+                ><el-option
+                  v-for="item in actionChoices"
+                  :key="item.value"
+                  :value="item.value"
+                  :label="item.label" /></el-select
+            ></label>
+            <label
+              >操作者<el-select v-model="filters.actor_id" clearable filterable
+                ><el-option
+                  v-for="item in actorChoices"
+                  :key="item.value"
+                  :value="item.value"
+                  :label="item.label" /></el-select
+            ></label>
+            <label
+              >资源类型<el-select v-model="filters.resource_type" clearable
+                ><el-option
+                  v-for="item in resourceChoices"
+                  :key="item.value"
+                  :value="item.value"
+                  :label="item.label" /></el-select
+            ></label>
+          </template>
+          <template v-else
+            ><label
+              >动作编码<el-input v-model="filters.action" placeholder="auth.login" clearable
+            /></label>
+            <label>操作者ID<el-input v-model="filters.actor_id" clearable /></label>
+            <label
+              >资源类型<el-input v-model="filters.resource_type" clearable />
+            </label> </template
           ><label
-            >动作编码<el-input v-model="filters.action" placeholder="auth.login" clearable
+            >追踪ID<el-input
+              v-model="filters.trace_id"
+              placeholder="仅在已知 Trace ID 时填写"
+              clearable
           /></label>
-          <label>操作者ID<el-input v-model="filters.actor_id" clearable /></label>
-          <label>资源类型<el-input v-model="filters.resource_type" clearable /></label>
-          <label>追踪ID<el-input v-model="filters.trace_id" clearable /></label
-        ></template>
+        </template>
         <label
           >分类<el-select v-model="filters.category" clearable
             ><el-option
-              v-for="item in categories"
+              v-for="item in categoryChoices"
               :key="item.value"
               :value="item.value"
               :label="item.label" /></el-select
@@ -397,7 +483,7 @@ watch(active, () => {
         <label
           >结果<el-select v-model="filters.outcome" clearable
             ><el-option
-              v-for="item in outcomes"
+              v-for="item in outcomeChoices"
               :key="item.value"
               :value="item.value"
               :label="item.label" /></el-select
@@ -430,6 +516,8 @@ watch(active, () => {
         :data="audit.data.value?.items ?? []"
         v-loading="audit.loading.value"
         row-key="id"
+        table-layout="fixed"
+        class="audit-table"
         :empty-text="
           audit.error.value
             ? '审计记录尚未读取成功'
@@ -438,30 +526,37 @@ watch(active, () => {
               : '当前查询范围没有审计事件'
         "
       >
-        <el-table-column prop="id" label="审计ID" min-width="170" /><el-table-column
-          prop="actor_id"
-          label="操作者"
-          min-width="150"
-        />
-        <el-table-column prop="action" label="动作" min-width="190" /><el-table-column
-          prop="category"
-          label="分类"
-          width="140"
-        />
-        <el-table-column prop="outcome" label="结果" width="90" /><el-table-column
-          prop="resource_type"
-          label="资源"
-          width="140"
-        />
-        <el-table-column prop="message" label="说明" min-width="200" /><el-table-column
-          prop="trace_id"
-          label="追踪ID"
-          min-width="170"
-        />
-        <el-table-column label="时间" width="185"
-          ><template #default="{ row }">{{
-            formatDateTime(row.created_at)
-          }}</template></el-table-column
+        <el-table-column label="审计事件" min-width="300"
+          ><template #default="{ row }">
+            <div>{{ row.message || actionLabel(row) }}</div>
+            <div class="admin-field-help">
+              {{ actionLabel(row) }} · {{ categoryLabel(row) }} · {{ resourceLabel(row) }}
+            </div>
+            <div class="admin-field-help" :title="String(row.id)">
+              审计 {{ shortIdentifier(String(row.id)) }}
+              <template v-if="row.trace_id">
+                · 追踪
+                <span :title="row.trace_id">{{ shortIdentifier(row.trace_id) }}</span>
+              </template>
+            </div>
+          </template></el-table-column
+        >
+        <el-table-column label="操作与结果" width="200"
+          ><template #default="{ row }">
+            <div :title="row.actor_id || undefined">{{ actorLabel(row) }}</div>
+            <el-tag
+              size="small"
+              :type="
+                row.outcome === 'success'
+                  ? 'success'
+                  : row.outcome === 'denied'
+                    ? 'warning'
+                    : 'danger'
+              "
+              >{{ outcomeLabel(row) }}</el-tag
+            >
+            <div class="admin-field-help">{{ formatDateTime(row.created_at) }}</div>
+          </template></el-table-column
         >
         <el-table-column
           v-if="can('retention_manage') && can('retention_read')"
@@ -727,5 +822,8 @@ watch(active, () => {
   border-radius: 4px;
   background: var(--el-bg-color);
   color: var(--el-text-color-primary);
+}
+.audit-table :deep(.el-table__cell > .cell) {
+  white-space: normal;
 }
 </style>
