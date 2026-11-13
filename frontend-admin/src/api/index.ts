@@ -2091,6 +2091,14 @@ export const api = {
 
   billing: {
     usage: () => get<Record<string, unknown>>('/billing/usage'),
+    filterOptions: () =>
+      get<{
+        event_types: Array<{ value: string; label: string }>
+        models: string[]
+      }>('/billing/filter-options').then((value) => ({
+        eventTypes: value.event_types,
+        models: value.models
+      })),
     monthly: (
       params: { month: string; page?: number; page_size?: number },
       opts?: RequestOptions
@@ -2290,6 +2298,11 @@ export const api = {
         `/audit/logs${q.toString() ? `?${q.toString()}` : ''}`
       )
     },
+    auditOptions: () =>
+      get<{
+        actions: Array<{ value: string; label: string }>
+        actors: Array<{ value: string; label: string }>
+      }>('/audit/options'),
     knowledgeProposals: {
       pending: () => get<KnowledgeWriteProposal[]>('/knowledge/write-proposals/pending'),
       approve: (proposalId: string, data: { reviewer_id: string; note?: string }) =>

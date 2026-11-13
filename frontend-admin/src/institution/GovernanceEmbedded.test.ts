@@ -47,7 +47,8 @@ vi.mock('../api', () => ({
         pauseWithReceipt: fixture.webhookPause,
         pauseResult: fixture.webhookPauseResult
       },
-      auditLogs: fixture.audit
+      auditLogs: fixture.audit,
+      auditOptions: async () => ({ actions: [], actors: [] })
     }
   }
 }))

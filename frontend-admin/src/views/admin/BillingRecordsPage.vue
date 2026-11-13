@@ -1,8 +1,8 @@
 <template>
   <AdminPage title="计费记录" description="查看月度模型费用，查询计费事件与请求用量。"
     ><FeedbackNotice
-      v-if="error || loadError"
-      :title="error || loadError"
+      v-if="error || loadError || filterError"
+      :title="error || loadError || filterError"
       :closable="false"
       type="error"
     /><ElTabs v-model="tab" :before-leave="beforeTabChange" @tab-change="queryRecords"
@@ -28,21 +28,41 @@
             end-placeholder="结束日期"
           />
         </div>
-        <ElInput
+        <ElSelect
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-if="tab === 'records'"
           v-model="model"
-          placeholder="模型"
+          clearable
+          filterable
+          placeholder="全部模型"
           aria-label="模型筛选"
-        /><ElInput
+          no-data-text="暂无可筛选的模型"
+        >
+          <ElOption
+            v-for="item in filterOptions?.models ?? []"
+            :key="item"
+            :label="item"
+            :value="item"
+          />
+        </ElSelect>
+        <ElSelect
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-if="tab === 'records'"
           v-model="eventType"
-          placeholder="事件类型"
+          clearable
+          placeholder="全部事件类型"
           aria-label="事件类型筛选"
-        /><ElInput
+        >
+          <ElOption
+            v-for="item in filterOptions?.eventTypes ?? []"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          />
+        </ElSelect>
+        <ElInput
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-else
@@ -53,8 +73,7 @@
         ><ElButton :disabled="busy || loading" @click="resetFilters">重置</ElButton>
 
         <FieldTip :id="formTipId + '-group-0'"
-          >按北京时间自然日期筛选，包含起止日期的整日；计费记录可按模型和事件类型查询，运行汇总可按
-          Run ID 查询。留空的条件不参与筛选，点击查询后更新结果。</FieldTip
+          >按北京时间自然日期筛选，包含起止日期的整日；模型和事件类型从当前可用选项中选择。留空的条件不参与筛选，点击查询后更新结果。</FieldTip
         >
       </div>
       <p v-if="filtersChanged" class="admin-muted" role="status">
@@ -537,7 +556,15 @@ watch(loaded, (result) => {
     saved.value = snapshot()
   }
 })
-onMounted(reload)
+const {
+  data: filterOptions,
+  error: filterError,
+  reload: reloadFilterOptions
+} = useResource(() => api.billing.filterOptions())
+onMounted(() => {
+  void reload()
+  void reloadFilterOptions()
+})
 const { busy, error, run } = useTask()
 useUnsavedChanges({
   dirty: () => tab.value === 'reconciliation' && !!saved.value && snapshot() !== saved.value,

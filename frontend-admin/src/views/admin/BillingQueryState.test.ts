@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ElButton, ElDatePicker, ElInput } from 'element-plus'
+import { ElButton, ElDatePicker, ElSelect } from 'element-plus'
 import BillingRecordsPage from './BillingRecordsPage.vue'
-const mocks = vi.hoisted(() => ({ records: vi.fn() }))
-vi.mock('../../api', () => ({ api: { billing: { records: mocks.records } } }))
+const mocks = vi.hoisted(() => ({ records: vi.fn(), filterOptions: vi.fn() }))
+vi.mock('../../api', () => ({
+  api: { billing: { records: mocks.records, filterOptions: mocks.filterOptions } }
+}))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
   mocks.records.mockReset()
+  mocks.filterOptions.mockResolvedValue({ eventTypes: [], models: [] })
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -51,9 +54,7 @@ describe('计费查询响应归属', () => {
       .mockResolvedValueOnce({ items: [{ model: 'new', event_type: '新结果' }], total: 2 })
     wrapper = mount(BillingRecordsPage, { attachTo: document.body })
     await flushPromises()
-    const field = wrapper
-      .findAllComponents(ElInput)
-      .find((item) => item.props('placeholder') === '模型')!
+    const field = wrapper.findAllComponents(ElSelect)[0]!
     field.vm.$emit('update:modelValue', 'new')
     await flushPromises()
     await wrapper

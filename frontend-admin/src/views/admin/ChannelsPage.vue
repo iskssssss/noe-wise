@@ -28,12 +28,22 @@
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
         v-model="query"
-        placeholder="搜索名称或类型"
+        placeholder="搜索渠道名称"
         clearable
-      /><span class="admin-muted" role="status">{{ filtered.length }} 个渠道</span
+      /><ElSelect v-model="type" clearable placeholder="全部类型" aria-label="渠道类型筛选">
+        <ElOption
+          v-for="item in channelTypes"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </ElSelect>
+      <span class="admin-muted" role="status">{{ filtered.length }} 个渠道</span
       ><ElButton @click="reload" :loading="loading" :disabled="busy">刷新</ElButton>
 
-      <FieldTip :id="formTipId + '-group-0'">按渠道名称或类型筛选；清空后可查询全部渠道。</FieldTip>
+      <FieldTip :id="formTipId + '-group-0'"
+        >按渠道名称和类型组合筛选；清空后可查询全部渠道。</FieldTip
+      >
     </div>
     <ElTable
       table-layout="auto"
@@ -42,10 +52,13 @@
       row-key="id"
       stripe
       :empty-text="
-        query ? '没有匹配渠道，清空关键词查看全部' : '尚未创建渠道，新增渠道后绑定智能体即可接入'
+        query || type
+          ? '没有匹配渠道，清空名称或类型后查看全部'
+          : '尚未创建渠道，新增渠道后绑定智能体即可接入'
       "
       ><ElTableColumn min-width="200" show-overflow-tooltip prop="name" label="名称"></ElTableColumn
-      ><ElTableColumn min-width="140" show-overflow-tooltip prop="type" label="类型"></ElTableColumn
+      ><ElTableColumn min-width="140" show-overflow-tooltip label="类型"
+        ><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></ElTableColumn
       ><ElTableColumn width="128" show-overflow-tooltip label="状态"
         ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
       ><ElTableColumn width="300" class-name="admin-table-actions" prop="actions" label="操作"
@@ -433,6 +446,7 @@ onMounted(() => {
 })
 const { busy, error, run } = useTask(),
   query = ref(''),
+  type = ref(''),
   open = ref(false),
   editing = ref<ChannelItem>(),
   saved = ref(''),
@@ -461,8 +475,17 @@ useUnsavedChanges({
       ? '凭据操作结果尚未确认。关闭标签页可能丢失原请求记录，请先核对。'
       : undefined
 })
+const channelTypes = [
+  { value: 'web_widget', label: '网页组件' },
+  { value: 'openapi', label: '开放 API' }
+]
+const channelTypeLabel = (value: string) =>
+  channelTypes.find((item) => item.value === value)?.label ?? value
 const filtered = computed(() =>
-  (data.value?.items ?? []).filter((r) => (r.name + r.type).includes(query.value))
+  (data.value?.items ?? []).filter(
+    (row) =>
+      (!query.value || row.name.includes(query.value)) && (!type.value || row.type === type.value)
+  )
 )
 async function edit(row?: ChannelItem) {
   if (busy.value || (!row && (pendingCreate.value || storageError.value))) return

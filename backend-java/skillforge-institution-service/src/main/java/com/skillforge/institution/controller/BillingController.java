@@ -6,6 +6,7 @@ import com.skillforge.core.shared.web.ApiResponses;
 
 import com.skillforge.institution.common.TenantIds;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.skillforge.core.foundation.access.RequirePermission;
 import com.skillforge.core.billing.metering.CostEventDO;
@@ -160,6 +161,31 @@ public class BillingController {
         List<UsageEventItem> items = result.getRecords().stream().map(this::eventItem).toList();
         return ApiResponses.wrap(new UsageEventListResponse(result.getTotal(), items));
     }
+
+    /** 当前租户实际可用于计费筛选的事件类型与模型，避免用户手输内部取值。 */
+    @RequirePermission("foundation.billing.read")
+    @GetMapping("/filter-options")
+    public ApiResponse<FilterOptions> filterOptions() {
+        long tenant = Long.parseLong(TenantIds.requireTenantId());
+        List<String> models = costEventMapper.selectObjs(new QueryWrapper<CostEventDO>()
+                        .select("DISTINCT model")
+                        .eq("tenant_id", tenant)
+                        .isNotNull("model")
+                        .ne("model", "")
+                        .orderByAsc("model"))
+                .stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
+        return ApiResponses.wrap(new FilterOptions(List.of(
+                new FilterOption("request", "请求"),
+                new FilterOption("llm.chat", "对话"),
+                new FilterOption("llm.embedding", "向量化"),
+                new FilterOption("llm.rerank", "重排"),
+                new FilterOption("knowledge.source", "知识来源"),
+                new FilterOption("workflow.external", "外部工作流")), models));
+    }
+
+    public record FilterOption(String value, String label) { }
+
+    public record FilterOptions(List<FilterOption> eventTypes, List<String> models) { }
 
     /**
      * 查询当前租户月度用量（基于最小单元聚合）。

@@ -4,8 +4,8 @@
     :title="embedded ? '接入与执行凭证' : '机构治理'"
     description="维护服务凭据、回调订阅、审计与知识写入审批。"
     ><FeedbackNotice
-      v-if="error || loadError"
-      :title="error || loadError"
+      v-if="error || loadError || auditOptionsError"
+      :title="error || loadError || auditOptionsError"
       :closable="false"
       type="error"
     /><ElAlert
@@ -176,16 +176,28 @@
         @click="openCreate"
         :disabled="busy || (tab === 'principals' ? credentialUncertain : webhookUncertain)"
         >{{ tab === 'principals' ? '创建服务身份' : '订阅回调' }}</ElButton
-      ><ElInput
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        clearable
+      ><ElSelect
         v-if="tab === 'audit'"
         v-model="action"
-        placeholder="筛选操作类型，按 Enter 查询"
-        @keyup.enter="reload"
-        @clear="reload"
-      /><ElButton @click="reload" :disabled="busy">刷新</ElButton>
+        clearable
+        filterable
+        placeholder="全部操作类型"
+        aria-label="操作类型筛选"
+        v-described-by="formTipId + '-group-0'"
+        :aria-describedby="formTipId + '-group-0'"
+        @change="reload"
+      >
+        <ElOption
+          v-for="item in auditOptions?.actions ?? []"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        >
+          <div>{{ item.label }}</div>
+          <div class="admin-field-help">{{ item.value }}</div>
+        </ElOption>
+      </ElSelect>
+      <ElButton @click="reload" :disabled="busy">刷新</ElButton>
 
       <FieldTip v-if="tab === 'audit'" :id="formTipId + '-group-0'"
         >审计页可按操作类型筛选；留空不限制操作类型。</FieldTip
@@ -293,17 +305,19 @@
       :data="audit"
       v-loading="loading"
       empty-text="最近记录中没有匹配的审计操作，可清除操作类型筛选后查看"
+      ><ElTableColumn min-width="160" label="操作"
+        ><template #default="{ row }"
+          ><div>{{ auditActionLabel(row.action) }}</div>
+          <div class="admin-field-help">{{ row.action }}</div></template
+        ></ElTableColumn
+      ><ElTableColumn min-width="200" label="操作者"
+        ><template #default="{ row }"
+          ><div>{{ auditActorLabel(row.actor_id) }}</div>
+          <div v-if="row.actor_id != null" class="admin-field-help">
+            {{ row.actor_id }}
+          </div></template
+        ></ElTableColumn
       ><ElTableColumn
-        min-width="160"
-        show-overflow-tooltip
-        prop="action"
-        label="操作"
-      /><ElTableColumn
-        min-width="200"
-        show-overflow-tooltip
-        prop="actor_id"
-        label="操作者"
-      /><ElTableColumn
         min-width="140"
         show-overflow-tooltip
         prop="resource_type"
@@ -657,7 +671,30 @@ const {
   else proposals.value = await api.governance.knowledgeProposals.pending()
   return true
 })
-onMounted(reload)
+const {
+  data: auditOptions,
+  error: auditOptionsError,
+  reload: reloadAuditOptions
+} = useResource(() =>
+  identity.allowed('foundation.audit.read')
+    ? api.governance.auditOptions()
+    : Promise.resolve({ actions: [], actors: [] })
+)
+const auditActionLabels = computed(
+  () => new Map((auditOptions.value?.actions ?? []).map((item) => [item.value, item.label]))
+)
+const auditActorLabels = computed(
+  () => new Map((auditOptions.value?.actors ?? []).map((item) => [item.value, item.label]))
+)
+const auditActionLabel = (value: string) => auditActionLabels.value.get(value) ?? value
+const auditActorLabel = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined || value === '') return '系统或未知来源'
+  return auditActorLabels.value.get(String(value)) ?? `操作者 #${value}`
+}
+onMounted(() => {
+  void reload()
+  void reloadAuditOptions()
+})
 const { busy, error, run } = useTask(),
   open = ref(false),
   secretOpen = ref(false),

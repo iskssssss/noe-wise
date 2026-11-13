@@ -9,6 +9,7 @@ import BillingRecordsPage from './BillingRecordsPage.vue'
 const mocks = vi.hoisted(() => ({
   records: vi.fn(),
   monthly: vi.fn(),
+  filterOptions: vi.fn(),
   reconciliationProvider: { get: vi.fn(), save: vi.fn() }
 }))
 vi.mock('../../api', () => ({ api: { billing: mocks } }))
@@ -30,6 +31,7 @@ const result: ModelBillingMonthly = {
 let wrapper: VueWrapper | undefined
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.filterOptions.mockResolvedValue({ eventTypes: [], models: [] })
   mocks.records.mockResolvedValue({ items: [], total: 0 })
   mocks.reconciliationProvider.get.mockResolvedValue({
     provider: 'http',

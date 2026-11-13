@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElDatePicker, ElPagination, ElInput } from 'element-plus'
+import { ElDatePicker, ElPagination, ElSelect } from 'element-plus'
 import BillingRecordsPage from './BillingRecordsPage.vue'
 
-const mocks = vi.hoisted(() => ({ records: vi.fn(), requests: vi.fn() }))
+const mocks = vi.hoisted(() => ({ records: vi.fn(), requests: vi.fn(), filterOptions: vi.fn() }))
 vi.mock('../../api', () => ({ api: { billing: mocks } }))
 vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@skillforge/shared/feedback')>()),
@@ -16,6 +16,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.records.mockResolvedValue({ items: [], total: 41 })
   mocks.requests.mockResolvedValue({ items: [], total: 41 })
+  mocks.filterOptions.mockResolvedValue({ eventTypes: [], models: [] })
 })
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
@@ -40,7 +41,7 @@ describe('账单自然日期查询契约', () => {
   it('修改模型或日期但未查询时，翻页保留上次查询条件', async () => {
     const wrapper = await page('records')
     wrapper.getComponent(ElDatePicker).vm.$emit('update:modelValue', ['2026-10-01', '2026-10-12'])
-    wrapper.getComponent(ElInput).vm.$emit('update:modelValue', 'new-model')
+    wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'new-model')
     wrapper.getComponent(ElPagination).vm.$emit('current-change', 2)
     await flushPromises()
     expect(mocks.records).toHaveBeenLastCalledWith(
