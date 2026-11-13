@@ -791,38 +791,39 @@ const formTipId = useId()
       :data="filteredRows"
       style="width: 100%"
     >
-      <ElTableColumn prop="name" label="部署名称" min-width="220" show-overflow-tooltip>
+      <ElTableColumn label="部署 / 工具" min-width="240">
+        <template #default="{ row }">
+          <div>{{ row.name }}</div>
+          <div class="admin-field-help">
+            工具：{{
+              tools.find((tool) => tool.id === row.tool_definition_id)?.name ??
+              '工具不在当前可选目录中'
+            }}
+          </div>
+          <div class="admin-field-help">提供方：{{ row.provider_ref }}</div>
+        </template>
       </ElTableColumn>
-      <ElTableColumn
-        prop="tool_definition_id"
-        label="工具（跟随当前发布）"
-        min-width="220"
-        show-overflow-tooltip
-        ><template #default="{ row }">{{
-          tools.find((tool) => tool.id === row.tool_definition_id)?.name ?? '工具不在当前可选目录中'
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn prop="provider_ref" label="提供方引用" min-width="220" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="environment" label="环境" min-width="140" show-overflow-tooltip>
+      <ElTableColumn prop="environment" label="环境" width="72" show-overflow-tooltip>
         <template #default="{ row }">{{
           row.environment === 'PRODUCTION' ? '生产' : '测试'
         }}</template>
       </ElTableColumn>
-      <ElTableColumn prop="active" label="启用" width="90">
-        <template #default="{ row }">{{ row.active ? '是' : '否' }}</template>
+      <ElTableColumn label="状态与发布" min-width="160">
+        <template #default="{ row }">
+          <div>{{ row.active ? '已启用' : '已停用' }}</div>
+          <div class="admin-field-help">
+            发布修订 {{ row.published_revision ?? '尚未发布' }} ·
+            {{ row.has_unpublished_changes ? '草稿待发布' : '与发布一致' }}
+          </div>
+        </template>
       </ElTableColumn>
-      <ElTableColumn label="发布修订" width="120"
-        ><template #default="{ row }">{{
-          row.published_revision ?? '尚未发布'
-        }}</template></ElTableColumn
+      <ElTableColumn
+        prop="actions"
+        label="操作"
+        width="160"
+        fixed="right"
+        class-name="admin-table-actions"
       >
-      <ElTableColumn label="工作草稿" width="120"
-        ><template #default="{ row }">{{
-          row.has_unpublished_changes ? '待发布' : '与发布一致'
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn prop="actions" label="操作" width="220" class-name="admin-table-actions">
         <template #default="{ row }">
           <ElButton
             v-permission="['foundation.system_agent_tools.publish']"

@@ -116,34 +116,27 @@ onMounted(load)
       v-loading="busy"
       style="width: 100%"
     >
-      <ElTableColumn prop="name" label="名称" min-width="220" show-overflow-tooltip>
+      <ElTableColumn label="模型" min-width="220">
         <template #default="{ row }">
           <RouterLink :to="'/platform/models/' + row.id">{{ row.name }}</RouterLink>
+          <div class="admin-field-help">
+            {{ modelKindLabels[row.kind] ?? row.kind }} · {{ row.provider_id }}
+          </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn prop="kind" label="类型" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }">{{ modelKindLabels[row.kind] ?? row.kind }}</template>
+      <ElTableColumn prop="model_id" label="模型标识" min-width="220" show-overflow-tooltip>
       </ElTableColumn>
-      <ElTableColumn prop="provider_id" label="提供方" min-width="160" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="model_id" label="模型标识" min-width="240" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="enabled" label="状态" width="100">
+      <ElTableColumn label="状态与发布" min-width="170">
         <template #default="{ row }">
           <ElTag :type="row.enabled ? 'success' : 'info'">{{
             row.enabled ? '启用' : '停用'
           }}</ElTag>
+          <div class="admin-field-help">
+            发布修订 {{ row.published_revision ?? '尚未发布' }} ·
+            {{ row.has_unpublished_changes ? '草稿待发布' : '与发布一致' }}
+          </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="发布修订" width="120"
-        ><template #default="{ row }">{{
-          row.published_revision ?? '尚未发布'
-        }}</template></ElTableColumn
-      ><ElTableColumn label="工作草稿" width="120"
-        ><template #default="{ row }">{{
-          row.has_unpublished_changes ? '待发布' : '与发布一致'
-        }}</template></ElTableColumn
-      >
     </ElTable>
   </AdminPage>
 </template>
