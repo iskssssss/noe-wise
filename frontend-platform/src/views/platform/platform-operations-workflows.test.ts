@@ -37,7 +37,10 @@ vi.mock('../../api', () => ({
       create: mocks.createDeployment
     },
     agentGrants: { list: mocks.grantList, create: mocks.createGrant, revoke: mocks.revokeGrant },
-    operations: { auditLogs: mocks.audit },
+    operations: {
+      auditLogs: mocks.audit,
+      auditOptions: async () => ({ actions: [], actors: [], resourceTypes: [] })
+    },
     health: mocks.health
   }
 }))

@@ -50,10 +50,10 @@ const filtersChanged = computed(
 const appliedSummary = computed(
   () =>
     [
-      applied.value.action && `操作 ${applied.value.action}`,
+      applied.value.action && `操作 ${actionLabel(applied.value.action)}`,
       applied.value.tenant_id && `机构 ${applied.value.tenant_id}`,
-      applied.value.actor_id && `操作者 ${applied.value.actor_id}`,
-      applied.value.resource_type && `资源 ${applied.value.resource_type}`,
+      applied.value.actor_id && `操作者 ${actorLabel(applied.value.actor_id)}`,
+      applied.value.resource_type && `资源 ${resourceTypeLabel(applied.value.resource_type)}`,
       applied.value.from &&
         `${formatDateTime(applied.value.from)} 至 ${formatDateTime(applied.value.to)}`
     ]
@@ -68,6 +68,44 @@ const load = useResource(async (signal) => {
   )
   return { ...result, page: requestedPage }
 })
+const options = useResource(() => api.operations.auditOptions())
+const actionLabel = (value: string) => {
+  const labels: Record<string, string> = {
+    'auth.login': '登录',
+    'auth.refresh': '刷新令牌',
+    'auth.password_change': '修改密码',
+    'platform.session.messages.read': '读取会话正文',
+    'trajectory.content.read': '读取轨迹正文',
+    'sensitive.audit.read': '读取安全审计',
+    'admin.tenant.provision': '开通机构',
+    'admin.tenant.update': '更新机构',
+    'admin.tenant.suspend': '停用机构',
+    'admin.tenant.activate': '启用机构',
+    'admin.tenant_member.create': '新增成员',
+    'admin.tenant_member.update': '更新成员',
+    'admin.tenant_member.reset_password': '重置成员密码'
+  }
+  return labels[value] ?? value
+}
+const actorLabel = (value: string | null | undefined) => {
+  if (value === null || value === undefined || value === '') return '系统或未知来源'
+  return (
+    options.data.value?.actors.find((item) => item.value === String(value))?.label ??
+    `操作者 #${value}`
+  )
+}
+const resourceTypeLabel = (value: string) => {
+  const labels: Record<string, string> = {
+    tenant: '机构',
+    tenant_member: '机构成员',
+    platform_member: '平台成员',
+    session: '会话',
+    security_session: '安全会话',
+    audit_query: '审计查询',
+    account: '账号'
+  }
+  return labels[value] ?? value
+}
 
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
@@ -117,7 +155,10 @@ function resetFilters() {
   page.value = 1
   submitFilters()
 }
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  void options.reload()
+})
 
 const formTipId = useId()
 </script>
@@ -178,43 +219,74 @@ const formTipId = useId()
         class="admin-filters"
         @submit.prevent="submitFilters"
       >
-        <ElInput
+        <ElSelect
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-model="filter.action"
-          placeholder="操作类型"
-        />
-        <EntitySelect
-          v-if="!manualTenant"
-          v-described-by="formTipId + '-group-0'"
-          :aria-describedby="formTipId + '-group-0'"
-          v-model="filter.tenant_id"
-          :load="loadTenantOptions"
-          :resolve="resolveTenantOption"
-          placeholder="选择机构"
-        />
-        <ElInput
-          v-else
-          v-model="filter.tenant_id"
           clearable
-          placeholder="历史机构标识"
-          aria-label="历史机构标识"
-        />
-        <ElButton link @click="manualTenant = !manualTenant">{{
-          manualTenant ? '按机构名称选择' : '输入历史机构标识'
-        }}</ElButton>
-        <ElInput
+          filterable
+          placeholder="全部操作类型"
+          aria-label="操作类型"
+        >
+          <ElOption
+            v-for="item in options.data.value?.actions ?? []"
+            :key="item"
+            :label="actionLabel(item)"
+            :value="item"
+          />
+        </ElSelect>
+        <div class="tenant-filter">
+          <EntitySelect
+            v-if="!manualTenant"
+            v-described-by="formTipId + '-group-0'"
+            :aria-describedby="formTipId + '-group-0'"
+            v-model="filter.tenant_id"
+            :load="loadTenantOptions"
+            :resolve="resolveTenantOption"
+            placeholder="选择机构"
+          />
+          <ElInput
+            v-else
+            v-model="filter.tenant_id"
+            clearable
+            placeholder="历史机构标识"
+            aria-label="历史机构标识"
+          />
+          <ElButton link class="tenant-history-toggle" @click="manualTenant = !manualTenant">
+            {{ manualTenant ? '按名称选择' : '历史标识' }}
+          </ElButton>
+        </div>
+        <ElSelect
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-model="filter.actor_id"
-          placeholder="操作者 ID"
-        />
-        <ElInput
+          clearable
+          filterable
+          placeholder="全部操作者"
+          aria-label="操作者"
+        >
+          <ElOption
+            v-for="item in options.data.value?.actors ?? []"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          />
+        </ElSelect>
+        <ElSelect
           v-described-by="formTipId + '-group-0'"
           :aria-describedby="formTipId + '-group-0'"
           v-model="filter.resource_type"
-          placeholder="资源类型"
-        />
+          clearable
+          placeholder="全部资源类型"
+          aria-label="资源类型"
+        >
+          <ElOption
+            v-for="item in options.data.value?.resourceTypes ?? []"
+            :key="item"
+            :label="resourceTypeLabel(item)"
+            :value="item"
+          />
+        </ElSelect>
         <div v-described-by="formTipId + '-time-range'" class="time-range-filter">
           <ElDatePicker
             :aria-describedby="formTipId + '-time-range'"
@@ -235,8 +307,7 @@ const formTipId = useId()
         ><ElButton @click="resetFilters">重置</ElButton>
 
         <FieldTip :id="formTipId + '-group-0'"
-          >按操作类型、机构、操作者
-          ID、资源类型和发生时间组合查询审计记录；历史机构可输入原标识。时间范围按北京时间选择，留空的条件不限制结果。</FieldTip
+          >按操作类型、机构、操作者和资源类型组合查询审计记录；历史机构标识只用于恢复旧记录。时间范围按北京时间选择，留空的条件不限制结果。</FieldTip
         >
       </ElForm>
       <p class="admin-field-help" role="status">
@@ -267,11 +338,20 @@ const formTipId = useId()
         <ElTableColumn prop="created_at" label="时间" min-width="190">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </ElTableColumn>
-        <ElTableColumn prop="action" label="操作" min-width="180" show-overflow-tooltip>
+        <ElTableColumn label="操作" min-width="180">
+          <template #default="{ row }">
+            <div>{{ actionLabel(row.action) }}</div>
+            <div class="admin-field-help">{{ row.action }}</div>
+          </template>
         </ElTableColumn>
-        <ElTableColumn prop="actor_id" label="操作者" min-width="180" show-overflow-tooltip>
+        <ElTableColumn label="操作者" min-width="180">
+          <template #default="{ row }">
+            <div>{{ actorLabel(row.actor_id) }}</div>
+            <div v-if="row.actor_id != null" class="admin-field-help">{{ row.actor_id }}</div>
+          </template>
         </ElTableColumn>
-        <ElTableColumn prop="resource_type" label="资源类型" min-width="160" show-overflow-tooltip>
+        <ElTableColumn label="资源类型" min-width="160">
+          <template #default="{ row }">{{ resourceTypeLabel(row.resource_type) }}</template>
         </ElTableColumn>
         <ElTableColumn prop="resource_id" label="资源 ID" min-width="240" show-overflow-tooltip>
         </ElTableColumn>
@@ -323,3 +403,23 @@ const formTipId = useId()
     </ElDrawer>
   </AdminPage>
 </template>
+
+<style scoped>
+.tenant-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  min-width: 320px;
+}
+
+.tenant-filter :deep(.el-select),
+.tenant-filter :deep(.el-input) {
+  flex: 1;
+}
+
+.tenant-history-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+</style>

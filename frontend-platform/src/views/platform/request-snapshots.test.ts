@@ -36,7 +36,10 @@ vi.mock('../../api', () => ({
     admin: { listTenants: mocks.tenants },
     agentTemplates: { list: mocks.templates },
     marketplace: { reviews: mocks.reviews },
-    operations: { auditLogs: mocks.audit },
+    operations: {
+      auditLogs: mocks.audit,
+      auditOptions: async () => ({ actions: [], actors: [], resourceTypes: [] })
+    },
     sessions: { list: mocks.sessions }
   }
 }))
@@ -283,7 +286,10 @@ describe('平台读取请求快照', () => {
               (field: VueWrapper) => field.get('input').attributes('placeholder') === '会话 ID'
             )!
           : inputs[0]!
-      await input.get('input').setValue('new-filter')
+      const filterValue = component === OperationsPage ? 'auth.login' : 'new-filter'
+      if (component === OperationsPage)
+        wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', filterValue)
+      else await input.get('input').setValue(filterValue)
       await flushPromises()
       expect(loader).toHaveBeenCalledTimes(count)
       expect(pager.props('currentPage')).toBe(3)
@@ -292,7 +298,7 @@ describe('平台读取请求快照', () => {
       expect(loader.mock.lastCall?.[0]).toMatchObject({ page: 4, [key]: '' })
       await wrapper.find('form.admin-filters, form.filters').trigger('submit')
       await flushPromises()
-      expect(loader.mock.lastCall?.[0]).toMatchObject({ page: 1, [key]: 'new-filter' })
+      expect(loader.mock.lastCall?.[0]).toMatchObject({ page: 1, [key]: filterValue })
       loader.mockRejectedValueOnce(new Error('加载失败'))
       pager.vm.$emit('current-change', 2)
       await flushPromises()

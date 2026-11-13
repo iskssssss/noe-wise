@@ -996,6 +996,16 @@ export const api = {
     }
   },
   operations: {
+    auditOptions: () =>
+      get<{
+        actions: string[]
+        actors: Array<{ value: string; label: string }>
+        resource_types: string[]
+      }>('/platform/audit/options').then((value) => ({
+        actions: value.actions,
+        actors: value.actors,
+        resourceTypes: value.resource_types
+      })),
     auditLogs: (
       params: {
         action?: string
