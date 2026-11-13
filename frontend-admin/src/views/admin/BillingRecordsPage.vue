@@ -88,12 +88,11 @@
         :data="records"
         v-loading="loading"
         empty-text="当前查询没有计费事件，可调整日期、模型或事件类型后查询"
-        ><ElTableColumn
-          min-width="140"
-          show-overflow-tooltip
-          prop="event_type"
-          label="类型"
-        /><ElTableColumn width="120" label="事实类型"
+        ><ElTableColumn min-width="140" label="类型"
+          ><template #default="{ row }">{{
+            eventTypeLabel(row.event_type)
+          }}</template></ElTableColumn
+        ><ElTableColumn width="120" label="事实类型"
           ><template #default="{ row }">{{
             usageKindLabel(row.usage_event_kind)
           }}</template></ElTableColumn
@@ -105,17 +104,16 @@
         /><ElTableColumn width="96" prop="quantity" label="数量" /><ElTableColumn
           width="96"
           prop="tokens"
-          label="Token"
+          label="Token 数"
         /><ElTableColumn width="120" prop="total_amount" label="金额" /><ElTableColumn
           width="80"
           prop="currency"
           label="币种"
-        /><ElTableColumn
-          width="128"
-          show-overflow-tooltip
-          prop="amount_status"
-          label="成本状态"
-        /><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
+        /><ElTableColumn width="128" label="成本状态"
+          ><template #default="{ row }">{{
+            costStatusLabel(row.amount_status)
+          }}</template></ElTableColumn
+        ><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
           ><template #default="{ row }">{{
             formatDateTime(row.created_at)
           }}</template></ElTableColumn
@@ -144,17 +142,16 @@
         /><ElTableColumn width="120" prop="llm_calls" label="模型调用" /><ElTableColumn
           width="96"
           prop="tokens"
-          label="Token"
+          label="Token 数"
         /><ElTableColumn width="120" prop="confirmed_cost" label="已确认成本" /><ElTableColumn
           width="120"
           prop="missing_cost_count"
           label="成本缺失数"
-        /><ElTableColumn
-          width="128"
-          show-overflow-tooltip
-          prop="usage_status"
-          label="状态"
-        /><ElTableColumn width="80" class-name="admin-table-actions" label="操作"
+        /><ElTableColumn width="128" label="状态"
+          ><template #default="{ row }">{{
+            requestStatusLabel(row.usage_status)
+          }}</template></ElTableColumn
+        ><ElTableColumn width="80" class-name="admin-table-actions" label="操作"
           ><template #default="{ row }"
             ><ElButton link @click="viewRequest(row.request_id)" :disabled="busy"
               >详情</ElButton
@@ -416,6 +413,33 @@ const usageKinds: Record<string, string> = {
 function usageKindLabel(kind?: string | null) {
   return kind ? (usageKinds[kind] ?? kind) : '未记录'
 }
+const eventTypeLabels: Record<string, string> = {
+  request: '请求',
+  'llm.chat': '对话',
+  'llm.embedding': '向量化',
+  'llm.rerank': '重排',
+  'knowledge.source': '知识来源',
+  'workflow.external': '外部工作流'
+}
+const costStatusLabels: Record<string, string> = {
+  unpriced: '未定价',
+  unresolved: '待确认',
+  not_applicable: '不适用',
+  priced: '已定价',
+  confirmed: '已确认'
+}
+const requestStatusLabels: Record<string, string> = {
+  complete: '完整',
+  partial: '部分缺失',
+  unresolved: '待确认',
+  missing: '缺失'
+}
+const eventTypeLabel = (value?: string | null) =>
+  value ? (eventTypeLabels[value] ?? value) : '未记录'
+const costStatusLabel = (value?: string | null) =>
+  value ? (costStatusLabels[value] ?? value) : '未记录'
+const requestStatusLabel = (value?: string | null) =>
+  value ? (requestStatusLabels[value] ?? value) : '未记录'
 const tab = ref('records'),
   range = ref<[string, string]>(),
   model = ref(''),
