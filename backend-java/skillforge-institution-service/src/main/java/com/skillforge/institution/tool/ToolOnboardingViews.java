@@ -53,6 +53,7 @@ public final class ToolOnboardingViews {
             @JsonProperty("definition_id") String definitionId,
             @JsonProperty("default_version_id") String defaultVersionId,
             String name,
+            String title,
             String description,
             @JsonProperty("tool_name") String toolName,
             List<Deployment> deployments) {}

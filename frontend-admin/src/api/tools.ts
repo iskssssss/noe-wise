@@ -11,6 +11,7 @@ export interface AvailableTool {
   definition_id: string
   default_version_id: string
   name: string
+  title?: string | null
   description: string
   tool_name: string
   deployments: AvailableToolDeployment[]

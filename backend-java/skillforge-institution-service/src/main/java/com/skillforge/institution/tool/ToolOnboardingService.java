@@ -311,6 +311,7 @@ public class ToolOnboardingService {
                 .collect(Collectors.toMap(ConnectorInstanceDO::getInstanceId, Function.identity()));
         Map<Long, AvailableToolDeployment> current = new LinkedHashMap<>();
         Map<Long, List<ToolOnboardingViews.Deployment>> grouped = new LinkedHashMap<>();
+        Map<Long, String> titles = new LinkedHashMap<>();
         for (var deployment : deployments) {
             String label;
             if (deployment.providerType() == ToolDeployment.ProviderType.MCP) {
@@ -319,8 +320,12 @@ public class ToolOnboardingService {
                         || !connector.getCapabilities().contains(deployment.toolName())) continue;
                 label = connector.getName();
             } else {
-                if (!platformTools.names().contains(deployment.providerRef())) continue;
-                label = deployment.providerRef();
+                var entry = platformTools.entries().stream()
+                        .filter(candidate -> candidate.name().equals(deployment.providerRef()))
+                        .findFirst().orElse(null);
+                if (entry == null) continue;
+                label = entry.title();
+                titles.putIfAbsent(deployment.definitionId(), entry.title());
             }
             current.putIfAbsent(deployment.definitionId(), deployment);
             grouped.computeIfAbsent(deployment.definitionId(), ignored -> new ArrayList<>()).add(
@@ -330,7 +335,7 @@ public class ToolOnboardingService {
         List<ToolOnboardingViews.AvailableTool> items = grouped.entrySet().stream().map(entry -> {
             var version = current.get(entry.getKey());
             return new ToolOnboardingViews.AvailableTool(version.definitionId().toString(), version.versionId().toString(),
-                    version.name(), version.description(), version.toolName(),
+                    version.name(), titles.get(entry.getKey()), version.description(), version.toolName(),
                     List.copyOf(entry.getValue()));
         }).toList();
         return new ToolOnboardingViews.Available(items);

@@ -81,8 +81,8 @@ const enabledToolNames = computed(
 const platformTitleByName = computed(
   () => new Map((platformCatalog.value ?? []).map((tool) => [tool.name, tool.title]))
 )
-function availableToolLabel(tool: { name: string; tool_name: string }) {
-  const title = platformTitleByName.value.get(tool.tool_name)
+function availableToolLabel(tool: { name: string; tool_name: string; title?: string | null }) {
+  const title = tool.title || platformTitleByName.value.get(tool.tool_name)
   return title ? `${title}（${tool.name}）` : tool.name
 }
 const canEnablePlatformTools = computed(() => allowed('foundation.capabilities.create'))

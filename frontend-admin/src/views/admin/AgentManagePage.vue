@@ -487,9 +487,9 @@
                 class="agent-capability-option"
                 :key="tool.definition_id"
                 :value="tool.definition_id"
-                :label="tool.name"
+                :label="tool.title || tool.name"
               >
-                <div>{{ tool.name }}</div>
+                <div>{{ tool.title || tool.name }}</div>
                 <div class="admin-field-help">{{ tool.description }}</div>
                 <div class="admin-field-help">
                   {{ tool.deployments.map((item) => item.provider_label).join('、') }}
