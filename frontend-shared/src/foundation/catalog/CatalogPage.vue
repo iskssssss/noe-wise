@@ -811,22 +811,31 @@ onBeforeUnmount(() => {
           ><el-button @click="load">刷新</el-button>
         </div>
         <el-table :data="nodes" row-key="code" border
-          ><el-table-column prop="code" label="节点编码" /><el-table-column
-            label="位置"
-            min-width="200"
+          ><el-table-column label="节点 / 页面" min-width="160">
+            <template #default="{ row }"
+              ><div class="navigation-code" :title="row.code">{{ row.code }}</div>
+              <div class="muted">
+                {{
+                  row.route_key
+                    ? routes.find((route) => route.key === row.route_key)?.title || row.route_key
+                    : '菜单分组'
+                }}
+              </div></template
+            ></el-table-column
+          ><el-table-column label="位置" min-width="190"
             ><template #default="{ row }">{{ nodePath(nodeRow(row)) }}</template></el-table-column
           >
-          <el-table-column label="类型 / 页面" min-width="180"
-            ><template #default="{ row }">{{
-              row.route_key
-                ? routes.find((route) => route.key === row.route_key)?.title || row.route_key
-                : '菜单分组'
-            }}</template></el-table-column
-          ><el-table-column prop="sort_order" label="排序" /><el-table-column label="状态"
+          <el-table-column prop="sort_order" label="排序" width="64" /><el-table-column
+            label="状态"
+            width="72"
             ><template #default="s">{{
               s.row.enabled ? '启用' : '隐藏'
             }}</template></el-table-column
-          ><el-table-column v-if="can('foundation.navigation.manage')" label="操作"
+          ><el-table-column
+            v-if="can('foundation.navigation.manage')"
+            label="操作"
+            width="112"
+            fixed="right"
             ><template #default="s"
               ><el-button link @click="editNode(nodeRow(s.row))">编辑</el-button
               ><el-button link type="danger" @click="remove('navigation', nodeRow(s.row))"
@@ -1199,5 +1208,10 @@ onBeforeUnmount(() => {
 }
 .id-input {
   max-width: 320px;
+}
+.navigation-code {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 </style>
