@@ -24,6 +24,7 @@ import { guardFormEnter } from '@skillforge/shared/admin'
 import { acceptUnhighlightedCreate } from '@skillforge/shared/admin/creatableOption'
 import { message, confirm } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
+import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import { computed, nextTick, onMounted, onScopeDispose, reactive, ref, useId, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -997,6 +998,15 @@ const probeLabels: Record<ModelProbeStatus, string> = {
   UNKNOWN: '结果未知',
   NOT_RUN: '未执行'
 }
+const probeReasonLabels: Record<string, string> = {
+  configuration_request_accepted: '供应商已接受配置请求',
+  stream_completed_with_deltas: '流式响应完整返回',
+  native_tool_continuation_completed: '原生工具调用与续答完成'
+}
+function probeReasonLabel(value?: string | null) {
+  if (!value) return '—'
+  return probeReasonLabels[value] ?? '未识别诊断'
+}
 const compatibilityChecks = computed(() => {
   const report = compatibilityReport.value
   return report
@@ -1954,7 +1964,8 @@ const formTipId = useId()
                 ? '未保存配置（仅本次测试）'
                 : `草稿修订 ${compatibilityReport.draft_revision}`
             }}
-            · {{ compatibilityReport.tested_at }} · 总耗时 {{ compatibilityReport.duration_ms }} ms
+            · {{ formatDateTime(compatibilityReport.tested_at) }} · 总耗时
+            {{ compatibilityReport.duration_ms }} ms
           </p>
           <ElTable :data="compatibilityChecks" aria-label="逐项兼容性检查">
             <ElTableColumn prop="label" label="检查项目" min-width="160" />
@@ -1966,12 +1977,18 @@ const formTipId = useId()
             <ElTableColumn label="耗时" min-width="100"
               ><template #default="{ row }">{{ row.duration_ms }} ms</template></ElTableColumn
             >
-            <ElTableColumn prop="reason_code" label="诊断代码" min-width="180"
-              ><template #default="{ row }">{{ row.reason_code || '—' }}</template></ElTableColumn
+            <ElTableColumn label="诊断说明" min-width="200"
+              ><template #default="{ row }"
+                ><span :title="row.reason_code || undefined">{{
+                  probeReasonLabel(row.reason_code)
+                }}</span></template
+              ></ElTableColumn
             >
           </ElTable>
           <p v-if="compatibilityReport.reason_code" class="admin-field-help">
-            本次诊断：{{ compatibilityReport.reason_code }}
+            <span :title="compatibilityReport.reason_code"
+              >本次诊断：{{ probeReasonLabel(compatibilityReport.reason_code) }}</span
+            >
           </p>
           <p class="admin-field-help">
             配置参数接受仅表示供应商接受了请求；不代表推理效果或缓存命中已验证。未执行和结果未知的项目均未通过验证。
