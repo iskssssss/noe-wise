@@ -256,7 +256,7 @@ const formTipId = useId()
       v-loading="load.loading.value"
       style="width: 100%"
     >
-      <ElTableColumn prop="session_id" label="会话 / 摘要" min-width="300" show-overflow-tooltip>
+      <ElTableColumn label="会话 / 机构" min-width="320" show-overflow-tooltip>
         <template #default="{ row }">
           <RouterLink
             :to="{
@@ -265,32 +265,24 @@ const formTipId = useId()
             }"
             >{{ row.summary || row.session_id }}</RouterLink
           >
+          <div class="admin-field-help">{{ row.tenant_name }}</div>
         </template>
       </ElTableColumn>
-      <ElTableColumn prop="tenant_name" label="机构" min-width="200" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="user_name" label="用户" min-width="160" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="agent_name" label="Agent" min-width="200" show-overflow-tooltip>
-      </ElTableColumn>
-      <ElTableColumn prop="answer_status" label="回答状态" width="120"
-        ><template #default="{ row }">{{
-          answerStatusLabel(row.answer_status)
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn prop="execution_status" label="执行状态" width="120"
-        ><template #default="{ row }"
-          ><ElTag
-            size="small"
-            :type="
-              ['FAILED', 'OUTCOME_UNKNOWN'].includes(row.execution_status) ? 'warning' : 'info'
-            "
-            >{{ statusLabel(row.execution_status) }}</ElTag
-          ></template
-        ></ElTableColumn
-      >
-      <ElTableColumn prop="last_activity_at" label="最近活动" min-width="190">
-        <template #default="{ row }">{{ formatDateTime(row.last_activity_at) }}</template>
+      <ElTableColumn label="参与方与状态" min-width="280">
+        <template #default="{ row }">
+          <div>{{ row.user_name }} · {{ row.agent_name }}</div>
+          <div class="admin-field-help">
+            回答：{{ answerStatusLabel(row.answer_status) }}
+            <ElTag
+              size="small"
+              :type="
+                ['FAILED', 'OUTCOME_UNKNOWN'].includes(row.execution_status) ? 'warning' : 'info'
+              "
+              >执行：{{ statusLabel(row.execution_status) }}</ElTag
+            >
+          </div>
+          <div class="admin-field-help">{{ formatDateTime(row.last_activity_at) }}</div>
+        </template>
       </ElTableColumn>
     </ElTable>
     <ElPagination
