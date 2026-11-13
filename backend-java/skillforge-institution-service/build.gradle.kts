@@ -908,6 +908,18 @@ tasks.register<Test>("agentKnowledgeSingleBrowserE2E") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("knowledgeSoftDeletedSourceBrowserE2E") {
+    description = "验证删除来源后的检索与引用边界"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSoftDeletedSourceBrowserE2ETest.softDeletedPublishedSourceIsExcluded") }
+    inputs.property("softDeleteMode", providers.environmentVariable("E2E_KNOWLEDGE_SOFT_DELETE").orElse("baseline"))
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("economicalKnowledgeRebuildBrowserE2E") {
     description = "验证经济知识库拒绝向量重建及运行时检索"
     group = "verification"

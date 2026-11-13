@@ -9,6 +9,9 @@ import org.apache.ibatis.annotations.Param;
 
 /** 知识文档不可变来源版本映射器。 */
 public interface KnowledgeDocumentVersionMapper extends BaseMapper<KnowledgeDocumentVersionDO> {
+    /** 当前未删除容器中的精确来源；不改变历史版本或发布清单。 */
+    List<String> liveSourceVersions(@Param("tenantId") long tenantId, @Param("kbId") long kbId,
+            @Param("sourceVersions") List<String> sourceVersions);
 
     /** 分页读取未删除文档的当前版本。 */
     Page<KnowledgeDocumentSummary> selectCurrentPage(

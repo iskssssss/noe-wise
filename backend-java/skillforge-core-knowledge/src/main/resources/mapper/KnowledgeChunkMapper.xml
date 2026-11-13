@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.skillforge.core.knowledge.mapper.KnowledgeChunkMapper">
+    <sql id="liveDocument">
+        AND EXISTS (SELECT 1 FROM public.nw_knowledge_documents live_document
+            WHERE live_document.tenant_id=k.tenant_id AND live_document.kb_id=k.kb_id
+              AND live_document.id=k.document_id AND live_document.deleted_at IS NULL)
+    </sql>
 
     <resultMap id="keywordChunk" type="com.skillforge.core.knowledge.model.KnowledgeChunkDO">
         <id column="id" property="id"/>
@@ -16,6 +21,7 @@
         WHERE k.tenant_id = CAST(#{tenantId} AS bigint)
           AND k.kb_id = CAST(#{kbId} AS bigint)
           AND strpos(lower(k.content), lower(#{query})) &gt; 0
+          <include refid="liveDocument"/>
           <if test="sourceVersions != null">
               <choose>
                   <when test="!sourceVersions.isEmpty()">
@@ -74,6 +80,7 @@
         WHERE k.tenant_id = CAST(#{tenantId} AS bigint)
           AND k.kb_id = CAST(#{kbId} AS bigint)
           AND k.embedding IS NOT NULL
+          <include refid="liveDocument"/>
           AND vector_dims(k.embedding) = vector_dims(CAST(#{queryVec} AS vector))
           <if test="threshold != null">
           AND 1 - (k.embedding &lt;=&gt; CAST(#{queryVec} AS vector)) &gt;= #{threshold}
@@ -97,6 +104,7 @@
           AND k.kb_id = CAST(#{kbId} AS bigint)
           AND k.source_version = #{sourceVersion}
           AND k.embedding IS NOT NULL
+          <include refid="liveDocument"/>
           AND vector_dims(k.embedding) = vector_dims(CAST(#{queryVec} AS vector))
           <if test="threshold != null">
           AND 1 - (k.embedding &lt;=&gt; CAST(#{queryVec} AS vector)) &gt;= #{threshold}
@@ -127,6 +135,7 @@
               <otherwise>AND FALSE</otherwise>
           </choose>
           AND k.embedding IS NOT NULL
+          <include refid="liveDocument"/>
           AND vector_dims(k.embedding) = vector_dims(CAST(#{queryVec} AS vector))
           <if test="threshold != null">
           AND 1 - (k.embedding &lt;=&gt; CAST(#{queryVec} AS vector)) &gt;= #{threshold}

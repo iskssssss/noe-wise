@@ -85,6 +85,8 @@ class KnowledgeServiceTest {
         revisionMapper = mock(KnowledgeBaseRevisionMapper.class);
         documentMapper = mock(KnowledgeDocumentMapper.class);
         documentVersionMapper = mock(KnowledgeDocumentVersionMapper.class);
+        org.mockito.Mockito.lenient().when(documentVersionMapper.liveSourceVersions(anyLong(), anyLong(),
+                org.mockito.ArgumentMatchers.<String>anyList())).thenAnswer(invocation -> invocation.getArgument(2));
         chunkMapper = mock(KnowledgeChunkMapper.class);
         embeddingProvider = mock(EmbeddingProvider.class);
         rerankProvider = mock(RerankProvider.class);
@@ -1084,6 +1086,76 @@ class KnowledgeServiceTest {
         assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.INACTIVE, null, null), inactive.scope());
         assertTrue(inactive.items().isEmpty());
         verifyNoInteractions(revisionMapper, documentMapper, searchIndexer, chunkMapper);
+    }
+
+    @Test
+    void managementSearchExcludesDeletedManifestSourceBeforeElasticsearchLimitAndKeepsScope() {
+        activeBase("deleted", "live");
+        when(documentVersionMapper.liveSourceVersions(7L, 10L, List.of("deleted", "live"))).thenReturn(List.of("live"));
+        when(searchIndexer.searchVersions("7", "10", "q", 1, List.of("live")))
+                .thenReturn(List.of(item("remaining", .8, "live")));
+        var result = service.searchWithStatus("7", "10", "q", 1,
+                new KnowledgeSearchRequest("10", "q", 1, "full_text", false, null, null, false));
+        assertEquals(List.of("live"), result.items().stream().map(KnowledgeHit::sourceVersion).toList());
+        assertEquals(KnowledgeService.SearchScopeKind.PUBLISHED_REVISION, result.scope().kind());
+        assertEquals(1L, result.scope().revision());
+        verify(searchIndexer).searchVersions("7", "10", "q", 1, List.of("live"));
+        verify(searchIndexer, never()).searchVersions("7", "10", "q", 1, List.of("deleted", "live"));
+    }
+
+    @Test
+    void explicitlyDeletedSourceReturnsEmptyBeforeEmbeddingOrSearchWithoutChangingRequestedScope() {
+        when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base());
+        when(documentVersionMapper.liveSourceVersions(7L, 10L, List.of("deleted"))).thenReturn(List.of());
+        for (String mode : List.of("full_text", "semantic", "hybrid")) {
+            var result = service.searchWithStatus("7", "10", "q", 1,
+                    new KnowledgeSearchRequest("10", "q", 1, mode, false, null, null, false, "deleted"));
+            assertTrue(result.items().isEmpty());
+            assertEquals(new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.SOURCE_VERSION, null, "deleted"), result.scope());
+        }
+        verifyNoInteractions(searchIndexer, embeddingProvider, chunkMapper);
+    }
+
+    @Test
+    void economicalKeywordFallbackUsesOnlySurvivingSources() {
+        var base = activeBase("deleted", "live"); base.setIndexingMode("economical");
+        when(documentVersionMapper.liveSourceVersions(7L, 10L, List.of("deleted", "live"))).thenReturn(List.of("live"));
+        var live = chunk(); live.setSourceVersion("live");
+        when(chunkMapper.searchKeyword("7", "10", "q", 1, List.of("live"))).thenReturn(List.of(live));
+        var result = service.searchWithStatus("7", "10", "q", 1, null);
+        assertEquals(List.of("live"), result.items().stream().map(KnowledgeHit::sourceVersion).toList());
+        verify(chunkMapper).searchKeyword("7", "10", "q", 1, List.of("live"));
+        verifyNoInteractions(embeddingProvider);
+    }
+
+    @Test
+    void deletionDuringRetrievalIsRecheckedBeforeReturningAnySourceText() {
+        activeBase("deleted", "live");
+        when(documentVersionMapper.liveSourceVersions(7L, 10L, List.of("deleted", "live")))
+                .thenReturn(List.of("deleted", "live"), List.of("live"));
+        when(searchIndexer.searchVersions("7", "10", "q", 2, List.of("deleted", "live")))
+                .thenReturn(List.of(item("removed", .9, "deleted"), item("remaining", .8, "live")));
+        var result = service.searchWithStatus("7", "10", "q", 2,
+                new KnowledgeSearchRequest("10", "q", 2, "full_text", false, null, null, false));
+        assertEquals(List.of("live"), result.items().stream().map(KnowledgeHit::sourceVersion).toList());
+        verify(documentVersionMapper, times(2)).liveSourceVersions(7L, 10L, List.of("deleted", "live"));
+    }
+
+    @Test
+    void semanticAndHybridPostgresFallbacksReceiveOnlySurvivingManifestSources() {
+        activeBase("deleted", "live");
+        when(documentVersionMapper.liveSourceVersions(7L, 10L, List.of("deleted", "live"))).thenReturn(List.of("live"));
+        when(embeddingProvider.embed("7", "81", 3L, "q")).thenReturn(new float[]{1f, 0f});
+        when(searchIndexer.searchKnnVersions(eq("7"), eq("10"), anyString(), anyInt(), eq(List.of("live"))))
+                .thenThrow(new IllegalStateException("isolated_index_unavailable"));
+        when(chunkMapper.vectorSearchVersions(eq("7"), eq("10"), anyString(), anyInt(), any(), eq(List.of("live"))))
+                .thenReturn(List.of(item("remaining", .8, "live")));
+        for (String mode : List.of("semantic", "hybrid")) {
+            var result = service.searchWithStatus("7", "10", "q", 1,
+                    new KnowledgeSearchRequest("10", "q", 1, mode, false, null, null, false));
+            assertEquals(List.of("live"), result.items().stream().map(KnowledgeHit::sourceVersion).toList());
+        }
+        verify(chunkMapper, times(2)).vectorSearchVersions(eq("7"), eq("10"), anyString(), anyInt(), any(), eq(List.of("live")));
     }
 
     private KnowledgeBaseDO activeBase(String... sourceVersions) {

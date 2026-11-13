@@ -11,6 +11,9 @@
          AND v.source_version=s.source_version AND v.chunk_set_id=s.chunk_set_id
         JOIN public.nw_knowledge_document_contents c
           ON c.tenant_id=v.tenant_id AND c.document_id=v.document_id AND c.id=v.content_id
+        JOIN public.nw_knowledge_documents document
+          ON document.tenant_id=v.tenant_id AND document.kb_id=v.kb_id
+         AND document.id=v.document_id AND document.deleted_at IS NULL
         WHERE s.tenant_id=b.tenant_id AND s.binding_id=b.binding_id AND v.status='ready'
           AND (s.source_id,s.source_version) IN
             <foreach collection="scope.versions" item="version" open="(" separator="," close=")">
@@ -50,6 +53,9 @@
             JOIN public.knowledge_chunk_values c ON c.tenant_id=r.source_tenant_id
               AND c.kb_id::text=r.source_id AND c.source_version=r.source_version
               AND c.document_id::text=r.document_id AND c.id::text=r.chunk_id
+            JOIN public.nw_knowledge_documents document
+              ON document.tenant_id=c.tenant_id AND document.kb_id=c.kb_id
+             AND document.id=c.document_id AND document.deleted_at IS NULL
             WHERE r.tenant_id=b.tenant_id AND r.binding_id=b.binding_id
               AND (r.source_id,r.source_version) IN
                 <foreach collection="versions" item="version" open="(" separator="," close=")">

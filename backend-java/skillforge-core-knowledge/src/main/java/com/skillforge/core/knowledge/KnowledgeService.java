@@ -964,7 +964,14 @@ public class KnowledgeService {
         double vectorWeight = vectorWeightOf(base, request, settings);
         String sourceVersion = request == null ? null : request.sourceVersion();
         SearchSelection selection = searchSelection(base, tenantId, kbId, sourceVersion);
-        List<String> activeSourceVersions = selection.sources();
+        List<String> requestedSources = sourceVersion == null ? selection.sources() : List.of(sourceVersion);
+        if (requestedSources.isEmpty()) return new SearchResult(List.of(),
+                rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED, selection.scope());
+        var liveSources = documentVersionMapper.liveSourceVersions(base.getTenantId(), base.getId(), requestedSources);
+        if (liveSources.isEmpty()) return new SearchResult(List.of(),
+                rerankEnabled ? KnowledgeRerankStatus.NO_CANDIDATES : KnowledgeRerankStatus.DISABLED, selection.scope());
+        List<String> activeSourceVersions = sourceVersion == null
+                ? requestedSources.stream().filter(liveSources::contains).toList() : null;
         KnowledgeBaseDO searchModel = KnowledgeConstants.RETRIEVAL_MODE_FULL_TEXT.equals(mode) ? base
                 : selectedModel(base, tenantId, kbId, sourceVersion, activeSourceVersions);
         // 一次检索共享查询向量；manifest 统一查询，失败后统一回退关键词。
@@ -1002,6 +1009,11 @@ public class KnowledgeService {
                 items = applyRerank(items, reranked, thresholdEnabled, threshold);
                 rerankStatus = KnowledgeRerankStatus.APPLIED;
             } else rerankStatus = KnowledgeRerankStatus.DEGRADED;
+        }
+        if (!items.isEmpty()) {
+            var currentSources = documentVersionMapper.liveSourceVersions(base.getTenantId(), base.getId(),
+                    items.stream().map(KnowledgeHit::sourceVersion).distinct().toList());
+            items = items.stream().filter(item -> currentSources.contains(item.sourceVersion())).toList();
         }
         return new SearchResult(items, rerankStatus, selection.scope());
     }

@@ -67,5 +67,17 @@
  AND NOT EXISTS(SELECT 1 FROM knowledge_chunk_values c WHERE c.tenant_id=v.tenant_id AND c.document_id=v.document_id
  AND c.source_version=v.source_version AND (c.embedding IS NULL OR vector_dims(c.embedding)&lt;&gt;#{dimensions}))
 </select>
+<select id="liveSourceVersions" resultType="string">
+ SELECT v.source_version FROM nw_knowledge_document_versions v
+ JOIN nw_knowledge_documents d ON d.tenant_id=v.tenant_id AND d.kb_id=v.kb_id AND d.id=v.document_id
+ WHERE v.tenant_id=#{tenantId} AND v.kb_id=#{kbId} AND d.deleted_at IS NULL
+ <choose>
+   <when test="sourceVersions != null and !sourceVersions.isEmpty()">
+     AND v.source_version IN
+     <foreach collection="sourceVersions" item="version" open="(" separator="," close=")">#{version}</foreach>
+   </when>
+   <otherwise>AND FALSE</otherwise>
+ </choose>
+</select>
 </mapper>
 

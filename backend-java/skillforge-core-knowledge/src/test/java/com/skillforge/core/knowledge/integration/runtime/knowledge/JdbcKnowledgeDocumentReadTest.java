@@ -81,6 +81,34 @@ class JdbcKnowledgeDocumentReadTest {
         assertEquals(suite.oracles().mounted_document_ids(),ids);assertEquals(24,new HashSet<>(ids).size());assertEquals(4,pages);
     }
 
+    @Test void deletedDocumentIsExcludedFromKeywordCatalogAndExactReadWithoutChangingOtherFrozenSources() throws Exception {
+        var removed = suite.documents().get(0);
+        var retained = suite.documents().get(1);
+        var versions = Set.of(new KnowledgeSourceVersion(removed.source_id(), removed.source_version()),
+                new KnowledgeSourceVersion(retained.source_id(), retained.source_version()));
+        var tenant = new TenantId(suite.oracles().catalog_tenant_id());
+        var control = new InvocationControl(Instant.now().plusSeconds(30), () -> false);
+        var before = bindings.keyword(tenant, target, versions, "住宿", 50, asOf, Optional.empty(), control);
+        assertTrue(before.stream().anyMatch(hit -> hit.documentId().equals(removed.document_id())));
+        assertTrue(before.stream().anyMatch(hit -> hit.documentId().equals(retained.document_id())));
+        try {
+            KnowledgeBindingDatabaseFixture.sql(admin, "UPDATE nw_knowledge_documents SET deleted_at=clock_timestamp() WHERE tenant_id="
+                    + removed.tenant_id() + " AND id=" + removed.document_id());
+            var after = bindings.keyword(tenant, target, versions, "住宿", 50, asOf, Optional.empty(), control);
+            assertFalse(after.stream().anyMatch(hit -> hit.documentId().equals(removed.document_id())));
+            assertTrue(after.stream().anyMatch(hit -> hit.documentId().equals(retained.document_id())));
+            var catalog = (KnowledgeDocumentResult.CatalogPage) retrieve(new KnowledgeOperation.ListDocuments("", Optional.empty(), 50), 262_144).documentResult().orElseThrow();
+            assertFalse(catalog.documents().stream().anyMatch(doc -> doc.documentId().equals(removed.document_id())));
+            assertTrue(catalog.documents().stream().anyMatch(doc -> doc.documentId().equals(retained.document_id())));
+            assertReason("knowledge_document_unavailable", () -> retrieve(read(removed, 0, 100), 262_144));
+            assertFalse(retrieve(read(retained, 0, 100), 262_144).items().isEmpty());
+            assertTrue(bindings.find(tenant, target).isPresent());
+        } finally {
+            KnowledgeBindingDatabaseFixture.sql(admin, "UPDATE nw_knowledge_documents SET deleted_at=NULL WHERE tenant_id="
+                    + removed.tenant_id() + " AND id=" + removed.document_id());
+        }
+    }
+
     @Test void titleFilterUsesLiteralFrozenTitlesAndCursorCannotChangeItsScope() {
         var result=retrieve(new KnowledgeOperation.ListDocuments(suite.oracles().title_filter(),Optional.empty(),50),262_144);
         var page=(KnowledgeDocumentResult.CatalogPage)result.documentResult().orElseThrow();
