@@ -961,7 +961,7 @@ tasks.register<Test>("knowledgeDeletedReuseBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeDeletedReuseBrowserE2ETest.repeatedQueryAfterDelete") }
-    inputs.property("deletedReuseMode", providers.environmentVariable("E2E_KNOWLEDGE_DELETED_REUSE").orElse("baseline"))
+    inputs.property("deletedReuseMode", providers.environmentVariable("E2E_KNOWLEDGE_DELETED_REUSE").orElse("deleted"))
     outputs.upToDateWhen { false }
 }
 

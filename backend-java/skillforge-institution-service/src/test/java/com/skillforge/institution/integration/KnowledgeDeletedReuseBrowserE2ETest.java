@@ -37,8 +37,8 @@ class KnowledgeDeletedReuseBrowserE2ETest extends ChatExecutionChainE2ETest {
     }
     @AfterAll static void closeFrontend() { FRONTEND.close(); }
     @Test void repeatedQueryAfterDelete() throws Exception {
-        String mode = System.getenv().getOrDefault("E2E_KNOWLEDGE_DELETED_REUSE", "baseline");
-        assertTrue(List.of("baseline", "candidate", "survivor").contains(mode));
+        String mode = System.getenv().getOrDefault("E2E_KNOWLEDGE_DELETED_REUSE", "deleted");
+        assertTrue(List.of("deleted", "survivor").contains(mode));
         login();
         Path evidence = Path.of("build/runtime-e2e/knowledge-deleted-reuse-" + SnowflakeIds.nextId()).toAbsolutePath();
         Path browser = evidence.resolve("browser"); Files.createDirectories(browser);
@@ -122,7 +122,7 @@ class KnowledgeDeletedReuseBrowserE2ETest extends ChatExecutionChainE2ETest {
                 Files.writeString(evidence.resolve("facts.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(facts));
                 assertEquals(knowledgeBefore, knowledgeFacts(actualRun), "已提交知识动作与预算事实必须保留");
                 assertEquals(1, countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? AND kind='KNOWLEDGE' AND status='SUCCEEDED'", tenantId, actualRun));
-                if ("candidate".equals(mode)) {
+                if ("deleted".equals(mode)) {
                     assertEquals(2, model.calls.get(), "删除后不得派发第三次模型请求");
                     assertEquals(2, countRuntime("SELECT count(*) FROM agent_runtime_budget_attempts WHERE tenant_id=? AND run_id=? AND category='BUSINESS_MODEL' AND state='SETTLED'", tenantId, actualRun));
                     assertEquals(2, countRuntime("SELECT count(*) FROM agent_runtime_execution_actions WHERE tenant_id=? AND run_id=? AND kind='MODEL'", tenantId, actualRun));

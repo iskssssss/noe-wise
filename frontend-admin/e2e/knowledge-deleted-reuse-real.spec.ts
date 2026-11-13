@@ -77,5 +77,10 @@ test('运行中删除来源并核对当前检索', async ({ page }) => {
   const versions = result.data.items.map((item: { source_version: string }) => item.source_version)
   expect(versions).toContain(required('E2E_SURVIVOR_SOURCE'))
   expect(versions).not.toContain(required('E2E_TARGET_SOURCE'))
+  const survivor = page.getByText(`来源版本 ${required('E2E_SURVIVOR_SOURCE')}`, {
+    exact: false
+  })
+  await expect(survivor).toBeVisible()
+  await survivor.scrollIntoViewIfNeeded()
   await page.screenshot({ path: join(evidence, 'search-after-delete.png'), fullPage: true })
 })
