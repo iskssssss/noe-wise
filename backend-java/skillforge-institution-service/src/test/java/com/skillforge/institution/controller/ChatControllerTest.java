@@ -21,6 +21,7 @@ import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.institution.runtime.AgentRuntimeExecutionProjection;
 import com.skillforge.core.chat.session.SessionView;
 import com.skillforge.core.chat.session.SessionOutboxEntry;
+import com.skillforge.core.chat.session.SessionOutboxEventProjector;
 import com.skillforge.core.chat.dto.chat.SessionOutboxCursorResponse;
 import com.skillforge.core.chat.session.SessionMailboxService;
 import com.skillforge.core.chat.session.SessionService;
@@ -121,6 +122,8 @@ class ChatControllerTest {
     void cursorPullReplaysOutboxWithoutExecutingChatInput() {
         ChatService chatService = mock(ChatService.class);
         AgentRuntimeExecutionProjection projection = mock(AgentRuntimeExecutionProjection.class);
+        when(projection.publicEvent(any())).thenAnswer(call ->
+                SessionOutboxEventProjector.project(call.getArgument(0)));
         SessionMailboxService mailbox = mock(SessionMailboxService.class);
         SessionService sessions = mock(SessionService.class);
         SessionView session = org.mockito.Mockito.mock(SessionView.class);
@@ -151,6 +154,7 @@ class ChatControllerTest {
         verify(mailbox).listOutputsAfter("7", "session-1", "output-0", 500);
         verify(chatService, never()).runChat(any(), any());
         verify(projection).reconcile(session);
+        verify(projection).publicEvent(output);
         assertEquals("output-1", response.data().nextCursor());
     }
 
@@ -357,10 +361,13 @@ class ChatControllerTest {
     private ChatController controller(
             ChatService chatService, SessionMailboxService mailbox, SessionService sessions) {
         notifications(mailbox);
+        var projection = mock(AgentRuntimeExecutionProjection.class);
+        when(projection.publicEvent(any())).thenAnswer(call ->
+                SessionOutboxEventProjector.project(call.getArgument(0)));
         return new ChatController(
                 chatService,
                 new ObjectMapper(),
-                mock(AgentRuntimeExecutionProjection.class),
+                projection,
                 mailbox,
                 sessions,
                 mock(AgentMapper.class),

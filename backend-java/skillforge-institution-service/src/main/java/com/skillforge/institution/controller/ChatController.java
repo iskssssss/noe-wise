@@ -211,7 +211,7 @@ public class ChatController {
                     long observedVersion = changes.version();
                     long readingAfter = nextSequence;
                     nextSequence = polling.poll(readingAfter, output -> {
-                        SessionOutboxEventProjector.Event event = SessionOutboxEventProjector.project(output);
+                        SessionOutboxEventProjector.Event event = projection.publicEvent(output);
                         sink.send(event.event(), event.data());
                     });
                     if (System.nanoTime() - heartbeat >= 15_000_000_000L) {
@@ -457,7 +457,7 @@ public class ChatController {
             List<SessionOutboxEntry> outputs = sessionMailboxService
                     .listOutputsAfterSequence(tenantId, sessionId, sequence, 500);
             for (SessionOutboxEntry output : outputs) {
-                SessionOutboxEventProjector.Event event = SessionOutboxEventProjector.project(output);
+                SessionOutboxEventProjector.Event event = projection.publicEvent(output);
                 sink.send(event.event(), event.data());
                 cursor = event.eventId();
                 sequence = event.sessionSequence();
@@ -481,7 +481,7 @@ public class ChatController {
     }
 
     private SessionOutboxCursorResponse.Event cursorEvent(SessionOutboxEntry output) {
-        SessionOutboxEventProjector.Event event = SessionOutboxEventProjector.project(output);
+        SessionOutboxEventProjector.Event event = projection.publicEvent(output);
         return new SessionOutboxCursorResponse.Event(
                 event.event(), event.eventId(), event.sessionId(), event.sessionSequence(),
                 event.inputId(), event.rootInputId(), event.causedByEventId(), event.eventVersion(),

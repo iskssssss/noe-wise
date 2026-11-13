@@ -1,5 +1,7 @@
 package com.skillforge.institution.runtime;
 
+import com.skillforge.core.chat.session.SessionOutboxEntry;
+import com.skillforge.core.chat.session.SessionOutboxEventProjector;
 import com.skillforge.core.chat.session.SessionView;
 import java.util.Map;
 import java.util.Optional;
@@ -8,4 +10,5 @@ import java.util.Optional;
 public interface AgentRuntimeEventProjection {
     void reconcile(SessionView session);
     Optional<Map<String, Object>> historyRetentionState(SessionView session);
+    SessionOutboxEventProjector.Event publicEvent(SessionOutboxEntry output);
 }
