@@ -69,6 +69,9 @@ const tab = ref('inbox'),
   cursor = ref(''),
   previous = ref<string[]>([]),
   unreadOnly = ref(false)
+function shortId(value: string) {
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
 const query = () => `?limit=20${cursor.value ? `&cursor=${encodeURIComponent(cursor.value)}` : ''}`
 const inbox = useResource((signal) =>
   props.request<MessagingPageResult<InboxItem>>(
@@ -493,23 +496,16 @@ watch(
                   : '暂无消息'
           "
         >
-          <ElTableColumn prop="title" label="标题" min-width="180" /><ElTableColumn
-            prop="body"
-            label="正文"
-            min-width="280"
-            show-overflow-tooltip
-          />
-          <ElTableColumn label="接收时间" min-width="180"
-            ><template #default="scope">{{
-              formatDateTime(scope.row.created_at)
-            }}</template></ElTableColumn
-          >
-          <ElTableColumn label="状态" width="120"
-            ><template #default="scope">{{
-              scope.row.read_at ? '已读' : '未读'
-            }}</template></ElTableColumn
-          >
-          <ElTableColumn label="操作" width="120"
+          <ElTableColumn label="消息" min-width="190"
+            ><template #default="scope"
+              ><div>{{ scope.row.title }}</div>
+              <div class="admin-field-help">
+                {{ formatDateTime(scope.row.created_at) }} ·
+                {{ scope.row.read_at ? '已读' : '未读' }}
+              </div></template
+            ></ElTableColumn
+          ><ElTableColumn prop="body" label="正文" min-width="240" show-overflow-tooltip />
+          <ElTableColumn label="操作" width="112" fixed="right"
             ><template #default="scope"
               ><ElButton
                 v-if="!scope.row.read_at"
@@ -544,23 +540,21 @@ watch(
                 : '暂无公告'
           "
         >
-          <ElTableColumn prop="title" label="标题" min-width="160" /><ElTableColumn
+          <ElTableColumn label="公告" min-width="190"
+            ><template #default="scope"
+              ><div>{{ scope.row.title }}</div>
+              <div class="admin-field-help">
+                {{ scope.row.recipients }} 人 ·
+                {{ scope.row.status === 'published' ? '已发布' : '已撤回' }} ·
+                {{ formatDateTime(scope.row.created_at) }}
+              </div></template
+            ></ElTableColumn
+          ><ElTableColumn
             prop="body"
             label="正文"
-            min-width="260"
+            min-width="220"
             show-overflow-tooltip
-          /><ElTableColumn prop="recipients" label="收件人数" width="120" />
-          <ElTableColumn label="发布状态" width="120"
-            ><template #default="scope">{{
-              scope.row.status === 'published' ? '已发布' : '已撤回'
-            }}</template></ElTableColumn
-          >
-          <ElTableColumn label="发布时间" min-width="180"
-            ><template #default="scope">{{
-              formatDateTime(scope.row.created_at)
-            }}</template></ElTableColumn
-          >
-          <ElTableColumn v-if="allowed('publish')" label="操作" width="100"
+          /><ElTableColumn v-if="allowed('publish')" label="操作" width="96" fixed="right"
             ><template #default="scope"
               ><ElButton
                 v-if="scope.row.status === 'published'"
@@ -573,9 +567,11 @@ watch(
         </ElTable>
       </template>
       <template v-else-if="tab === 'templates'">
-        <ElButton type="primary" :disabled="task.busy.value" @click="newTemplate()"
-          >发布模板</ElButton
-        >
+        <div class="admin-actions">
+          <ElButton type="primary" :disabled="task.busy.value" @click="newTemplate()"
+            >发布模板</ElButton
+          >
+        </div>
         <ElTable
           v-loading="templates.loading.value"
           :data="templates.data.value ?? []"
@@ -588,12 +584,13 @@ watch(
                 : '暂无通知模板，可点击“发布模板”创建'
           "
         >
-          <ElTableColumn prop="key" label="模板键" min-width="180" /><ElTableColumn
+          <ElTableColumn prop="key" label="模板键" min-width="145" /><ElTableColumn
             prop="subject"
             label="标题模板"
-            min-width="200"
-          /><ElTableColumn prop="body" label="正文模板" min-width="280" show-overflow-tooltip />
-          <ElTableColumn label="操作" width="120"
+            min-width="170"
+            show-overflow-tooltip
+          /><ElTableColumn prop="body" label="正文模板" min-width="190" show-overflow-tooltip />
+          <ElTableColumn label="操作" width="100" fixed="right"
             ><template #default="scope"
               ><ElButton :disabled="task.busy.value" @click="newTemplate(scope.row as TemplateView)"
                 >编辑发布</ElButton
@@ -684,24 +681,21 @@ watch(
                 : '暂无邮件投递记录'
           "
         >
-          <ElTableColumn prop="id" label="投递 ID" min-width="180" /><ElTableColumn
-            label="状态"
-            min-width="180"
-            ><template #default="scope">{{
-              deliveryLabels[scope.row.status] ?? scope.row.status
-            }}</template></ElTableColumn
+          <ElTableColumn label="状态 / 投递" min-width="150"
+            ><template #default="scope"
+              ><div>{{ deliveryLabels[scope.row.status] ?? scope.row.status }}</div>
+              <div class="admin-field-help" :title="scope.row.id">
+                {{ shortId(scope.row.id) }} · 尝试 {{ scope.row.attempts }} 次
+              </div></template
+            ></ElTableColumn
           >
-          <ElTableColumn prop="attempts" label="尝试次数" width="110" /><ElTableColumn
-            prop="error_code"
-            label="处理原因"
-            min-width="220"
-          />
-          <ElTableColumn label="更新时间" min-width="180"
+          <ElTableColumn prop="error_code" label="处理原因" min-width="180" show-overflow-tooltip />
+          <ElTableColumn label="更新时间" min-width="140"
             ><template #default="scope">{{
               formatDateTime(scope.row.updated_at)
             }}</template></ElTableColumn
           >
-          <ElTableColumn label="操作" min-width="160"
+          <ElTableColumn label="操作" width="112" fixed="right"
             ><template #default="scope"
               ><ElButton
                 v-if="['blocked', 'rejected'].includes(scope.row.status)"
