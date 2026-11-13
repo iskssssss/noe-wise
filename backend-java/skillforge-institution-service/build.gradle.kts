@@ -973,7 +973,6 @@ tasks.register<Test>("knowledgeSoftDeletedSourceBrowserE2E") {
     classpath = ordinaryTests.runtimeClasspath
     setFinalizedBy(emptyList<Any>())
     filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeSoftDeletedSourceBrowserE2ETest.softDeletedPublishedSourceIsExcluded") }
-    inputs.property("softDeleteMode", providers.environmentVariable("E2E_KNOWLEDGE_SOFT_DELETE").orElse("baseline"))
     outputs.upToDateWhen { false }
 }
 

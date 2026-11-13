@@ -12,8 +12,6 @@ test.describe.configure({ retries: 0 })
 test('删除来源后核对同库检索', async ({ page }) => {
   test.setTimeout(120_000)
   const evidence = required('E2E_ARTIFACT_DIR')
-  const mode = required('E2E_KNOWLEDGE_SOFT_DELETE')
-  expect(['baseline', 'candidate']).toContain(mode)
   await page.goto(
     `/login?redirect=${encodeURIComponent('/admin/knowledge/' + required('E2E_KNOWLEDGE_ID'))}`
   )
@@ -64,7 +62,11 @@ test('删除来源后核对同库检索', async ({ page }) => {
   expect(response.status()).toBe(200)
   const versions = result.data.items.map((item: { source_version: string }) => item.source_version)
   expect(versions).toContain(required('E2E_SURVIVOR_SOURCE'))
-  if (mode === 'baseline') expect(versions).toContain(required('E2E_TARGET_SOURCE'))
-  else expect(versions).not.toContain(required('E2E_TARGET_SOURCE'))
+  expect(versions).not.toContain(required('E2E_TARGET_SOURCE'))
+  const survivor = page.getByText(`来源版本 ${required('E2E_SURVIVOR_SOURCE')}`, {
+    exact: false
+  })
+  await expect(survivor).toBeVisible()
+  await survivor.scrollIntoViewIfNeeded()
   await page.screenshot({ path: join(evidence, 'search-after-delete.png'), fullPage: true })
 })

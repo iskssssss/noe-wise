@@ -31,8 +31,6 @@ class KnowledgeSoftDeletedSourceBrowserE2ETest extends ChatExecutionChainE2ETest
     @AfterAll static void closeFrontend() { FRONTEND.close(); }
 
     @Test void softDeletedPublishedSourceIsExcluded() throws Exception {
-        String mode = System.getenv().getOrDefault("E2E_KNOWLEDGE_SOFT_DELETE", "baseline");
-        assertTrue(List.of("baseline", "candidate").contains(mode));
         login();
         Path evidence = Path.of("build/runtime-e2e/knowledge-soft-deleted-source-" + SnowflakeIds.nextId()).toAbsolutePath();
         Path browser = evidence.resolve("browser"); Files.createDirectories(browser);
@@ -78,7 +76,7 @@ class KnowledgeSoftDeletedSourceBrowserE2ETest extends ChatExecutionChainE2ETest
             var command = new ProcessBuilder(KnowledgeBrowserServer.nodeExecutable(), admin.resolve("node_modules/@playwright/test/cli.js").toString(), "test", "e2e/knowledge-soft-deleted-source-real.spec.ts", "--output", evidence.resolve("playwright-output").toString());
             command.directory(admin.toFile()); command.redirectErrorStream(true); command.redirectOutput(evidence.resolve("playwright.log").toFile());
             var env = command.environment(); env.put("E2E_BASE_URL", FRONTEND.baseUrl()); env.put("E2E_ARTIFACT_DIR", browser.toString()); env.put("E2E_TENANT_SLUG", fixtureTenantSlug()); env.put("E2E_PASSWORD", PASSWORD);
-            env.put("E2E_KNOWLEDGE_SOFT_DELETE", mode); env.put("E2E_KNOWLEDGE_ID", target.kbId()); env.put("E2E_TARGET_TITLE", targetTitle); env.put("E2E_TARGET_ID", target.documentId()); env.put("E2E_TARGET_SOURCE", targetSource); env.put("E2E_SURVIVOR_SOURCE", survivor); env.put("E2E_QUERY", common);
+            env.put("E2E_KNOWLEDGE_ID", target.kbId()); env.put("E2E_TARGET_TITLE", targetTitle); env.put("E2E_TARGET_ID", target.documentId()); env.put("E2E_TARGET_SOURCE", targetSource); env.put("E2E_SURVIVOR_SOURCE", survivor); env.put("E2E_QUERY", common);
             env.remove("SDK4_LIVE_MODEL_KEY"); env.remove("E2E_LIVE_MODEL");
             Process process = command.start();
             try (var owned = new KnowledgeBrowserProcesses(process.toHandle())) {
@@ -93,9 +91,9 @@ class KnowledgeSoftDeletedSourceBrowserE2ETest extends ChatExecutionChainE2ETest
             runId = Long.toString(SnowflakeIds.nextId());
             var nextSession = send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken);
             assertEquals(200, nextSession.statusCode(), nextSession.body()); sessionId = successData(nextSession).path("session_id").asText();
-            JsonNode after = execute(model, evidence, "after", handle, target.kbId(), "candidate".equals(mode) ? survivor : targetSource, "candidate".equals(mode) ? common : targetTerm);
-            assertEquals("candidate".equals(mode) ? survivor : targetSource, after.path("citations").get(0).path("source_version").asText());
-            Files.writeString(evidence.resolve("facts.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("mode", mode, "targetDocument", target.documentId(), "targetSource", targetSource, "survivorDocument", survivorId, "survivorSource", survivor, "session", sessionId)));
+            JsonNode after = execute(model, evidence, "after", handle, target.kbId(), survivor, common);
+            assertEquals(survivor, after.path("citations").get(0).path("source_version").asText());
+            Files.writeString(evidence.resolve("facts.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("targetDocument", target.documentId(), "targetSource", targetSource, "survivorDocument", survivorId, "survivorSource", survivor, "session", sessionId)));
         }
     }
 
