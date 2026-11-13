@@ -46,14 +46,17 @@
         >核对原操作</ElButton
       >
     </section>
-    <section
-      v-if="!pending && can('foundation.skills.read')"
-      class="admin-toolbar"
-      aria-label="查询技能发布回执"
-    >
-      <ElInput v-model="receiptRequestId" aria-label="原请求 ID" placeholder="输入原请求 ID" />
-      <ElButton :loading="busy" @click="checkPublication">查询发布回执</ElButton>
-    </section>
+    <ElCollapse v-if="!pending && can('foundation.skills.read')" class="admin-card">
+      <ElCollapseItem title="查询历史发布回执" name="receipt">
+        <p class="admin-field-help">
+          仅在系统提示结果未知且原页面已关闭时使用。正常保存与发布不需要请求 ID。
+        </p>
+        <div class="admin-actions">
+          <ElInput v-model="receiptRequestId" aria-label="原请求 ID" placeholder="输入原请求 ID" />
+          <ElButton :loading="busy" @click="checkPublication">查询发布回执</ElButton>
+        </div>
+      </ElCollapseItem>
+    </ElCollapse>
     <p v-if="publicationReceipt?.publication" class="admin-field-help" role="status">
       技能发布已确认：版本 {{ publicationReceipt.publication.version_id }}，定义修订
       {{ publicationReceipt.publication.definition_revision }}。

@@ -32,14 +32,17 @@
         >核对原操作</ElButton
       >
     </section>
-    <section
-      v-if="!uncertain && can('foundation.teams.read')"
-      class="admin-toolbar"
-      aria-label="查询团队发布回执"
-    >
-      <ElInput v-model="receiptRequestId" placeholder="输入原请求 ID" aria-label="原请求 ID" />
-      <ElButton :loading="busy" @click="checkPublication">查询发布回执</ElButton>
-    </section>
+    <ElCollapse v-if="!uncertain && can('foundation.teams.read')" class="admin-card">
+      <ElCollapseItem title="查询历史发布回执" name="receipt">
+        <p class="admin-field-help">
+          仅在系统提示结果未知且原页面已关闭时使用。正常保存与发布不需要请求 ID。
+        </p>
+        <div class="admin-actions">
+          <ElInput v-model="receiptRequestId" placeholder="输入原请求 ID" aria-label="原请求 ID" />
+          <ElButton :loading="busy" @click="checkPublication">查询发布回执</ElButton>
+        </div>
+      </ElCollapseItem>
+    </ElCollapse>
     <div class="admin-toolbar admin-filters">
       <ElInput
         v-model="query"
