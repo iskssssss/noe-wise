@@ -1,5 +1,6 @@
 import type { Component } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
+import { message } from '@skillforge/shared/feedback'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import {
@@ -192,6 +193,8 @@ beforeEach(() => {
   mocks.listRevisions.mockResolvedValue({ items: [] })
   mocks.availableModels.mockResolvedValue([])
   mocks.get.mockResolvedValue({
+    kb_id: 'kb-1',
+    job_id: null,
     status: 'IDLE',
     write_locked: false,
     ready_documents: 0,
@@ -343,6 +346,8 @@ describe('Element Plus 控件与业务交互', () => {
   })
   it('上传按钮在写锁时明确禁用，不能绕过知识库写保护', async () => {
     mocks.get.mockResolvedValue({
+      kb_id: 'kb-1',
+      job_id: 'job-1',
       status: 'RUNNING',
       write_locked: true,
       ready_documents: 2,
@@ -936,7 +941,7 @@ describe('Element Plus 控件与业务交互', () => {
         content: '改动A\n内容B',
         source_version: 'v2'
       })
-    mocks.updateChunk.mockResolvedValue({})
+    mocks.updateChunk.mockResolvedValue({ source_version: 'v2' })
     const wrapper = render(KnowledgeManagePage)
     await flushPromises()
     await button(wrapper, '编辑 / 分块').trigger('click')
@@ -971,6 +976,190 @@ describe('Element Plus 控件与业务交互', () => {
       .trigger('click')
     await flushPromises()
     expect(mocks.updateChunk).toHaveBeenLastCalledWith('b2', 'v2', { content: '改动B' })
+  })
+  it('分块回执未知时保留草稿，只在核对兼容后显式恢复', async () => {
+    const old = [
+      { id: 101, content: '内容A', chunk_index: 0, source_version: 'v1' },
+      { id: 201, content: '内容B', chunk_index: 1, source_version: 'v1' }
+    ]
+    const next = [
+      { ...old[0], id: 102, content: '改动A', source_version: 'v2' },
+      { ...old[1], id: 202, source_version: 'v2' }
+    ]
+    mocks.listDocuments.mockResolvedValue({
+      items: [{ id: 1, title: '文档', source_version: 'v1' }],
+      total: 1
+    })
+    mocks.getDocument.mockResolvedValue({
+      id: 1,
+      title: '原文',
+      content: '正文',
+      source_version: 'v1'
+    })
+    mocks.listChunks.mockResolvedValue({ items: old.map((item) => ({ ...item })), total: 2 })
+    mocks.updateChunk
+      .mockRejectedValueOnce(Error('连接中断'))
+      .mockResolvedValue({ source_version: 'v3' })
+    const wrapper = render(KnowledgeManagePage)
+    await flushPromises()
+    await button(wrapper, '编辑 / 分块').trigger('click')
+    await flushPromises()
+    Array.from(document.body.querySelectorAll<HTMLElement>('[role="tab"]'))
+      .find((tab) => tab.textContent?.trim() === '分块')!
+      .click()
+    await flushPromises()
+    for (const [before, after] of [
+      ['内容A', '改动A'],
+      ['内容B', '改动B']
+    ])
+      wrapper
+        .findAllComponents(ElInput)
+        .find((item) => item.props('modelValue') === before)!
+        .vm.$emit('update:modelValue', after)
+    await flushPromises()
+    await button(wrapper, '保存分块').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('分块保存结果尚未确认')
+    expect(button(wrapper, '保存分块').props('disabled')).toBe(true)
+    const documentDrawer = wrapper
+      .findAllComponents(ElDrawer)
+      .find((item) => item.props('title') === '原文')!
+    expect(button(documentDrawer, '关闭').props('disabled')).toBe(true)
+    await button(wrapper, '核对最新分块').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.findAllComponents(ElButton).some((item) => item.text() === '按当前版本恢复编辑')
+    ).toBe(false)
+    const delayedRead = deferred<{
+      id: number
+      title: string
+      content: string
+      source_version: string
+    }>()
+    const warning = vi.spyOn(message, 'warning')
+    mocks.getDocument.mockReturnValueOnce(delayedRead.promise)
+    mocks.listChunks.mockResolvedValue({ items: next, total: 2 })
+    await button(wrapper, '核对最新分块').trigger('click')
+    currentAuth.identityVersion++
+    delayedRead.resolve({
+      id: 1,
+      title: '原文',
+      content: '改动A\n内容B',
+      source_version: 'v2'
+    })
+    await flushPromises()
+    expect(
+      wrapper.findAllComponents(ElButton).some((item) => item.text() === '按当前版本恢复编辑')
+    ).toBe(false)
+    expect(warning).not.toHaveBeenCalledWith(
+      '已读取当前版本；原保存回执仍未确认，可选择按当前版本恢复编辑。'
+    )
+    warning.mockRestore()
+    currentAuth.identityVersion--
+    mocks.getDocument.mockResolvedValue({
+      id: 1,
+      title: '原文',
+      content: '改动A\n内容B',
+      source_version: 'v2'
+    })
+    for (const conflicting of [
+      [{ ...next[0], content: '其他目标正文' }, next[1]],
+      [next[0], { ...next[1], content: '其他相邻正文' }]
+    ]) {
+      mocks.listChunks.mockResolvedValue({ items: conflicting, total: 2 })
+      await button(wrapper, '核对最新分块').trigger('click')
+      await flushPromises()
+      expect(
+        wrapper.findAllComponents(ElButton).some((item) => item.text() === '按当前版本恢复编辑')
+      ).toBe(false)
+      expect(button(wrapper, '保存分块').props('disabled')).toBe(true)
+      for (const draft of ['改动A', '改动B'])
+        expect(
+          wrapper.findAllComponents(ElInput).some((item) => item.props('modelValue') === draft)
+        ).toBe(true)
+      expect(mocks.updateChunk).toHaveBeenCalledTimes(1)
+    }
+    mocks.listChunks.mockResolvedValue({ items: next, total: 2 })
+    await button(wrapper, '核对最新分块').trigger('click')
+    await flushPromises()
+    expect(mocks.updateChunk).toHaveBeenCalledTimes(1)
+    await button(wrapper, '按当前版本恢复编辑').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.findAllComponents(ElInput).some((item) => item.props('modelValue') === '改动B')
+    ).toBe(true)
+    await wrapper
+      .findAllComponents(ElButton)
+      .filter((item) => item.text() === '保存分块')[1]!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.updateChunk).toHaveBeenLastCalledWith(202, 'v2', { content: '改动B' })
+    const key = Object.keys(sessionStorage).find((item) =>
+      item.startsWith('skillforge.knowledge-chunk-unknown.')
+    )!
+    const records = JSON.parse(sessionStorage.getItem(key)!)
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ documentId: '1', sourceVersion: 'v1', chunkId: '101' })
+    expect(sessionStorage.getItem(key)).not.toContain('改动A')
+    expect(sessionStorage.getItem(key)).not.toContain('改动B')
+    wrapper.unmount()
+    mocks.getDocument.mockResolvedValue({
+      id: 1,
+      title: '原文',
+      content: '正文',
+      source_version: 'v1'
+    })
+    const reopened = render(KnowledgeManagePage)
+    await flushPromises()
+    expect(reopened.text()).toContain('分块保存结果尚未确认')
+    await button(reopened, '编辑 / 分块').trigger('click')
+    await flushPromises()
+    await button(reopened, '核对最新分块').trigger('click')
+    await flushPromises()
+    expect(
+      reopened.findAllComponents(ElButton).some((item) => item.text() === '按当前版本恢复编辑')
+    ).toBe(false)
+    mocks.getDocument.mockResolvedValue({
+      id: 1,
+      title: '原文',
+      content: '当前正文',
+      source_version: 'v2'
+    })
+    await button(reopened, '核对最新分块').trigger('click')
+    await flushPromises()
+    await button(reopened, '按当前版本恢复编辑').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(records)
+    expect(document.body.textContent?.match(/分块保存结果尚未确认/g)).toHaveLength(1)
+  })
+  it('无法记录分块写入身份时不发送保存', async () => {
+    mocks.listDocuments.mockResolvedValue({
+      items: [{ id: 'doc-1', title: '文档', source_version: 'v1' }],
+      total: 1
+    })
+    mocks.listChunks.mockResolvedValue({
+      items: [{ id: 'a', content: '内容A', chunk_index: 0, source_version: 'v1' }],
+      total: 1
+    })
+    const wrapper = render(KnowledgeManagePage)
+    await flushPromises()
+    await button(wrapper, '编辑 / 分块').trigger('click')
+    await flushPromises()
+    Array.from(document.body.querySelectorAll<HTMLElement>('[role="tab"]'))
+      .find((tab) => tab.textContent?.trim() === '分块')!
+      .click()
+    await flushPromises()
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw Error('存储不可用')
+    })
+    try {
+      await button(wrapper, '保存分块').trigger('click')
+      await flushPromises()
+      expect(mocks.updateChunk).not.toHaveBeenCalled()
+      expect(document.body.textContent).toContain('无法保存分块操作记录')
+    } finally {
+      storage.mockRestore()
+    }
   })
   it('删除分块后保留相邻草稿并使用新版本分块身份继续保存', async () => {
     mocks.listDocuments.mockResolvedValue({

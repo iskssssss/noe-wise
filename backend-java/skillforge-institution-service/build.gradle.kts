@@ -139,6 +139,7 @@ tasks.named<Test>("test") {
     exclude("**/SessionCitationBrowserE2ETest.class")
     exclude("**/KnowledgeTitleReuseBrowserE2ETest.class")
     exclude("**/KnowledgeSourceChunkConflictBrowserE2ETest.class")
+    exclude("**/KnowledgeChunkReceiptBrowserE2ETest.class")
     exclude("**/SkillPackageEncodingBrowserE2ETest.class")
     exclude("**/WorkflowHitlReplyBrowserE2ETest.class")
     exclude("**/WorkflowResumeCancelBrowserE2ETest.class")
@@ -227,6 +228,20 @@ tasks.register<Test>("knowledgeTitleReuseBrowserE2E") {
         include("frontend-admin/src/**", "frontend-admin/e2e/knowledge-title-reuse-real.spec.ts", "frontend-admin/playwright.config.ts", "frontend-admin/vite.config.ts", "frontend-admin/index.html", "frontend-admin/package.json")
         include("frontend-shared/src/**", "frontend-shared/package.json", "tools/frontend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     }).withPropertyName("knowledgeTitleReuseFrontend").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.register<Test>("knowledgeChunkReceiptBrowserE2E") {
+    description = "观察分块写入回执丢失后的真实状态"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.KnowledgeChunkReceiptBrowserE2ETest.observesLostChunkReceipt") }
+    inputs.property("knowledgeChunkReceipt", providers.environmentVariable("E2E_KNOWLEDGE_CHUNK_RECEIPT").orElse("baseline"))
+    inputs.files(fileTree("../../frontend-admin") { include("src/**", "e2e/knowledge-chunk-receipt-real.spec.ts", "playwright.config.*", "vite.config.*", "package*.json", "index.html") },
+            fileTree("../../frontend-shared") { include("src/**", "package.json") })
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<Test>("knowledgeSourceChunkConflictBrowserE2E") {

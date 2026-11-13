@@ -37,6 +37,18 @@
       >
       <ElButton @click="load" :disabled="busy">刷新</ElButton></template
     >
+    <section v-if="chunkRecords.length && !documentOpen" class="admin-card" role="status">
+      <p>分块保存结果尚未确认；后续保存不会确认原请求。</p>
+      <p v-for="item in chunkRecords" :key="item.id">
+        文档 {{ item.documentId }} · 原来源 {{ item.sourceVersion }} · 分块 {{ item.chunkId }}
+      </p>
+    </section>
+    <ElAlert
+      v-if="chunkRecordError && !documentOpen"
+      :title="chunkRecordError"
+      type="error"
+      :closable="false"
+    />
     <section v-if="initialPending" class="admin-card" role="status">
       已选择“{{ initialPending.name }}”，尚未上传。
       {{
@@ -867,8 +879,8 @@
       append-to-body
       direction="rtl"
       :close-on-click-modal="false"
-      :close-on-press-escape="!busy"
-      :show-close="!busy"
+      :close-on-press-escape="!busy && !chunkUnknown && !chunkRecovery"
+      :show-close="!busy && !chunkUnknown && !chunkRecovery"
       class="admin-drawer"
       ><FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
       <ElAlert
@@ -880,6 +892,30 @@
       <ElButton v-if="documentRefresh" :disabled="busy" @click="retryDocumentRefresh"
         >重新读取已保存内容</ElButton
       >
+      <section
+        v-if="chunkRecords.some((item) => item.documentId === String(document?.id))"
+        role="status"
+      >
+        <p>分块保存结果尚未确认；请核对最新分块，恢复编辑或后续保存不会确认原请求。</p>
+        <p
+          v-for="item in chunkRecords.filter(
+            (record) => record.documentId === String(document?.id)
+          )"
+          :key="item.id"
+        >
+          原来源 {{ item.sourceVersion }} · 分块 {{ item.chunkId }}
+        </p>
+      </section>
+      <ElAlert v-if="chunkRecordError" :title="chunkRecordError" type="error" :closable="false" />
+      <ElButton v-if="chunkUnknown || chunkRecovery" :disabled="busy" @click="checkUnknownChunk"
+        >核对最新分块</ElButton
+      >
+      <ElButton
+        v-if="chunkUnknown?.checked || chunkRecoveryChecked"
+        :disabled="busy"
+        @click="resumeUnknownChunk"
+        >按当前版本恢复编辑</ElButton
+      >
       <ElTabs v-model="documentTab"
         ><ElTabPane label="原文" name="source"
           ><ElInput
@@ -889,6 +925,8 @@
             :disabled="
               busy ||
               !!documentRefresh ||
+              !!chunkUnknown ||
+              !!chunkRecovery ||
               rebuildRefresh ||
               rebuildPublicationLocked ||
               rebuild?.write_locked
@@ -902,6 +940,8 @@
             :readonly="
               busy ||
               !!documentRefresh ||
+              !!chunkUnknown ||
+              !!chunkRecovery ||
               rebuildRefresh ||
               rebuildPublicationLocked ||
               rebuild?.write_locked
@@ -931,6 +971,8 @@
                 :disabled="
                   busy ||
                   !!documentRefresh ||
+                  !!chunkUnknown ||
+                  !!chunkRecovery ||
                   rebuildRefresh ||
                   rebuildPublicationLocked ||
                   rebuild?.write_locked
@@ -943,6 +985,8 @@
                 :disabled="
                   busy ||
                   !!documentRefresh ||
+                  !!chunkUnknown ||
+                  !!chunkRecovery ||
                   rebuildRefresh ||
                   rebuildPublicationLocked ||
                   rebuild?.write_locked
@@ -960,6 +1004,8 @@
               :disabled="
                 busy ||
                 !!documentRefresh ||
+                !!chunkUnknown ||
+                !!chunkRecovery ||
                 rebuildRefresh ||
                 rebuildPublicationLocked ||
                 rebuild?.write_locked
@@ -972,7 +1018,7 @@
             > </ElCard
           ><ElPagination
             v-if="chunkTotal > 20"
-            :disabled="busy || !!documentRefresh"
+            :disabled="busy || !!documentRefresh || !!chunkUnknown || !!chunkRecovery"
             :current-page="chunkPage"
             :page-size="20"
             :total="chunkTotal"
@@ -980,14 +1026,20 @@
       ><template #footer
         ><span v-if="documentTab === 'chunks'" class="admin-muted"
           >分块逐项保存，关闭前请检查未保存修改。</span
-        ><ElButton @click="closeDrawer0" :disabled="busy">关闭</ElButton
+        ><ElButton @click="closeDrawer0" :disabled="busy || !!chunkUnknown || !!chunkRecovery"
+          >关闭</ElButton
         ><ElButton
           v-if="documentTab === 'source'"
           v-permission="['foundation.knowledge.update']"
           type="primary"
           :loading="busy"
           :disabled="
-            !!documentRefresh || rebuildRefresh || rebuildPublicationLocked || rebuild?.write_locked
+            !!documentRefresh ||
+            !!chunkUnknown ||
+            !!chunkRecovery ||
+            rebuildRefresh ||
+            rebuildPublicationLocked ||
+            rebuild?.write_locked
           "
           @click="saveDocument"
           >保存原文</ElButton
@@ -1721,7 +1773,70 @@ const documentOpen = ref(false),
   chunkPage = ref(1),
   chunkTotal = ref(0),
   savedChunks = ref(''),
-  documentRefresh = ref<() => Promise<void>>()
+  documentRefresh = ref<() => Promise<void>>(),
+  chunkUnknown = ref<{
+    changed: KnowledgeChunkItem
+    submitted: string
+    original: KnowledgeChunkItem[]
+    total: number
+    page: number
+    checked?: { document: KnowledgeDocumentDetail; chunks: KnowledgeChunkItem[] }
+  }>()
+type ChunkWriteRecord = { id: string; documentId: string; sourceVersion: string; chunkId: string }
+const chunkRecordKey = computed(
+  () => `skillforge.knowledge-chunk-unknown.${JSON.stringify([initialOwner.value, id.value])}`
+)
+const chunkRecords = ref<ChunkWriteRecord[]>([])
+const chunkRecordError = ref('')
+const chunkRecovery = ref(false)
+const chunkRecoveryChecked = ref<KnowledgeDocumentDetail>()
+watch(
+  [chunkRecordKey, () => auth.identityVersion],
+  (_next, previous) => {
+    if (previous) {
+      documentOpen.value = false
+      chunkUnknown.value = undefined
+    }
+    chunkRecovery.value = false
+    chunkRecoveryChecked.value = undefined
+    try {
+      const stored: unknown = JSON.parse(sessionStorage.getItem(chunkRecordKey.value) ?? '[]')
+      if (
+        !Array.isArray(stored) ||
+        stored.some(
+          (item) =>
+            !item ||
+            typeof item.id !== 'string' ||
+            !['string', 'number'].includes(typeof item.documentId) ||
+            typeof item.sourceVersion !== 'string' ||
+            !['string', 'number'].includes(typeof item.chunkId)
+        )
+      )
+        throw Error('invalid record')
+      chunkRecords.value = stored.map((item) => ({
+        ...item,
+        documentId: String(item.documentId),
+        chunkId: String(item.chunkId)
+      }))
+      chunkRecordError.value = ''
+    } catch {
+      chunkRecords.value = []
+      chunkRecordError.value = '无法读取分块保存记录，请恢复浏览器存储后再编辑。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
+function storeChunkRecords(records: ChunkWriteRecord[]) {
+  try {
+    sessionStorage.setItem(chunkRecordKey.value, JSON.stringify(records))
+    chunkRecords.value = records
+    chunkRecordError.value = ''
+    return true
+  } catch {
+    chunkRecordError.value = '无法保存分块操作记录，请恢复浏览器存储后再编辑。'
+    return false
+  }
+}
 async function finishDocumentRefresh() {
   await documentRefresh.value?.()
   documentRefresh.value = undefined
@@ -1738,21 +1853,24 @@ const documentDirty = computed(
 useUnsavedChanges({
   dirty: () =>
     documentDirty.value ||
+    !!chunkUnknown.value ||
     !!publicationPending.value ||
     !!rebuildPublicationPending.value ||
     !!uploadUnknown.value ||
     !!initialPending.value,
   busy: () => busy.value,
   leaveMessage: () =>
-    uploadUnknown.value
-      ? `文件“${uploadUnknown.value.name}”的上传结果未知；关闭标签页可能丢失原文件记录。`
-      : initialPending.value
-        ? `文件“${initialPending.value.name}”尚未上传；刷新或关闭页面后需要重新选择。`
-        : rebuildPublicationPending.value
-          ? `重建发布结果未知，请记录原请求 ID：${rebuildPublicationPending.value.requestId}。`
-          : publicationPending.value
-            ? `知识发布结果未知，请记录原请求 ID：${publicationPending.value.requestId}。`
-            : undefined
+    chunkUnknown.value
+      ? '分块保存结果尚未确认；离开页面会丢失未保存的编辑内容。'
+      : uploadUnknown.value
+        ? `文件“${uploadUnknown.value.name}”的上传结果未知；关闭标签页可能丢失原文件记录。`
+        : initialPending.value
+          ? `文件“${initialPending.value.name}”尚未上传；刷新或关闭页面后需要重新选择。`
+          : rebuildPublicationPending.value
+            ? `重建发布结果未知，请记录原请求 ID：${rebuildPublicationPending.value.requestId}。`
+            : publicationPending.value
+              ? `知识发布结果未知，请记录原请求 ID：${publicationPending.value.requestId}。`
+              : undefined
 })
 async function loadChunks() {
   if (!document.value) return
@@ -1772,7 +1890,14 @@ watch(documentTab, (tab) => {
   if (tab === 'chunks' && documentOpen.value && !chunksLoaded.value) void readChunks()
 })
 async function changeChunkPage(nextPage: number) {
-  if (busy.value || documentRefresh.value || nextPage === chunkPage.value) return
+  if (
+    busy.value ||
+    documentRefresh.value ||
+    chunkUnknown.value ||
+    chunkRecovery.value ||
+    nextPage === chunkPage.value
+  )
+    return
   if (
     JSON.stringify(chunks.value) !== savedChunks.value &&
     !(await confirm({
@@ -1807,11 +1932,21 @@ async function editDocument(documentId: string) {
     savedChunks.value = JSON.stringify([])
     chunksLoaded.value = false
     documentRefresh.value = undefined
+    chunkUnknown.value = undefined
+    chunkRecovery.value = chunkRecords.value.some((item) => item.documentId === String(documentId))
+    chunkRecoveryChecked.value = undefined
     documentOpen.value = true
   })
 }
 async function saveDocument() {
-  if (documentRefresh.value || rebuildPublicationLocked.value) return
+  if (
+    documentRefresh.value ||
+    chunkUnknown.value ||
+    chunkRecovery.value ||
+    chunkRecordError.value ||
+    rebuildPublicationLocked.value
+  )
+    return
   const [, savedContent] = JSON.parse(saved.value) as [string, string]
   const overwritesSavedChunks = sourcePredatesChunkWrite.value && content.value !== savedContent
   if (
@@ -1890,15 +2025,17 @@ async function removeDocument(row: KnowledgeDocumentItem) {
 async function refreshAfterChunkWrite(
   changed: KnowledgeChunkItem,
   deleted: boolean,
-  submitted?: string
+  submitted?: string,
+  expectedSource?: string,
+  current?: () => boolean
 ) {
   if (!document.value) return
   const baseline = JSON.parse(savedChunks.value) as KnowledgeChunkItem[]
   const drafts = new Map<number, string>()
   for (const item of chunks.value) {
-    if (deleted && item.id === changed.id) continue
-    const original = baseline.find((row) => row.id === item.id)
-    const savedContent = item.id === changed.id ? submitted : original?.content
+    if (deleted && String(item.id) === String(changed.id)) continue
+    const original = baseline.find((row) => String(row.id) === String(item.id))
+    const savedContent = String(item.id) === String(changed.id) ? submitted : original?.content
     if (item.content !== savedContent) {
       drafts.set(
         item.chunk_index - (deleted && item.chunk_index > changed.chunk_index ? 1 : 0),
@@ -1912,7 +2049,11 @@ async function refreshAfterChunkWrite(
     api.knowledge.getDocument(document.value.id),
     api.knowledge.listChunks(document.value.id, { page: nextPage, page_size: 20 })
   ])
-  if (nextChunks.items.some((item) => item.source_version !== nextDocument.source_version))
+  if (current && !current()) return
+  if (
+    (expectedSource && nextDocument.source_version !== expectedSource) ||
+    nextChunks.items.some((item) => item.source_version !== nextDocument.source_version)
+  )
     throw Error('文档内容已更新，当前编辑仍保留。请先备份未保存内容，再重新打开文档核对最新版本。')
   const [savedTitle, savedContent] = JSON.parse(saved.value) as [string, string]
   if (content.value !== savedContent) sourcePredatesChunkWrite.value = true
@@ -1929,17 +2070,187 @@ async function refreshAfterChunkWrite(
   }))
 }
 async function saveChunk(chunk: KnowledgeChunkItem) {
-  if (documentRefresh.value || rebuildPublicationLocked.value) return
+  if (
+    documentRefresh.value ||
+    chunkUnknown.value ||
+    chunkRecovery.value ||
+    chunkRecordError.value ||
+    rebuildPublicationLocked.value
+  )
+    return
+  const doc = document.value
+  const ownsScope = rebuildReadCurrent()
+  const current = () => ownsScope() && document.value === doc && !chunkUnknown.value
   await run(async () => {
     const submittedContent = chunk.content
-    await api.knowledge.updateChunk(chunk.id, chunk.source_version, { content: submittedContent })
+    if (!doc || !initialOwner.value || chunkRecordError.value) return
+    const record: ChunkWriteRecord = {
+      id: crypto.randomUUID(),
+      documentId: String(doc.id),
+      sourceVersion: chunk.source_version,
+      chunkId: String(chunk.id)
+    }
+    if (!storeChunkRecords([...chunkRecords.value, record])) return
+    let result: KnowledgeChunkItem
+    try {
+      result = await api.knowledge.updateChunk(chunk.id, chunk.source_version, {
+        content: submittedContent
+      })
+    } catch (cause) {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      if (
+        !(cause instanceof HttpClientError) ||
+        cause.status === 0 ||
+        cause.status === 408 ||
+        cause.status >= 500
+      ) {
+        chunkUnknown.value = {
+          changed: { ...chunk },
+          submitted: submittedContent,
+          original: JSON.parse(savedChunks.value) as KnowledgeChunkItem[],
+          total: chunkTotal.value,
+          page: chunkPage.value
+        }
+      } else {
+        storeChunkRecords(chunkRecords.value.filter((item) => item.id !== record.id))
+      }
+      throw cause
+    }
+    if (!current()) return
+    storeChunkRecords(chunkRecords.value.filter((item) => item.id !== record.id))
     message.success('分块已保存')
-    documentRefresh.value = () => refreshAfterChunkWrite(chunk, false, submittedContent)
+    documentRefresh.value = async () => {
+      if (!current()) return
+      try {
+        await refreshAfterChunkWrite(chunk, false, submittedContent, result.source_version, current)
+      } catch (cause) {
+        if (!current()) {
+          if (cause instanceof HttpClientError) cause.claimFeedback()
+          throw 'cancel'
+        }
+        throw cause
+      }
+    }
     await finishDocumentRefresh()
   })
 }
+async function checkUnknownChunk() {
+  const pending = chunkUnknown.value
+  const doc = document.value
+  if (!doc || (!pending && !chunkRecovery.value)) return
+  const ownsScope = rebuildReadCurrent()
+  const current = () => ownsScope() && document.value === doc && chunkUnknown.value === pending
+  if (!pending) {
+    chunkRecoveryChecked.value = undefined
+    await run(async () => {
+      let next: KnowledgeDocumentDetail
+      try {
+        next = await api.knowledge.getDocument(doc.id)
+      } catch (cause) {
+        if (!current()) {
+          if (cause instanceof HttpClientError) cause.claimFeedback()
+          throw 'cancel'
+        }
+        throw cause
+      }
+      if (!current()) return
+      const records = chunkRecords.value.filter((item) => item.documentId === String(doc.id))
+      if (
+        !next.source_version ||
+        !records.length ||
+        records.some((item) => item.sourceVersion === next.source_version)
+      ) {
+        message.warning('当前来源未前进，不能确认原请求结果。')
+        return
+      }
+      chunkRecoveryChecked.value = next
+      message.warning('当前来源已变化；原保存回执仍未确认，可选择按当前版本恢复编辑。')
+    })
+    return
+  }
+  const guard = <T,>(promise: Promise<T>) =>
+    promise.catch((cause: unknown) => {
+      if (!current()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      throw cause
+    })
+  pending.checked = undefined
+  await run(async () => {
+    const [nextDocument, nextChunks] = await Promise.all([
+      guard(api.knowledge.getDocument(doc.id)),
+      guard(api.knowledge.listChunks(doc.id, { page: pending.page, page_size: 20 }))
+    ])
+    if (!current()) return
+    const compatible =
+      nextDocument.source_version !== doc.source_version &&
+      nextChunks.total === pending.total &&
+      chunkPage.value === pending.page &&
+      nextChunks.items.length === pending.original.length &&
+      nextChunks.items.every((item, index) => {
+        const original = pending.original[index]
+        return (
+          original &&
+          item.chunk_index === original.chunk_index &&
+          item.source_version === nextDocument.source_version &&
+          (String(original.id) === String(pending.changed.id)
+            ? item.content === original.content || item.content === pending.submitted
+            : item.content === original.content)
+        )
+      })
+    if (!compatible) {
+      message.warning('当前分块无法安全对应原草稿，请保留草稿并人工核对。')
+      return
+    }
+    pending.checked = { document: nextDocument, chunks: nextChunks.items }
+    message.warning('已读取当前版本；原保存回执仍未确认，可选择按当前版本恢复编辑。')
+  })
+}
+function resumeUnknownChunk() {
+  const pending = chunkUnknown.value
+  if (!pending && chunkRecoveryChecked.value) {
+    const next = chunkRecoveryChecked.value
+    document.value = next
+    title.value = next.title
+    content.value = next.content
+    saved.value = JSON.stringify([next.title, next.content])
+    chunks.value = []
+    savedChunks.value = JSON.stringify([])
+    chunksLoaded.value = false
+    chunkRecovery.value = false
+    chunkRecoveryChecked.value = undefined
+    if (documentTab.value === 'chunks') void readChunks()
+    return
+  }
+  if (!pending?.checked) return
+  const { document: nextDocument, chunks: nextChunks } = pending.checked
+  const drafts = new Map(chunks.value.map((item) => [item.chunk_index, item.content]))
+  const [savedTitle, savedContent] = JSON.parse(saved.value) as [string, string]
+  if (content.value !== savedContent) sourcePredatesChunkWrite.value = true
+  if (title.value === savedTitle) title.value = nextDocument.title
+  if (content.value === savedContent) content.value = nextDocument.content
+  saved.value = JSON.stringify([nextDocument.title, nextDocument.content])
+  document.value = nextDocument
+  savedChunks.value = JSON.stringify(nextChunks)
+  chunks.value = nextChunks.map((item) => ({
+    ...item,
+    content: drafts.get(item.chunk_index) ?? item.content
+  }))
+  chunkUnknown.value = undefined
+}
 async function removeChunk(chunk: KnowledgeChunkItem) {
-  if (documentRefresh.value || rebuildPublicationLocked.value) return
+  if (
+    documentRefresh.value ||
+    chunkUnknown.value ||
+    chunkRecovery.value ||
+    chunkRecordError.value ||
+    rebuildPublicationLocked.value
+  )
+    return
   if (
     await confirm({
       title: '删除分块',
@@ -3109,7 +3420,7 @@ onScopeDispose(() => {
 
 const { requestClose: closeDrawer0 } = useDrawerClose({
   open: () => documentOpen.value,
-  busy: () => busy.value,
+  busy: () => busy.value || !!chunkUnknown.value || chunkRecovery.value,
   dirty: () => documentOpen.value && documentDirty.value,
   close: () => {
     documentOpen.value = false
