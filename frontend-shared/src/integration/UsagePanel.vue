@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
-import { guardFormEnter, useResource } from '../admin'
+import { EntitySelect, guardFormEnter, useResource, type EntityOption } from '../admin'
 import FieldTip from '../components/FieldTip.vue'
 import { vDescribedBy } from '../directives/describedBy'
 import { formatDateTime, toBeijingDateTime } from '../utils/datetime'
@@ -15,6 +15,10 @@ const props = withDefaults(
     initialTenantId?: string
     fixedTenantId?: string
     showTenant?: boolean
+    tenantOptions?: {
+      load: (query: string, signal?: AbortSignal) => Promise<EntityOption[]>
+      resolve: (id: string) => Promise<EntityOption | undefined>
+    }
     canEvents?: boolean
     canSummary?: boolean
     canDetails?: boolean
@@ -53,6 +57,10 @@ const filterLabels: Record<keyof typeof filters, string> = {
   agent_definition_version: '定义版本'
 }
 const advancedKeys = [
+  'integration_id',
+  'group_binding_id',
+  'deployment_id',
+  'agent_id',
   'session_id',
   'run_id',
   'business_scope_id',
@@ -252,44 +260,56 @@ watch(
           :aria-describedby="help"
         />
       </ElFormItem>
-      <ElFormItem v-if="showTenant && !fixedTenantId" label="机构标识"
-        ><ElInput
+      <ElFormItem v-if="showTenant && !fixedTenantId" label="机构"
+        ><EntitySelect
+          v-if="tenantOptions"
+          v-model="filters.tenant_id"
+          :load="tenantOptions.load"
+          :resolve="tenantOptions.resolve"
+          placeholder="选择机构"
+          aria-label="机构"
+          v-described-by="help"
+          :aria-describedby="help"
+        />
+        <ElInput
+          v-else
           v-model="filters.tenant_id"
           clearable
           v-described-by="help"
           :aria-describedby="help"
-      /></ElFormItem>
-      <ElFormItem label="接入标识"
-        ><ElInput v-model="filters.integration_id" clearable :aria-describedby="help"
-      /></ElFormItem>
-      <ElFormItem label="群标识"
-        ><ElInput
-          v-model="filters.group_binding_id"
-          clearable
-          inputmode="numeric"
-          v-described-by="help"
-          :aria-describedby="help"
-      /></ElFormItem>
-      <ElFormItem label="部署标识"
-        ><ElInput v-model="filters.deployment_id" clearable :aria-describedby="help"
-      /></ElFormItem>
-      <ElFormItem label="智能体标识"
-        ><ElInput
-          v-model="filters.agent_id"
-          clearable
-          v-described-by="help"
-          :aria-describedby="help"
-      /></ElFormItem>
+        />
+      </ElFormItem>
       <details
         class="usage-advanced"
         :open="advancedOpen"
         @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
       >
         <summary>
-          更多筛选<span v-if="advancedCount"> · {{ advancedCount }} 项已填写</span
-          ><span class="usage-advanced-hint">会话、任务、用户与历史版本</span>
+          按历史标识定位<span v-if="advancedCount"> · {{ advancedCount }} 项已填写</span
+          ><span class="usage-advanced-hint">接入、群、部署、智能体、会话、任务、用户与版本</span>
         </summary>
         <div class="usage-advanced-fields">
+          <ElFormItem label="接入标识"
+            ><ElInput v-model="filters.integration_id" clearable :aria-describedby="help"
+          /></ElFormItem>
+          <ElFormItem label="群标识"
+            ><ElInput
+              v-model="filters.group_binding_id"
+              clearable
+              inputmode="numeric"
+              v-described-by="help"
+              :aria-describedby="help"
+          /></ElFormItem>
+          <ElFormItem label="部署标识"
+            ><ElInput v-model="filters.deployment_id" clearable :aria-describedby="help"
+          /></ElFormItem>
+          <ElFormItem label="智能体标识"
+            ><ElInput
+              v-model="filters.agent_id"
+              clearable
+              v-described-by="help"
+              :aria-describedby="help"
+          /></ElFormItem>
           <ElFormItem label="会话标识"
             ><ElInput
               v-model="filters.session_id"
@@ -348,10 +368,10 @@ watch(
           >查询限定于机构
           {{
             fixedTenantId
-          }}，时间和其他标识留空表示该机构授权范围内不限制。支持输入该机构的历史部署与版本标识，范围不受当前资源目录限制；群标识匹配同一群生命周期。</template
+          }}，时间和其他历史标识留空表示该机构授权范围内不限制。历史标识用于精确定位既有记录，正常查询无需填写；范围不受当前资源目录限制。</template
         >
         <template v-else
-          >时间和标识留空表示当前授权范围内不限制。支持输入历史机构、部署与版本标识，范围不受当前资源目录限制；群标识匹配同一群生命周期。</template
+          >时间与机构为常规筛选；其他历史标识用于精确定位既有记录，正常查询无需填写，范围不受当前资源目录限制。</template
         >
       </FieldTip>
     </ElForm>
