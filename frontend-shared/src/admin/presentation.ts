@@ -38,6 +38,8 @@ const labels: Record<string, string> = {
   pending: '待处理',
   admin: '管理员',
   developer: '开发者',
+  tenant_admin: '机构管理员',
+  auditor: '审计成员',
   viewer: '只读成员',
   operator: '运营人员',
   platform_admin: '平台管理员',

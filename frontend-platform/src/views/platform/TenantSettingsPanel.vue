@@ -497,19 +497,25 @@ const formTipId = useId()
           :data="members"
           style="width: 100%"
         >
-          <ElTableColumn prop="username" label="账号" min-width="180" show-overflow-tooltip>
+          <ElTableColumn label="成员" min-width="220">
+            <template #default="{ row }">
+              <div>{{ row.username }}</div>
+              <div class="admin-field-help">{{ row.email || '未登记邮箱' }}</div>
+              <div class="admin-field-help">状态：{{ statusLabel(row.status) }}</div>
+            </template>
           </ElTableColumn>
           <ElTableColumn prop="roles" label="角色" width="120"
             ><template #default="{ row }">{{
               row.roles.map((role: string) => statusLabel(role)).join('、')
             }}</template></ElTableColumn
           >
-          <ElTableColumn prop="email" label="邮箱" min-width="240" show-overflow-tooltip>
-          </ElTableColumn>
-          <ElTableColumn prop="status" label="状态" width="110"
-            ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
+          <ElTableColumn
+            prop="actions"
+            label="操作"
+            width="180"
+            fixed="right"
+            class-name="admin-table-actions"
           >
-          <ElTableColumn prop="actions" label="操作" width="180" class-name="admin-table-actions">
             <template #default="{ row }">
               <ElButton
                 v-permission="['foundation.tenants.update']"

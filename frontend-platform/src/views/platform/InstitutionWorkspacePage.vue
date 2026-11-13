@@ -210,7 +210,7 @@ onMounted(() => {
       @changed="refresh"
       @target-selected="(value) => (onboardingTarget = value.tenantId)"
     />
-    <ElEmpty v-else-if="!selectedId" description="从左侧选择机构，或新增、接入一个机构。" />
+    <ElEmpty v-else-if="!selectedId" description="点击右上角“选择机构”；也可新增或接入一个机构。" />
     <div v-else :key="`${selectedId}:${section}:${route.query.view ?? ''}:${integrationId}`">
       <FeedbackNotice
         v-if="details.error.value"
