@@ -146,6 +146,9 @@ async function complete() {
       >
         {{ hasCredential ? '返回发送恢复邮件' : '已有恢复邮件，填写凭据' }}
       </ElButton>
+      <p v-if="form.purpose === 'invitation'">
+        邀请邮件包含一次性凭据；无需填写上方的机构标识、用户名或密码。
+      </p>
       <ElForm
         v-if="hasCredential || form.purpose === 'invitation'"
         label-position="top"
