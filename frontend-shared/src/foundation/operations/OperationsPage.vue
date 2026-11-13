@@ -11,6 +11,7 @@ import FieldTip from '../../components/FieldTip.vue'
 import { vDescribedBy } from '../../directives/describedBy'
 import { saveAuditCsv } from './contracts'
 import type {
+  AuditSummary,
   AuditSummaryPage,
   AuditFilterOption,
   AuditOptions,
@@ -528,9 +529,10 @@ watch(active, () => {
       >
         <el-table-column label="审计事件" min-width="300"
           ><template #default="{ row }">
-            <div>{{ row.message || actionLabel(row) }}</div>
+            <div>{{ row.message || actionLabel(row as AuditSummary) }}</div>
             <div class="admin-field-help">
-              {{ actionLabel(row) }} · {{ categoryLabel(row) }} · {{ resourceLabel(row) }}
+              {{ actionLabel(row as AuditSummary) }} · {{ categoryLabel(row as AuditSummary) }} ·
+              {{ resourceLabel(row as AuditSummary) }}
             </div>
             <div class="admin-field-help" :title="String(row.id)">
               审计 {{ shortIdentifier(String(row.id)) }}
@@ -543,7 +545,7 @@ watch(active, () => {
         >
         <el-table-column label="操作与结果" width="200"
           ><template #default="{ row }">
-            <div :title="row.actor_id || undefined">{{ actorLabel(row) }}</div>
+            <div :title="row.actor_id || undefined">{{ actorLabel(row as AuditSummary) }}</div>
             <el-tag
               size="small"
               :type="
@@ -553,7 +555,7 @@ watch(active, () => {
                     ? 'warning'
                     : 'danger'
               "
-              >{{ outcomeLabel(row) }}</el-tag
+              >{{ outcomeLabel(row as AuditSummary) }}</el-tag
             >
             <div class="admin-field-help">{{ formatDateTime(row.created_at) }}</div>
           </template></el-table-column

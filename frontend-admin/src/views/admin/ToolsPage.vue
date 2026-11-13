@@ -9,6 +9,14 @@ import { api, type McpToolItem } from '../../api'
 import { toolsApi, type ToolOnboardingReceipt } from '../../api/tools'
 import { useAuthStore } from '../../stores/auth'
 
+type PlatformToolRow = {
+  name: string
+  title: string
+  definition?: { defaultVersionId?: string | null }
+  descriptor: Record<string, unknown>
+}
+type AvailableToolRow = { name: string; tool_name: string; title?: string | null }
+
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const emit = defineEmits<{
   confirmed: [receipt: ToolOnboardingReceipt]
@@ -209,7 +217,7 @@ watch(
             typeof requestId === 'string' &&
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)
         )
-      )
+      ) as Record<string, string>
     } catch {
       platformStorageError.value = '无法读取原平台工具启用记录，请恢复浏览器存储后重试。'
     }
@@ -657,7 +665,7 @@ async function inspect(automatic = false) {
           </template>
         </ElTableColumn>
         <ElTableColumn label="风险" width="170">
-          <template #default="{ row }">{{ platformRisk(row) }}</template>
+          <template #default="{ row }">{{ platformRisk(row as PlatformToolRow) }}</template>
         </ElTableColumn>
         <ElTableColumn label="状态" width="88">
           <template #default="{ row }">
@@ -679,7 +687,7 @@ async function inspect(automatic = false) {
               type="primary"
               :loading="platformBusy === row.name"
               :disabled="!canEnablePlatformTools || !!platformBusy"
-              @click="enablePlatformTool(row)"
+              @click="enablePlatformTool(row as PlatformToolRow)"
               >启用</ElButton
             >
             <ElButton
@@ -687,7 +695,7 @@ async function inspect(automatic = false) {
               link
               :loading="platformBusy === row.name"
               :disabled="!!platformBusy"
-              @click="inspectPlatformTool(row)"
+              @click="inspectPlatformTool(row as PlatformToolRow)"
               >核对结果</ElButton
             >
             <div v-if="platformErrors[row.name]" class="admin-field-help" role="status">
@@ -751,7 +759,7 @@ async function inspect(automatic = false) {
         "
       >
         <ElTableColumn label="工具" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ availableToolLabel(row) }}</template>
+          <template #default="{ row }">{{ availableToolLabel(row as AvailableToolRow) }}</template>
         </ElTableColumn>
         <ElTableColumn prop="description" label="说明" min-width="240" show-overflow-tooltip />
         <ElTableColumn label="服务来源" min-width="200"
