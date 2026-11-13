@@ -79,10 +79,7 @@
           ><ElFormItem
             label="新密码"
             prop="next"
-            :rules="[
-              { required: true, message: '请输入新密码' },
-              { min: 12, max: 72, message: '新密码需12至72位' }
-            ]"
+            :rules="[{ required: true, message: '请输入新密码' }, accountPasswordRule]"
             ><ElInput
               v-described-by="formTipId + '-field-2'"
               :aria-describedby="formTipId + '-field-2'"
@@ -98,6 +95,7 @@
             label="再次输入新密码"
             prop="confirm"
             :rules="[
+              { required: true, message: '请再次输入新密码' },
               {
                 validator: (_rule, value, callback) =>
                   callback(
@@ -134,6 +132,7 @@ import { guardFormEnter } from '@skillforge/shared/admin'
 import { computed, onMounted, reactive, ref, useId } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { AdminPage, useResource, useTask, useUnsavedChanges } from '@skillforge/shared/admin'
+import { accountPasswordRule } from '@skillforge/shared/utils/accountPassword'
 import { api, type ModelSelections } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useRouter } from 'vue-router'
@@ -195,15 +194,6 @@ async function saveModels() {
 async function changePassword() {
   await run(async () => {
     if (!(await passwordRef.value?.validate().catch(() => false))) return
-    if (password.next !== password.confirm) throw Error('两次输入的新密码不一致')
-    if (
-      [...password.next].length < 12 ||
-      !/[A-Za-z]/.test(password.next) ||
-      !/[0-9]/.test(password.next)
-    )
-      throw Error('新密码至少 12 个字符，且须包含字母和数字')
-    if (new TextEncoder().encode(password.next).length > 72)
-      throw Error('新密码编码后不能超过 72 字节；中文等字符占用更多，请缩短密码后保存')
     await api.auth.changePassword({ old_password: password.old, new_password: password.next })
     Object.assign(password, { old: '', next: '', confirm: '' })
     success.value = '密码已修改，请重新登录'
