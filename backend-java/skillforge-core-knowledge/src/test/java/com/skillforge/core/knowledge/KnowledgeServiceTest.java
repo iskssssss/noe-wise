@@ -1,6 +1,7 @@
 package com.skillforge.core.knowledge;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -139,12 +140,15 @@ class KnowledgeServiceTest {
         when(baseMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(base);
         when(baseMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(base));
         when(documentMapper.countByBase(eq(7L), any())).thenReturn(List.of(new KnowledgeBaseCount(10L, 1L)));
+        when(documentMapper.baseIdsWithDocuments(eq(7L), any())).thenReturn(List.of(10L));
         when(chunkMapper.countCurrentByBase(eq(7L), any())).thenReturn(List.of(new KnowledgeBaseCount(10L, 1L)));
 
         var listed = service.listBases("7");
         assertEquals(1, listed.total());
         assertEquals(1L, listed.items().get(0).documentCount());
+        assertFalse(listed.items().getFirst().canDelete());
         assertEquals(10L, service.getBase("7", 10L).id());
+        assertFalse(service.getBase("7", 10L).canDelete());
 
         KnowledgeService.KnowledgeBaseSettingsUpdate settings =
                 new KnowledgeService.KnowledgeBaseSettingsUpdate(20, 2, "economical", "full_text",
@@ -166,6 +170,7 @@ class KnowledgeServiceTest {
         assertEquals(3L, createdBase.getValue().getEmbeddingModelRevision());
         assertEquals(2, createdBase.getValue().getEmbeddingDimensions());
 
+        when(documentMapper.baseIdsWithDocuments(7L, List.of(10L))).thenReturn(List.of());
         service.deleteBase("7", 10L);
         verify(baseMapper).deleteById(10L);
         assertThrows(com.skillforge.core.shared.exception.ApiException.class,
@@ -799,17 +804,23 @@ class KnowledgeServiceTest {
         when(chunkMapper.countCurrentByBase(7L, List.of(10L, 11L))).thenReturn(List.of(new KnowledgeBaseCount(10L, largeCount + 1)));
         when(documentMapper.countByBase(7L, List.of(10L))).thenReturn(List.of(new KnowledgeBaseCount(10L, 1L)));
         when(chunkMapper.countCurrentByBase(7L, List.of(10L))).thenReturn(List.of(new KnowledgeBaseCount(10L, 2L)));
+        when(documentMapper.baseIdsWithDocuments(7L, List.of(10L, 11L))).thenReturn(List.of(10L));
+        when(documentMapper.baseIdsWithDocuments(7L, List.of(10L))).thenReturn(List.of(10L));
 
         var items = service.listBases("7").items();
         assertEquals(largeCount, items.get(0).documentCount());
         assertEquals(largeCount + 1, items.get(0).chunkCount());
+        assertFalse(items.get(0).canDelete());
         assertEquals(0L, items.get(1).documentCount());
         assertEquals(0L, items.get(1).chunkCount());
+        assertTrue(items.get(1).canDelete());
         var detail = service.getBase("7", 10L);
         assertEquals(1L, detail.documentCount());
         assertEquals(2L, detail.chunkCount());
+        assertFalse(detail.canDelete());
         verify(documentMapper).countByBase(7L, List.of(10L));
         verify(chunkMapper).countCurrentByBase(7L, List.of(10L));
+        verify(documentMapper).baseIdsWithDocuments(7L, List.of(10L));
         verify(documentMapper, never()).selectList(any());
         verify(chunkMapper, never()).selectList(any());
     }
@@ -819,12 +830,15 @@ class KnowledgeServiceTest {
         when(baseMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(base()));
         when(documentMapper.countByBase(7L, List.of(10L))).thenReturn(List.of(new KnowledgeBaseCount(10L, 3L)));
         when(chunkMapper.countCurrentByBase(7L, List.of(10L))).thenReturn(List.of(new KnowledgeBaseCount(10L, 4L)));
+        when(documentMapper.baseIdsWithDocuments(7L, List.of(10L))).thenReturn(List.of(10L));
 
         var result = service.listBases("7", List.of(10L, 99L));
         assertEquals(1, result.total());
         assertEquals(3L, result.items().getFirst().documentCount());
+        assertFalse(result.items().getFirst().canDelete());
         verify(documentMapper).countByBase(7L, List.of(10L));
         verify(chunkMapper).countCurrentByBase(7L, List.of(10L));
+        verify(documentMapper).baseIdsWithDocuments(7L, List.of(10L));
         clearInvocations(documentMapper, chunkMapper);
         when(baseMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         assertEquals(0, service.listBases("7", List.of(99L)).total());

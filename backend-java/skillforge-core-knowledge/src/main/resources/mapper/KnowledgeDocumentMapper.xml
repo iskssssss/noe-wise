@@ -17,6 +17,14 @@
         GROUP BY kb_id
     </select>
 
+    <select id="baseIdsWithDocuments" resultType="long">
+        SELECT DISTINCT kb_id
+        FROM public.nw_knowledge_documents
+        WHERE tenant_id = #{tenantId}
+          AND kb_id IN
+          <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>
+    </select>
+
     <update id="compareAndSetCurrentVersion">
         UPDATE public.nw_knowledge_documents
         SET current_source_version = #{newSourceVersion}

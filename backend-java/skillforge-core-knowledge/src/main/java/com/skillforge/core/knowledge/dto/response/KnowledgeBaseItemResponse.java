@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param status        知识库状态
  * @param documentCount 文档数
  * @param chunkCount    分块数
+ * @param canDelete     是否可硬删除；存在任一文档身份时为 false
  */
 public record KnowledgeBaseItemResponse(
         @Schema(type = "string", description = "知识库主键（雪花 ID）", example = "834824179306501")
@@ -20,5 +21,7 @@ public record KnowledgeBaseItemResponse(
         @Schema(description = "知识库描述，可空") String description,
         @Schema(description = "知识库状态：active 可用 / archived 已归档") KnowledgeBaseStatus status,
         @Schema(description = "文档数") long documentCount,
-        @Schema(description = "分块数") long chunkCount) {
+        @Schema(description = "分块数") long chunkCount,
+        @Schema(description = "是否可硬删除；存在任一文档身份（包括已软删除身份）时为 false")
+        boolean canDelete) {
 }

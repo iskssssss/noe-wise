@@ -22,6 +22,7 @@ import java.time.Instant;
  * @param rerankEnabled         Rerank 重排开关
  * @param documentCount         文档数
  * @param chunkCount            分块数
+ * @param canDelete             是否可硬删除；存在任一文档身份时为 false
  * @param createdAt             创建时间
  */
 public record KnowledgeBaseDetailResponse(
@@ -43,6 +44,8 @@ public record KnowledgeBaseDetailResponse(
         @Schema(description = "Rerank 重排开关") Boolean rerankEnabled,
         @Schema(description = "文档数") long documentCount,
         @Schema(description = "分块数") long chunkCount,
+        @Schema(description = "是否可硬删除；存在任一文档身份（包括已软删除身份）时为 false")
+        boolean canDelete,
         @Schema(description = "创建时间") Instant createdAt,
         @Schema(description = "当前实际索引方式；原始索引列为空时使用当前运营默认") String effectiveIndexingMode) {
 }

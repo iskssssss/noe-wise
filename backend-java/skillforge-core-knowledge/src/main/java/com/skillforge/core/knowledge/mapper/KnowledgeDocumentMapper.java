@@ -14,6 +14,9 @@ public interface KnowledgeDocumentMapper extends BaseMapper<KnowledgeDocumentDO>
     /** 仅在调用方已读取的非空知识库集合内聚合未删除文档。 */
     List<KnowledgeBaseCount> countByBase(@Param("tenantId") long tenantId, @Param("kbIds") List<Long> kbIds);
 
+    /** 返回仍持有文档身份的库，包括已软删除身份，用于判断能否硬删除知识库。 */
+    List<Long> baseIdsWithDocuments(@Param("tenantId") long tenantId, @Param("kbIds") List<Long> kbIds);
+
     /** 仅在当前指针仍等于预期值时切换到新 ready 来源版本。 */
     int compareAndSetCurrentVersion(
             @Param("tenantId") long tenantId,

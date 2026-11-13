@@ -78,7 +78,11 @@
       ></ElTableColumn
       ><ElTableColumn width="96" prop="document_count" label="文档"></ElTableColumn
       ><ElTableColumn width="96" prop="chunk_count" label="分块"></ElTableColumn
-      ><ElTableColumn width="112" class-name="admin-table-actions" prop="actions" label="操作"
+      ><ElTableColumn width="88" prop="status" label="状态"
+        ><template #default="{ row }">{{
+          row.status === 'archived' ? '已归档' : '启用'
+        }}</template></ElTableColumn
+      ><ElTableColumn width="184" class-name="admin-table-actions" prop="actions" label="操作"
         ><template #default="{ row }"
           ><ElButton
             v-permission="['foundation.knowledge.update']"
@@ -87,11 +91,18 @@
             :disabled="busy || !!creationUnknown || !!configurationUnknown"
             >检索配置</ElButton
           ><ElButton
+            v-permission="['foundation.knowledge.update']"
+            link
+            @click="toggleArchive(row as KnowledgeBase)"
+            :disabled="busy || !!creationUnknown || !!configurationUnknown"
+            >{{ row.status === 'archived' ? '启用' : '归档' }}</ElButton
+          ><ElButton
             v-permission="['foundation.knowledge.delete']"
             link
             type="danger"
             @click="remove(row as KnowledgeBase)"
-            :disabled="busy || !!creationUnknown || !!configurationUnknown"
+            :disabled="busy || !!creationUnknown || !!configurationUnknown || !row.can_delete"
+            :title="!row.can_delete ? '已有文档来源的知识库不能硬删除，请使用归档' : undefined"
             >删除</ElButton
           ></template
         ></ElTableColumn
@@ -709,13 +720,35 @@ async function navigateToCreated(destination: string) {
     message.warning('知识库已创建，未能进入详情，请使用页面入口继续。')
   }
 }
+async function toggleArchive(row: KnowledgeBase) {
+  const archive = row.status !== 'archived'
+  if (
+    archive &&
+    !(await confirm({
+      title: '归档知识库',
+      confirmText: '归档',
+      content:
+        '确定归档“' + row.name + '”？归档后不再参与检索，已发布来源、文档和分块仍保留，可再次启用。'
+    }))
+  )
+    return
+  await run(async () => {
+    await api.knowledge.updateBase(row.id, { status: archive ? 'archived' : 'active' })
+    message.success(archive ? '知识库已归档' : '知识库已启用')
+    await reload()
+  })
+}
 async function remove(row: KnowledgeBase) {
+  if (!row.can_delete) {
+    message.warning('已有文档来源的知识库不能硬删除，请使用归档')
+    return
+  }
   if (
     await confirm({
       title: '删除知识库',
       confirmText: '删除知识库',
       danger: true,
-      content: '确定删除“' + row.name + '”及其文档和分块？'
+      content: '确定删除空知识库“' + row.name + '”？'
     })
   )
     await run(async () => {

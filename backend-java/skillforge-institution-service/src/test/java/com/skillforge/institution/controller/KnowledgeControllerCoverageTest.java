@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.skillforge.common.context.TenantContext;
 import com.skillforge.core.knowledge.KnowledgeBaseRevisionService;
+import com.skillforge.core.knowledge.KnowledgeRerankStatus;
 import com.skillforge.core.knowledge.KnowledgeService;
 import com.skillforge.institution.service.KnowledgeManagementService;
 import com.skillforge.core.knowledge.KnowledgeHit;
@@ -42,7 +43,7 @@ class KnowledgeControllerCoverageTest {
         management = mock(KnowledgeManagementService.class);
         controller = new KnowledgeController(knowledge, revisions, management);
         when(management.list("7")).thenReturn(new KnowledgeBaseListResponse(1,
-                List.of(new KnowledgeBaseItemResponse(31L, "FAQ", null, KnowledgeBaseStatus.fromCode("active"), 2, 9))));
+                List.of(new KnowledgeBaseItemResponse(31L, "FAQ", null, KnowledgeBaseStatus.fromCode("active"), 2, 9, false))));
     }
 
     @AfterEach
@@ -56,7 +57,8 @@ class KnowledgeControllerCoverageTest {
         when(management.create("7", "FAQ", "help", null, null, null, null)).thenReturn(new CreateKnowledgeBaseResponse(31L, "FAQ"));
         assertThat(controller.createBase(new CreateKnowledgeBaseRequest("FAQ", "help", null, null, null, null, null, null, null, null, null)).data().id()).isEqualTo(31L);
         var detail = new KnowledgeBaseDetailResponse(31L, "FAQ", null, "active", 4L, 500, 50,
-                "high_quality", "hybrid", 5, true, 0.5, 0.7, false, 2, 9, Instant.parse("2026-08-25T00:00:00Z"), "high_quality");
+                "high_quality", "hybrid", 5, true, 0.5, 0.7, false, 2, 9, false,
+                Instant.parse("2026-08-25T00:00:00Z"), "high_quality");
         when(knowledge.getBase("7", 31L)).thenReturn(detail);
         when(knowledge.updateBase(any(), any(), any(), any(), any(), any())).thenReturn(detail);
         assertThat(controller.getBase(31L).data().name()).isEqualTo("FAQ");
@@ -86,13 +88,16 @@ class KnowledgeControllerCoverageTest {
 
     @Test
     void searchResponseProjectsTypedHits() {
-        when(knowledge.search(any(), any(), any(), anyInt(), any())).thenReturn(
-                List.of(new KnowledgeHit("31", "d1", "c1", "v1", "answer", 0.9, 0.8)));
+        when(knowledge.searchWithStatus(any(), any(), any(), anyInt(), any())).thenReturn(
+                new KnowledgeService.SearchResult(
+                        List.of(new KnowledgeHit("31", "d1", "c1", "v1", "answer", 0.9, 0.8)),
+                        KnowledgeRerankStatus.DISABLED,
+                        new KnowledgeService.SearchScope(KnowledgeService.SearchScopeKind.CURRENT_DOCUMENTS, null, null)));
         var inherited = new KnowledgeSearchRequest("31", "query", null, null, null, null, null, null);
         assertThat(controller.search(inherited).data().items()).hasSize(1);
-        verify(knowledge).search("7", "31", "query", 0, inherited);
+        verify(knowledge).searchWithStatus("7", "31", "query", 0, inherited);
         var override = new KnowledgeSearchRequest("31", "query", 2, "hybrid", true, 0.4, 0.7, true);
         assertThat(controller.search(override).data().items()).hasSize(1);
-        verify(knowledge).search("7", "31", "query", 2, override);
+        verify(knowledge).searchWithStatus("7", "31", "query", 2, override);
     }
 }

@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -157,10 +158,12 @@ public class KnowledgeService {
         List<Long> baseIds = rows.stream().map(KnowledgeBaseDO::getId).toList();
         Map<Long, Long> documents = countsByKb(documentMapper.countByBase(Long.parseLong(tenantId), baseIds));
         Map<Long, Long> chunks = countsByKb(chunkMapper.countCurrentByBase(Long.parseLong(tenantId), baseIds));
+        Set<Long> sourceBases = Set.copyOf(
+                documentMapper.baseIdsWithDocuments(Long.parseLong(tenantId), baseIds));
         return new KnowledgeBaseListResponse(rows.size(), rows.stream().map(row ->
                 new KnowledgeBaseItemResponse(row.getId(), row.getName(), row.getDescription(),
                         KnowledgeBaseStatus.fromCode(row.getStatus()), documents.getOrDefault(row.getId(), 0L),
-                        chunks.getOrDefault(row.getId(), 0L))).toList());
+                        chunks.getOrDefault(row.getId(), 0L), !sourceBases.contains(row.getId()))).toList());
     }
 
     /**
@@ -174,12 +177,14 @@ public class KnowledgeService {
         KnowledgeBaseDO base = requireBase(tenantId, kbId);
         Map<Long, Long> documents = countsByKb(documentMapper.countByBase(Long.parseLong(tenantId), List.of(kbId)));
         Map<Long, Long> chunks = countsByKb(chunkMapper.countCurrentByBase(Long.parseLong(tenantId), List.of(kbId)));
+        boolean canDelete = documentMapper.baseIdsWithDocuments(
+                Long.parseLong(tenantId), List.of(kbId)).isEmpty();
         return new KnowledgeBaseDetailResponse(base.getId(), base.getName(), base.getDescription(),
                 base.getStatus(), base.getActiveRevisionId(), base.getChunkSize(), base.getChunkOverlap(),
                 base.getIndexingMode(), base.getRetrievalMode(), base.getTopK(), base.getScoreThresholdEnabled(),
                 base.getScoreThreshold(), base.getVectorWeight(), base.getRerankEnabled(),
-                documents.getOrDefault(base.getId(), 0L), chunks.getOrDefault(base.getId(), 0L), base.getCreatedAt(),
-                operationalSettings.effectiveIndexingMode(base.getIndexingMode()));
+                documents.getOrDefault(base.getId(), 0L), chunks.getOrDefault(base.getId(), 0L), canDelete,
+                base.getCreatedAt(), operationalSettings.effectiveIndexingMode(base.getIndexingMode()));
     }
 
     /**
@@ -255,10 +260,8 @@ public class KnowledgeService {
     @Transactional
     public void deleteBase(String tenantId, Long kbId) {
         KnowledgeBaseDO base = requireWritableBase(tenantId, kbId);
-        Long documents = documentMapper.selectCount(new LambdaQueryWrapper<KnowledgeDocumentDO>()
-                .eq(KnowledgeDocumentDO::getTenantId, base.getTenantId())
-                .eq(KnowledgeDocumentDO::getKbId, base.getId()));
-        if (documents != null && documents > 0) {
+        if (!documentMapper.baseIdsWithDocuments(
+                base.getTenantId(), List.of(base.getId())).isEmpty()) {
             throw conflict("知识库已有不可变来源版本，不能硬删除；请归档知识库");
         }
         knowledgeBaseMapper.deleteById(base.getId());

@@ -414,6 +414,7 @@ export interface KnowledgeBase {
   status: string
   document_count?: number
   chunk_count?: number
+  can_delete: boolean
 }
 
 export interface KnowledgeBaseDetail extends KnowledgeBase {

@@ -26,7 +26,8 @@ const api = vi.hoisted(() => ({
   listBases: vi.fn(),
   createBase: vi.fn(),
   updateBase: vi.fn(),
-  getBase: vi.fn()
+  getBase: vi.fn(),
+  removeBase: vi.fn()
 }))
 const createReceipt = vi.hoisted(() => vi.fn())
 const push = vi.hoisted(() => vi.fn())
@@ -60,6 +61,8 @@ beforeEach(() => {
   permissions.value = ['foundation.knowledge.create', 'foundation.knowledge.update']
   api.listBases.mockResolvedValue({ items: [], total: 0 })
   api.createBase.mockResolvedValue({ id: 'kb-owned', name: '知识配置' })
+  api.updateBase.mockResolvedValue({})
+  api.removeBase.mockResolvedValue({ status: 'deleted' })
   push.mockResolvedValue(undefined)
 })
 afterEach(() => {
@@ -82,6 +85,108 @@ function button(wrapper: VueWrapper, label: string) {
 }
 
 describe('知识库数字控件的原生和 ARIA 状态', () => {
+  it('有来源的知识库只允许归档，空知识库仍可硬删除', async () => {
+    permissions.value = [
+      'foundation.knowledge.create',
+      'foundation.knowledge.update',
+      'foundation.knowledge.delete'
+    ]
+    api.listBases
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'kb-full',
+            name: '非空知识库',
+            status: 'active',
+            document_count: 1,
+            chunk_count: 2,
+            can_delete: false
+          },
+          {
+            id: 'kb-empty',
+            name: '空知识库',
+            status: 'active',
+            document_count: 0,
+            chunk_count: 0,
+            can_delete: true
+          },
+          {
+            id: 'kb-soft-deleted',
+            name: '软删除来源知识库',
+            status: 'active',
+            document_count: 0,
+            chunk_count: 0,
+            can_delete: false
+          }
+        ],
+        total: 3
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'kb-full',
+            name: '非空知识库',
+            status: 'archived',
+            document_count: 1,
+            chunk_count: 2,
+            can_delete: false
+          },
+          {
+            id: 'kb-empty',
+            name: '空知识库',
+            status: 'active',
+            document_count: 0,
+            chunk_count: 0,
+            can_delete: true
+          },
+          {
+            id: 'kb-soft-deleted',
+            name: '软删除来源知识库',
+            status: 'active',
+            document_count: 0,
+            chunk_count: 0,
+            can_delete: false
+          }
+        ],
+        total: 3
+      })
+    vi.mocked(confirm).mockResolvedValue(true)
+    const wrapper = mount(KnowledgePage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    let deleteButtons = wrapper
+      .findAllComponents(ElButton)
+      .filter((candidate) => candidate.text() === '删除')
+    expect(deleteButtons.map((candidate) => candidate.props('disabled'))).toEqual([
+      true,
+      false,
+      true
+    ])
+
+    await button(wrapper, '归档').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '归档知识库',
+        content: expect.stringContaining('已发布来源、文档和分块仍保留')
+      })
+    )
+    expect(api.updateBase).toHaveBeenCalledWith('kb-full', { status: 'archived' })
+    expect(wrapper.text()).toContain('已归档')
+    expect(wrapper.text()).toContain('启用')
+
+    deleteButtons = wrapper
+      .findAllComponents(ElButton)
+      .filter((candidate) => candidate.text() === '删除')
+    await deleteButtons[1]!.trigger('click')
+    await flushPromises()
+    expect(api.removeBase).toHaveBeenCalledWith('kb-empty')
+  })
+
   it('首次读取失败不显示空库，刷新失败时保留旧结果并说明', async () => {
     api.listBases
       .mockRejectedValueOnce(new Error('目录暂不可用'))

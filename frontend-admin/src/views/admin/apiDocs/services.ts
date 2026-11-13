@@ -509,7 +509,8 @@ export const serviceEndpoints: ApiDocEndpoint[] = [
           description: SERVICE_COMMON.knowledgeDescriptionExample,
           status: 'active',
           document_count: 0,
-          chunk_count: 0
+          chunk_count: 0,
+          can_delete: true
         }
       ]
     },
@@ -543,6 +544,7 @@ export const serviceEndpoints: ApiDocEndpoint[] = [
       rerank_enabled: false,
       document_count: 0,
       chunk_count: 0,
+      can_delete: true,
       created_at: '2026-09-13T00:00:00Z'
     },
     notes: channelNotes

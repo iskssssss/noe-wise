@@ -69,14 +69,30 @@ class KnowledgeCreateBrowserE2ETest extends AbstractIntegrationTest {
             assertEquals(0, process.exitValue(), () -> "浏览器验收失败：" + evidence);
         }
         var receipt = json.readTree(Files.readString(evidence.resolve("creation-receipt.json")));
-        var rows = queryRows(jdbc, tenant, "SELECT id, name, indexing_mode, chunk_size, chunk_overlap, top_k FROM nw_knowledge_bases WHERE tenant_id=? AND id=?",
+        var rows = queryRows(jdbc, tenant, "SELECT id, name, status, indexing_mode, chunk_size, chunk_overlap, top_k FROM nw_knowledge_bases WHERE tenant_id=? AND id=?",
                 Long.valueOf(tenant), receipt.path("data").path("kb_id").asLong());
         assertEquals(1, rows.size());
         assertEquals("浏览器创建知识库", rows.getFirst().get("name"));
+        assertEquals("archived", rows.getFirst().get("status"));
         assertEquals("economical", rows.getFirst().get("indexing_mode"));
         assertEquals(640, rows.getFirst().get("chunk_size"));
         assertEquals(40, rows.getFirst().get("chunk_overlap"));
         assertEquals(7, rows.getFirst().get("top_k"));
+        var lifecycle = json.readTree(Files.readString(evidence.resolve("knowledge-lifecycle.json")));
+        assertFalse(lifecycle.path("initialCanDelete").asBoolean());
+        assertEquals(1, lifecycle.path("documentDeletes").asInt());
+        assertEquals(0, lifecycle.path("documentCount").asLong());
+        assertEquals(0, lifecycle.path("chunkCount").asLong());
+        assertFalse(lifecycle.path("canDelete").asBoolean());
+        assertEquals(1, lifecycle.path("archiveWrites").asInt());
+        assertEquals(0, lifecycle.path("deleteWrites").asInt());
+        assertEquals("archived", lifecycle.path("status").asText());
+        assertEquals(1, queryCount(jdbc, tenant,
+                "SELECT count(*) FROM nw_knowledge_documents WHERE tenant_id=? AND kb_id=?",
+                Long.valueOf(tenant), receipt.path("data").path("kb_id").asLong()));
+        assertEquals(1, queryCount(jdbc, tenant,
+                "SELECT count(*) FROM nw_knowledge_documents WHERE tenant_id=? AND kb_id=? AND deleted_at IS NOT NULL",
+                Long.valueOf(tenant), receipt.path("data").path("kb_id").asLong()));
         assertEquals(1, queryCount(jdbc, tenant, "SELECT count(*) FROM nw_knowledge_bases WHERE tenant_id=? AND name=? AND id=?",
                 Long.valueOf(tenant), "恢复知识库", receipt.path("recovered").path("kb_id").asLong()));
     }

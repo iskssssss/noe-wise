@@ -89,7 +89,106 @@ test('创建后直接维护新知识库', async ({ page }) => {
     1
   )
   await expect(page.getByRole('button', { name: '上传文件' }).first()).toBeVisible()
+  const firstListRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === '/api/v1/knowledge/bases'
+  )
   await page.goto('/admin/knowledge')
+  const initialItem = (await (await firstListRead).json()).data.items.find(
+    (item: { id: string }) => item.id === id
+  )
+  expect(initialItem).toMatchObject({
+    document_count: 1,
+    chunk_count: 1,
+    can_delete: false
+  })
+  const managed = page.getByRole('row').filter({ hasText: '浏览器创建知识库' })
+  await expect(managed).toContainText('1')
+  await page.screenshot({
+    path: join(required('E2E_ARTIFACT_DIR'), 'knowledge-lifecycle-before.png'),
+    fullPage: true
+  })
+  await expect(managed.getByRole('button', { name: '删除', exact: true })).toBeDisabled()
+  await expect(managed.getByRole('button', { name: '归档', exact: true })).toBeVisible()
+  await managed.getByRole('link', { name: '浏览器创建知识库' }).click()
+  await expect(page).toHaveURL(new RegExp(`/admin/knowledge/${id}$`))
+  const documentRow = page.getByRole('row').filter({ hasText: '首份文档' })
+  await expect(documentRow).toBeVisible()
+  const deletedDocument = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      new URL(response.url()).pathname === '/api/v1/knowledge/documents/delete'
+  )
+  await documentRow.getByRole('button', { name: '删除', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '删除文档', exact: true })
+    .getByRole('button', { name: '删除文档', exact: true })
+    .click()
+  expect((await deletedDocument).status()).toBe(200)
+  await expect(documentRow).toHaveCount(0)
+  const softDeletedListRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === '/api/v1/knowledge/bases'
+  )
+  await page.goto('/admin/knowledge')
+  const softDeletedList = await (await softDeletedListRead).json()
+  const softDeletedItem = softDeletedList.data.items.find((item: { id: string }) => item.id === id)
+  expect(softDeletedItem).toMatchObject({
+    document_count: 0,
+    chunk_count: 0,
+    can_delete: false
+  })
+  const retainedSource = page.getByRole('row').filter({ hasText: '浏览器创建知识库' })
+  await expect(retainedSource.getByRole('button', { name: '删除', exact: true })).toBeDisabled()
+  await expect(retainedSource.getByRole('button', { name: '归档', exact: true })).toBeVisible()
+  await page.screenshot({
+    path: join(required('E2E_ARTIFACT_DIR'), 'knowledge-lifecycle-source-deleted.png'),
+    fullPage: true
+  })
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/knowledge/bases/update' &&
+      response.request().method() === 'PATCH'
+  )
+  await retainedSource.getByRole('button', { name: '归档', exact: true }).click()
+  const archiveDialog = page.getByRole('dialog').filter({ hasText: '归档知识库' })
+  await archiveDialog.getByRole('button', { name: '归档', exact: true }).click()
+  expect((await archived).status()).toBe(200)
+  await expect(
+    page.getByRole('row').filter({ hasText: '浏览器创建知识库' }).filter({ hasText: '已归档' })
+  ).toBeVisible()
+  await expect(
+    page
+      .getByRole('row')
+      .filter({ hasText: '浏览器创建知识库' })
+      .getByRole('button', { name: '删除', exact: true })
+  ).toBeDisabled()
+  await expect(archiveDialog).toBeHidden()
+  await page.screenshot({
+    path: join(required('E2E_ARTIFACT_DIR'), 'knowledge-lifecycle-archived.png'),
+    fullPage: true
+  })
+  await writeFile(
+    join(required('E2E_ARTIFACT_DIR'), 'knowledge-lifecycle.json'),
+    JSON.stringify(
+      {
+        kbId: id,
+        initialCanDelete: initialItem.can_delete,
+        documentDeletes: writes.filter((path) => path === '/api/v1/knowledge/documents/delete')
+          .length,
+        documentCount: softDeletedItem.document_count,
+        chunkCount: softDeletedItem.chunk_count,
+        canDelete: softDeletedItem.can_delete,
+        archiveWrites: writes.filter((path) => path === '/api/v1/knowledge/bases/update').length,
+        deleteWrites: writes.filter((path) => path === '/api/v1/knowledge/bases/delete').length,
+        status: 'archived'
+      },
+      null,
+      2
+    )
+  )
   await page.route(
     '**/api/v1/knowledge/bases/create-with-receipt',
     async (route) => {
