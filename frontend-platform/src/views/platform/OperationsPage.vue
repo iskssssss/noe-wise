@@ -106,6 +106,12 @@ const resourceTypeLabel = (value: string) => {
   }
   return labels[value] ?? value
 }
+const traceKind = (value?: string | null) => {
+  if (!value) return '未记录'
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? '执行追踪'
+    : '安全会话'
+}
 
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
@@ -396,7 +402,11 @@ const formTipId = useId()
     >
       <ElDescriptions v-if="selected" :column="1" border>
         <ElDescriptionsItem label="操作">{{ selected.action }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="Trace ID">{{ selected.trace_id }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="追踪 / 会话"
+          >{{ selected.trace_id ?? '未记录' }}（{{
+            traceKind(selected.trace_id)
+          }}）</ElDescriptionsItem
+        >
         <ElDescriptionsItem label="说明">{{ selected.message }}</ElDescriptionsItem>
       </ElDescriptions>
       <pre class="prewrap">{{ JSON.stringify(selected?.payload, null, 2) }}</pre>

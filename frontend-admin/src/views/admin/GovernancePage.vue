@@ -332,12 +332,12 @@
         show-overflow-tooltip
         prop="message"
         label="说明"
-      /><ElTableColumn
-        min-width="200"
-        show-overflow-tooltip
-        prop="trace_id"
-        label="Trace ID"
-      /><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
+      /><ElTableColumn min-width="200" label="追踪 / 会话"
+        ><template #default="{ row }">
+          <div>{{ row.trace_id ?? '未记录' }}</div>
+          <div class="admin-field-help">{{ traceKind(row.trace_id) }}</div>
+        </template></ElTableColumn
+      ><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
         ><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></ElTableColumn
       ></ElTable
     >
@@ -690,6 +690,12 @@ const auditActionLabel = (value: string) => auditActionLabels.value.get(value) ?
 const auditActorLabel = (value: string | number | null | undefined) => {
   if (value === null || value === undefined || value === '') return '系统或未知来源'
   return auditActorLabels.value.get(String(value)) ?? `操作者 #${value}`
+}
+const traceKind = (value?: string | null) => {
+  if (!value) return '未记录'
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? '执行追踪'
+    : '安全会话'
 }
 onMounted(() => {
   void reload()
