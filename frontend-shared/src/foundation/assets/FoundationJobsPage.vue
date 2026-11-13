@@ -115,6 +115,12 @@ const stateLabels: Record<string, string> = {
   cancelled: '已取消',
   expired: '结果已过期'
 }
+function handlerTitle(code: string) {
+  return handlers.data.value?.find((handler) => handler.code === code)?.title || code
+}
+function shortId(value: string) {
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
@@ -527,31 +533,30 @@ onScopeDispose(() => {
             : '暂无管理任务'
       "
     >
-      <ElTableColumn label="任务" min-width="210"
+      <ElTableColumn label="任务" min-width="180"
         ><template #default="{ row }"
-          ><ElButton link @click="inspect(row as FoundationJob)">{{ row.handler }}</ElButton>
-          <div class="muted">{{ row.id }}</div></template
+          ><ElButton link @click="inspect(row as FoundationJob)">{{
+            handlerTitle(row.handler)
+          }}</ElButton>
+          <div class="muted" :title="row.id">
+            {{ shortId(row.id) }} · {{ formatDateTime(row.created_at) }}
+          </div></template
         ></ElTableColumn
       >
-      <ElTableColumn label="操作" width="90"
+      <ElTableColumn label="方式" width="64"
         ><template #default="{ row }">{{
           row.operation === 'import' ? '导入' : '导出'
         }}</template></ElTableColumn
       >
-      <ElTableColumn label="状态" min-width="110"
-        ><template #default="{ row }">{{
-          stateLabels[row.state] ?? row.state
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn label="进度" min-width="150"
+      <ElTableColumn label="状态与进度" min-width="160"
         ><template #default="{ row }"
-          >{{ row.completed_rows }} / {{ row.total_rows }}，错误 {{ row.error_rows }}</template
+          ><div>{{ stateLabels[row.state] ?? row.state }}</div>
+          <div class="muted">
+            {{ row.completed_rows }} / {{ row.total_rows }}，错误 {{ row.error_rows }}
+          </div></template
         ></ElTableColumn
       >
-      <ElTableColumn label="创建时间" min-width="180"
-        ><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></ElTableColumn
-      >
-      <ElTableColumn label="操作" width="210" fixed="right"
+      <ElTableColumn label="操作" width="180" fixed="right"
         ><template #default="{ row }"
           ><ElButton link @click="inspect(row as FoundationJob)">详情</ElButton
           ><ElButton

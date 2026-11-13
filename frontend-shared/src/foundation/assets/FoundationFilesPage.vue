@@ -17,6 +17,18 @@ const formTipId = useId()
 const size = useFoundationPageSize()
 const action = useTask()
 const message = ref('')
+const fileTypes: Record<string, string> = {
+  'text/csv': 'CSV',
+  'text/plain': 'TXT',
+  'application/json': 'JSON',
+  'application/pdf': 'PDF',
+  'image/png': 'PNG',
+  'image/jpeg': 'JPEG',
+  'image/webp': 'WebP'
+}
+function fileTypeLabel(value: string) {
+  return fileTypes[value] ?? value
+}
 const canUpload = computed(() => props.permissions.includes('foundation.files.upload'))
 const canDelete = computed(() => props.permissions.includes('foundation.files.delete'))
 const files = useResource((signal) =>
@@ -185,16 +197,15 @@ onScopeDispose(() => {
             : '暂无公共文件'
       "
     >
-      <ElTableColumn prop="name" label="文件名" min-width="200" show-overflow-tooltip />
-      <ElTableColumn prop="mime_type" label="类型" min-width="140" />
-      <ElTableColumn label="容量（字节）" width="140" align="right"
-        ><template #default="{ row }">{{
-          row.size_bytes.toLocaleString()
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn prop="reference_count" label="引用数" width="100" align="right" />
-      <ElTableColumn label="上传时间" min-width="180"
-        ><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></ElTableColumn
+      <ElTableColumn label="文件" min-width="450"
+        ><template #default="{ row }"
+          ><div>{{ row.name }}</div>
+          <div class="muted">
+            {{ fileTypeLabel(row.mime_type) }} · {{ row.size_bytes.toLocaleString() }} 字节 · 引用
+            {{ row.reference_count }} 次
+          </div>
+          <div class="muted">上传于 {{ formatDateTime(row.created_at) }}</div></template
+        ></ElTableColumn
       >
       <ElTableColumn label="操作" width="170" fixed="right"
         ><template #default="{ row }"
