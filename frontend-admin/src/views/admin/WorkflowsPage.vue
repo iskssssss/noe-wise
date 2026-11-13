@@ -34,33 +34,28 @@
           ? '没有匹配的工作流，请调整筛选条件'
           : '尚无工作流，新建后添加节点并连接处理步骤'
       "
-      ><ElTableColumn min-width="200" show-overflow-tooltip prop="name" label="名称"
+      ><ElTableColumn min-width="190" prop="name" label="工作流"
         ><template #default="{ row }"
           ><RouterLink :to="'/admin/workflows/' + encodeURIComponent(row.workflowId)">{{
             row.name || row.workflowId
-          }}</RouterLink></template
+          }}</RouterLink>
+          <div class="admin-field-help">
+            {{ statusLabel(row.status) }} ·
+            {{ row.activeDefinitionVersionId ? '已发布' : '尚未发布' }} ·
+            {{ row.status === 'draft' ? '草稿待发布' : '与发布一致' }}
+          </div></template
         ></ElTableColumn
       ><ElTableColumn
-        min-width="200"
+        min-width="150"
         show-overflow-tooltip
         prop="workflowId"
         label="标识"
-      /><ElTableColumn width="128" show-overflow-tooltip label="状态"
-        ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
-      ><ElTableColumn width="128" label="当前发布"
-        ><template #default="{ row }">{{
-          row.activeDefinitionVersionId ? '已发布' : '尚未发布'
-        }}</template></ElTableColumn
-      ><ElTableColumn width="128" label="工作草稿"
-        ><template #default="{ row }">{{
-          row.status === 'draft' ? '待发布' : '与发布一致'
-        }}</template></ElTableColumn
-      ><ElTableColumn
-        min-width="280"
+      /><ElTableColumn
+        min-width="180"
         show-overflow-tooltip
         prop="description"
         label="说明"
-      /><ElTableColumn label="操作" width="104"
+      /><ElTableColumn label="操作" width="104" fixed="right"
         ><template #default="{ row }">
           <ElButton
             link
