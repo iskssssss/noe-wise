@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   chunks: vi.fn(),
   updateDocument: vi.fn(),
   reindex: vi.fn(),
+  reindexResult: vi.fn(),
   repairProjection: vi.fn(),
   removeDocument: vi.fn(),
   rebuild: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('../../api', () => ({
       getDocument: mocks.document,
       listChunks: mocks.chunks,
       reindexDocument: mocks.reindex,
+      reindexResult: mocks.reindexResult,
       repairProjection: mocks.repairProjection,
       removeDocument: mocks.removeDocument,
       updateDocument: mocks.updateDocument
@@ -749,13 +751,18 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   it.each(['重新索引', '删除'])(
     '%s成功但读取失败时保留旧目录并只允许读取恢复',
     async (operation) => {
-      mocks.reindex.mockResolvedValue({})
+      mocks.reindex.mockImplementation(async (requestId: string, documentId: string) => ({
+        request_id: requestId,
+        status: 'SUCCEEDED',
+        document: { document_id: documentId, chunks: 1, source_version: 'v2' },
+        error_message: null
+      }))
       mocks.removeDocument.mockResolvedValue({})
       await open()
       mocks.documents.mockRejectedValueOnce(new Error('文档列表暂不可读'))
       await click(operation)
       expect(mocks.success).toHaveBeenCalledWith(
-        operation === '删除' ? '文档已删除' : '文档重建已提交'
+        operation === '删除' ? '文档已删除' : '文档重新索引已完成'
       )
       expect(wrapper.text()).toContain('文档操作已完成，但列表尚未更新')
       expect(wrapper.text()).toContain('原文标题')
@@ -773,6 +780,71 @@ describe('知识详情按需读取与已发布状态恢复', () => {
       expect(action('重新索引').props('disabled')).toBe(false)
     }
   )
+  it('重新索引回执丢失后持久化未知状态，刷新后核对且不重发', async () => {
+    mocks.reindex.mockRejectedValueOnce(
+      new HttpClientError({ status: 0, userMessage: '网络连接已断开' })
+    )
+    await open()
+    await click('重新索引')
+
+    const requestId = mocks.reindex.mock.calls[0]![0] as string
+    expect(mocks.reindex).toHaveBeenCalledExactlyOnceWith(requestId, 'doc-1', 'v1')
+    expect(wrapper.text()).toContain(
+      '文档重新索引结果尚未确认；请按原请求核对结果，当前不会使用旧版本再次提交。'
+    )
+    let reindexButton = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '重新索引')!
+    expect(reindexButton.props('disabled')).toBe(true)
+    expect(sessionStorage.length).toBe(1)
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).toContain(requestId)
+
+    wrapper.unmount()
+    await open()
+    expect(wrapper.text()).toContain(
+      '文档重新索引结果尚未确认；请按原请求核对结果，当前不会使用旧版本再次提交。'
+    )
+    reindexButton = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '重新索引')!
+    expect(reindexButton.props('disabled')).toBe(true)
+    expect(mocks.reindex).toHaveBeenCalledTimes(1)
+
+    mocks.reindexResult.mockResolvedValueOnce({
+      request_id: requestId,
+      status: 'SUCCEEDED',
+      document: { document_id: 'doc-1', chunks: 1, source_version: 'v2' },
+      error_message: null
+    })
+    await click('核对重建结果')
+    expect(mocks.reindexResult).toHaveBeenCalledExactlyOnceWith('doc-1', requestId)
+    expect(mocks.success).toHaveBeenCalledWith('文档重新索引已完成')
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.reindex).toHaveBeenCalledTimes(1)
+    reindexButton = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '重新索引')!
+    expect(reindexButton.props('disabled')).toBe(false)
+  })
+  it('重新索引统一接口数值文档标识与本地请求身份', async () => {
+    const documentId = 870045322219525
+    mocks.documents.mockResolvedValue({
+      items: [{ ...documentFixture, id: documentId, status: 'ready', chunk_count: 1 }],
+      total: 1
+    })
+    mocks.reindex.mockImplementation(async (requestId: string) => ({
+      request_id: requestId,
+      status: 'SUCCEEDED',
+      document: { document_id: documentId, chunks: 1, source_version: 'v2' },
+      error_message: null
+    }))
+    await open()
+    await click('重新索引')
+    const requestId = mocks.reindex.mock.calls[0]![0] as string
+    expect(mocks.reindex).toHaveBeenCalledExactlyOnceWith(requestId, String(documentId), 'v1')
+    expect(mocks.success).toHaveBeenCalledWith('文档重新索引已完成')
+    expect(sessionStorage.length).toBe(0)
+  })
 
   it('文档首次读取失败时不显示空知识库，刷新成功后显示真实结果', async () => {
     mocks.documents.mockRejectedValueOnce(new Error('文档列表暂时不可读'))

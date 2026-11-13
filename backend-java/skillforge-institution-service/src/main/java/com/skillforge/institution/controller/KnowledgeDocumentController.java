@@ -2,6 +2,9 @@ package com.skillforge.institution.controller;
 
 import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.core.shared.web.ApiResponses;
+import com.skillforge.core.foundation.access.FoundationAccess;
+import com.skillforge.core.knowledge.KnowledgeReindexReceiptService;
+import com.skillforge.core.shared.exception.ApiException;
 
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.NotBlank;
@@ -14,7 +17,6 @@ import com.skillforge.core.knowledge.dto.response.ChunkListResponse;
 import com.skillforge.core.shared.dto.resource.DeleteResponse;
 import com.skillforge.core.knowledge.dto.response.DocumentDetailResponse;
 import com.skillforge.core.knowledge.dto.response.DocumentListResponse;
-import com.skillforge.core.knowledge.dto.knowledge.ReindexResponse;
 import com.skillforge.core.knowledge.dto.request.UpdateChunkRequest;
 import com.skillforge.core.knowledge.dto.request.UpdateDocumentRequest;
 import com.skillforge.core.knowledge.dto.query.KnowledgeDocumentQuery;
@@ -23,6 +25,9 @@ import com.skillforge.institution.service.KnowledgeManagementService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -47,15 +52,23 @@ public class KnowledgeDocumentController {
     /** 知识库服务。 */
     private final KnowledgeService knowledgeService;
     private final KnowledgeManagementService management;
+    private final KnowledgeReindexReceiptService reindexReceipts;
+    private final FoundationAccess access;
 
     /**
      * 构造知识文档控制器。
      *
      * @param knowledgeService 知识库服务
      */
-    public KnowledgeDocumentController(KnowledgeService knowledgeService, KnowledgeManagementService management) {
+    public KnowledgeDocumentController(
+            KnowledgeService knowledgeService,
+            KnowledgeManagementService management,
+            KnowledgeReindexReceiptService reindexReceipts,
+            FoundationAccess access) {
         this.knowledgeService = knowledgeService;
         this.management = management;
+        this.reindexReceipts = reindexReceipts;
+        this.access = access;
     }
 
     /**
@@ -160,18 +173,33 @@ public class KnowledgeDocumentController {
      * @param docId 文档 ID
      * @return 重算的分块数
      */
-    @Operation(summary = "重新索引文档", description = "expected_source_version 必填；复制完整分段并重算 embedding，生成新来源版本后 CAS 切换当前指针")
+    @Operation(summary = "重新索引文档", description = "request_id 绑定原请求；复制完整分段并重算 embedding，新来源版本与成功回执同事务提交")
     @RequirePermission("foundation.knowledge.run")
     @PostMapping("/documents/reindex")
-    public ApiResponse<ReindexResponse> reindexDocumentEndpoint(
+    public ApiResponse<KnowledgeReindexReceiptService.Receipt> reindexDocumentEndpoint(
             @Valid @RequestBody ReindexDocumentCommand command) {
-        return ApiResponses.wrap(reindexDocument(command.docId(), command.expectedSourceVersion()));
+        String tenant = TenantIds.requireTenantId();
+        var subject = access.currentSubject();
+        if (subject.platform() || !tenant.equals(subject.tenantId()))
+            throw new ApiException(HttpStatus.FORBIDDEN, "机构身份与当前租户不匹配");
+        management.requireDocument(tenant, command.docId(), "manage");
+        return ApiResponses.wrap(reindexReceipts.reindex(
+                tenant, command.docId(), subject.memberId(), command.requestId(), command.expectedSourceVersion()));
     }
 
-    public ReindexResponse reindexDocument(Long docId, String expectedSourceVersion) {
-        management.requireDocument(TenantIds.requireTenantId(), docId, "manage");
-        var result = knowledgeService.reindexDocument(TenantIds.requireTenantId(), docId, expectedSourceVersion);
-        return new ReindexResponse(result.documentId(), result.chunks());
+    /** 204 仅表示当前无可见回执，不能证明原请求已经结束。 */
+    @Operation(summary = "查询文档重新索引回执", description = "按原请求 ID 查询；无回执不代表请求失败")
+    @RequirePermission("foundation.knowledge.read")
+    @GetMapping("/documents/reindex/result")
+    public ResponseEntity<ApiResponse<KnowledgeReindexReceiptService.Receipt>> reindexResult(
+            @RequestParam("doc_id") Long docId, @RequestParam("request_id") UUID requestId) {
+        String tenant = TenantIds.requireTenantId();
+        var subject = access.currentSubject();
+        if (subject.platform() || !tenant.equals(subject.tenantId()))
+            throw new ApiException(HttpStatus.FORBIDDEN, "机构身份与当前租户不匹配");
+        management.requireDocument(tenant, docId, "read");
+        var receipt = reindexReceipts.result(tenant, docId, subject.memberId(), requestId);
+        return receipt == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(ApiResponses.wrap(receipt));
     }
 
     /**
@@ -252,6 +280,7 @@ public class KnowledgeDocumentController {
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */
     public record ReindexDocumentCommand(
             @JsonProperty("doc_id") @NotNull Long docId,
+            @JsonProperty("request_id") @NotNull UUID requestId,
             @JsonProperty("expected_source_version") @NotBlank
             String expectedSourceVersion) {}
 

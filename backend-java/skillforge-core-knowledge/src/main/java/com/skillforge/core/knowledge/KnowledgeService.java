@@ -789,6 +789,12 @@ public class KnowledgeService {
     @Transactional(propagation = Propagation.NEVER)
     public UploadDocumentResponse reindexDocument(
             String tenantId, Long docId, String expectedSourceVersion) {
+        return persistPreparedReindex(tenantId, prepareReindexDocument(tenantId, docId, expectedSourceVersion));
+    }
+
+    /** 模型调用先于短事务；调用方负责在同一事务内提交来源版本和操作回执。 */
+    PreparedReindex prepareReindexDocument(
+            String tenantId, Long docId, String expectedSourceVersion) {
         KnowledgeDocumentDO document = requireDocument(tenantId, docId);
         assertExpectedVersion(document, expectedSourceVersion);
         KnowledgeDocumentVersionDO current = requireVersion(
@@ -814,9 +820,20 @@ public class KnowledgeService {
                     vectors == null ? null : vectors.get(index)));
         }
         freezeModel(next, base);
-        replaceVersion(tenantId, document, expectedSourceVersion, next, chunks);
+        return new PreparedReindex(document, expectedSourceVersion, next, List.copyOf(chunks));
+    }
+
+    /** 加入重新索引的原子事务；CAS 切换失败时不留下新版本。 */
+    UploadDocumentResponse persistPreparedReindex(String tenantId, PreparedReindex prepared) {
+        KnowledgeDocumentDO document = prepared.document();
+        KnowledgeDocumentVersionDO next = prepared.version();
+        List<KnowledgeChunkDO> chunks = prepared.chunks();
+        replaceVersion(tenantId, document, prepared.expectedSourceVersion(), next, chunks);
         return new UploadDocumentResponse(document.getId(), chunks.size(), next.getSourceVersion());
     }
+
+    record PreparedReindex(KnowledgeDocumentDO document, String expectedSourceVersion,
+                           KnowledgeDocumentVersionDO version, List<KnowledgeChunkDO> chunks) { }
 
     /**
      * 分页查询文档分段（排除 embedding 列）。

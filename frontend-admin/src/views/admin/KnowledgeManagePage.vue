@@ -71,6 +71,21 @@
         >读取最新文档</ElButton
       >
     </section>
+    <section v-if="reindexPendingList.length" class="admin-card" role="status">
+      <p>文档重新索引结果尚未确认；请按原请求核对结果，当前不会使用旧版本再次提交。</p>
+      <p v-for="operation in reindexPendingList" :key="operation.documentId">
+        文档“{{ operation.title }}” · 原来源 {{ operation.expectedSourceVersion }} · 请求
+        <code>{{ operation.requestId }}</code>
+      </p>
+      <ElButton
+        v-for="operation in reindexPendingList"
+        :key="operation.requestId"
+        :disabled="busy || !can('foundation.knowledge.read')"
+        @click="checkReindex(operation)"
+        >核对重建结果</ElButton
+      >
+    </section>
+    <p v-if="reindexStorageError" role="status">{{ reindexStorageError }}</p>
     <section v-if="uploadRefresh" class="admin-card" role="status">
       文件已上传，最新文档列表尚未读取。<ElButton :disabled="busy" @click="retryUploadRefresh"
         >读取上传后的文档</ElButton
@@ -334,7 +349,9 @@
                   documentMutationRefresh ||
                   rebuildRefresh ||
                   rebuildPublicationLocked ||
-                  rebuild?.write_locked
+                  rebuild?.write_locked ||
+                  !!reindexPending[row.id] ||
+                  !!reindexStorageError
                 "
                 @click="reindex(row as KnowledgeDocumentItem)"
                 >{{ row.status === 'failed' ? '重试索引' : '重新索引' }}</ElButton
@@ -1081,6 +1098,7 @@ import {
   type KnowledgeChunkItem,
   type KnowledgeBaseRevision,
   type KnowledgePrepareAndPublishReceipt,
+  type KnowledgeReindexReceipt,
   type KnowledgeUploadReceipt,
   type KnowledgeSearchParams,
   type KnowledgeSearchItem,
@@ -1172,6 +1190,17 @@ const publicationOwner = computed(() =>
 )
 const publicationKey = (owner: string) => `skillforge.knowledge-publication.${owner}`
 const uploadKey = (owner: string) => `skillforge.knowledge-upload.${owner}`
+const reindexKey = (owner: string) => `skillforge.knowledge-reindex.${owner}`
+type ReindexPending = {
+  requestId: string
+  kbId: string
+  documentId: string
+  title: string
+  expectedSourceVersion: string
+}
+const reindexPending = ref<Record<string, ReindexPending>>({})
+const reindexPendingList = computed(() => Object.values(reindexPending.value))
+const reindexStorageError = ref('')
 const uploadUnknown = ref<{ name: string; size: number; requestId?: string }>()
 const uploadStorageError = ref('')
 const uploadNotStarted = ref(false)
@@ -1315,6 +1344,42 @@ watch(
       publicationPending.value = value
     } catch {
       publicationStorageError.value = '无法读取原知识发布记录，请恢复浏览器存储后重新进入页面。'
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
+watch(
+  publicationOwner,
+  (owner) => {
+    reindexPending.value = {}
+    reindexStorageError.value = ''
+    if (!owner) return
+    try {
+      const raw = sessionStorage.getItem(reindexKey(owner))
+      if (!raw) return
+      const stored: unknown = JSON.parse(raw)
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw Error('invalid')
+      const restored: Record<string, ReindexPending> = {}
+      for (const [documentId, item] of Object.entries(stored)) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) throw Error('invalid')
+        const value = item as Partial<ReindexPending>
+        if (
+          value.kbId !== id.value ||
+          value.documentId !== documentId ||
+          typeof value.title !== 'string' ||
+          !value.title ||
+          typeof value.expectedSourceVersion !== 'string' ||
+          !value.expectedSourceVersion ||
+          typeof value.requestId !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+        )
+          throw Error('invalid')
+        restored[documentId] = value as ReindexPending
+      }
+      reindexPending.value = restored
+    } catch {
+      reindexStorageError.value =
+        '无法读取原重新索引记录，已暂停该知识库的重索引；请恢复浏览器存储后重新进入。'
     }
   },
   { immediate: true, flush: 'sync' }
@@ -1983,15 +2048,156 @@ async function refreshDocumentList() {
 function needsDocumentContent(value?: KnowledgeDocumentItem) {
   return value?.status === 'failed' && value.chunk_count === 0
 }
+function persistReindexPending(owner: string, next: Record<string, ReindexPending>) {
+  if (Object.keys(next).length) {
+    sessionStorage.setItem(reindexKey(owner), JSON.stringify(next))
+  } else {
+    sessionStorage.removeItem(reindexKey(owner))
+  }
+  reindexPending.value = next
+}
+function clearReindexPending(owner: string, documentId: string) {
+  const next = { ...reindexPending.value }
+  delete next[documentId]
+  persistReindexPending(owner, next)
+}
+function validReindexReceipt(
+  receipt: KnowledgeReindexReceipt | undefined,
+  operation: ReindexPending
+): receipt is KnowledgeReindexReceipt {
+  if (
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    !['PROCESSING', 'REJECTED', 'SUCCEEDED'].includes(receipt.status)
+  )
+    return false
+  if (receipt.status === 'SUCCEEDED') {
+    const document = receipt.document
+    return (
+      !!document &&
+      String(document.document_id) === operation.documentId &&
+      typeof document.source_version === 'string' &&
+      !!document.source_version &&
+      Number.isSafeInteger(document.chunks) &&
+      document.chunks >= 0
+    )
+  }
+  return (
+    receipt.status === 'PROCESSING' ||
+    (typeof receipt.error_message === 'string' && !!receipt.error_message)
+  )
+}
+async function acceptReindexReceipt(
+  receipt: KnowledgeReindexReceipt | undefined,
+  operation: ReindexPending,
+  owner: string,
+  identity: number
+) {
+  if (disposed || publicationOwner.value !== owner || auth.identityVersion !== identity)
+    return false
+  if (!validReindexReceipt(receipt, operation)) {
+    message.warning('尚未取得完整匹配的原重新索引回执，结果仍未确认')
+    return false
+  }
+  if (receipt.status === 'PROCESSING') {
+    message.warning('原文档仍在校验或重新索引，请稍后核对')
+    return false
+  }
+  try {
+    clearReindexPending(owner, operation.documentId)
+  } catch {
+    reindexStorageError.value =
+      '原重新索引已有最终回执，但无法清除本地请求记录；请恢复浏览器存储后重新核对。'
+    message.error(reindexStorageError.value)
+    return false
+  }
+  reindexStorageError.value = ''
+  if (receipt.status === 'REJECTED') {
+    message.error(`文档重新索引未完成：${receipt.error_message}`)
+    return false
+  }
+  message.success('文档重新索引已完成')
+  documentMutationRefresh.value = true
+  await refreshDocumentList()
+  return true
+}
 async function reindex(row: KnowledgeDocumentItem) {
-  if (documentMutationRefresh.value || rebuildPublicationLocked.value) return
+  if (
+    documentMutationRefresh.value ||
+    rebuildPublicationLocked.value ||
+    reindexPending.value[row.id] ||
+    reindexStorageError.value
+  )
+    return
   await run(async () => {
     if (!row.source_version)
       throw Error('尚未读到文档版本，请刷新文档列表后再选择需要重新索引的文档')
-    await api.knowledge.reindexDocument(row.id, row.source_version)
-    message.success('文档重建已提交')
-    documentMutationRefresh.value = true
-    await refreshDocumentList()
+    const owner = publicationOwner.value
+    const identity = auth.identityVersion
+    if (!owner) throw Error('当前登录会话无法保存重新索引记录，请重新登录')
+    const operation: ReindexPending = {
+      requestId: crypto.randomUUID(),
+      kbId: id.value,
+      documentId: String(row.id),
+      title: row.title,
+      expectedSourceVersion: row.source_version
+    }
+    try {
+      persistReindexPending(owner, { ...reindexPending.value, [row.id]: operation })
+    } catch {
+      reindexStorageError.value = '无法保存原请求记录，未发送重新索引；请恢复浏览器存储后重试。'
+      message.error(reindexStorageError.value)
+      return
+    }
+    try {
+      await acceptReindexReceipt(
+        await api.knowledge.reindexDocument(
+          operation.requestId,
+          operation.documentId,
+          operation.expectedSourceVersion
+        ),
+        operation,
+        owner,
+        identity
+      )
+    } catch (cause) {
+      if (disposed || publicationOwner.value !== owner || auth.identityVersion !== identity) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        throw 'cancel'
+      }
+      if (
+        cause instanceof HttpClientError &&
+        cause.status >= 400 &&
+        cause.status < 500 &&
+        cause.status !== 408
+      ) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        try {
+          clearReindexPending(owner, operation.documentId)
+        } catch {
+          reindexStorageError.value =
+            '重新索引请求已拒绝，但无法清除本地记录；请恢复浏览器存储后重新核对。'
+        }
+        message.error(cause.message)
+        throw 'cancel'
+      }
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      message.warning('文档重新索引结果尚未确认，请按原请求核对')
+      throw 'cancel'
+    }
+  })
+}
+async function checkReindex(operation: ReindexPending) {
+  if (!can('foundation.knowledge.read') || busy.value) return
+  const owner = publicationOwner.value
+  const identity = auth.identityVersion
+  await run(async () => {
+    const receipt = await api.knowledge.reindexResult(operation.documentId, operation.requestId)
+    if (!receipt) {
+      message.warning('尚未查到原重新索引回执，结果仍未确认')
+      return
+    }
+    await acceptReindexReceipt(receipt, operation, owner, identity)
   })
 }
 async function repairProjection(row: KnowledgeDocumentItem) {

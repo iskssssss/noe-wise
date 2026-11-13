@@ -387,6 +387,12 @@ export interface KnowledgeUploadReceipt {
   document?: { document_id: string; chunks: number; source_version: string } | null
   error_message?: string | null
 }
+export interface KnowledgeReindexReceipt {
+  request_id: string
+  status: 'PROCESSING' | 'SUCCEEDED' | 'REJECTED'
+  document?: { document_id: string; chunks: number; source_version: string } | null
+  error_message?: string | null
+}
 
 export interface KnowledgeBaseCreateInput {
   name: string
@@ -2035,11 +2041,20 @@ export const api = {
         doc_id: id,
         expected_source_version: expectedSourceVersion
       }),
-    reindexDocument: (id: string, expectedSourceVersion: string) =>
-      post<{ document_id: string; chunks: number }>(`/knowledge/documents/reindex`, {
-        doc_id: id,
-        expected_source_version: expectedSourceVersion
-      }),
+    reindexDocument: (requestId: string, id: string, expectedSourceVersion: string) =>
+      post<KnowledgeReindexReceipt>(
+        `/knowledge/documents/reindex`,
+        {
+          request_id: requestId,
+          doc_id: id,
+          expected_source_version: expectedSourceVersion
+        },
+        { retryOnUnauthorized: false }
+      ),
+    reindexResult: (id: string, requestId: string) =>
+      get<KnowledgeReindexReceipt | undefined>(
+        `/knowledge/documents/reindex/result?${new URLSearchParams({ doc_id: id, request_id: requestId })}`
+      ),
     listChunks: (docId: string, params?: { page?: number; page_size?: number }) => {
       const q = new URLSearchParams()
       if (params?.page) q.set('page', String(params.page))
