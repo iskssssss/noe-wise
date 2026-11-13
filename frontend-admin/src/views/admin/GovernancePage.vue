@@ -194,7 +194,6 @@
           :value="item.value"
         >
           <div>{{ item.label }}</div>
-          <div class="admin-field-help">{{ item.value }}</div>
         </ElOption>
       </ElSelect>
       <ElButton @click="reload" :disabled="busy">刷新</ElButton>
@@ -300,46 +299,37 @@
       ></ElTable
     >
     <ElTable
-      table-layout="auto"
+      table-layout="fixed"
+      class="governance-audit-table"
       v-if="tab === 'audit'"
       :data="audit"
       v-loading="loading"
       empty-text="最近记录中没有匹配的审计操作，可清除操作类型筛选后查看"
-      ><ElTableColumn min-width="160" label="操作"
-        ><template #default="{ row }"
-          ><div>{{ auditActionLabel(row.action) }}</div>
-          <div class="admin-field-help">{{ row.action }}</div></template
-        ></ElTableColumn
-      ><ElTableColumn min-width="200" label="操作者"
-        ><template #default="{ row }"
-          ><div>{{ auditActorLabel(row.actor_id) }}</div>
-          <div v-if="row.actor_id != null" class="admin-field-help">
-            {{ row.actor_id }}
-          </div></template
-        ></ElTableColumn
-      ><ElTableColumn
-        min-width="140"
-        show-overflow-tooltip
-        prop="resource_type"
-        label="资源类型"
-      /><ElTableColumn
-        min-width="200"
-        show-overflow-tooltip
-        prop="resource_id"
-        label="资源"
-      /><ElTableColumn
-        min-width="280"
-        show-overflow-tooltip
-        prop="message"
-        label="说明"
-      /><ElTableColumn min-width="200" label="追踪 / 会话"
+      ><ElTableColumn min-width="320" label="审计事件"
         ><template #default="{ row }">
-          <div>{{ row.trace_id ?? '未记录' }}</div>
-          <div class="admin-field-help">{{ traceKind(row.trace_id) }}</div>
+          <div>{{ row.message || auditActionLabel(row.action) }}</div>
+          <div class="admin-field-help">
+            {{ auditActionLabel(row.action) }} · {{ auditResourceLabel(row.resource_type) }}
+          </div>
+          <div class="admin-field-help">
+            <template v-if="row.trace_id">
+              {{ traceKind(row.trace_id) }}
+              <span :title="row.trace_id">{{ shortIdentifier(row.trace_id) }}</span>
+            </template>
+            <template v-if="row.trace_id && row.resource_id"> · </template>
+            <template v-if="row.resource_id">
+              资源
+              <span :title="row.resource_id">{{ shortIdentifier(row.resource_id) }}</span>
+            </template>
+            <template v-if="!row.trace_id && !row.resource_id">未记录追踪或资源标识</template>
+          </div>
         </template></ElTableColumn
-      ><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
-        ><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></ElTableColumn
-      ></ElTable
+      ><ElTableColumn width="200" label="操作与时间">
+        <template #default="{ row }">
+          <div>{{ auditActorLabel(row.actor_id) }}</div>
+          <div class="admin-field-help">{{ formatDateTime(row.created_at) }}</div>
+        </template>
+      </ElTableColumn></ElTable
     >
     <ElTable
       table-layout="auto"
@@ -686,11 +676,21 @@ const auditActionLabels = computed(
 const auditActorLabels = computed(
   () => new Map((auditOptions.value?.actors ?? []).map((item) => [item.value, item.label]))
 )
+const auditResourceLabels = computed(
+  () =>
+    new Map(
+      (auditOptions.value?.resource_types ?? []).map((item) => [item.value, item.label] as const)
+    )
+)
 const auditActionLabel = (value: string) => auditActionLabels.value.get(value) ?? value
 const auditActorLabel = (value: string | number | null | undefined) => {
   if (value === null || value === undefined || value === '') return '系统或未知来源'
-  return auditActorLabels.value.get(String(value)) ?? `操作者 #${value}`
+  return auditActorLabels.value.get(String(value)) ?? '平台或历史操作者'
 }
+const auditResourceLabel = (value: string | null | undefined) =>
+  !value ? '无特定资源' : (auditResourceLabels.value.get(value) ?? value)
+const shortIdentifier = (value: string) =>
+  value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
 const traceKind = (value?: string | null) => {
   if (!value) return '未记录'
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
@@ -1364,3 +1364,9 @@ async function decide(row: KnowledgeWriteProposal, approve: boolean) {
 
 const formTipId = useId()
 </script>
+
+<style scoped>
+.governance-audit-table :deep(.el-table__cell > .cell) {
+  white-space: normal;
+}
+</style>

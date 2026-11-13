@@ -2302,6 +2302,7 @@ export const api = {
       get<{
         actions: Array<{ value: string; label: string }>
         actors: Array<{ value: string; label: string }>
+        resource_types?: Array<{ value: string; label: string }>
       }>('/audit/options'),
     knowledgeProposals: {
       pending: () => get<KnowledgeWriteProposal[]>('/knowledge/write-proposals/pending'),
