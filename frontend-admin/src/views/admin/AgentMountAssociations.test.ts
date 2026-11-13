@@ -25,6 +25,7 @@ import { EntitySelect } from '@skillforge/shared/admin'
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   mountUpdate: vi.fn(),
+  mountDelete: vi.fn(),
   get: vi.fn(),
   versions: vi.fn(),
   getVersion: vi.fn(),
@@ -66,7 +67,8 @@ const mocks = vi.hoisted(() => ({
     'foundation.capabilities.publish'
   ],
   push: vi.fn(),
-  browserSession: 'knowledge-session'
+  browserSession: 'knowledge-session',
+  authSession: 'knowledge-identity'
 }))
 vi.mock('../../api/workflowOnboarding', () => ({
   workflowOnboardingApi: { result: mocks.workflowResult, submit: mocks.workflowSubmit }
@@ -98,6 +100,7 @@ vi.mock('../../api', () => ({
       capabilityMounts: {
         create: mocks.create,
         update: mocks.mountUpdate,
+        delete: mocks.mountDelete,
         workflowOptions: mocks.workflowOptions
       }
     },
@@ -122,7 +125,9 @@ vi.mock('../../api', () => ({
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
     identityVersion: 1,
-    sessionIdentity: 'knowledge-identity',
+    get sessionIdentity() {
+      return mocks.authSession
+    },
     user: {
       tenant_id: '1',
       sub: 'actor-1',
@@ -201,6 +206,7 @@ async function open(type: string) {
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.browserSession = 'knowledge-session'
+  mocks.authSession = 'knowledge-identity'
   mocks.requirementOptions.mockImplementation(async (type: string) =>
     type === 'SKILL' || type === 'WORKFLOW'
       ? [{ id: '10', name: '服务流程', versionId: '21', versionKey: '2' }]
@@ -235,6 +241,7 @@ beforeEach(() => {
     status: 'published',
     published_revision: 2,
     has_draft_changes: true,
+    mountSetGeneration: 1,
     mounts: [],
     execution_config: {},
     delegation_config: { enabled: false, target_agent_ids: [] }
@@ -315,6 +322,297 @@ afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   document.body.innerHTML = ''
 })
+describe('移除挂载结果未知', () => {
+  it('保留未保存表单，读取失败继续锁定，重读成功只展示当前状态', async () => {
+    mocks.permissions.push(
+      'foundation.agents.delete',
+      'foundation.agents.update',
+      'foundation.agents.read'
+    )
+    const original = await mocks.get('agent-1')
+    const mount = {
+      mountId: 'mount-1',
+      capabilityType: 'SKILL',
+      capabilityDefinitionId: '10',
+      capabilityVersionId: '21',
+      priority: 0,
+      revision: 7,
+      status: 'ACTIVE',
+      skillConfig: { activationMode: 'ON_DEMAND', tokenBudget: 64 },
+      toolConfig: null,
+      workflowConfig: null,
+      knowledgeConfig: null
+    }
+    mocks.get.mockResolvedValue({ ...original, mounts: [mount] })
+    mocks.mountDelete.mockRejectedValueOnce(new Error('连接中断'))
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const role = wrapper
+      .findAllComponents(ElFormItem)
+      .find((item) => item.props('label') === '角色描述')!
+      .getComponent(ElInput)
+    role.vm.$emit('update:modelValue', '未保存角色草稿')
+    await flushPromises()
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    expect(mocks.mountDelete).toHaveBeenCalledExactlyOnceWith('agent-1', 'mount-1', 7)
+    expect(wrapper.text()).toContain('原移除结果尚未确认')
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(true)
+    mocks.get.mockRejectedValueOnce(new Error('读取失败'))
+    await button(wrapper, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(button(wrapper, '核对挂载状态').exists()).toBe(true)
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(true)
+    mocks.get.mockResolvedValueOnce({
+      ...original,
+      mountSetGeneration: 2,
+      mounts: [],
+      has_draft_changes: true
+    })
+    await button(wrapper, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('原移除结果仍未确认')
+    expect(wrapper.text()).toContain('已读取当前状态，原挂载已不存在或修订已变化')
+    expect(role.props('modelValue')).toBe('未保存角色草稿')
+    expect(button(wrapper, '保存草稿').props('disabled')).toBe(false)
+    expect(mocks.mountDelete).toHaveBeenCalledTimes(1)
+  })
+  it('无效成功回执保持未知，刷新后同修订不解锁，显式继续保留原 CAS', async () => {
+    mocks.permissions.push(
+      'foundation.agents.delete',
+      'foundation.agents.update',
+      'foundation.agents.read'
+    )
+    const original = await mocks.get('agent-1')
+    const originalMount = {
+      mountId: 'mount-1',
+      capabilityType: 'TOOL',
+      capabilityDefinitionId: '10',
+      capabilityVersionId: '21',
+      priority: 0,
+      revision: 7,
+      status: 'ACTIVE'
+    }
+    mocks.get.mockResolvedValue({ ...original, mounts: [originalMount] })
+    mocks.mountDelete.mockResolvedValueOnce({ generation: 2, mounts: [originalMount] })
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const first = mountPage()
+    await flushPromises()
+    await button(first, '移除').trigger('click')
+    await flushPromises()
+    expect(first.text()).toContain('原移除结果尚未确认')
+    first.unmount()
+    const restored = mountPage()
+    await flushPromises()
+    expect(restored.text()).toContain('原移除结果尚未确认')
+    await button(restored, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(restored.text()).toContain('当前读取未证明原挂载修订已变化')
+    expect(button(restored, '移除').props('disabled')).toBe(true)
+    mocks.get.mockResolvedValueOnce({ ...original, mountSetGeneration: 2, mounts: [originalMount] })
+    await button(restored, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(restored.text()).toContain('原挂载仍为相同或更早修订')
+    expect(button(restored, '移除').props('disabled')).toBe(true)
+    mocks.mountDelete.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, code: 'CONFLICT', userMessage: '修订冲突' })
+    )
+    await button(restored, '继续移除原挂载').trigger('click')
+    await flushPromises()
+    expect(restored.text()).toContain('原移除结果尚未确认')
+    expect(mocks.mountDelete).toHaveBeenLastCalledWith('agent-1', 'mount-1', 7)
+    mocks.mountDelete.mockResolvedValueOnce({ generation: 2, mounts: [] })
+    mocks.get.mockResolvedValueOnce({ ...original, mountSetGeneration: 2, mounts: [] })
+    await button(restored, '继续移除原挂载').trigger('click')
+    await flushPromises()
+    expect(restored.text()).toContain('此前原请求结果仍未确认')
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.mountDelete).toHaveBeenCalledTimes(3)
+  })
+  it('同一挂载修订推进后旧 CAS 失效，仅解除锁不确认原结果', async () => {
+    mocks.permissions.push('foundation.agents.delete', 'foundation.agents.read')
+    const original = await mocks.get('agent-1')
+    const originalMount = {
+      mountId: 'mount-1',
+      capabilityType: 'TOOL',
+      capabilityDefinitionId: '10',
+      capabilityVersionId: '21',
+      priority: 0,
+      revision: 7,
+      status: 'ACTIVE'
+    }
+    mocks.get.mockResolvedValue({ ...original, mounts: [originalMount] })
+    mocks.mountDelete.mockRejectedValueOnce(new Error('连接中断'))
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    mocks.get.mockResolvedValueOnce({
+      ...original,
+      mountSetGeneration: 2,
+      mounts: [{ ...originalMount, revision: 8 }]
+    })
+    await button(wrapper, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('原移除结果仍未确认')
+    expect(button(wrapper, '移除').props('disabled')).not.toBe(true)
+    expect(mocks.mountDelete).toHaveBeenCalledOnce()
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('会话切换后迟到的删除失败不清除原身份记录', async () => {
+    mocks.permissions.push('foundation.agents.delete')
+    const original = await mocks.get('agent-1')
+    mocks.get.mockResolvedValue({
+      ...original,
+      mounts: [
+        {
+          mountId: 'mount-1',
+          capabilityType: 'TOOL',
+          capabilityDefinitionId: '10',
+          capabilityVersionId: '21',
+          priority: 0,
+          revision: 7,
+          status: 'ACTIVE'
+        }
+      ]
+    })
+    let reject!: (reason: unknown) => void
+    mocks.mountDelete.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    mocks.authSession = 'another-session'
+    reject(new Error('连接中断'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('原移除结果尚未确认')
+    expect(sessionStorage.length).toBe(1)
+    expect(mocks.mountDelete).toHaveBeenCalledOnce()
+  })
+  it('无法持久保存移除身份时不发送 DELETE', async () => {
+    mocks.permissions.push('foundation.agents.delete')
+    const original = await mocks.get('agent-1')
+    mocks.get.mockResolvedValue({
+      ...original,
+      mounts: [
+        {
+          mountId: 'mount-1',
+          capabilityType: 'TOOL',
+          capabilityDefinitionId: '10',
+          capabilityVersionId: '21',
+          priority: 0,
+          revision: 7,
+          status: 'ACTIVE'
+        }
+      ]
+    })
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    expect(mocks.mountDelete).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('无法保存原挂载移除记录，尚未发送请求')
+    expect(button(wrapper, '移除').props('disabled')).toBe(true)
+  })
+  it('清除原记录失败保持锁，存储恢复后只读核对再解锁', async () => {
+    mocks.permissions.push('foundation.agents.delete', 'foundation.agents.read')
+    const original = await mocks.get('agent-1')
+    mocks.get.mockResolvedValue({
+      ...original,
+      mounts: [
+        {
+          mountId: 'mount-1',
+          capabilityType: 'TOOL',
+          capabilityDefinitionId: '10',
+          capabilityVersionId: '21',
+          priority: 0,
+          revision: 7,
+          status: 'ACTIVE'
+        }
+      ]
+    })
+    mocks.mountDelete.mockResolvedValueOnce({ generation: 2, mounts: [] })
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('无法清除原挂载移除记录')
+    expect(wrapper.text()).toContain('原移除结果尚未确认')
+    expect(button(wrapper, '移除').props('disabled')).toBe(true)
+    expect(sessionStorage.length).toBe(1)
+    remove.mockRestore()
+    mocks.get.mockResolvedValueOnce({ ...original, mountSetGeneration: 2, mounts: [] })
+    await button(wrapper, '核对挂载状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('无法清除原挂载移除记录')
+    expect(wrapper.text()).toContain('原移除结果仍未确认')
+    expect(sessionStorage.length).toBe(0)
+    expect(mocks.mountDelete).toHaveBeenCalledOnce()
+  })
+  it('明确拒绝不产生未知状态', async () => {
+    mocks.permissions.push('foundation.agents.delete')
+    const original = await mocks.get('agent-1')
+    mocks.get.mockResolvedValue({
+      ...original,
+      mounts: [
+        {
+          mountId: 'mount-1',
+          capabilityType: 'TOOL',
+          capabilityDefinitionId: '10',
+          capabilityVersionId: '21',
+          priority: 0,
+          revision: 7,
+          status: 'ACTIVE'
+        }
+      ]
+    })
+    mocks.mountDelete.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, code: 'CONFLICT', userMessage: '修订冲突' })
+    )
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await button(wrapper, '移除').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('原移除结果尚未确认')
+    expect(mocks.mountDelete).toHaveBeenCalledOnce()
+  })
+})
+function mountPage() {
+  const wrapper = mount(AgentManagePage, { attachTo: document.body })
+  wrappers.push(wrapper)
+  return wrapper
+}
 describe('已挂载技能预算调整', () => {
   const skill = {
     mountId: 'mount-1',

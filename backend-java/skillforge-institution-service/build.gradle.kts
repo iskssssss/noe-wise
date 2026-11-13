@@ -159,6 +159,7 @@ tasks.named<Test>("test") {
     exclude("**/KnowledgeSemanticThresholdBrowserE2ETest.class")
     exclude("**/KnowledgeProjectionRepairBrowserE2ETest.class")
     exclude("**/AgentSkillCrossTabBrowserE2ETest.class")
+    exclude("**/AgentSkillRemoveLossBrowserE2ETest.class")
     exclude("**/AgentSkillOptionsBrowserE2ETest.class")
     exclude("**/SkillDirectPublishUnknownBrowserE2ETest.class")
     exclude("**/AgentKnowledgeSingleBrowserE2ETest.class")
@@ -1723,4 +1724,17 @@ tasks.register<Test>("stagingRuntimeE2E") {
             }
         }
     }
+}
+
+
+tasks.register<Test>("agentSkillRemoveLossBrowserE2E") {
+    inputs.property("skillRemoveLoss", providers.environmentVariable("E2E_SKILL_REMOVE_LOSS").orElse("baseline"))
+    description = "Verify skill removal response loss and publication runtime boundary"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.AgentSkillRemoveLossBrowserE2ETest.removedSkillLostResponsePreservesPublishedRuntimeUntilPublication") }
+    outputs.upToDateWhen { false }
 }

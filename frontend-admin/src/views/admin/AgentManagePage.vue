@@ -11,7 +11,13 @@
       ><ElButton
         v-if="loadError || refreshRequired"
         :loading="loading"
-        :disabled="busy || !!publicationOperation || !!restoreOperation || !!restoreStorageError"
+        :disabled="
+          busy ||
+          mountRemovalNeedsCheck ||
+          !!publicationOperation ||
+          !!restoreOperation ||
+          !!restoreStorageError
+        "
         @click="refreshAgent"
         >重新读取</ElButton
       ><ElButton
@@ -74,6 +80,35 @@
       <span>{{ agent.mounts.length }} 项能力</span>
       <span>{{ form.model_config_id ? '使用指定模型' : '继承机构默认模型' }}</span>
     </div>
+    <section
+      v-if="mountRemovalPending || mountRemovalNotice || mountRemovalStorageError"
+      class="admin-card"
+      aria-label="挂载移除结果核对"
+    >
+      <p v-if="mountRemovalPending" role="status">
+        原移除结果尚未确认。重新读取只显示当前状态，不能证明原请求的结果。
+      </p>
+      <p v-if="mountRemovalPending">
+        挂载 {{ mountRemovalPending.mountId }} · 修订 {{ mountRemovalPending.revision }}
+      </p>
+      <p v-if="mountRemovalNotice" role="status">{{ mountRemovalNotice }}</p>
+      <p v-if="mountRemovalStorageError" role="status">{{ mountRemovalStorageError }}</p>
+      <ElButton
+        v-if="mountRemovalPending && can('foundation.agents.read')"
+        :disabled="busy"
+        @click="checkMountRemoval"
+        >核对挂载状态</ElButton
+      >
+      <ElButton
+        v-if="mountRemovalPending && can('foundation.agents.delete')"
+        :disabled="busy || !!mountRemovalStorageError"
+        @click="continueMountRemoval"
+        >继续移除原挂载</ElButton
+      >
+      <p v-if="mountRemovalPending" class="admin-field-help">
+        继续操作将按原挂载和修订重新提交删除，需要当前移除权限。
+      </p>
+    </section>
     <ElAlert
       v-if="refreshRequired"
       :title="
@@ -1218,9 +1253,65 @@ onScopeDispose(() => {
   publicationDisposed = true
   stopKnowledgeNotifications()
 })
+type PendingMountRemoval = {
+  agentId: string
+  mountId: string
+  revision: number
+  generation: number
+}
+const mountRemovalPending = ref<PendingMountRemoval>()
+const mountRemovalNotice = ref('')
+const mountRemovalStorageError = ref('')
+const mountRemovalNeedsCheck = computed(
+  () => !!mountRemovalPending.value || !!mountRemovalStorageError.value
+)
+const mountRemovalStorageKey = () =>
+  auth.user?.tenant_id && auth.user?.sub
+    ? `skillforge.agent-mount-removal:${encodeURIComponent(JSON.stringify([auth.user.tenant_id, auth.user.sub, id.value]))}`
+    : ''
+function loadMountRemoval() {
+  mountRemovalPending.value = undefined
+  mountRemovalNotice.value = ''
+  mountRemovalStorageError.value = ''
+  const key = mountRemovalStorageKey()
+  if (!key) return
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return
+    const record = JSON.parse(raw) as PendingMountRemoval
+    if (
+      !record ||
+      record.agentId !== id.value ||
+      typeof record.mountId !== 'string' ||
+      !record.mountId ||
+      !Number.isSafeInteger(record.revision) ||
+      record.revision < 1 ||
+      !Number.isSafeInteger(record.generation) ||
+      record.generation < 1
+    )
+      throw Error('invalid')
+    mountRemovalPending.value = record
+  } catch {
+    mountRemovalStorageError.value = '无法读取原挂载移除记录，请恢复浏览器存储后重新进入。'
+  }
+}
+function clearMountRemoval() {
+  const key = mountRemovalStorageKey()
+  try {
+    if (!key) throw Error('identity')
+    sessionStorage.removeItem(key)
+  } catch {
+    mountRemovalStorageError.value = '无法清除原挂载移除记录，请恢复浏览器存储后重新核对。'
+    return false
+  }
+  mountRemovalStorageError.value = ''
+  mountRemovalPending.value = undefined
+  return true
+}
 const editingBlocked = computed(
   () =>
     busy.value ||
+    mountRemovalNeedsCheck.value ||
     !!publicationOperation.value ||
     !!publicationStorageError.value ||
     !!restoreOperation.value ||
@@ -1315,7 +1406,11 @@ const form = reactive({
 })
 const dirty = computed(() => !!agent.value && JSON.stringify(form) !== saved.value)
 useUnsavedChanges({
-  dirty: () => dirty.value || !!publicationOperation.value || !!restoreOperation.value,
+  dirty: () =>
+    dirty.value ||
+    !!publicationOperation.value ||
+    !!restoreOperation.value ||
+    mountRemovalNeedsCheck.value,
   busy: () => busy.value,
   leaveMessage: () =>
     publicationOperation.value
@@ -1326,6 +1421,7 @@ watch(
   publicationOwner,
   () => {
     invalidateAgent()
+    loadMountRemoval()
     skillBudgetOpen.value = false
     skillBudgetMount.value = undefined
     mountNames.invalidate()
@@ -1499,6 +1595,7 @@ async function saveAndPublish(trial = false) {
   if (
     !canSaveAndPublish.value ||
     !dirty.value ||
+    mountRemovalNeedsCheck.value ||
     refreshRequired.value ||
     publicationOperation.value ||
     publicationStorageError.value ||
@@ -1637,6 +1734,7 @@ async function checkPublication() {
 async function save() {
   if (
     agent.value?.definition_managed ||
+    mountRemovalNeedsCheck.value ||
     !dirty.value ||
     refreshRequired.value ||
     publicationOperation.value ||
@@ -1662,6 +1760,7 @@ async function publish() {
   if (
     agent.value?.definition_managed ||
     !can('foundation.agents.publish') ||
+    mountRemovalNeedsCheck.value ||
     refreshRequired.value ||
     publicationOperation.value ||
     publicationStorageError.value ||
@@ -2654,29 +2753,175 @@ async function addMount() {
     if (await reload()) refreshRequired.value = false
   })
 }
+async function checkMountRemoval() {
+  const operation = mountRemovalPending.value
+  if (!can('foundation.agents.read') || !operation || busy.value) return
+  const owner = publicationOwner.value,
+    session = auth.sessionIdentity
+  const current = () =>
+    !publicationDisposed &&
+    owner === publicationOwner.value &&
+    session === auth.sessionIdentity &&
+    mountRemovalPending.value === operation
+  await run(async () => {
+    publicationReadGuard = current
+    let value: AgentDetail | undefined
+    try {
+      value = await reload()
+    } finally {
+      if (publicationReadGuard === current) publicationReadGuard = undefined
+    }
+    if (!current() || !can('foundation.agents.read') || !value) return
+    if (
+      value.id !== operation.agentId ||
+      !Number.isSafeInteger(value.mountSetGeneration) ||
+      value.mountSetGeneration <= operation.generation
+    ) {
+      mountRemovalNotice.value = '当前读取未证明原挂载修订已变化，原请求可能仍在处理。'
+      return
+    }
+    const mount = value.mounts.find((item) => item.mountId === operation.mountId)
+    if (mount && mount.revision <= operation.revision) {
+      mountRemovalNotice.value =
+        '原挂载仍为相同或更早修订，原请求可能仍在处理；请继续核对或明确继续移除。'
+      return
+    }
+    if (!clearMountRemoval()) return
+    mountRemovalNotice.value = '已读取当前状态，原挂载已不存在或修订已变化；原移除结果仍未确认。'
+  })
+}
+async function continueMountRemoval() {
+  const operation = mountRemovalPending.value
+  if (
+    !operation ||
+    busy.value ||
+    mountRemovalStorageError.value ||
+    !can('foundation.agents.delete')
+  )
+    return
+  const owner = publicationOwner.value,
+    session = auth.sessionIdentity
+  const ownsScope = () =>
+    !publicationDisposed && owner === publicationOwner.value && session === auth.sessionIdentity
+  const current = () => ownsScope() && mountRemovalPending.value === operation
+  if (
+    !(await confirm({
+      title: '继续移除原挂载',
+      confirmText: '继续移除原挂载',
+      danger: true,
+      content: '将按原挂载和修订重新提交删除；如果原请求尚未执行，此操作可能移除该挂载。'
+    }))
+  )
+    return
+  if (!current() || !can('foundation.agents.delete')) return
+  await run(() => submitMountRemoval(operation, current, ownsScope, true))
+}
+async function submitMountRemoval(
+  operation: PendingMountRemoval,
+  current: () => boolean,
+  ownsScope: () => boolean,
+  retry: boolean
+) {
+  try {
+    const result = await api.agents.capabilityMounts.delete(
+      operation.agentId,
+      operation.mountId,
+      operation.revision
+    )
+    if (!current()) return
+    if (
+      !result ||
+      !Number.isSafeInteger(result.generation) ||
+      result.generation <= operation.generation ||
+      !Array.isArray(result.mounts) ||
+      result.mounts.some((item) => item.mountId === operation.mountId)
+    )
+      throw Error('移除响应不完整，原移除结果尚未确认。')
+    if (!clearMountRemoval()) return
+    if (retry) mountRemovalNotice.value = '当前挂载已移除；此前原请求结果仍未确认。'
+    refreshRequired.value = true
+    message.success('能力已移除')
+    publicationReadGuard = ownsScope
+    try {
+      if ((await reload()) && ownsScope()) refreshRequired.value = false
+    } finally {
+      if (publicationReadGuard === ownsScope) publicationReadGuard = undefined
+    }
+  } catch (reason) {
+    if (!current()) {
+      if (reason instanceof HttpClientError) reason.claimFeedback()
+      throw 'cancel'
+    }
+    if (
+      !retry &&
+      reason instanceof HttpClientError &&
+      reason.status >= 400 &&
+      reason.status < 500 &&
+      reason.status !== 408 &&
+      reason.status !== 429
+    )
+      clearMountRemoval()
+    throw reason
+  }
+}
 async function removeMount(mount: CapabilityMount) {
   if (
+    !can('foundation.agents.delete') ||
     refreshRequired.value ||
+    mountRemovalNeedsCheck.value ||
     publicationOperation.value ||
     publicationStorageError.value ||
     restoreOperation.value ||
     restoreStorageError.value
   )
     return
+  const owner = publicationOwner.value,
+    session = auth.sessionIdentity,
+    agentId = id.value
+  const ownsScope = () =>
+    !publicationDisposed &&
+    owner === publicationOwner.value &&
+    session === auth.sessionIdentity &&
+    agentId === id.value
   if (
-    await confirm({
+    !(await confirm({
       title: '移除能力',
       confirmText: '移除能力',
       danger: true,
       content: `从“${agent.value?.name ?? '当前智能体'}”移除“${mountVersionNames.value[mount.capabilityVersionId] ?? '所选能力'}”？修改会保存到草稿，发布后在后续运行生效。`
-    })
+    }))
   )
-    await run(async () => {
-      await api.agents.capabilityMounts.delete(id.value, mount.mountId, mount.revision)
-      refreshRequired.value = true
-      message.success('能力已移除')
-      if (await reload()) refreshRequired.value = false
-    })
+    return
+  if (
+    !ownsScope() ||
+    !can('foundation.agents.delete') ||
+    editingBlocked.value ||
+    refreshRequired.value
+  )
+    return
+  const generation = agent.value?.mountSetGeneration
+  if (!Number.isSafeInteger(generation) || !generation || generation < 1) {
+    message.error('当前挂载代次无效，请重新读取后操作')
+    return
+  }
+  const key = mountRemovalStorageKey()
+  const operation: PendingMountRemoval = {
+    agentId,
+    mountId: mount.mountId,
+    revision: mount.revision,
+    generation
+  }
+  try {
+    if (!key) throw Error('identity')
+    sessionStorage.setItem(key, JSON.stringify(operation))
+  } catch {
+    mountRemovalStorageError.value = '无法保存原挂载移除记录，尚未发送请求。'
+    return
+  }
+  mountRemovalPending.value = operation
+  const savedOperation = mountRemovalPending.value!
+  const current = () => ownsScope() && mountRemovalPending.value === savedOperation
+  await run(() => submitMountRemoval(savedOperation, current, ownsScope, false))
 }
 
 useDrawerClose({
