@@ -18,6 +18,12 @@ export interface SessionListQuery {
   page: number
   page_size: 20 | 50 | 100
 }
+export interface SessionFilterOption {
+  kind: 'session' | 'user' | 'agent' | 'team' | 'channel'
+  value: string
+  label: string
+  description: string | null
+}
 export interface SessionSummary {
   tenant_id: string
   tenant_name: string | null
@@ -281,6 +287,8 @@ export function createSessionObservationApi(
   get: <T>(path: string, opts?: RequestOptions) => Promise<T>
 ) {
   return {
+    options: (q = '', opts?: RequestOptions) =>
+      get<SessionFilterOption[]>(`/platform/sessions/options?${query({ q })}`, opts),
     modelAttemptDetail: (
       tenantId: string,
       sessionId: string,

@@ -7,6 +7,8 @@ import com.skillforge.core.chat.observation.SessionObservationPublicFacts.ReadSc
 import com.skillforge.core.chat.observation.SessionObservationPublicFacts.SessionKey;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +50,41 @@ public class SessionObservationRepository {
             LOG.debug("持久化方法退出 invocation={} method={} elapsedNanos={}",
                     invocation, "readAt", started == 0 ? 0 : System.nanoTime() - started);
         }
+    }
+
+    /** 读取授权范围内可筛选的会话、用户、智能体、团队与渠道，按种类去重。 */
+    List<SessionObservationService.FilterOption> filterOptions(SessionObservationScope scope, String q) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (scope.kind() == SessionObservationScope.Kind.TENANT) {
+            long tenant = scope.tenantId();
+            rows.addAll(reads.read(tenant, () -> mapper.filterOptions(
+                    parameters("scopeTenantId", tenant, "q", q))));
+        } else {
+            long after = 0;
+            for (;;) {
+                var targets = reads.targets(null, after, 100);
+                for (long tenant : targets) {
+                    rows.addAll(reads.read(tenant, () -> mapper.filterOptions(
+                            parameters("scopeTenantId", tenant, "q", q))));
+                }
+                if (targets.size() < 100) break;
+                after = targets.getLast();
+            }
+        }
+        Map<String, SessionObservationService.FilterOption> distinct = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String kind = text(row.get("kind"));
+            String value = text(row.get("value"));
+            if (kind == null || value == null || value.isBlank()) continue;
+            String label = text(row.get("label"));
+            distinct.putIfAbsent(kind + "\0" + value, new SessionObservationService.FilterOption(
+                    kind, value, label == null || label.isBlank() ? value : label,
+                    text(row.get("description"))));
+        }
+        return distinct.values().stream()
+                .sorted(Comparator.comparing(SessionObservationService.FilterOption::kind)
+                        .thenComparing(SessionObservationService.FilterOption::label))
+                .limit(500).toList();
     }
 
     /** 按授权范围读取非状态条件的候选；公开归并后由服务统一筛选、计数和分页。 */
@@ -451,6 +488,10 @@ public class SessionObservationRepository {
             LOG.debug("持久化方法退出 invocation={} method={} elapsedNanos={}",
                     invocation, "parameters", started == 0 ? 0 : System.nanoTime() - started);
         }
+    }
+
+    private static String text(Object value) {
+        return value == null ? null : value.toString();
     }
 
     /** 将可选过滤字符串去除首尾空白；空白值转换为 null 表示不限制。 */

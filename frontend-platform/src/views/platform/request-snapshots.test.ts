@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { computed, type Component } from 'vue'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
+import { EntitySelect } from '@skillforge/shared/admin'
 import { ElDatePicker, ElInput, ElOption, ElPagination, ElSelect } from 'element-plus'
 import AgentTemplatesPage from './AgentTemplatesPage.vue'
 import ReviewPage from './ReviewPage.vue'
@@ -289,6 +290,11 @@ describe('平台读取请求快照', () => {
       const filterValue = component === OperationsPage ? 'auth.login' : 'new-filter'
       if (component === OperationsPage)
         wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', filterValue)
+      else if (component === SessionsPage)
+        wrapper
+          .findAllComponents(EntitySelect)
+          .find((field) => field.props('placeholder') === '选择会话')!
+          .vm.$emit('update:modelValue', 'session-1')
       else await input.get('input').setValue(filterValue)
       await flushPromises()
       expect(loader).toHaveBeenCalledTimes(count)
@@ -298,7 +304,10 @@ describe('平台读取请求快照', () => {
       expect(loader.mock.lastCall?.[0]).toMatchObject({ page: 4, [key]: '' })
       await wrapper.find('form.admin-filters, form.filters').trigger('submit')
       await flushPromises()
-      expect(loader.mock.lastCall?.[0]).toMatchObject({ page: 1, [key]: filterValue })
+      expect(loader.mock.lastCall?.[0]).toMatchObject({
+        page: 1,
+        [key]: component === SessionsPage ? 'session-1' : filterValue
+      })
       loader.mockRejectedValueOnce(new Error('加载失败'))
       pager.vm.$emit('current-change', 2)
       await flushPromises()

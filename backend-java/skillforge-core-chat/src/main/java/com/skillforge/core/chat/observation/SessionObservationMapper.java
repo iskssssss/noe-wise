@@ -16,6 +16,12 @@ public interface SessionObservationMapper {
     /** 读取数据库当前时刻作为观测时间；每次执行重新读取，避免事务内缓存旧时刻。 */
     Instant readAt();
     /**
+     * 读取会话、终端用户、智能体、团队和渠道的筛选候选。
+     * @param parameters scopeTenantId、q 可空
+     * @return 每行包含 kind、value、label、description
+     */
+    List<Map<String, Object>> filterOptions(Map<String, Object> parameters);
+    /**
      * 按授权非状态过滤条件读取会话候选，公开归并之后统一分页。
      * @param parameters scopeTenantId、tenantId、sessionId、userId、agentId、teamId、channel、summary、startedFrom、startedTo 可空
      * @return 会话列映射列表，每行包含 total_count；无匹配返回空列表

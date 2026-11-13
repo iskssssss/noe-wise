@@ -23,6 +23,8 @@ public final class ChatObservationAuthorizedSqlRule implements AuthorizedSqlRule
         String id = access.statementId();
         if (id.startsWith(TRAJECTORY) && TRAJECTORY_READS.contains(id.substring(TRAJECTORY.length())))
             return access.parameterEquals("tenant", access.tenant());
+        if (id.equals(SESSION + "filterOptions"))
+            return access.parameterEquals("scopeTenantId", access.tenant());
         if (id.startsWith(SESSION) && SESSION_READS.contains(id.substring(SESSION.length())))
             return access.parameterEquals("tenantId", access.tenant());
         if (id.equals(SESSION + "publicFacts") || id.equals(SESSION + "messages")) {

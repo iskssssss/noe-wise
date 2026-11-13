@@ -9,6 +9,7 @@ import com.skillforge.core.chat.observation.SessionObservationView;
 import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.core.shared.web.ApiResponses;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,6 +53,13 @@ public class PlatformSessionController {
                         trim(sessionId), optionalId(userId, "user_id"), optionalId(agentId, "agent_id"),
                         trim(teamId), trim(channel), trim(status), startedFrom, startedTo,
                         trim(summary), page, pageSize)));
+    }
+
+    @RequirePermission("foundation.sessions.read")
+    @GetMapping("/options")
+    public ApiResponse<List<SessionObservationService.FilterOption>> options(
+            @RequestParam(name = "q", required = false) String q) {
+        return ApiResponses.wrap(observations.filterOptions(authorizer.platformAdmin(), q));
     }
 
     @RequirePermission("foundation.sessions.read")

@@ -150,6 +150,52 @@ latest_root_input_id, event_upper_bound, message_upper_bound,
 created_at, updated_at, last_activity_at, 1::bigint AS total_count FROM candidates
   </select>
   <select id="readAt" resultType="java.time.Instant" flushCache="true" useCache="false">SELECT clock_timestamp()</select>
+  <select id="filterOptions" resultType="map">
+WITH base AS (
+    SELECT s.session_id, s.summary_text, s.updated_at, s.end_user_id,
+           u.display_name AS user_name, s.agent_id, a.name AS agent_name,
+           s.team_id, COALESCE(team.definition -&gt;&gt; 'name', team.id::text) AS team_name,
+           s.channel_id, c.channel_type, c.name AS channel_name, t.name AS tenant_name
+      FROM public.nw_chat_sessions s
+      JOIN public.nw_tenants t ON t.id=s.tenant_id
+      JOIN public.nw_end_users u ON u.tenant_id=s.tenant_id AND u.id=s.end_user_id
+ LEFT JOIN public.nw_agents a ON a.tenant_id=s.tenant_id AND a.id=s.agent_id
+ LEFT JOIN public.nw_agent_teams team ON team.tenant_id=s.tenant_id AND team.id=s.team_id
+ LEFT JOIN public.nw_channels c ON c.tenant_id=s.tenant_id AND c.id=s.channel_id
+     WHERE (#{scopeTenantId,jdbcType=BIGINT} IS NULL OR s.tenant_id=#{scopeTenantId,jdbcType=BIGINT})
+       AND (#{q,jdbcType=VARCHAR} IS NULL
+            OR s.session_id ILIKE '%'||#{q}||'%'
+            OR s.summary_text ILIKE '%'||#{q}||'%'
+            OR u.display_name ILIKE '%'||#{q}||'%'
+            OR a.name ILIKE '%'||#{q}||'%'
+            OR c.name ILIKE '%'||#{q}||'%')
+), session_options AS (
+    SELECT DISTINCT ON (session_id) 'session' AS kind, session_id AS value,
+           COALESCE(NULLIF(summary_text,''), session_id) AS label, tenant_name AS description
+      FROM base ORDER BY session_id, updated_at DESC LIMIT 100
+), user_options AS (
+    SELECT DISTINCT ON (end_user_id) 'user' AS kind, end_user_id::text AS value,
+           user_name AS label, tenant_name AS description
+      FROM base WHERE end_user_id IS NOT NULL ORDER BY end_user_id, updated_at DESC LIMIT 100
+), agent_options AS (
+    SELECT DISTINCT ON (agent_id) 'agent' AS kind, agent_id::text AS value,
+           agent_name AS label, tenant_name AS description
+      FROM base WHERE agent_id IS NOT NULL ORDER BY agent_id, updated_at DESC LIMIT 100
+), team_options AS (
+    SELECT DISTINCT ON (team_id) 'team' AS kind, team_id::text AS value,
+           team_name AS label, tenant_name AS description
+      FROM base WHERE team_id IS NOT NULL ORDER BY team_id, updated_at DESC LIMIT 100
+), channel_options AS (
+    SELECT DISTINCT ON (channel_id) 'channel' AS kind, channel_id::text AS value,
+           COALESCE(NULLIF(channel_name,''), channel_type) AS label, tenant_name AS description
+      FROM base WHERE channel_id IS NOT NULL ORDER BY channel_id, updated_at DESC LIMIT 100
+)
+SELECT * FROM session_options
+UNION ALL SELECT * FROM user_options
+UNION ALL SELECT * FROM agent_options
+UNION ALL SELECT * FROM team_options
+UNION ALL SELECT * FROM channel_options
+  </select>
   <select id="rounds" resultType="map">
 WITH roots AS (
     SELECT root_input_id, MIN(session_sequence) AS first_sequence,

@@ -53,6 +53,32 @@ const load = useResource(async (signal) => {
   const result = await api.sessions.list({ ...applied.value, page: requestedPage }, { signal })
   return { ...result, page: requestedPage }
 })
+function sessionOptionSource(kind: 'session' | 'user' | 'agent' | 'team' | 'channel') {
+  return {
+    async load(keyword: string, signal?: AbortSignal) {
+      return (await api.sessions.options(keyword, { signal }))
+        .filter((item) => item.kind === kind)
+        .map((item) => ({
+          id: item.value,
+          label: item.label,
+          description: item.description ?? undefined
+        }))
+    },
+    async resolve(id: string) {
+      const item = (await api.sessions.options(id)).find(
+        (candidate) => candidate.kind === kind && candidate.value === id
+      )
+      return item
+        ? { id: item.value, label: item.label, description: item.description ?? undefined }
+        : { id, label: id }
+    }
+  }
+}
+const sessionOptions = sessionOptionSource('session')
+const userOptions = sessionOptionSource('user')
+const agentOptions = sessionOptionSource('agent')
+const teamOptions = sessionOptionSource('team')
+const channelOptions = sessionOptionSource('channel')
 
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
@@ -139,20 +165,44 @@ const formTipId = useId()
         精确筛选{{ advancedCount ? `（${advancedCount}）` : '' }}
       </ElButton>
       <div v-show="advancedOpen" class="advanced-filters">
-        <ElInput
-          v-for="f in [
-            { key: 'session_id', label: '会话 ID' },
-            { key: 'user_id', label: '用户 ID' },
-            { key: 'agent_id', label: 'Agent ID' },
-            { key: 'team_id', label: '团队 ID' },
-            { key: 'channel', label: '渠道' }
-          ] as const"
-          :key="f.key"
-          v-model="query[f.key]"
-          :aria-label="f.label"
-          :placeholder="f.label"
-          clearable
+        <EntitySelect
+          v-model="query.session_id"
+          :load="sessionOptions.load"
+          :resolve="sessionOptions.resolve"
+          placeholder="选择会话"
+          aria-label="会话"
         />
+        <EntitySelect
+          v-model="query.user_id"
+          :load="userOptions.load"
+          :resolve="userOptions.resolve"
+          placeholder="选择终端用户"
+          aria-label="终端用户"
+        />
+        <EntitySelect
+          v-model="query.agent_id"
+          :load="agentOptions.load"
+          :resolve="agentOptions.resolve"
+          placeholder="选择智能体"
+          aria-label="智能体"
+        />
+        <EntitySelect
+          v-model="query.team_id"
+          :load="teamOptions.load"
+          :resolve="teamOptions.resolve"
+          placeholder="选择团队"
+          aria-label="团队"
+        />
+        <EntitySelect
+          v-model="query.channel"
+          :load="channelOptions.load"
+          :resolve="channelOptions.resolve"
+          placeholder="选择渠道"
+          aria-label="渠道"
+        />
+        <p class="admin-field-help">
+          精确筛选支持按名称或近期记录远程搜索；候选来自当前授权范围内的会话事实。
+        </p>
         <div v-described-by="formTipId + '-time-range'" class="time-range-filter">
           <ElDatePicker
             :aria-describedby="formTipId + '-time-range'"
@@ -172,8 +222,7 @@ const formTipId = useId()
       </div>
 
       <FieldTip :id="formTipId + '-group-0'"
-        >按机构、会话/用户/Agent/团队
-        ID、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配回答或执行任一状态；例如执行完成但无最终回答也会匹配“已完成”。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
+        >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配回答或执行任一状态；例如执行完成但无最终回答也会匹配“已完成”。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
       >
     </ElForm>
     <FeedbackNotice
@@ -186,9 +235,11 @@ const formTipId = useId()
       >重新读取会话</ElButton
     >
     <p v-if="load.error.value && load.data.value" class="result-count" role="status">
-      {{ query.page === load.data.value.page
-        ? `第 ${query.page} 页刷新失败，当前保留上次读取的结果。`
-        : `第 ${query.page} 页读取失败，当前保留第 ${load.data.value.page} 页的结果。` }}
+      {{
+        query.page === load.data.value.page
+          ? `第 ${query.page} 页刷新失败，当前保留上次读取的结果。`
+          : `第 ${query.page} 页读取失败，当前保留第 ${load.data.value.page} 页的结果。`
+      }}
     </p>
     <p v-if="load.data.value" class="result-count" role="status">找到 {{ total }} 个会话</p>
     <ElTable

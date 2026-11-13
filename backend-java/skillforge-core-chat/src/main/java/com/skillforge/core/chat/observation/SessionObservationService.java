@@ -145,6 +145,15 @@ public class SessionObservationService {
         return new SessionPage(page, query.page(), query.pageSize(), total, repository.readAt());
     }
 
+    /** 当前授权范围内可供筛选的会话、用户、智能体、团队与渠道。 */
+    @Transactional(readOnly = true)
+    public List<FilterOption> filterOptions(SessionObservationScope scope, String q) {
+        requireScope(scope);
+        return repository.filterOptions(scope, blankToNull(q));
+    }
+
+    public record FilterOption(String kind, String value, String label, String description) { }
+
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public SessionDetail detail(SessionObservationScope scope, SessionObservationQuery.Resource query) {
         SessionRow row = requireSession(scope, query.tenantId(), query.sessionId());
