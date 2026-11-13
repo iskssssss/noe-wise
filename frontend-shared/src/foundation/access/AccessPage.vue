@@ -628,36 +628,35 @@ onBeforeUnmount(() => {
         </div>
         <FieldTip :id="formTipId + '-keyword'"> 按姓名或账号查询；翻页沿用已查询条件。 </FieldTip>
         <el-table v-if="loaded" :data="members" v-loading="loading" row-key="id"
+          ><el-table-column label="成员" min-width="210"
+            ><template #default="{ row }"
+              ><div>{{ row.display_name }}</div>
+              <div class="admin-field-help">{{ row.username }}</div>
+              <div class="admin-field-help">{{ row.email || '未登记邮箱' }}</div></template
+            ></el-table-column
+          ><el-table-column label="组织归属" min-width="210"
+            ><template #default="{ row }"
+              ><div>
+                部门：{{
+                  departments.find((item) => item.id === row.department_id)?.name ?? '未分配'
+                }}
+              </div>
+              <div class="admin-field-help">
+                角色：{{
+                  row.roles
+                    .map((code: string) => roles.find((role) => role.code === code)?.name || code)
+                    .join('、') || '无角色'
+                }}
+              </div>
+              <div class="admin-field-help">
+                状态：{{ memberStates[row.status] ?? row.status }}
+              </div></template
+            ></el-table-column
           ><el-table-column
-            prop="username"
-            label="用户名"
-            min-width="160"
-            show-overflow-tooltip
-          /><el-table-column
-            prop="display_name"
-            label="显示名称"
-            min-width="160"
-            show-overflow-tooltip
-          /><el-table-column
-            prop="email"
-            label="邮箱"
-            min-width="240"
-            show-overflow-tooltip
-          /><el-table-column label="部门" min-width="160" show-overflow-tooltip
-            ><template #default="{ row }">{{
-              departments.find((item) => item.id === row.department_id)?.name ?? '未分配'
-            }}</template></el-table-column
-          ><el-table-column label="角色" min-width="180" show-overflow-tooltip
-            ><template #default="{ row }">{{
-              row.roles
-                .map((code: string) => roles.find((role) => role.code === code)?.name || code)
-                .join('、') || '无角色'
-            }}</template></el-table-column
-          ><el-table-column label="状态" width="120"
-            ><template #default="{ row }">{{
-              memberStates[row.status] ?? row.status
-            }}</template></el-table-column
-          ><el-table-column label="操作" width="250" class-name="access-member-actions"
+            label="操作"
+            width="200"
+            fixed="right"
+            class-name="access-member-actions"
             ><template #default="{ row }"
               ><el-button
                 v-if="can('foundation.access.organization.manage')"

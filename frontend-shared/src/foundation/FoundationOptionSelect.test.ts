@@ -52,6 +52,24 @@ describe('foundation 真实分页选择目录', () => {
     await flushPromises()
     expect(choices(wrapper)).toEqual([])
   })
+  it('数字内部标识不进入用户可见选项文本', async () => {
+    const resource = {
+      id: '870176814764037',
+      name: '灵知助理',
+      code: '870176814755845',
+      status: 'draft'
+    }
+    const wrapper = render(
+      async <T>() => ({ items: [resource], has_more: false }) as T,
+      resource.id
+    )
+    await flushPromises()
+    await wrapper.get('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('灵知助理')
+    expect(document.body.textContent).not.toContain(resource.id)
+    expect(document.body.textContent).not.toContain(resource.code)
+  })
   it('搜索、加载下一页与精确已选解析保持完整字符串身份和已选名称', async () => {
     const paths: string[] = []
     const chosen = option('9223372036854775806', '已选成员')

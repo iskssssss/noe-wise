@@ -36,6 +36,13 @@ const selectedIds = computed<string[]>(() => {
 const options = computed(() => [
   ...new Map([...selectedRows.value, ...rows.value].map((row) => [row.id, row])).values()
 ])
+function optionCode(option: FoundationOption) {
+  const code = option.code?.trim()
+  return code && code !== option.name && !/^\d+$/.test(code) ? code : ''
+}
+function optionLabel(option: FoundationOption) {
+  return [option.name, optionCode(option)].filter(Boolean).join(' · ')
+}
 function url(params: URLSearchParams) {
   return `${props.path}${props.path.includes('?') ? '&' : '?'}${params}`
 }
@@ -150,10 +157,10 @@ onScopeDispose(() => {
         v-for="option in options"
         :key="option.id"
         :value="option.id"
-        :label="option.name === option.code ? option.name : `${option.name} · ${option.code}`"
+        :label="optionLabel(option)"
       >
-        <span>{{ option.name }}</span
-        ><span class="admin-field-help"> · {{ option.code }} · {{ option.id }}</span>
+        <span>{{ option.name }}</span>
+        <span v-if="optionCode(option)" class="admin-field-help"> · {{ optionCode(option) }}</span>
       </ElOption>
       <template #footer
         ><ElButton v-if="more" text :loading="loading" @click="load(keyword, true)"
