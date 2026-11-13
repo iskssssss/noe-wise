@@ -15,20 +15,49 @@ describe('institution navigation', () => {
     expect(projected.map((item) => item.title)).toEqual([
       '工作台',
       '机构工作台',
-      '全局中心',
-      '跨机构运营'
+      '跨机构运营',
+      '模型'
     ])
     expect(navigationLeaves(projected).map((item) => item.path)).toEqual([
       '/platform/home',
       '/platform/tenants',
-      '/platform/models',
-      '/platform/agent-grants'
+      '/platform/agent-grants',
+      '/platform/models'
     ])
     expect(original[1]!.title).toBe('机构管理')
   })
   it('没有机构入口时不凭空创建机构导航', () => {
     const projected = institutionNavigation([{ title: '模型', path: '/platform/models' }], true)
     expect(projected.some((item) => item.title === '机构工作台')).toBe(false)
+  })
+  it('保留服务端业务域分组，只把机构维护入口单独收拢', () => {
+    const projected = institutionNavigation(
+      [
+        { title: '工作台', path: '/admin/home' },
+        {
+          title: '智能体与协作',
+          children: [
+            { title: '智能体', path: '/admin/agents' },
+            { title: '下级机构', path: '/admin/sub-institutions' }
+          ]
+        },
+        {
+          title: '能力与数据',
+          children: [{ title: '知识库', path: '/admin/knowledge' }]
+        }
+      ],
+      false,
+      ['foundation.agents.read']
+    )
+    expect(projected.map((item) => item.title)).toEqual([
+      '工作台',
+      '机构工作台',
+      '智能体与协作',
+      '能力与数据',
+      '机构维护视图'
+    ])
+    expect(projected[2]!.children!.map((item) => item.title)).toEqual(['智能体'])
+    expect(projected[4]!.children!.map((item) => item.title)).toEqual(['下级机构'])
   })
   it('只有审计页面的机构账号不获得工作台入口', () => {
     const projected = institutionNavigation([{ title: '治理', path: '/admin/governance' }], false, [

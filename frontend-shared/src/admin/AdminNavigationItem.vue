@@ -1,17 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ElIcon, ElMenuItem, ElSubMenu, ElTooltip } from 'element-plus'
 import { Folder } from 'lucide-vue-next'
 import type { AdminMenu } from './types'
 import { navigationIcon } from './navigationIcons'
+import { navigationKeys } from './navigationTree'
 
-defineProps<{
+const props = defineProps<{
   item: AdminMenu
   index: string
   collapsed: boolean
   activePath?: string
   home: string
 }>()
+const childKeys = computed(() => navigationKeys(props.item.children ?? [], props.index))
 const emit = defineEmits<{ activate: [event: MouseEvent, path: string] }>()
 </script>
 
@@ -30,9 +33,9 @@ const emit = defineEmits<{ activate: [event: MouseEvent, path: string] }>()
     </template>
     <AdminNavigationItem
       v-for="(child, childIndex) in item.children"
-      :key="child.path ?? `${index}.${childIndex}`"
+      :key="childKeys[childIndex]"
       :item="child"
-      :index="`${index}.${childIndex}`"
+      :index="childKeys[childIndex]!"
       :collapsed="false"
       :active-path="activePath"
       :home="home"

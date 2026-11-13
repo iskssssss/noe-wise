@@ -6,7 +6,12 @@ import { Search } from 'lucide-vue-next'
 import type { MenuInstance } from 'element-plus'
 import type { AdminMenu } from './types'
 import AdminNavigationItem from './AdminNavigationItem.vue'
-import { expandedNavigation, filterNavigation, navigationLeaves } from './navigationTree'
+import {
+  expandedNavigation,
+  filterNavigation,
+  navigationKeys,
+  navigationLeaves
+} from './navigationTree'
 
 const props = defineProps<{
   title: string
@@ -23,17 +28,21 @@ const menu = ref<MenuInstance>()
 const logoFailed = ref(false)
 const query = ref('')
 const groups = computed(() => filterNavigation(props.menus, query.value))
+const keys = computed(() => navigationKeys(groups.value))
 const resultCount = computed(() => navigationLeaves(groups.value).length)
+let syncedSignature = ''
 watch(
-  () => [props.activePath, props.menus, query.value, props.collapsed],
+  () => [props.activePath, groups.value, props.collapsed],
   async () => {
     await nextTick()
     if (props.collapsed) return
+    // 路由守卫刷新用户信息会重建菜单数组但路径未变，跳过以免先关闭当前分组。
+    const signature = `${props.activePath ?? ''}|${query.value.trim()}|${keys.value.join('|')}`
+    if (signature === syncedSignature) return
+    syncedSignature = signature
     const open = expandedNavigation(groups.value, props.activePath, !!query.value.trim())
-    if (!open.length && !query.value.trim()) {
-      const first = groups.value.findIndex((item) => item.children?.length)
-      if (first >= 0) open.push(`group.${first}`)
-    }
+    // 非搜索时 unique-opened 会在打开当前分组的同时原子关闭其他分组，不产生空帧。
+    if (!open.length) for (const key of keys.value) menu.value?.close(key)
     for (const key of open) menu.value?.open(key)
   },
   { immediate: true, flush: 'post' }
@@ -109,13 +118,14 @@ function followLink(event: MouseEvent, path: string) {
         :default-active="activePath"
         :collapse="collapsed"
         :collapse-transition="false"
+        :unique-opened="!query.trim()"
         @select="select"
       >
         <AdminNavigationItem
           v-for="(item, index) in groups"
-          :key="item.path ?? `group.${index}`"
+          :key="keys[index]"
           :item="item"
-          :index="`group.${index}`"
+          :index="keys[index]!"
           :collapsed="collapsed"
           :active-path="activePath"
           :home="home"

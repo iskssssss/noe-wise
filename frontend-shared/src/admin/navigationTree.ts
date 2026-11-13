@@ -15,16 +15,34 @@ export function navigationLeaves(items: AdminMenu[]): AdminMenu[] {
   return items.flatMap((item) => (item.children?.length ? navigationLeaves(item.children) : [item]))
 }
 
-/** Element Plus 的分组索引只属于显示树，不充当路由或权限标识。 */
+/**
+ * 分组键按标题生成，筛选后仍指向同一个分组；同名兄弟节点才追加序号。
+ * 叶节点使用路由路径，避免过滤重排后把展开状态套到另一个目录。
+ */
+export function navigationKeys(items: AdminMenu[], parent = 'section'): string[] {
+  const seen = new Map<string, number>()
+  return items.map((item, index) => {
+    const name = item.children?.length
+      ? item.title || `group-${index}`
+      : item.path || item.title || `item-${index}`
+    const base = `${parent}/${name}`
+    const count = (seen.get(base) ?? 0) + 1
+    seen.set(base, count)
+    return count === 1 ? base : `${base}#${count}`
+  })
+}
+
+/** 只展开当前页所在分组；搜索时展开全部命中分组。 */
 export function expandedNavigation(
   items: AdminMenu[],
   activePath?: string,
   search = false,
-  prefix = 'group'
+  prefix = 'section'
 ): string[] {
+  const keys = navigationKeys(items, prefix)
   return items.flatMap((item, index) => {
     if (!item.children?.length) return []
-    const key = `${prefix}.${index}`
+    const key = keys[index]!
     const containsActive = navigationLeaves(item.children).some(
       (child) => child.path === activePath
     )

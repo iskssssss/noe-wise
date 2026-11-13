@@ -3,7 +3,12 @@ import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import AdminNavigation from './AdminNavigation.vue'
-import { expandedNavigation, filterNavigation, navigationLeaves } from './navigationTree'
+import {
+  expandedNavigation,
+  filterNavigation,
+  navigationKeys,
+  navigationLeaves
+} from './navigationTree'
 import type { AdminMenu } from './types'
 
 const menus: AdminMenu[] = [
@@ -45,7 +50,11 @@ describe('任务导航', () => {
     const found = filterNavigation(menus, '知识库')
     expect(navigationLeaves(found).map((item) => item.path)).toEqual(['/admin/knowledge'])
     expect(found[0]?.title).toBe('资源构建')
-    expect(expandedNavigation(found, undefined, true)).toEqual(['group.0', 'group.0.0'])
+    expect(expandedNavigation(found, undefined, true)).toEqual([
+      'section/资源构建',
+      'section/资源构建/知识与记忆'
+    ])
+    expect(navigationKeys(found)[0]).toBe(navigationKeys(menus)[1])
     expect(navigationLeaves(filterNavigation(menus, '运营管理')).map((item) => item.path)).toEqual([
       '/admin/billing-records'
     ])
