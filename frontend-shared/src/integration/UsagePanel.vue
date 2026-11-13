@@ -2,9 +2,10 @@
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
 import { EntitySelect, guardFormEnter, useResource, type EntityOption } from '../admin'
+import { statusLabel } from '../admin/presentation'
 import FieldTip from '../components/FieldTip.vue'
 import { vDescribedBy } from '../directives/describedBy'
-import { formatDateTime, toBeijingDateTime } from '../utils/datetime'
+import { formatDate, formatDateTime, formatTime, toBeijingDateTime } from '../utils/datetime'
 import { HttpClientError } from '../utils/http'
 import type { UsageApi, UsageEvent, UsageQuery } from './usage'
 
@@ -118,13 +119,30 @@ const details = useResource(async (signal) => {
 })
 const rows = computed(() => details.data.value?.items ?? [])
 const kindLabels: Record<string, string> = {
-  measured: '实测',
+  measured: '实际计量',
   usage_report: '用量报告',
   confirmation: '成本确认',
   adjustment: '调整',
   unknown: '待确认用量'
 }
 const requesterLabels: Record<string, string> = { END_USER: '终端用户', SYSTEM: '系统主体' }
+const originLabels: Record<string, string> = {
+  native: '平台原生',
+  external: '外部接入',
+  system: '系统后台'
+}
+const usageSourceLabels: Record<string, string> = {
+  PROVIDER_REPORTED: '供应商报告',
+  ESTIMATED: '平台估算',
+  UNKNOWN: '待确认'
+}
+const ownerKindLabels: Record<string, string> = { platform: '平台', tenant: '机构' }
+const unitLabels: Record<string, string> = {
+  token: 'Token',
+  request: '次',
+  call: '次',
+  document: '篇'
+}
 const amountLabels: Record<string, string> = {
   effective: '有效',
   confirmed: '已确认',
@@ -189,6 +207,40 @@ function sourceUserLabel(
 }
 function requesterLabel(kind: UsageEvent['requester_kind']) {
   return kind ? (requesterLabels[kind] ?? kind) : '未记录'
+}
+function eventTypeLabel(value: UsageEvent['event_type']) {
+  return !value ? '未记录' : value === 'request' ? '请求' : statusLabel(value)
+}
+function unitLabel(value: UsageEvent['measurement_unit']) {
+  return value ? (unitLabels[value] ?? value) : ''
+}
+/** 长标识只保留尾部，完整值放在悬停说明和展开详情中。 */
+function compactRef(value: string | null | undefined) {
+  if (!value) return ''
+  return value.length <= 12 ? value : `…${value.slice(-6)}`
+}
+/** 计数只做展示分组，不经过 Number，避免大整数精度丢失。 */
+function formatCount(value: string | number) {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+function usageLabel(row: UsageEvent) {
+  const parts: string[] = []
+  if (row.quantity !== null && row.quantity !== undefined && row.quantity !== '') {
+    parts.push(`${formatCount(row.quantity)} ${unitLabel(row.measurement_unit)}`.trim())
+  }
+  if (row.tokens !== null && row.tokens !== undefined && row.tokens !== '') {
+    parts.push(`Token ${formatCount(row.tokens)}`)
+  }
+  return parts.length ? parts.join(' · ') : row.kind === 'unknown' ? '用量待确认' : '—'
+}
+function costLabel(row: UsageEvent) {
+  const amount =
+    row.amount_cents !== null && row.amount_cents !== undefined && row.amount_cents !== ''
+      ? `${row.amount_cents} ${row.currency ?? ''}`.trim()
+      : row.currency
+        ? `— ${row.currency}`
+        : '—'
+  return `${amount} · ${amountLabels[row.amount_status] ?? row.amount_status}`
 }
 /** 重置其他条件时保留固定机构；全局入口恢复原有的初始授权范围。 */
 function reset() {
@@ -397,21 +449,27 @@ watch(
       <span v-if="!appliedLabels.length" class="admin-field-help">当前身份的全部授权范围</span>
     </div>
     <ElDescriptions v-if="summary.data.value" class="usage-summary" :column="3" border>
-      <ElDescriptionsItem label="请求数">{{ summary.data.value.request_count }}</ElDescriptionsItem>
+      <ElDescriptionsItem label="请求数">{{
+        formatCount(summary.data.value.request_count)
+      }}</ElDescriptionsItem>
       <ElDescriptionsItem label="实际调用数">{{
-        summary.data.value.invocation_count
+        formatCount(summary.data.value.invocation_count)
       }}</ElDescriptionsItem>
       <ElDescriptionsItem label="待确认用量">{{
-        summary.data.value.unknown_usage_count
+        formatCount(summary.data.value.unknown_usage_count)
       }}</ElDescriptionsItem>
       <ElDescriptionsItem label="输入 Token">{{
-        summary.data.value.prompt_tokens ?? '—'
+        summary.data.value.prompt_tokens === null
+          ? '—'
+          : formatCount(summary.data.value.prompt_tokens)
       }}</ElDescriptionsItem>
       <ElDescriptionsItem label="输出 Token">{{
-        summary.data.value.completion_tokens ?? '—'
+        summary.data.value.completion_tokens === null
+          ? '—'
+          : formatCount(summary.data.value.completion_tokens)
       }}</ElDescriptionsItem>
       <ElDescriptionsItem label="待确认成本">{{
-        summary.data.value.unresolved_cost_count
+        formatCount(summary.data.value.unresolved_cost_count)
       }}</ElDescriptionsItem>
       <ElDescriptionsItem label="供应商成本（分）"
         ><span v-for="cost in summary.data.value.costs" :key="cost.currency" class="usage-cost"
@@ -450,7 +508,7 @@ watch(
       class="usage-table"
       :data="rows"
       v-loading="details.loading.value"
-      table-layout="auto"
+      table-layout="fixed"
       row-key="event_id"
       :empty-text="
         details.loading.value
@@ -467,7 +525,7 @@ watch(
             <ElDescriptions :column="2" border>
               <ElDescriptionsItem label="事件标识">{{ row.event_id }}</ElDescriptionsItem>
               <ElDescriptionsItem label="来源类型">{{
-                row.origin_kind ?? '未记录'
+                row.origin_kind ? (originLabels[row.origin_kind] ?? row.origin_kind) : '未记录'
               }}</ElDescriptionsItem>
               <ElDescriptionsItem label="机构">{{
                 tenantLabel?.(row.tenant_id) ?? row.tenant_id
@@ -538,7 +596,9 @@ watch(
                 row.agent_definition_version ?? '未记录'
               }}</ElDescriptionsItem>
               <ElDescriptionsItem label="用量来源">{{
-                row.usage_source ?? '未记录'
+                row.usage_source
+                  ? (usageSourceLabels[row.usage_source] ?? row.usage_source)
+                  : '未记录'
               }}</ElDescriptionsItem>
               <ElDescriptionsItem label="来源用量事件">{{
                 row.source_event_id ?? '—'
@@ -561,7 +621,11 @@ watch(
                 row.attempt_id ?? '—'
               }}</ElDescriptionsItem>
               <ElDescriptionsItem label="定义所有者"
-                >{{ row.source_owner_kind ?? '—' }}
+                >{{
+                  row.source_owner_kind
+                    ? (ownerKindLabels[row.source_owner_kind] ?? row.source_owner_kind)
+                    : '—'
+                }}
                 {{ row.source_owner_tenant_id ?? '' }}</ElDescriptionsItem
               >
               <ElDescriptionsItem label="定义标识">{{
@@ -578,7 +642,7 @@ watch(
                 >{{ row.grant_id ?? '—' }} / {{ row.grant_revision ?? '—' }}</ElDescriptionsItem
               >
               <ElDescriptionsItem label="计量单位">{{
-                row.measurement_unit ?? '—'
+                unitLabel(row.measurement_unit) || '—'
               }}</ElDescriptionsItem>
             </ElDescriptions>
             <p class="muted">
@@ -612,52 +676,39 @@ watch(
           </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="发生时间" min-width="180"
-        ><template #default="{ row }">{{
-          formatDateTime(row.occurred_at)
-        }}</template></ElTableColumn
+      <ElTableColumn label="发生时间" :width="showTenant ? 110 : 118"
+        ><template #default="{ row }"
+          ><div class="usage-cell-primary">{{ formatDate(row.occurred_at) }}</div>
+          <div class="usage-cell-secondary">{{ formatTime(row.occurred_at) }}</div></template
+        ></ElTableColumn
       >
-      <ElTableColumn v-if="showTenant" label="机构" min-width="150" show-overflow-tooltip
+      <ElTableColumn v-if="showTenant" label="机构" width="120" show-overflow-tooltip
         ><template #default="{ row }">{{
           tenantLabel?.(row.tenant_id) ?? row.tenant_id
         }}</template></ElTableColumn
       >
-      <ElTableColumn label="调用来源" min-width="190" show-overflow-tooltip
-        ><template #default="{ row }"
-          ><div>{{ requesterLabel(row.requester_kind) }}</div>
-          <span class="admin-field-help">{{
-            row.agent_id ? `智能体 ${row.agent_id}` : (row.actor_ref ?? '执行主体未记录')
-          }}</span></template
-        ></ElTableColumn
-      >
-      <ElTableColumn label="记录类型" min-width="120"
-        ><template #default="{ row }">{{
-          kindLabels[row.kind] ?? row.kind
-        }}</template></ElTableColumn
-      >
-      <ElTableColumn prop="event_type" label="调用类型" min-width="140" show-overflow-tooltip />
-      <ElTableColumn label="数量" width="100" align="right"
-        ><template #default="{ row }">{{ row.quantity ?? '—' }}</template></ElTableColumn
-      >
-      <ElTableColumn
-        prop="measurement_unit"
-        label="计量单位"
-        min-width="130"
-        show-overflow-tooltip
-      />
-      <ElTableColumn label="Token" width="110" align="right"
-        ><template #default="{ row }">{{ row.tokens ?? '—' }}</template></ElTableColumn
-      >
-      <ElTableColumn label="供应商成本（分）" min-width="170" align="right"
-        ><template #default="{ row }"
-          >{{ row.amount_cents ?? '—' }} {{ row.currency ?? '' }}</template
-        ></ElTableColumn
-      >
-      <ElTableColumn label="成本状态" min-width="110"
-        ><template #default="{ row }">{{
-          amountLabels[row.amount_status] ?? row.amount_status
-        }}</template></ElTableColumn
-      >
+      <ElTableColumn label="调用" :min-width="showTenant ? 200 : 220">
+        <template #default="{ row }">
+          <div class="usage-cell-primary">
+            {{ requesterLabel(row.requester_kind) }}
+            <span v-if="row.agent_id" :title="row.agent_id">
+              · 智能体 {{ compactRef(row.agent_id) }}
+            </span>
+            <span v-else-if="row.actor_ref" :title="row.actor_ref">
+              · {{ compactRef(row.actor_ref) }}
+            </span>
+          </div>
+          <div class="usage-cell-secondary">
+            {{ eventTypeLabel(row.event_type) }} · {{ kindLabels[row.kind] ?? row.kind }}
+          </div>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="用量与成本" :min-width="showTenant ? 175 : 180">
+        <template #default="{ row }">
+          <div class="usage-cell-primary usage-amount">{{ usageLabel(row as UsageEvent) }}</div>
+          <div class="usage-cell-secondary usage-amount">{{ costLabel(row as UsageEvent) }}</div>
+        </template>
+      </ElTableColumn>
     </ElTable>
     <div v-if="canReadRecords" class="actions">
       <ElButton
@@ -712,6 +763,21 @@ watch(
 }
 .usage-table :deep(th.el-table__cell .cell) {
   white-space: nowrap;
+}
+.usage-table :deep(.el-table__cell) {
+  padding-block: 9px;
+}
+.usage-cell-primary {
+  line-height: 1.45;
+}
+.usage-cell-secondary {
+  margin-top: 2px;
+  color: var(--admin-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.usage-amount {
+  font-variant-numeric: tabular-nums;
 }
 .usage-cost {
   display: block;
