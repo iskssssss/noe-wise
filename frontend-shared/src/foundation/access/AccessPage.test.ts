@@ -296,9 +296,10 @@ describe('组织权限真实交互', () => {
     await flushPromises()
     expect(dialog().querySelectorAll('fieldset')).toHaveLength(1)
     expect(dialog().textContent).toContain('读取组织')
+    expect(dialog().textContent).not.toContain('foundation.access.read')
     expect(dialog().textContent).not.toContain('撤销设备')
     await input(
-      dialog().querySelector<HTMLInputElement>('input[placeholder="筛选权限名称或编码"]')!,
+      dialog().querySelector<HTMLInputElement>('input[placeholder="搜索权限动作"]')!,
       '不存在'
     )
     await flushPromises()

@@ -1,6 +1,7 @@
 package com.skillforge.core.foundation.access;
 
 import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /** access 域拥有的权限定义；业务资源消费者使用资源动作编码完成对象授权。 */
@@ -14,6 +15,14 @@ public final class AccessPermissions implements FoundationPermissionContributor 
     public static final String ROLE_MANAGE = "foundation.access.role.manage";
     /** 管理 Agent、Workflow 和知识库共享授权。 */
     public static final String RESOURCE_MANAGE = "foundation.access.resource.manage";
+    private static final Map<String, String> RESOURCE_NAMES = Map.of(
+            "agent", "智能体",
+            "workflow", "工作流",
+            "knowledge", "知识库");
+    private static final Map<String, String> RESOURCE_ACTIONS = Map.of(
+            "read", "读取",
+            "execute", "执行",
+            "manage", "管理");
 
     /** 返回本域实际实现的管理与业务资源动作。 */
     @Override
@@ -27,7 +36,8 @@ public final class AccessPermissions implements FoundationPermissionContributor 
         for (String kind : List.of("agent", "workflow", "knowledge")) {
             for (String action : List.of("read", "execute", "manage")) {
                 result.add(new FoundationPermission("foundation.resource." + kind + "." + action,
-                        kind + "资源" + action, FoundationPermission.Audience.TENANT));
+                        RESOURCE_NAMES.get(kind) + "资源" + RESOURCE_ACTIONS.get(action),
+                        FoundationPermission.Audience.TENANT));
             }
         }
         return List.copyOf(result);

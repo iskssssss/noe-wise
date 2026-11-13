@@ -86,6 +86,7 @@ const resourceBaseline = ref('')
 const resourceError = ref('')
 const permissionFilter = ref('')
 const selectedPermissionsOnly = ref(false)
+const memberEmailError = ref('')
 const editorBaseline = ref('')
 let requestVersion = 0
 let resourceVersion = 0
@@ -118,16 +119,52 @@ const permissionGroups = computed(() => {
 })
 const permissionGroupNames: Record<string, string> = {
   'foundation.access': '组织与权限',
+  'foundation.agents': '智能体',
+  'foundation.audit': '审计',
+  'foundation.billing': '账务',
+  'foundation.capabilities': '能力目录',
+  'foundation.channels': '渠道',
+  'foundation.connectors': '连接器',
   'foundation.dictionary': '字典',
-  'foundation.navigation': '菜单',
-  'foundation.preferences': '个人偏好',
-  'foundation.settings': '机构设置',
   'foundation.entitlements': '功能与配额',
-  'foundation.security': '账号安全',
-  'foundation.messaging': '消息通知',
   'foundation.files': '公共文件',
+  'foundation.handoff': '人工接管',
   'foundation.jobs': '导入导出',
-  'foundation.operations': '审计与运维'
+  'foundation.knowledge': '知识库',
+  'foundation.memory': '记忆',
+  'foundation.messaging': '消息通知',
+  'foundation.marketplace': '市场审核',
+  'foundation.models': '模型',
+  'foundation.navigation': '菜单',
+  'foundation.operations': '审计与运维',
+  'foundation.preferences': '个人偏好',
+  'foundation.resource': '资源共享',
+  'foundation.runtime_settings': '运行配置',
+  'foundation.security': '账号安全',
+  'foundation.service_principals': '服务凭据',
+  'foundation.sessions': '会话与任务',
+  'foundation.settings': '机构设置',
+  'foundation.skills': '技能',
+  'foundation.system_agent_tools': '系统工具',
+  'foundation.system_agents': '系统智能体',
+  'foundation.teams': '智能体团队',
+  'foundation.tenants': '机构',
+  'foundation.usage': '用量',
+  'foundation.webhooks': '事件订阅',
+  'foundation.workflows': '工作流',
+  'platform.agent_definitions': '平台共享定义',
+  'platform.agent_grants': '平台授权',
+  'platform.agent_deployments': '平台部署',
+  'platform.institution_credentials': '机构执行凭证',
+  'platform.institution_management_grants': '总部部署管理许可',
+  'platform.institution_relations': '机构关系',
+  'platform.institutions': '机构接入',
+  'platform.management_principals': '管理机器身份',
+  'platform.usage': '平台用量',
+  'tenant.agent_definitions': '机构共享定义',
+  'tenant.agent_grants': '机构授权',
+  'tenant.agent_deployments': '机构部署',
+  'tenant.sub_institutions': '直属机构'
 }
 const parentDepartments = computed(() => {
   const excluded = new Set([departmentForm.id])
@@ -292,6 +329,7 @@ function openMember(row?: Member, roleOnly = false) {
     },
     row ? { ...row, role_ids: [...row.role_ids], email: row.email ?? '' } : {}
   )
+  memberEmailError.value = ''
   beginEditor(roleOnly ? 'member_roles' : 'member')
 }
 /** 内置角色只读，角色定义操作复制集合，不直接修改列表事实。 */
@@ -320,6 +358,16 @@ function openRole(row?: Role) {
 async function submit() {
   if (saving.value || !editorWritable.value) return
   error.value = ''
+  if (editor.value === 'member') {
+    const email = memberForm.email.trim()
+    memberEmailError.value =
+      !email && !memberForm.id && memberForm.credential === 'invitation'
+        ? '邀请激活需要填写邮箱，也可改为“设置初始密码”。'
+        : email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+          ? '邮箱格式无效'
+          : ''
+    if (memberEmailError.value) return
+  }
   saving.value = true
   try {
     if (editor.value === 'department')
@@ -579,6 +627,12 @@ watch(
     void load()
   }
 )
+watch(
+  () => [memberForm.email, memberForm.credential] as const,
+  () => {
+    memberEmailError.value = ''
+  }
+)
 onMounted(() => {
   void load()
 })
@@ -654,7 +708,7 @@ onBeforeUnmount(() => {
             ></el-table-column
           ><el-table-column
             label="操作"
-            width="200"
+            width="260"
             fixed="right"
             class-name="access-member-actions"
             ><template #default="{ row }"
@@ -916,28 +970,35 @@ onBeforeUnmount(() => {
             ><el-input
               v-model="departmentForm.code"
               :disabled="!!departmentForm.id"
-              maxlength="64" /></el-form-item
+              maxlength="64"
+            />
+            <p v-if="departmentForm.id" class="admin-field-help">
+              部门编码创建后不可修改。
+            </p></el-form-item
           ><el-form-item label="部门名称" required
             ><el-input v-model="departmentForm.name" maxlength="128" /></el-form-item
           ><el-form-item label="上级部门"
             ><el-select
               v-model="departmentForm.parent_id"
+              placeholder="无上级部门（根部门）"
               clearable
               @clear="departmentForm.parent_id = null"
               ><el-option
                 v-for="department in parentDepartments"
                 :key="department.id"
                 :label="department.name"
-                :value="department.id" /></el-select></el-form-item
+                :value="department.id"
+            /></el-select>
+            <p class="admin-field-help">不选择时作为根部门。</p></el-form-item
           ><el-form-item v-if="departmentForm.id" label="启用"
             ><el-switch v-model="departmentForm.enabled" /></el-form-item
         ></template>
         <template v-if="editor === 'position'"
           ><el-form-item label="岗位编码" required
-            ><el-input
-              v-model="positionForm.code"
-              :disabled="!!positionForm.id"
-              maxlength="64" /></el-form-item
+            ><el-input v-model="positionForm.code" :disabled="!!positionForm.id" maxlength="64" />
+            <p v-if="positionForm.id" class="admin-field-help">
+              岗位编码创建后不可修改。
+            </p></el-form-item
           ><el-form-item label="岗位名称" required
             ><el-input v-model="positionForm.name" maxlength="128" /></el-form-item
           ><el-form-item v-if="positionForm.id" label="启用"
@@ -951,7 +1012,10 @@ onBeforeUnmount(() => {
               maxlength="128" /></el-form-item
           ><el-form-item label="显示名称" required
             ><el-input v-model="memberForm.display_name" maxlength="128" /></el-form-item
-          ><el-form-item label="邮箱"
+          ><el-form-item
+            label="邮箱"
+            :required="!memberForm.id && memberForm.credential === 'invitation'"
+            :error="memberEmailError"
             ><el-input v-model="memberForm.email" type="email" maxlength="255" /></el-form-item
           ><el-form-item v-if="!memberForm.id" label="激活方式"
             ><el-radio-group v-model="memberForm.credential"
@@ -978,6 +1042,7 @@ onBeforeUnmount(() => {
           ><el-form-item label="部门"
             ><el-select
               v-model="memberForm.department_id"
+              placeholder="不分配部门"
               clearable
               @clear="memberForm.department_id = null"
               ><el-option
@@ -988,6 +1053,7 @@ onBeforeUnmount(() => {
           ><el-form-item label="岗位"
             ><el-select
               v-model="memberForm.position_id"
+              placeholder="不分配岗位"
               clearable
               @clear="memberForm.position_id = null"
               ><el-option
@@ -1026,10 +1092,10 @@ onBeforeUnmount(() => {
         >
         <template v-if="editor === 'role'"
           ><el-form-item label="角色编码" required
-            ><el-input
-              v-model="roleForm.code"
-              :disabled="!!roleForm.id"
-              maxlength="64" /></el-form-item
+            ><el-input v-model="roleForm.code" :disabled="!!roleForm.id" maxlength="64" />
+            <p v-if="roleForm.id" class="admin-field-help">
+              角色编码创建后不可修改。
+            </p></el-form-item
           ><el-form-item label="角色名称" required
             ><el-input v-model="roleForm.name" maxlength="128" /></el-form-item
           ><el-form-item label="数据范围" required
@@ -1051,7 +1117,7 @@ onBeforeUnmount(() => {
               <p class="admin-field-help" role="status">
                 已选 {{ roleForm.permissions.length }} 项权限；只能授予本人持有的权限。
               </p>
-              <el-input v-model="permissionFilter" placeholder="筛选权限名称或编码" clearable />
+              <el-input v-model="permissionFilter" placeholder="搜索权限动作" clearable />
               <el-checkbox v-model="selectedPermissionsOnly">只看已选</el-checkbox>
               <p v-if="!permissionGroups.length" class="admin-field-help">没有符合条件的权限</p>
               <el-checkbox-group v-model="roleForm.permissions">
@@ -1060,16 +1126,17 @@ onBeforeUnmount(() => {
                   :key="group.code"
                   class="permission-group"
                 >
-                  <legend>
-                    {{ permissionGroupNames[group.code] || group.code }}（{{ group.items.length }}）
+                  <legend :title="group.code">
+                    {{ permissionGroupNames[group.code] || '其他权限' }}（{{ group.items.length }}）
                   </legend>
                   <el-checkbox
                     v-for="permission in group.items"
                     :key="permission.code"
                     :value="permission.code"
                     :disabled="!can(permission.code)"
+                    :title="permission.code"
                   >
-                    {{ permission.name }} <small>{{ permission.code }}</small>
+                    {{ permission.name }}
                   </el-checkbox>
                 </fieldset>
               </el-checkbox-group>
