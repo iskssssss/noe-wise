@@ -19,6 +19,7 @@ const props = withDefaults(
       load: (query: string, signal?: AbortSignal) => Promise<EntityOption[]>
       resolve: (id: string) => Promise<EntityOption | undefined>
     }
+    tenantLabel?: (id: string | null | undefined) => string
     canEvents?: boolean
     canSummary?: boolean
     canDetails?: boolean
@@ -468,7 +469,9 @@ watch(
               <ElDescriptionsItem label="来源类型">{{
                 row.origin_kind ?? '未记录'
               }}</ElDescriptionsItem>
-              <ElDescriptionsItem label="机构标识">{{ row.tenant_id }}</ElDescriptionsItem>
+              <ElDescriptionsItem label="机构">{{
+                tenantLabel?.(row.tenant_id) ?? row.tenant_id
+              }}</ElDescriptionsItem>
               <ElDescriptionsItem label="接入标识">{{
                 row.integration_id ?? '—'
               }}</ElDescriptionsItem>
@@ -614,13 +617,11 @@ watch(
           formatDateTime(row.occurred_at)
         }}</template></ElTableColumn
       >
-      <ElTableColumn
-        v-if="showTenant"
-        prop="tenant_id"
-        label="机构"
-        min-width="150"
-        show-overflow-tooltip
-      />
+      <ElTableColumn v-if="showTenant" label="机构" min-width="150" show-overflow-tooltip
+        ><template #default="{ row }">{{
+          tenantLabel?.(row.tenant_id) ?? row.tenant_id
+        }}</template></ElTableColumn
+      >
       <ElTableColumn label="调用来源" min-width="190" show-overflow-tooltip
         ><template #default="{ row }"
           ><div>{{ requesterLabel(row.requester_kind) }}</div>
