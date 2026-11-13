@@ -53,6 +53,20 @@ const error = computed(() =>
 )
 const dirty = computed(() => JSON.stringify(groups.value) !== baseline.value)
 const search = ref('')
+const fieldChoiceLabels: Record<string, Record<string, string>> = {
+  default_indexing_mode: {
+    high_quality: '高质量索引',
+    economical: '经济索引'
+  },
+  default_retrieval_mode: {
+    semantic: '语义检索',
+    full_text: '全文检索',
+    hybrid: '混合检索'
+  }
+}
+function fieldChoiceLabel(field: SystemSettingField, choice: string) {
+  return fieldChoiceLabels[field.key]?.[choice] ?? choice
+}
 function groupDirty(group: SystemSettingGroup) {
   const base = JSON.parse(baseline.value) as SystemSettingGroup[]
   return JSON.stringify(base.find((value) => value.key === group.key)) !== JSON.stringify(group)
@@ -392,7 +406,12 @@ const formTipId = useId()
                   :label="String(group.values[field.key]) + '（已不可用）'"
                   disabled
                 />
-                <ElOption v-for="choice in field.choices" :key="choice" :value="choice" />
+                <ElOption
+                  v-for="choice in field.choices"
+                  :key="choice"
+                  :value="choice"
+                  :label="fieldChoiceLabel(field, choice)"
+                />
               </ElSelect>
               <ElInput
                 v-described-by="
@@ -516,7 +535,14 @@ const formTipId = useId()
             :key="key"
             :label="selected?.fields.find((field) => field.key === key)?.label ?? String(key)"
             >{{
-              selected?.fields.find((f) => f.key === key)?.secret ? '••••••' : value
+              selected?.fields.find((f) => f.key === key)?.secret
+                ? '••••••'
+                : selected?.fields.find((f) => f.key === key)?.type === 'select'
+                  ? fieldChoiceLabel(
+                      selected.fields.find((f) => f.key === key)!,
+                      String(value)
+                    )
+                  : value
             }}</ElDescriptionsItem
           >
         </ElDescriptions>

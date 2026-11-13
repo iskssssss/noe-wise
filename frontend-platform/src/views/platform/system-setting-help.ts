@@ -23,10 +23,8 @@ const descriptions: Record<string, Record<string, string>> = {
     chunk_overlap: '新知识库相邻分段默认重叠的字符数，必须小于默认分段长度。',
     max_upload_mb: '单个知识文档允许上传的最大文件大小。',
     max_chunks_per_document: '单个知识文档可生成的最大分块数量。',
-    default_indexing_mode:
-      '新知识库的默认索引方式；high_quality 使用高质量索引，economical 使用经济模式。',
-    default_retrieval_mode:
-      '新知识库的默认检索方式：semantic 语义检索、full_text 全文检索、hybrid 混合检索。',
+    default_indexing_mode: '新知识库的默认索引方式：高质量索引或经济索引。',
+    default_retrieval_mode: '新知识库的默认检索方式：语义检索、全文检索或混合检索。',
     default_top_k: '新知识库默认返回的检索结果数量。',
     default_score_threshold: '新知识库默认的相关度过滤阈值，是否过滤取决于知识库的阈值启用设置。',
     default_vector_weight: '新知识库混合检索中的默认向量侧权重，其余权重归全文侧。'
