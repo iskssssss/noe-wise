@@ -56,12 +56,12 @@
           ? '没有匹配渠道，清空名称或类型后查看全部'
           : '尚未创建渠道，新增渠道后绑定智能体即可接入'
       "
-      ><ElTableColumn min-width="200" show-overflow-tooltip prop="name" label="名称"></ElTableColumn
-      ><ElTableColumn min-width="140" show-overflow-tooltip label="类型"
+      ><ElTableColumn min-width="120" show-overflow-tooltip prop="name" label="名称"></ElTableColumn
+      ><ElTableColumn min-width="100" show-overflow-tooltip label="类型"
         ><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></ElTableColumn
-      ><ElTableColumn width="128" show-overflow-tooltip label="状态"
+      ><ElTableColumn width="96" show-overflow-tooltip label="状态"
         ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
-      ><ElTableColumn width="300" class-name="admin-table-actions" prop="actions" label="操作"
+      ><ElTableColumn width="264" class-name="admin-table-actions" prop="actions" label="操作"
         ><template #default="{ row }"
           ><ElButton link @click="edit(row as ChannelItem)" :disabled="busy">编辑</ElButton
           ><ElButton link @click="bind(row as ChannelItem)" :disabled="busy">绑定智能体</ElButton
