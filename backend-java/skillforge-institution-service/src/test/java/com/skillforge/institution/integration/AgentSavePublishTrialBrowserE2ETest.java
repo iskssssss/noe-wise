@@ -32,16 +32,13 @@ class AgentSavePublishTrialBrowserE2ETest extends ChatExecutionChainE2ETest {
             assertEquals(200,send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken).statusCode());
             var child=send("/api/v1/agents","POST",Map.of("name","Directory child "+marker,"system_prompt",childPrompt),accessToken);assertEquals(200,child.statusCode(),child.body());String childId=successData(child).path("id").asText();
             model.expectedChild=childId;
-            String existingId="";
-            if("candidate".equals(System.getenv("E2E_DELEGATION_DIRECTORY"))) {
-                var existing=send("/api/v1/agents","POST",Map.of("name","Directory existing "+marker,"system_prompt","Uncalled existing member"),accessToken);assertEquals(200,existing.statusCode(),existing.body());existingId=successData(existing).path("id").asText();
-                assertEquals(200,send("/api/v1/agents/publish","POST",Map.of("agent_id",existingId),accessToken).statusCode());
-                assertEquals(200,send("/api/v1/agents/update","PATCH",Map.of("agent_id",agentId,"payload",Map.of("delegation_config",Map.of("enabled",true,"target_agent_ids",java.util.List.of(existingId)))),accessToken).statusCode());
-            }
+            var existing=send("/api/v1/agents","POST",Map.of("name","Directory existing "+marker,"system_prompt","Uncalled existing member"),accessToken);assertEquals(200,existing.statusCode(),existing.body());String existingId=successData(existing).path("id").asText();
+            assertEquals(200,send("/api/v1/agents/publish","POST",Map.of("agent_id",existingId),accessToken).statusCode());
+            assertEquals(200,send("/api/v1/agents/update","PATCH",Map.of("agent_id",agentId,"payload",Map.of("delegation_config",Map.of("enabled",true,"target_agent_ids",java.util.List.of(existingId)))),accessToken).statusCode());
             FRONTEND.bindBackend(baseUrl());Path admin=KnowledgeBrowserServer.repoRoot().resolve("frontend-admin");
             var command=new ProcessBuilder(admin.resolve("node_modules/.bin/playwright.cmd").toString(),"test","e2e/agent-delegation-directory-real.spec.ts");command.directory(admin.toFile());command.redirectErrorStream(true);command.redirectOutput(evidence.resolve("playwright.log").toFile());
             var env=command.environment();env.put("E2E_BASE_URL",FRONTEND.baseUrl());env.put("E2E_ARTIFACT_DIR",browser.toString());env.put("E2E_TENANT_SLUG",fixtureTenantSlug());env.put("E2E_USERNAME","runtime-e2e-admin");env.put("E2E_PASSWORD",PASSWORD);env.put("E2E_AGENT_ID",agentId);env.put("E2E_CHILD_AGENT",childId);env.put("E2E_DIRECTORY_MARKER",marker);
-            if(!existingId.isEmpty())env.put("E2E_EXISTING_TARGET",existingId);
+            env.put("E2E_EXISTING_TARGET",existingId);
             Process process=command.start();try(var owned=new KnowledgeBrowserProcesses(process.toHandle())){long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(4);while(process.isAlive()&&System.nanoTime()<deadline){owned.capture();process.waitFor(200,TimeUnit.MILLISECONDS);}assertFalse(process.isAlive());assertEquals(0,process.exitValue(),evidence+"\n"+Files.readString(evidence.resolve("playwright.log")));}
             var facts=objectMapper.readTree(Files.readString(browser.resolve("delegation-directory.json")));String run=facts.path("run").path("execution_id").asText();
             assertEquals(2,model.parentCalls.get());assertEquals(1,model.childCalls.get());
