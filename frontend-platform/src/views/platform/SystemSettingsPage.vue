@@ -420,6 +420,9 @@ const formTipId = useId()
                 :type="field.secret ? 'password' : field.type === 'text' ? 'textarea' : 'text'"
                 :rows="4"
                 :show-password="field.secret"
+                :name="`system-setting-${group.key}-${field.key}`"
+                :autocomplete="field.secret ? 'new-password' : 'off'"
+                spellcheck="false"
               />
 
               <FieldTip
