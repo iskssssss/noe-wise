@@ -12,11 +12,12 @@ public record CapabilityRequirementOptionResponse(
         String versionKey,
         Long skillEstimatedTokens,
         String capabilityKey,
-        String description) {
+        String description,
+        String versionName) {
 
     public static CapabilityRequirementOptionResponse from(CapabilityRequirementOption value) {
         return new CapabilityRequirementOptionResponse(value.definitionId(), value.name(),
                 value.versionId(), value.versionKey(), value.skillEstimatedTokens(),
-                value.capabilityKey(), value.description());
+                value.capabilityKey(), value.description(), value.versionName());
     }
 }

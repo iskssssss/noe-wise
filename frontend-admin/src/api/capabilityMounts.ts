@@ -1210,6 +1210,7 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
             description: string
             version_id: string
             version_key: string
+            version_name: string
             skill_estimated_tokens: number | null
           }>
         >('/capabilities/requirements/options?capability_type=' + encodeURIComponent(type), opts)
@@ -1224,6 +1225,7 @@ export function createCapabilityCatalogApi(http: CapabilityMountHttp) {
                 : fail('description must be a string'),
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
             versionKey: item.version_key,
+            versionName: item.version_name,
             skillEstimatedTokens: item.skill_estimated_tokens
           }))
         ),

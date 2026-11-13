@@ -6,7 +6,11 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import { useAuthStore } from '../stores/auth'
 import { listenWorkflowPublished } from '../views/admin/workflowPublicationEvents'
 import WorkflowInstallationFields from './builder/WorkflowInstallationFields.vue'
-import { defaultInstallationSlots } from './builder/workflowInstallationDefaults'
+import {
+  defaultInstallationSlots,
+  toolInstallationVersions
+} from './builder/workflowInstallationDefaults'
+import type { CapabilityRequirementOption } from '@skillforge/shared/capabilities/types'
 import {
   api,
   getSessionId,
@@ -65,6 +69,7 @@ const autoSelected = ref('')
 const mode = ref<'REUSE' | 'INSTALL' | 'UPDATE'>()
 const expectedDefinition = ref('')
 const slots = ref<Slot[]>([])
+const toolOptions = ref<CapabilityRequirementOption[]>([])
 const definitions = ref<CapabilityDefinition[]>([])
 const versions = ref<CapabilityVersion[]>([])
 const deployments = ref<CapabilityDeployment[]>([])
@@ -336,6 +341,13 @@ onMounted(async () => {
   }
 })
 function candidates(slot: Slot) {
+  if (slot.type === 'tool')
+    return toolInstallationVersions(
+      toolOptions.value,
+      slot.capability_id,
+      slot.version_constraint,
+      matchesWorkflowVersion
+    )
   return versions.value.filter((version) => {
     const definition = definitions.value.find((item) => item.id === version.definitionId)
     return (
@@ -482,7 +494,10 @@ async function readDependencies() {
     workflow === selected.value &&
     subject === props.agentId
   try {
-    const nextDefinitions = slots.value.length
+    const nextToolOptions = slots.value.some((slot) => slot.type === 'tool')
+      ? await claimStaleRead(api.capabilities.listRequirementOptions('TOOL'), current)
+      : []
+    const nextDefinitions = slots.value.some((slot) => slot.type === 'knowledge_source')
       ? (
           await claimStaleRead(api.capabilities.definitions(undefined, 'PUBLISHED'), current)
         ).filter(
@@ -490,6 +505,7 @@ async function readDependencies() {
             definition.defaultVersionId &&
             slots.value.some(
               (slot) =>
+                slot.type === 'knowledge_source' &&
                 definition.capabilityType === slot.type.toUpperCase() &&
                 definition.capabilityKey === slot.capability_id
             )
@@ -512,6 +528,7 @@ async function readDependencies() {
       subject !== props.agentId
     )
       return
+    toolOptions.value = nextToolOptions
     definitions.value = nextDefinitions
     versions.value = nextVersions
     deployments.value = nextDeployments

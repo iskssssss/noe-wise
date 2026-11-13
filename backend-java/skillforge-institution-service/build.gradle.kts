@@ -179,6 +179,7 @@ tasks.named<Test>("test") {
     exclude("**/MemoryRestoreReviewBrowserE2ETest.class")
     exclude("**/BillingReconciliationRecoveryBrowserE2ETest.class")
     exclude("**/WorkflowAgentSingleBrowserE2ETest.class")
+    exclude("**/WorkflowToolOptionsBrowserE2ETest.class")
     exclude("**/WorkflowCrossTabBrowserE2ETest.class")
     useJUnitPlatform { excludeTags("runtime-latency", "live", "native-stream-browser", "session-directory-browser", "knowledge-create-browser", "workflow-onboarding-browser", "workflow-publish-browser", "skill-publish-browser", "knowledge-publish-browser", "platform-deployment-browser", "tool-onboarding-browser", "connector-creation-browser", "institution-definition-recovery-browser") }
 }
@@ -866,6 +867,18 @@ tasks.register<Test>("workflowHitlReplyBrowserE2E") {
     filter {
         includeTestsMatching("com.skillforge.institution.integration.WorkflowHitlReplyBrowserE2ETest.realWorkflowReplyAfterResponseInterruption")
     }
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<Test>("workflowToolOptionsBrowserE2E") {
+    description = "验证工作流工具依赖选项及实际运行"
+    group = "verification"
+    val ordinaryTests = sourceSets.named("test").get()
+    testClassesDirs = ordinaryTests.output.classesDirs
+    classpath = ordinaryTests.runtimeClasspath
+    setFinalizedBy(emptyList<Any>())
+    filter { includeTestsMatching("com.skillforge.institution.integration.WorkflowToolOptionsBrowserE2ETest.workflowToolOptionsRemainUsableWhenVersionReadFails") }
+    inputs.property("workflowToolOptions", providers.environmentVariable("E2E_WORKFLOW_TOOL_OPTIONS").orElse("baseline"))
     outputs.upToDateWhen { false }
 }
 

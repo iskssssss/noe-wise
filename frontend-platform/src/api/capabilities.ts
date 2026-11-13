@@ -312,6 +312,7 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
             description: string | null
             version_id: string
             version_key: string
+            version_name: string
             skill_estimated_tokens: number | null
           }>
         >(
@@ -326,6 +327,7 @@ export function createCapabilityCatalogApi(http: CapabilityCatalogHttp) {
             description: item.description ?? '',
             versionId: catalogDecimalIdentity(item.version_id, 'version_id'),
             versionKey: item.version_key,
+            versionName: item.version_name,
             skillEstimatedTokens: item.skill_estimated_tokens
           }))
         ),

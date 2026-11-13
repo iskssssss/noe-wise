@@ -92,16 +92,17 @@ class CapabilityCatalogControllerTest {
     void requirementOptionsReturnExactIdentitiesAndSkillEstimateUsingAuthenticatedScope() throws Exception {
         when(catalog.listRequirementOptions(CapabilityCatalogScope.platform(), CapabilityType.SKILL))
                 .thenReturn(List.of(new CapabilityRequirementOption(9007199254740993L,
-                        "可选技能", 9007199254740995L, "release-2", 31L, "test-key", "test-description")));
+                        "可选技能", 9007199254740995L, "release-2", 31L, "test-key", "test-description", "published-version-name")));
         var access = mock(FoundationAccess.class);
         skillMvc(access).perform(get("/api/v1/admin/capabilities/requirements/options")
                         .param("capability_type", " skill ").param("tenant_id", "999"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].length()").value(7))
+                .andExpect(jsonPath("$.data[0].length()").value(8))
                 .andExpect(jsonPath("$.data[0].definition_id").value("9007199254740993"))
                 .andExpect(jsonPath("$.data[0].version_id").value("9007199254740995"))
                 .andExpect(jsonPath("$.data[0].name").value("可选技能"))
+                .andExpect(jsonPath("$.data[0].version_name").value("published-version-name"))
                 .andExpect(jsonPath("$.data[0].version_key").value("release-2"))
                 .andExpect(jsonPath("$.data[0].capability_key").value("test-key"))
                 .andExpect(jsonPath("$.data[0].description").value("test-description"))

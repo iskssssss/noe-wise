@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   publicationDetail: vi.fn(),
   definitions: vi.fn(),
+  requirementOptions: vi.fn(),
   versions: vi.fn(),
   deployments: vi.fn(),
   install: vi.fn(),
@@ -84,6 +85,7 @@ vi.mock('../../api', () => ({
     },
     capabilities: {
       definitions: mocks.definitions,
+      listRequirementOptions: mocks.requirementOptions,
       versions: mocks.versions,
       deployments: mocks.deployments
     },
@@ -157,6 +159,35 @@ beforeEach(() => {
   testAuth.user.sub = '8'
   testAuth.user.permissions = ['foundation.workflows.read']
   vi.resetAllMocks()
+  mocks.requirementOptions.mockImplementation(async () => {
+    const definitions = (await mocks.definitions(undefined, 'PUBLISHED')) ?? []
+    const toolDefinitions = definitions.filter(
+      (definition: { capabilityType: string; defaultVersionId?: string }) =>
+        definition.capabilityType === 'TOOL' && definition.defaultVersionId
+    )
+    const versions = (
+      await Promise.all(
+        toolDefinitions.map((definition: { id: string }) =>
+          mocks.versions(definition.id, 'PUBLISHED')
+        )
+      )
+    ).flat()
+    return toolDefinitions.flatMap(
+      (definition: { id: string; capabilityKey: string; defaultVersionId: string }) =>
+        versions
+          .filter((version: { id: string }) => version.id === definition.defaultVersionId)
+          .map((version: { id: string; name: string; versionKey: string }) => ({
+            id: definition.id,
+            capabilityKey: definition.capabilityKey,
+            versionId: version.id,
+            versionKey: version.versionKey,
+            versionName: version.name,
+            name: version.name,
+            description: '',
+            skillEstimatedTokens: null
+          }))
+    )
+  })
   sessionStorage.clear()
   mocks.confirm.mockResolvedValue(true)
   window.history.replaceState(null, '')

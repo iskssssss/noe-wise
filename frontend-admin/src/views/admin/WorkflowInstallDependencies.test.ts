@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ElButton, ElFormItem, ElInput, ElSelect } from 'element-plus'
+import { ElButton, ElFormItem, ElInput, ElOption, ElSelect } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import WorkflowDetailPage from './WorkflowDetailPage.vue'
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   publicationDetail: vi.fn(),
   definitions: vi.fn(),
+  requirementOptions: vi.fn(),
   versions: vi.fn(),
   deployments: vi.fn(),
   listRevisions: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('../../api', () => ({
     },
     capabilities: {
       definitions: mocks.definitions,
+      listRequirementOptions: mocks.requirementOptions,
       versions: mocks.versions,
       deployments: mocks.deployments
     },
@@ -101,6 +103,35 @@ async function openInstall() {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.requirementOptions.mockImplementation(async () => {
+    const definitions = (await mocks.definitions(undefined, 'PUBLISHED')) ?? []
+    const toolDefinitions = definitions.filter(
+      (definition: { capabilityType: string; defaultVersionId?: string }) =>
+        definition.capabilityType === 'TOOL' && definition.defaultVersionId
+    )
+    const versions = (
+      await Promise.all(
+        toolDefinitions.map((definition: { id: string }) =>
+          mocks.versions(definition.id, 'PUBLISHED')
+        )
+      )
+    ).flat()
+    return toolDefinitions.flatMap(
+      (definition: { id: string; capabilityKey: string; defaultVersionId: string }) =>
+        versions
+          .filter((version: { id: string }) => version.id === definition.defaultVersionId)
+          .map((version: { id: string; name: string; versionKey: string }) => ({
+            id: definition.id,
+            capabilityKey: definition.capabilityKey,
+            versionId: version.id,
+            versionKey: version.versionKey,
+            versionName: version.name,
+            name: version.name,
+            description: '',
+            skillEstimatedTokens: null
+          }))
+    )
+  })
   mocks.session = 'test-session'
   sessionStorage.clear()
   clearFeedback()
@@ -563,34 +594,43 @@ describe('工作流安装只读取声明的依赖', () => {
         }
       ]
     })
-    mocks.definitions.mockResolvedValue([
-      { id: '10', capabilityType: 'TOOL', capabilityKey: 'lookup_key', defaultVersionId: '101' },
-      { id: '11', capabilityType: 'TOOL', capabilityKey: 'unrelated', defaultVersionId: '111' },
+    mocks.requirementOptions.mockResolvedValue([
+      {
+        id: '10',
+        capabilityKey: 'lookup_key',
+        versionId: '101',
+        versionKey: '1.2.0',
+        versionName: '查询版本',
+        name: '查询',
+        description: '',
+        skillEstimatedTokens: null
+      },
+      {
+        id: '11',
+        capabilityKey: 'unrelated',
+        versionId: '111',
+        versionKey: '1.2.0',
+        versionName: '无关版本',
+        name: '无关',
+        description: '',
+        skillEstimatedTokens: null
+      },
       {
         id: '12',
-        capabilityType: 'KNOWLEDGE_SOURCE',
         capabilityKey: 'lookup_key',
-        defaultVersionId: '121'
-      },
-      { id: '13', capabilityType: 'TOOL', capabilityKey: 'lookup_key', defaultVersionId: null }
+        versionId: '121',
+        versionKey: '2.0.0',
+        versionName: '不匹配版本',
+        name: '查询',
+        description: '',
+        skillEstimatedTokens: null
+      }
     ])
-    mocks.versions.mockImplementation((id: string) =>
-      id === '10'
-        ? Promise.resolve([
-            {
-              id: '101',
-              definitionId: '10',
-              capabilityType: 'TOOL',
-              versionKey: '1.2.0',
-              name: '查询',
-              descriptor: {}
-            }
-          ])
-        : Promise.reject(new Error('无关能力不可读取'))
-    )
     mocks.deployments.mockResolvedValue([])
     await openInstall()
-    expect(mocks.versions).toHaveBeenCalledExactlyOnceWith('10', 'PUBLISHED')
+    expect(mocks.requirementOptions).toHaveBeenCalledExactlyOnceWith('TOOL')
+    expect(mocks.definitions).not.toHaveBeenCalled()
+    expect(mocks.versions).not.toHaveBeenCalled()
     expect(mocks.deployments).toHaveBeenCalledExactlyOnceWith('ACTIVE')
     const picker = wrapper
       .findAllComponents(ElSelect)
@@ -599,6 +639,109 @@ describe('工作流安装只读取声明的依赖', () => {
     picker.vm.$emit('update:modelValue', '101')
     await flushPromises()
     expect(picker.props('modelValue')).toBe('101')
+  })
+
+  it('混合工具和知识槽保持精确版本、名称和部署匹配', async () => {
+    published({
+      capability_requirements: [
+        {
+          slot: 'tool',
+          label: '工具槽',
+          type: 'tool',
+          capability_id: 'lookup',
+          version_constraint: '1.x'
+        },
+        {
+          slot: 'docs',
+          label: '知识槽',
+          type: 'knowledge_source',
+          capability_id: 'docs',
+          version_constraint: '*'
+        }
+      ]
+    })
+    mocks.requirementOptions.mockResolvedValue([
+      {
+        id: '10',
+        capabilityKey: 'lookup',
+        versionId: '101',
+        versionKey: '1.2.0',
+        versionName: '工具版本名',
+        name: '工具定义名',
+        description: '',
+        skillEstimatedTokens: null
+      },
+      {
+        id: '11',
+        capabilityKey: 'lookup',
+        versionId: '102',
+        versionKey: '2.0.0',
+        versionName: '不符合约束',
+        name: '工具定义名',
+        description: '',
+        skillEstimatedTokens: null
+      }
+    ])
+    mocks.definitions.mockResolvedValue([
+      {
+        id: '20',
+        capabilityType: 'KNOWLEDGE_SOURCE',
+        capabilityKey: 'docs',
+        defaultVersionId: '201'
+      }
+    ])
+    mocks.versions.mockResolvedValue([
+      {
+        id: '201',
+        definitionId: '20',
+        capabilityType: 'KNOWLEDGE_SOURCE',
+        versionKey: '1.0.0',
+        name: '知识版本',
+        descriptor: { source_id: 'source-1' }
+      }
+    ])
+    mocks.deployments.mockResolvedValue([
+      { deploymentKey: 'old', toolVersionId: '102', providerType: 'MCP', revision: 1 },
+      { deploymentKey: 'current', toolVersionId: '101', providerType: 'MCP', revision: 2 }
+    ])
+    mocks.listRevisions.mockResolvedValue({
+      items: [{ status: 'published', capability_version_id: '201', revision: 3 }]
+    })
+    await openInstall()
+    expect(mocks.requirementOptions).toHaveBeenCalledExactlyOnceWith('TOOL')
+    expect(mocks.versions).toHaveBeenCalledExactlyOnceWith('20', 'PUBLISHED')
+    expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain(
+      '工具版本名 · 1.2.0'
+    )
+    expect(
+      wrapper.findAllComponents(ElOption).map((option) => option.props('label'))
+    ).not.toContain('不符合约束 · 2.0.0')
+    await wrapper
+      .findAllComponents(ElButton)
+      .filter((button) => button.text() === '安装')
+      .at(-1)!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.install).toHaveBeenCalledWith(
+      'flow',
+      expect.objectContaining({
+        capabilities: expect.arrayContaining([
+          expect.objectContaining({
+            slot: 'tool',
+            capability: { type: 'TOOL', capabilityId: '10', versionId: '101' },
+            tool_deployment_id: 'current',
+            tool_deployment_revision: 2
+          }),
+          expect.objectContaining({
+            slot: 'docs',
+            capability: { type: 'KNOWLEDGE_SOURCE', capabilityId: '20', versionId: '201' },
+            knowledge_revision: 3
+          })
+        ])
+      }),
+      expect.anything(),
+      expect.anything()
+    )
   })
 
   it('仅知识槽读取对应发布修订，跳过工具部署目录', async () => {

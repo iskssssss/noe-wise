@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   detail: vi.fn(),
   definitions: vi.fn(),
+  requirementOptions: vi.fn(),
   versions: vi.fn(),
   deployments: vi.fn(),
   revisions: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../api', () => ({
     },
     capabilities: {
       definitions: mocks.definitions,
+      listRequirementOptions: mocks.requirementOptions,
       versions: mocks.versions,
       deployments: mocks.deployments
     },
@@ -58,6 +60,35 @@ const wrappers: VueWrapper[] = []
 beforeEach(() => {
   sessionStorage.clear()
   vi.resetAllMocks()
+  mocks.requirementOptions.mockImplementation(async () => {
+    const definitions = (await mocks.definitions(undefined, 'PUBLISHED')) ?? []
+    const toolDefinitions = definitions.filter(
+      (definition: { capabilityType: string; defaultVersionId?: string }) =>
+        definition.capabilityType === 'TOOL' && definition.defaultVersionId
+    )
+    const versions = (
+      await Promise.all(
+        toolDefinitions.map((definition: { id: string }) =>
+          mocks.versions(definition.id, 'PUBLISHED')
+        )
+      )
+    ).flat()
+    return toolDefinitions.flatMap(
+      (definition: { id: string; capabilityKey: string; defaultVersionId: string }) =>
+        versions
+          .filter((version: { id: string }) => version.id === definition.defaultVersionId)
+          .map((version: { id: string; name: string; versionKey: string }) => ({
+            id: definition.id,
+            capabilityKey: definition.capabilityKey,
+            versionId: version.id,
+            versionKey: version.versionKey,
+            versionName: version.name,
+            name: version.name,
+            description: '',
+            skillEstimatedTokens: null
+          }))
+    )
+  })
   useAuthStore().identityVersion = 1
   mocks.list.mockResolvedValue({
     items: [
@@ -587,26 +618,28 @@ describe('智能体内工作流接入', () => {
         }
       }
     })
-    mocks.definitions
+    mocks.requirementOptions
       .mockResolvedValueOnce([])
       .mockRejectedValueOnce(new Error('目录读取失败'))
       .mockResolvedValue([
-        { id: '10', capabilityType: 'TOOL', capabilityKey: 'lookup', defaultVersionId: '101' }
+        {
+          id: '10',
+          capabilityKey: 'lookup',
+          versionId: '101',
+          versionKey: '1',
+          versionName: '查询',
+          name: '查询',
+          description: '',
+          skillEstimatedTokens: null
+        }
       ])
-    mocks.versions.mockResolvedValue([
-      {
-        id: '101',
-        definitionId: '10',
-        capabilityType: 'TOOL',
-        name: '查询',
-        versionKey: '1',
-        descriptor: {}
-      }
-    ])
     mocks.deployments.mockResolvedValue([
       { deploymentKey: 'only', toolVersionId: '101', providerType: 'MCP', revision: 3 }
     ])
     const wrapper = await open()
+    expect(mocks.requirementOptions).toHaveBeenCalledExactlyOnceWith('TOOL')
+    expect(mocks.definitions).not.toHaveBeenCalled()
+    expect(mocks.versions).not.toHaveBeenCalled()
     const note = wrapper
       .findAllComponents(ElFormItem)
       .find((item) => item.props('label') === '说明（可选）')!

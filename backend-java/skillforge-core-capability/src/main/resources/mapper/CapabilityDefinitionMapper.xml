@@ -13,7 +13,7 @@
   <select id="listRequirementOptions" resultType="com.skillforge.core.capability.CapabilityRequirementOption">
     SELECT d.id AS definition_id,d.name,v.id AS version_id,v.version_key,
       CASE WHEN d.capability_type='SKILL' THEN (v.descriptor->>'estimated_tokens')::bigint END AS skill_estimated_tokens,
-      d.capability_key,d.description
+      d.capability_key,d.description,v.name AS version_name
     FROM nw_capability_definitions d
     JOIN nw_capability_versions v ON v.id=d.default_version_id AND v.definition_id=d.id
       AND v.tenant_id IS NOT DISTINCT FROM d.tenant_id AND v.capability_type=d.capability_type

@@ -1,4 +1,28 @@
+import type { CapabilityRequirementOption } from '@skillforge/shared/capabilities/types'
 import type { CapabilityDeployment, CapabilityVersion } from '../../api'
+
+export type WorkflowInstallationVersion = Pick<
+  CapabilityVersion,
+  'id' | 'definitionId' | 'capabilityType' | 'versionKey' | 'name' | 'descriptor'
+>
+
+export function toolInstallationVersions(
+  options: CapabilityRequirementOption[],
+  capabilityKey: string,
+  constraint: string,
+  matches: (constraint: string, version: string) => boolean
+): WorkflowInstallationVersion[] {
+  return options
+    .filter((item) => item.capabilityKey === capabilityKey && matches(constraint, item.versionKey))
+    .map((item) => ({
+      id: item.versionId,
+      definitionId: item.id,
+      capabilityType: 'TOOL',
+      versionKey: item.versionKey,
+      name: item.versionName,
+      descriptor: {}
+    }))
+}
 
 export function uniqueToolDeployment(
   versionId: string | undefined,
@@ -14,7 +38,7 @@ export function defaultInstallationSlots<
   T extends { required?: boolean; type: string; versionId?: string; deploymentKey?: string }
 >(
   slots: T[],
-  candidates: (slot: T) => CapabilityVersion[],
+  candidates: (slot: T) => WorkflowInstallationVersion[],
   deployments: CapabilityDeployment[]
 ): T[] {
   return slots.map((slot) => {

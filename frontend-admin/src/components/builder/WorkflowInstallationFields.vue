@@ -3,9 +3,12 @@ import { useId } from 'vue'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
-import type { CapabilityDeployment, CapabilityVersion } from '../../api'
+import type { CapabilityDeployment } from '../../api'
 import type { WorkflowConfigField } from '../../utils/workflow'
-import { uniqueToolDeployment } from './workflowInstallationDefaults'
+import {
+  uniqueToolDeployment,
+  type WorkflowInstallationVersion
+} from './workflowInstallationDefaults'
 
 interface InstallationSlot {
   slot: string
@@ -24,7 +27,7 @@ const props = defineProps<{
   config: Record<string, FieldValue>
   customPrompt: string
   deployments: CapabilityDeployment[]
-  candidates: (slot: InstallationSlot) => CapabilityVersion[]
+  candidates: (slot: InstallationSlot) => WorkflowInstallationVersion[]
   disabled?: boolean
 }>()
 const emit = defineEmits<{

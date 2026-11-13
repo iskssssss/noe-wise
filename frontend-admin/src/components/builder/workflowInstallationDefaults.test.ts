@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { CapabilityDeployment, CapabilityVersion } from '../../api'
-import { defaultInstallationSlots } from './workflowInstallationDefaults'
+import {
+  defaultInstallationSlots,
+  toolInstallationVersions,
+  uniqueToolDeployment
+} from './workflowInstallationDefaults'
+import { matchesWorkflowVersion } from '../../utils/workflow'
 
 describe('工作流安装的默认实例', () => {
   const version = { id: 'v1' } as CapabilityVersion
@@ -38,4 +43,55 @@ describe('工作流安装的默认实例', () => {
       ])[0]?.versionId
     ).toBeUndefined()
   })
+})
+
+it('工具摘要按能力键和版本约束筛选，部署只匹配精确版本', () => {
+  const options = [
+    {
+      id: '10',
+      capabilityKey: 'lookup',
+      versionId: '101',
+      versionKey: '1.2.0',
+      versionName: '发布版本名称',
+      name: '能力名称',
+      description: '',
+      skillEstimatedTokens: null
+    },
+    {
+      id: '11',
+      capabilityKey: 'lookup',
+      versionId: '102',
+      versionKey: '2.0.0',
+      versionName: '其他版本',
+      name: '能力名称',
+      description: '',
+      skillEstimatedTokens: null
+    },
+    {
+      id: '12',
+      capabilityKey: 'other',
+      versionId: '103',
+      versionKey: '1.2.0',
+      versionName: '无关版本',
+      name: '其他',
+      description: '',
+      skillEstimatedTokens: null
+    }
+  ]
+  const versions = toolInstallationVersions(options, 'lookup', '1.x', matchesWorkflowVersion)
+  expect(versions).toEqual([
+    {
+      id: '101',
+      definitionId: '10',
+      capabilityType: 'TOOL',
+      versionKey: '1.2.0',
+      name: '发布版本名称',
+      descriptor: {}
+    }
+  ])
+  const deployments = [
+    { deploymentKey: 'wrong-version', toolVersionId: '102', providerType: 'MCP' },
+    { deploymentKey: 'right-version', toolVersionId: '101', providerType: 'PLATFORM' }
+  ] as CapabilityDeployment[]
+  expect(uniqueToolDeployment(versions[0]?.id, deployments)).toBe('right-version')
 })

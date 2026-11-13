@@ -769,7 +769,11 @@ import {
 import WorkflowGovernanceFields from '../../components/builder/WorkflowGovernanceFields.vue'
 import WorkflowConfigFields from '../../components/builder/WorkflowConfigFields.vue'
 import WorkflowInstallationFields from '../../components/builder/WorkflowInstallationFields.vue'
-import { defaultInstallationSlots } from '../../components/builder/workflowInstallationDefaults'
+import {
+  defaultInstallationSlots,
+  toolInstallationVersions
+} from '../../components/builder/workflowInstallationDefaults'
+import type { CapabilityRequirementOption } from '@skillforge/shared/capabilities/types'
 import WorkflowScriptResources from '../../components/builder/WorkflowScriptResources.vue'
 import WorkflowCapabilityDeclarations from '../../components/builder/WorkflowCapabilityDeclarations.vue'
 import {
@@ -2363,6 +2367,7 @@ const installOpen = ref(false),
   installSlots = ref<InstallSlot[]>([]),
   installVersions = ref<CapabilityVersion[]>([]),
   installDefinitions = ref<CapabilityDefinition[]>([]),
+  installToolOptions = ref<CapabilityRequirementOption[]>([]),
   deployments = ref<CapabilityDeployment[]>([]),
   customPrompt = ref(''),
   installConfigFields = ref<WorkflowConfigField[]>([]),
@@ -2409,6 +2414,13 @@ const installBaseline = ref('')
 const installationSnapshot = () =>
   JSON.stringify([installSlots.value, installConfig.value, customPrompt.value])
 function candidateVersions(slot: InstallSlot) {
+  if (slot.type === 'tool')
+    return toolInstallationVersions(
+      installToolOptions.value,
+      slot.capability_id,
+      slot.version_constraint,
+      matchesWorkflowVersion
+    )
   return installVersions.value.filter((version) => {
     const definition = installDefinitions.value.find((d) => d.id === version.definitionId)
     return (
@@ -2428,12 +2440,16 @@ const { requestClose: closeInstall } = useDrawerClose({
   }
 })
 async function readInstallDependencies(slots: InstallSlot[]) {
-  const definitions = slots.length
+  const toolOptions = slots.some((slot) => slot.type === 'tool')
+    ? await api.capabilities.listRequirementOptions('TOOL')
+    : []
+  const definitions = slots.some((slot) => slot.type === 'knowledge_source')
     ? (await api.capabilities.definitions(undefined, 'PUBLISHED')).filter(
         (definition) =>
           definition.defaultVersionId &&
           slots.some(
             (slot) =>
+              slot.type === 'knowledge_source' &&
               definition.capabilityType === slot.type.toUpperCase() &&
               definition.capabilityKey === slot.capability_id
           )
@@ -2481,10 +2497,11 @@ async function readInstallDependencies(slots: InstallSlot[]) {
           revision.revision
         )
   }
-  return { definitions, versions, toolDeployments, revisions }
+  return { definitions, versions, toolOptions, toolDeployments, revisions }
 }
 function acceptInstallDependencies(value: Awaited<ReturnType<typeof readInstallDependencies>>) {
   installDefinitions.value = value.definitions
+  installToolOptions.value = value.toolOptions
   installVersions.value = value.versions
   deployments.value = value.toolDeployments
   knowledgeRevisions.value = value.revisions

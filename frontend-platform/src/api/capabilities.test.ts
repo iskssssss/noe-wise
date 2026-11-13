@@ -294,6 +294,7 @@ it('platform requirement options use the fixed platform type scope and exact pub
       description: '技能说明',
       version_id: '9223372036854775806',
       version_key: 'current',
+      version_name: '版本名称',
       skill_estimated_tokens: 31
     }
   ])
@@ -306,6 +307,7 @@ it('platform requirement options use the fixed platform type scope and exact pub
       description: '技能说明',
       versionId: '9223372036854775806',
       versionKey: 'current',
+      versionName: '版本名称',
       skillEstimatedTokens: 31
     }
   ])

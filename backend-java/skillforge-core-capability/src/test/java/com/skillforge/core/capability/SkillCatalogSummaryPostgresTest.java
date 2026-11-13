@@ -320,7 +320,7 @@ class SkillCatalogSummaryPostgresTest {
             for (var type : CapabilityType.values()) {
                 long id = platformIds.get(type);
                 assertEquals(List.of(new CapabilityRequirementOption(id, "技能-" + id, id * 10 + 1, "v" + (id * 10 + 1),
-                                type == CapabilityType.SKILL ? (id * 10 + 1) * 100 : null, id == 1 ? "same-key" : "skill-" + id, "用途-" + id)),
+                                type == CapabilityType.SKILL ? (id * 10 + 1) * 100 : null, id == 1 ? "same-key" : "skill-" + id, "用途-" + id, "版本-" + (id * 10 + 1))),
                         service.listRequirementOptions(CapabilityCatalogScope.platform(), type));
             }
             assertNotNull(service.getVersion(CapabilityCatalogScope.platform(), 31L).descriptor().get("package"),
@@ -359,8 +359,8 @@ class SkillCatalogSummaryPostgresTest {
             try (var query = session.getConnection().prepareStatement(bound.getSql())) {
                 new DefaultParameterHandler(statement, arguments, bound).setParameters(query);
                 try (var rows = query.executeQuery()) {
-                    assertEquals(7, rows.getMetaData().getColumnCount());
-                    for (int column = 1; column <= 7; column++) assertNotEquals("jsonb", rows.getMetaData().getColumnTypeName(column));
+                    assertEquals(8, rows.getMetaData().getColumnCount());
+                    for (int column = 1; column <= 8; column++) assertNotEquals("jsonb", rows.getMetaData().getColumnTypeName(column));
                 }
             }
             assertNotNull(service.getVersion(CapabilityCatalogScope.tenant(7L), 51L).descriptor().get("package"));
@@ -381,7 +381,7 @@ class SkillCatalogSummaryPostgresTest {
         }
         TenantContext.clear();
         try (var session = factory.openSession()) {
-            assertEquals(List.of(new CapabilityRequirementOption(1L, "技能-1", 11L, "v11", 1100L, "same-key", "用途-1")),
+            assertEquals(List.of(new CapabilityRequirementOption(1L, "技能-1", 11L, "v11", 1100L, "same-key", "用途-1", "版本-11")),
                     catalog(session).listRequirementOptions(CapabilityCatalogScope.platform(), CapabilityType.SKILL));
         }
     }

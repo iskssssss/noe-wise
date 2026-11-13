@@ -100,8 +100,8 @@ class SkillDraftServiceTest {
                         new CapabilityRef(CapabilityType.TOOL, "22", "old2")));
         stub(input, null);
         when(catalog.listRequirementOptions(scope, CapabilityType.TOOL)).thenReturn(List.of(
-                new CapabilityRequirementOption(21L, "one", 31L, "v2", null, "test-key", "test-description"),
-                new CapabilityRequirementOption(22L, "two", 32L, "v3", null, "test-key", "test-description")));
+                new CapabilityRequirementOption(21L, "one", 31L, "v2", null, "test-key", "test-description", "published-version-name"),
+                new CapabilityRequirementOption(22L, "two", 32L, "v3", null, "test-key", "test-description", "published-version-name")));
         when(repository.save(eq(scope), eq(12L), eq(2L), any())).thenReturn(true);
         service.save(scope, 12L, 2, input);
         verify(catalog, times(1)).listRequirementOptions(scope, CapabilityType.TOOL);
@@ -130,7 +130,7 @@ class SkillDraftServiceTest {
         stub(existing, null);
         var edited = content("---\nname: sample\ndescription: Test\n---\nInstructions");
         when(catalog.listRequirementOptions(scope, CapabilityType.TOOL)).thenReturn(List.of(
-                new CapabilityRequirementOption(21L, "tool", 31L, "v1", null, "test-key", "test-description")));
+                new CapabilityRequirementOption(21L, "tool", 31L, "v1", null, "test-key", "test-description", "published-version-name")));
         assertTrue(service.validateSelected(scope, 12L, 2, edited,
                 List.of(new SkillDependencySelection(CapabilityType.TOOL, "21"))).valid());
         verify(repository, never()).save(any(), anyLong(), anyLong(), any());

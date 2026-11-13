@@ -10,5 +10,6 @@ export interface CapabilityRequirementOption {
   description: string
   versionId: string
   versionKey: string
+  versionName: string
   skillEstimatedTokens: number | null
 }
