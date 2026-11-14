@@ -62,14 +62,17 @@ class AgentRuntimeHostProvisionerTest {
         verify(f.models, org.mockito.Mockito.never()).registerPreparation(any());
     }
 
-    @Test void defaultAndLowReasoningAreFrozenAsTheExactSelectedPolicies() {
+    @Test void defaultReasoningFreezesExplicitlyDisabledWhileEffortStaysExact() {
         for (String selected : List.of("DEFAULT", "LOW")) {
             var f = new Fixture();
             when(f.catalog.readRevision("10", 3)).thenReturn(messagesModel(selected));
             f.host.prepareNewRun("1", "7", "run");
             var preparation = ArgumentCaptor.forClass(AgentRuntimeModelConfiguration.PreparationPlan.class);
             verify(f.models).registerPreparation(preparation.capture());
-            assertEquals(com.skillforge.runtime.api.port.ModelPort.ReasoningPolicy.valueOf(selected),
+            assertEquals(
+                    "DEFAULT".equals(selected)
+                            ? com.skillforge.runtime.api.port.ModelPort.ReasoningPolicy.DISABLED
+                            : com.skillforge.runtime.api.port.ModelPort.ReasoningPolicy.LOW,
                     preparation.getValue().reasoning());
         }
     }

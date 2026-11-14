@@ -313,6 +313,8 @@ public class AgentRuntimeHostProvisioner {
         com.skillforge.runtime.adapter.model.provider.ModelProviderCatalog.standard()
                 .validateReasoning(provider, reasoningPolicy);
         boolean reasoning = reasoningPolicy != ReasoningPolicy.DISABLED && reasoningPolicy != ReasoningPolicy.DEFAULT;
+        // DEFAULT 不显式请求推理；冻结目标据此声明 reasoning=false 时，请求必须显式禁用推理。
+        var effectiveReasoning = reasoning ? reasoningPolicy : ReasoningPolicy.DISABLED;
         var responseFormats = java.util.EnumSet.of(ResponseFormatKind.TEXT);
         if (provider.capabilities().jsonObject() == com.skillforge.runtime.adapter.model.provider.ModelProviderCatalog.SupportLevel.SUPPORTED)
             responseFormats.add(ResponseFormatKind.JSON_OBJECT);
@@ -336,6 +338,7 @@ public class AgentRuntimeHostProvisioner {
         String settingsIdentity = ".view-v3.prompts-" + prompts.revision() + ".characters-" + characters + ".history-" + history + ".input-" + promptTokens
                 + ".policy-" + digest(contextPolicy.toString())
                 + ".instructions-" + digest(instructions.render(true)) + ".binding-" + digest(bindingId)
+                + ".reasoning-" + effectiveReasoning.name()
                 + ".model-" + target.binding().revision()
                 + agentId.map(id -> ".agent-" + id.value()).orElse("");
         ResultRef tokenizerProfile = new ResultRef(AgentRuntimeHostContracts.TOKENIZER_PROFILE.value() + settingsIdentity);
@@ -354,7 +357,7 @@ public class AgentRuntimeHostProvisioner {
                 new ResponseContract(new ResponseFormat.NativeConversation(), EnforcementLevel.STRICT, "native_agent_conversation"),
                 new GenerationOptions(OptionalInt.of(output), selected.temperature() == null
                         ? OptionalDouble.empty() : OptionalDouble.of(selected.temperature())),
-                reasoningPolicy, PortalCallKind.MODEL_STREAM,
+                effectiveReasoning, PortalCallKind.MODEL_STREAM,
                 tokenizerProfile, contextPolicy, promptTokens, characters, history, delegationEnabled,
                 Set.of(InboundKind.MESSAGE, InboundKind.ACTION)));
         var ledger = executionBudget.isPresent() ? executionBudget : frozen == null ? Optional.<com.skillforge.runtime.api.port.ExecutionBudgetPort.Registration>empty()
