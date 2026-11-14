@@ -574,12 +574,12 @@
             ><template #default="{ row }"
               >{{ row.source_versions.length }} 项</template
             ></ElTableColumn
-          ><ElTableColumn
-            min-width="200"
-            show-overflow-tooltip
-            prop="capability_version_id"
-            label="能力版本"
-          ></ElTableColumn
+          ><ElTableColumn min-width="160" label="能力版本"
+            ><template #default="{ row }"
+              ><span :title="row.capability_version_id">{{
+                compactVersion(row.capability_version_id)
+              }}</span></template
+            ></ElTableColumn
           ><ElTableColumn width="112" class-name="admin-table-actions" prop="actions" label="操作"
             ><template #default="{ row }"
               ><ElButton
@@ -931,21 +931,30 @@
       >
       <ElTabs v-model="documentTab"
         ><ElTabPane label="原文" name="source"
-          ><ElInput
-            v-described-by="formTipId + '-group-0'"
-            :aria-describedby="formTipId + '-group-0'"
-            v-model="title"
-            :disabled="
-              busy ||
-              !!documentRefresh ||
-              !!chunkUnknown ||
-              !!chunkRecovery ||
-              rebuildRefresh ||
-              rebuildPublicationLocked ||
-              rebuild?.write_locked
-            "
-            placeholder="文档标题"
-          /><CodeEditor
+          ><div class="knowledge-source-field">
+            <label :for="formTipId + '-document-title'" class="knowledge-field-label"
+              >文档标题</label
+            ><ElInput
+              :id="formTipId + '-document-title'"
+              aria-label="文档标题"
+              v-described-by="formTipId + '-group-0'"
+              :aria-describedby="formTipId + '-group-0'"
+              v-model="title"
+              :disabled="
+                busy ||
+                !!documentRefresh ||
+                !!chunkUnknown ||
+                !!chunkRecovery ||
+                rebuildRefresh ||
+                rebuildPublicationLocked ||
+                rebuild?.write_locked
+              "
+              placeholder="文档标题"
+            />
+          </div>
+          <label class="knowledge-field-label">正文（Markdown）</label
+          ><CodeEditor
+            label="正文（Markdown）"
             :described-by="formTipId + '-group-0'"
             v-model="content"
             language="markdown"
@@ -1164,6 +1173,11 @@ const initialOwner = computed(() =>
 const initialPending = computed(() =>
   peekInitialFile(initialOwner.value, auth.identityVersion, id.value)
 )
+/** 能力版本只在列表中保留首尾，完整值仍可通过悬停查看。 */
+function compactVersion(value: string | null | undefined) {
+  if (!value) return '—'
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
 function discardInitialFile() {
   takeInitialFile(initialOwner.value, auth.identityVersion, id.value)
   if (uploadNotStarted.value) {
@@ -3655,6 +3669,14 @@ const formTipId = useId()
 }
 .knowledge-status-filter :deep(.el-select) {
   width: 100%;
+}
+.knowledge-field-label {
+  display: block;
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+.knowledge-source-field .knowledge-field-label {
+  margin-top: 0;
 }
 @media (max-width: 767px) {
   .knowledge-document-filters :deep(.el-form-item) {

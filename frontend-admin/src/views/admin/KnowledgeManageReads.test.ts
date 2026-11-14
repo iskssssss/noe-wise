@@ -869,6 +869,8 @@ describe('知识详情按需读取与已发布状态恢复', () => {
   it('打开和保存原文不预读分块，首次查看分块读取一次，切回不重复读取', async () => {
     await open()
     await click('编辑 / 分块')
+    expect(document.querySelector('input[aria-label="文档标题"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('正文（Markdown）')
     expect(mocks.document).toHaveBeenCalledExactlyOnceWith('doc-1')
     expect(mocks.chunks).not.toHaveBeenCalled()
     await click('保存原文')
