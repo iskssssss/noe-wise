@@ -20,6 +20,7 @@ import {
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { useAuthStore } from '../../stores/auth'
 import { api, type SystemAgentView, type SystemAgentExecutionMode } from '../../api'
+type AgentDraftRow = { status: string; draft: unknown; published: unknown }
 const { allowed, checked } = useActionPermissions()
 const auth = useAuthStore()
 const actor = computed(() => auth.user?.sub ?? '')
@@ -232,6 +233,11 @@ const { requestClose: openClose } = useDrawerClose({
 })
 
 const formTipId = useId()
+/** 已归档配置只读，不能再把草稿差异解释成可发布状态。 */
+function draftStateLabel(row: AgentDraftRow) {
+  if (row.status.toUpperCase() === 'ARCHIVED') return '不可发布'
+  return JSON.stringify(row.draft) === JSON.stringify(row.published) ? '与发布一致' : '待发布'
+}
 </script>
 
 <template>
@@ -324,7 +330,7 @@ const formTipId = useId()
       >
       <ElTableColumn label="工作草稿" width="120"
         ><template #default="{ row }">{{
-          JSON.stringify(row.draft) === JSON.stringify(row.published) ? '与发布一致' : '待发布'
+          draftStateLabel(row as AgentDraftRow)
         }}</template></ElTableColumn
       >
       <ElTableColumn prop="published_version" label="发布版本" width="120"> </ElTableColumn>
