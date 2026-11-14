@@ -197,6 +197,8 @@ describe('关联选择表单', () => {
     expect(statusLabel('projection')).toBe('平台投影')
     expect(statusLabel('tenant_admin')).toBe('机构管理员')
     expect(statusLabel('auditor')).toBe('审计成员')
+    expect(statusLabel('approved')).toBe('已批准')
+    expect(statusLabel('rejected')).toBe('已拒绝')
     expect(statusLabel('future_state')).toBe('future_state')
   })
   it('失效引用保留原始标识并提示重新选择，不自动改绑第一个候选', async () => {

@@ -36,6 +36,8 @@ const labels: Record<string, string> = {
   revoked: '已撤销',
   warning: '预警',
   pending: '待处理',
+  approved: '已批准',
+  rejected: '已拒绝',
   admin: '管理员',
   developer: '开发者',
   tenant_admin: '机构管理员',
