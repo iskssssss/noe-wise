@@ -81,11 +81,7 @@ const formTipId = useId()
       <ElOption
         v-for="model in models"
         :key="model.id"
-        :label="
-          [model.name, model.model_id, model.provider_id, '标识 ' + model.id]
-            .filter(Boolean)
-            .join(' · ')
-        "
+        :label="[model.name, model.model_id, model.provider_id].filter(Boolean).join(' · ')"
         :value="model.id"
     /></ElSelect>
     <p :id="`${helpId}-model`" class="admin-field-help">
