@@ -669,6 +669,12 @@ watch(
         </ElForm>
       </template>
       <template v-else-if="tab === 'deliveries'">
+        <p class="messaging-tip">
+          邮件仅在 SMTP 已配置并启用时实际投递；未配置时通知保持暂不可投递，不会产生发送记录。
+          <ElButton v-if="allowed('configure')" link type="primary" @click="tab = 'mailbox'"
+            >去配置 SMTP</ElButton
+          >
+        </p>
         <ElTable
           v-loading="deliveries.loading.value"
           :data="deliveries.data.value?.items ?? []"

@@ -130,6 +130,32 @@ describe('消息页真实状态与账号边界', () => {
     wrapper.unmount()
   })
 
+  it('邮件投递空态说明 SMTP 未配置原因并可跳到配置', async () => {
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/mailbox')) return mailbox
+      if (path.endsWith('/unread')) return { count: 0 }
+      if (path.endsWith('/templates')) return []
+      return { items: [], has_more: false, next_cursor: null }
+    })
+    const wrapper = await mountPage(
+      ['foundation.messaging.operate', 'foundation.messaging.configure'],
+      request as MessagingRequest
+    )
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((item) => item.text() === '邮件投递')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('邮件仅在 SMTP 已配置并启用时实际投递')
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '去配置 SMTP')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('SMTP 主机')
+    wrapper.unmount()
+  })
+
   it('只有发布权限仍能按姓名选收件人，不额外读取组织目录或公告历史', async () => {
     const request = vi.fn(async (_method: string, path: string) =>
       path.includes('/options/')
