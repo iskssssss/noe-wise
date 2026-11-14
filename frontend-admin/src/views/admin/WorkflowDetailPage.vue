@@ -140,7 +140,7 @@
       当前工作流已归档，配置仅供查看。
     </p>
     <p v-if="!route.params.workflowId" class="admin-field-help">
-      已提供“开始 → 结束”作为可修改的流程起点；添加业务节点后再校验和发布。
+      已提供“开始 → 结束”作为可修改的流程起点；可按需添加业务节点后再校验和发布。
     </p>
     <FeedbackNotice
       v-if="error || loadError"
