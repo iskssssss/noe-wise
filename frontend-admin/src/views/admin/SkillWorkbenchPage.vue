@@ -124,10 +124,11 @@
             <ElSelect
               v-described-by="formTipId + '-group-0'"
               :aria-describedby="formTipId + '-group-0'"
+              aria-label="技能版本"
               :model-value="selectedVersion"
               :disabled="busy || !!pending || !!storageError"
               style="width: 260px"
-              placeholder="工作版本"
+              placeholder="当前草稿（工作版本）"
               @change="switchVersion"
               ><ElOption label="当前草稿" :value="''" /><ElOption
                 v-for="version in versions"
