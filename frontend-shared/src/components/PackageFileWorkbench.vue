@@ -5,9 +5,13 @@ import { confirm } from '../feedback'
 import { guardFormEnter } from '../admin/keyboard'
 import { isSkillTextFile } from '../capabilities/skillDrafts'
 import CodeEditor from './CodeEditor.vue'
-const props = withDefaults(defineProps<{ files: Record<string, string>; readonly?: boolean }>(), {
-  readonly: false
-})
+const props = withDefaults(
+  defineProps<{ files: Record<string, string>; readonly?: boolean; dirty?: boolean }>(),
+  {
+    readonly: false,
+    dirty: false
+  }
+)
 const emit = defineEmits<{ 'update:files': [files: Record<string, string>] }>()
 interface FileNode {
   key: string
@@ -242,7 +246,13 @@ async function remove() {
         <div class="file-current">
           <strong>{{ selected || '文件编辑' }}</strong
           ><span class="file-mode">{{
-            readonly ? '只读版本' : textFile ? '草稿 · 修改后需保存' : '原始资源 · 只读'
+            readonly
+              ? '只读版本'
+              : textFile
+                ? props.dirty
+                  ? '草稿 · 修改后需保存'
+                  : '草稿 · 已保存'
+                : '原始资源 · 只读'
           }}</span>
         </div>
         <ElButton

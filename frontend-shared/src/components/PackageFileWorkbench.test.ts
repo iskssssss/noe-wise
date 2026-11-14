@@ -17,11 +17,12 @@ afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   vi.clearAllMocks()
 })
-function render(files: Record<string, string>, readonly = false) {
+function render(files: Record<string, string>, readonly = false, dirty = false) {
   const wrapper = mount(PackageFileWorkbench, {
     props: {
       files,
       readonly,
+      dirty,
       'onUpdate:files': (next) => {
         void wrapper.setProps({ files: next })
       }
@@ -36,6 +37,12 @@ function button(wrapper: VueWrapper, label: string) {
   return found
 }
 describe('包文件任务工作台', () => {
+  it('草稿文件状态区分已保存与待保存', async () => {
+    const wrapper = render({ 'SKILL.md': '# 技能' }, false, true)
+    expect(wrapper.text()).toContain('草稿 · 修改后需保存')
+    await wrapper.setProps({ dirty: false })
+    expect(wrapper.text()).toContain('草稿 · 已保存')
+  })
   it('问题定位选中实际文件并聚焦指定行，无效路径不改变编辑对象', async () => {
     const wrapper = render({ 'SKILL.md': '# 技能', 'scripts/main.py': 'line1\nline2' })
     const exposed = wrapper.vm as unknown as {

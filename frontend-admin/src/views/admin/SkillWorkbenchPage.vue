@@ -185,6 +185,7 @@
             ><PackageFileWorkbench
               ref="packageWorkbench"
               v-model:files="draft.files"
+              :dirty="dirty"
               :readonly="readonly || busy" /></ElTabPane
           ><ElTabPane label="发布设置" name="settings"
             ><ElForm
