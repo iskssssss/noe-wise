@@ -143,6 +143,61 @@ describe('复杂导入导出任务状态和隔离', () => {
     }
   })
 
+  it('新建任务不沿用上一任务上传的文件', async () => {
+    const request: FoundationRequest = async <T>(method: string, path: string) => {
+      if (path.endsWith('/handlers'))
+        return [
+          {
+            ...handlers[0],
+            can_import: true,
+            can_export: false,
+            option_fields: []
+          }
+        ] as T
+      if (path.endsWith('/files/upload'))
+        return {
+          id: 'file-old',
+          name: 'old-members.csv',
+          mime_type: 'text/csv',
+          size_bytes: 10,
+          sha256: 'sha',
+          reference_count: 0,
+          created_at: '2026-10-12T08:00:00+08:00'
+        } as T
+      if (path.endsWith('/jobs/preflight')) return { valid: true, row_count: 1, errors: [] } as T
+      if (path.endsWith('/jobs/submit'))
+        return {
+          ...jobs[0],
+          handler: 'members-0',
+          operation: 'import',
+          state: 'queued'
+        } as T
+      if (path.includes('/errors?')) return [] as T
+      if (path.includes('/detail?')) return jobs[0] as T
+      return pageResult(path) as T
+    }
+    const wrapper = await render(request)
+    wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'members-0')
+    await flushPromises()
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['username\nmember'], 'old-members.csv', { type: 'text/csv' })],
+      configurable: true
+    })
+    await input.trigger('change')
+    await flushPromises()
+    expect(wrapper.text()).toContain('old-members.csv')
+    await button(wrapper, '导入预检').trigger('click')
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('查看已受理任务')
+    await button(wrapper, '新建任务').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('old-members.csv')
+    expect(wrapper.find('input[type="file"]').exists()).toBe(true)
+  })
+
   it('27任务分页呈现137行部分成功与错误，不把完成行等同全部成功', async () => {
     const reads: string[] = []
     const request: FoundationRequest = async <T>(_method: string, path: string) => {

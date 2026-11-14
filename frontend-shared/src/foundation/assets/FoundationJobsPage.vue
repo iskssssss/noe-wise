@@ -164,6 +164,11 @@ function invalidatePreflight() {
   message.value = ''
   submittedJob.value = undefined
 }
+/** 新建任务不沿用上一任务已上传的材料，避免误提交旧文件。 */
+function newTask() {
+  inputFile.value = undefined
+  invalidatePreflight()
+}
 /** 文件上传与预检分开，上传失败不能伪造已保存材料。 */
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement
@@ -497,7 +502,7 @@ onScopeDispose(() => {
           >{{
             submitted ? '查看已受理任务' : pendingSubmission ? '重试原提交' : '提交任务'
           }}</ElButton
-        ><ElButton v-if="submitted" :disabled="action.busy.value" @click="invalidatePreflight"
+        ><ElButton v-if="submitted" :disabled="action.busy.value" @click="newTask"
           >新建任务</ElButton
         >
       </div>
@@ -592,7 +597,7 @@ onScopeDispose(() => {
       @size-change="resize"
     />
     <FieldTip :id="formTipId + '-pagination'"> 条数仅对当前列表生效。 </FieldTip>
-    <ElDescriptions v-if="selected" title="任务详情" :column="2" border
+    <ElDescriptions v-if="selected" title="任务详情" :column="1" :label-width="110" border
       ><ElDescriptionsItem label="任务身份">{{ selected.id }}</ElDescriptionsItem
       ><ElDescriptionsItem label="状态">{{
         stateLabels[selected.state] ?? selected.state
