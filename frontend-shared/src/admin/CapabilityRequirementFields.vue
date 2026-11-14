@@ -111,6 +111,9 @@ const formTipId = useId()
     <p class="admin-field-help">
       每次新执行使用所选能力的当前发布版本。切换能力类型后需重新选择能力；保存时会检查发布状态。
     </p>
+    <p v-if="!modelValue.length" class="admin-field-help">
+      尚未声明能力依赖；没有依赖时可直接保存草稿。
+    </p>
     <FeedbackNotice v-if="error" :title="error" type="error" :closable="false" /><ElButton
       v-if="error"
       link
