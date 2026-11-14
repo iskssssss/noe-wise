@@ -32,7 +32,10 @@ const currentAuth = vi.hoisted(() => ({
       'foundation.agents.read',
       'foundation.knowledge.read',
       'foundation.channels.read',
-      'foundation.sessions.read'
+      'foundation.sessions.read',
+      'foundation.skills.read',
+      'foundation.skills.update',
+      'foundation.skills.publish'
     ]
   }
 }))
@@ -169,6 +172,15 @@ const rows = Array.from({ length: 30 }, (_, i) => ({
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  currentAuth.user.permissions = [
+    'foundation.agents.read',
+    'foundation.knowledge.read',
+    'foundation.channels.read',
+    'foundation.sessions.read',
+    'foundation.skills.read',
+    'foundation.skills.update',
+    'foundation.skills.publish'
+  ]
   mocks.getDocument.mockResolvedValue({
     id: 'doc-1',
     title: '原文',
@@ -210,7 +222,17 @@ beforeEach(() => {
   mocks.getActive.mockResolvedValue(draft())
   mocks.importZip.mockResolvedValue({ ...draft(), revision: 8 })
   mocks.confirm.mockResolvedValue(true)
-  mocks.usage.mockResolvedValue({ total_amount: 1.125, total_tokens: 0, unavailable: null })
+  mocks.usage.mockResolvedValue({
+    total: {
+      calls: 0,
+      tokens: 0,
+      confirmed_cost: '1.125',
+      missing_cost_count: 0,
+      usage_status: 'complete'
+    },
+    event_types: [],
+    grouped: null
+  })
   mocks.health.mockResolvedValue({ deps: {} })
   mocks.sessions.mockResolvedValue([])
   mocks.tasks.mockResolvedValue(rows)
@@ -729,20 +751,34 @@ describe('Element Plus 控件与业务交互', () => {
     await flushPromises()
     expect(drawer.props('modelValue')).toBe(false)
   })
-  it('仪表盘统计保留小数精度与未知状态', async () => {
+  it('仪表盘按业务字段展示成本与未知状态', async () => {
+    mocks.usage.mockResolvedValueOnce({
+      total: {
+        calls: null,
+        tokens: 0,
+        confirmed_cost: '1.125',
+        missing_cost_count: null,
+        usage_status: null
+      },
+      event_types: [],
+      grouped: null
+    })
     const wrapper = render(DashboardPage)
     await flushPromises()
+    expect(wrapper.text()).toContain('请求数')
+    expect(wrapper.text()).toContain('已确认成本（元）')
     expect(wrapper.text()).toContain('1.125')
-    expect(wrapper.text()).toContain('—')
-    expect(wrapper.findAllComponents(ElStatistic).map((c) => c.props('value'))).toEqual([1.125, 0])
+    expect(wrapper.text()).toContain('状态未记录')
+    expect(wrapper.text()).not.toContain('confirmed_cost')
+    expect(wrapper.text()).not.toContain('usage_status')
+    expect(wrapper.text()).not.toContain('event_types')
   })
   it('服务状态读取失败时保留独立读取成功的机构用量', async () => {
     mocks.health.mockRejectedValueOnce(Error('服务检查超时'))
     const wrapper = render(DashboardPage)
     await flushPromises()
-    expect(wrapper.findAllComponents(ElStatistic).map((item) => item.props('value'))).toEqual([
-      1.125, 0
-    ])
+    expect(wrapper.findAll('.summary-card')).toHaveLength(4)
+    expect(wrapper.text()).toContain('1.125')
     expect(
       Array.from(document.body.querySelectorAll('.el-message__content')).at(-1)?.textContent
     ).toContain('服务状态读取失败：服务检查超时')
@@ -773,7 +809,7 @@ describe('Element Plus 控件与业务交互', () => {
   })
   it('技能发布成功后读取失败保留成功事实，并禁止重复发布', async () => {
     mocks.validateSkill.mockResolvedValue({ valid: true, issues: [] })
-    mocks.publishSkill.mockResolvedValue({ versionId: '11' })
+    mocks.publishSkill.mockResolvedValue({ versionId: '11', definitionRevision: 8 })
     mocks.getActive
       .mockResolvedValueOnce(draft())
       .mockRejectedValueOnce(new Error('发布结果读取失败'))

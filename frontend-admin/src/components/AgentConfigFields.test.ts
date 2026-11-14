@@ -92,7 +92,7 @@ it('平台侧未选模型时仍阻止保存', async () => {
   }
 })
 
-it('同名模型显示模型、提供方和配置标识，选择仍提交原配置 ID', async () => {
+it('同名模型显示模型和提供方，选择仍提交原配置 ID', async () => {
   const value = reactive({
     name: '测试',
     system_prompt: '职责',
@@ -114,8 +114,8 @@ it('同名模型显示模型、提供方和配置标识，选择仍提交原配�
   try {
     const options = wrapper.findAllComponents(ElOption)
     expect(options.map((option) => option.props('label'))).toEqual([
-      '对话模型 · deepseek-flash · east · 标识 101',
-      '对话模型 · deepseek-flash · west · 标识 102'
+      '对话模型 · deepseek-flash · east',
+      '对话模型 · deepseek-flash · west'
     ])
     expect(wrapper.getComponent(ElSelect).props('filterable')).toBe(true)
     wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', '102')

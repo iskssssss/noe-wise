@@ -801,6 +801,40 @@ export interface BillingRequestDetail {
   }
   items: BillingRecordItem[]
 }
+export interface UsageAggregateRow {
+  calls?: number | null
+  request_id?: string | null
+  tokens?: number | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_amount_cents?: number | null
+  confirmed_cost?: string | null
+  missing_cost_count?: number | null
+  usage_status?: string | null
+}
+export interface UsageByTypeRow {
+  event_type: string
+  quantity?: number | null
+  tokens?: number | null
+  total_amount_cents?: number | null
+  confirmed_cost?: string | null
+  missing_cost_count?: number | null
+  usage_status?: string | null
+}
+export interface UsageGroupedRow {
+  dimension: string
+  calls?: number | null
+  tokens?: number | null
+  total_amount_cents?: number | null
+  confirmed_cost?: string | null
+  missing_cost_count?: number | null
+  usage_status?: string | null
+}
+export interface UsageDetailResponse {
+  total: UsageAggregateRow
+  event_types: UsageByTypeRow[]
+  grouped?: UsageGroupedRow[] | null
+}
 export interface ServicePrincipal {
   id: number
   principal_id: string
@@ -2090,7 +2124,7 @@ export const api = {
   },
 
   billing: {
-    usage: () => get<Record<string, unknown>>('/billing/usage'),
+    usage: () => get<UsageDetailResponse>('/billing/usage'),
     filterOptions: () =>
       get<{
         event_types: Array<{ value: string; label: string }>
