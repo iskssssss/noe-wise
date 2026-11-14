@@ -193,14 +193,15 @@
               scroll-to-error
               @keydown.capture="guardFormEnter"
               ><div class="admin-form-grid">
-                <ElFormItem label="版本号"
+                <ElFormItem label="版本号" required
                   ><ElInput
                     v-described-by="formTipId + '-field-0'"
                     :aria-describedby="formTipId + '-field-0'"
                     v-model="draft.versionKey"
+                    placeholder="例如 1.0.0"
                   />
                   <FieldTip :id="formTipId + '-field-0'"
-                    >平台发布版本标识，独立于原包
+                    >平台发布版本标识，必填；独立于原包
                     metadata.version；不需要修改上游文件中的版本号。</FieldTip
                   > </ElFormItem
                 ><ElFormItem label="激活方式"
