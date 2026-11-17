@@ -132,13 +132,27 @@ final class ExecutionToolSchemas {
                 Map.entry("stderr_truncated", property("boolean")),
                 Map.entry("delivery_status", property("string")),
                 Map.entry("delivery_error", property("string")),
-                Map.entry("artifacts", arraySchema(property("object"))),
+                Map.entry("artifacts", artifactsOutputSchema()),
                 Map.entry("public_presentation", schemas.codePublicPresentationSchema())));
         if (includeAttachmentInputs) {
             properties.put("attachment_inputs", attachmentInputsOutputSchema());
             properties.put("input_provenance", artifactProvenanceOutputSchema());
         }
         return objectSchema(Map.copyOf(properties), List.of("success"));
+    }
+
+    /** 代码生成、程序编排与格式转换共用的已核验文件回执，不暴露内部清单摘要。 */
+    static Map<String, Object> artifactsOutputSchema() {
+        var file=objectSchema(Map.of(
+                "file_id", property("string"), "path", property("string"),
+                "size", property("integer"), "sha256", property("string")),
+                List.of("file_id", "path", "size", "sha256"));
+        return arraySchema(objectSchema(Map.of(
+                "id", property("string"), "type", property("string"),
+                "name", property("string"), "size", property("integer"),
+                "expires_at", property("string"), "status", property("string"),
+                "files", arraySchema(file), "paths", arraySchema(property("string"))),
+                List.of("id", "type", "name", "size", "files", "expires_at", "status")));
     }
 
     static Map<String, Object> codeDiagnosticSchema() {

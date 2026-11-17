@@ -511,18 +511,27 @@ class CodeExecutionToolHandlerTest {
         } finally {java.nio.file.Files.deleteIfExists(transfer);}
     }
 
-    @Test
-    void publishedArtifactReferencesMatchCatalogWithoutLeakingManifestOrOwnership() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+    void publishedArtifactReferencesExposeFileHashesWithoutLeakingManifestOrOwnership(int fileCount) throws Exception {
+        var files=List.of(
+                new com.skillforge.institution.artifact.ArtifactMetadata.File("report.txt",1,"0".repeat(64)),
+                new com.skillforge.institution.artifact.ArtifactMetadata.File("details.csv",2,"1".repeat(64)))
+                .subList(0,fileCount);
         startRunner(exchange -> {
             if(exchange.getRequestURI().getPath().endsWith("/files"))respond(exchange,200,"archive");
-            else respond(exchange,200,"{\"state\":\"completed\",\"phase\":\"execution\",\"exitCode\":0,\"files\":[{\"path\":\"report.txt\",\"size\":1,\"sha256\":\""+"0".repeat(64)+"\"}]}");
+            else respond(exchange,200,"{\"state\":\"completed\",\"phase\":\"execution\",\"exitCode\":0,\"files\":"+json.writeValueAsString(files)+"}");
         });
         Fixture fixture=handler(true);
         org.mockito.Mockito.when(fixture.storage().publish(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyList(),
                         org.mockito.ArgumentMatchers.anyList(),org.mockito.ArgumentMatchers.any()))
-                .thenReturn(new com.skillforge.institution.artifact.ArtifactMetadata("artifact","session","run","invocation","file","report.txt",1,"0".repeat(64),Instant.now().plusSeconds(60),"ready",java.util.List.of(),java.util.List.of()));
+                .thenReturn(new com.skillforge.institution.artifact.ArtifactMetadata("artifact","session","run","invocation","file","report.txt",
+                        files.stream().mapToLong(com.skillforge.institution.artifact.ArtifactMetadata.File::size).sum(),
+                        "9".repeat(64),Instant.now().plusSeconds(60),"ready",files,List.of()));
         Map<String,Object> result;
-        result=fixture.handler().execute(inline(),context());
+        var arguments=new java.util.LinkedHashMap<>(inline());
+        arguments.put("output_files",files.stream().map(com.skillforge.institution.artifact.ArtifactMetadata.File::path).toList());
+        result=fixture.handler().execute(arguments,context());
         var schema=new com.skillforge.core.capability.connector.PlatformToolCatalog(new com.skillforge.core.chat.contract.ChatToolSchemaContributor()).entries().stream().filter(entry->entry.name().equals("code_execute")).findFirst().orElseThrow().outputSchema();
         var structured = new java.util.LinkedHashMap<>(result);
         structured.remove("content");
@@ -530,7 +539,19 @@ class CodeExecutionToolHandlerTest {
         assertEquals(true,validation.get("valid"),validation.toString());
         assertEquals("ready",result.get("delivery_status"));
         var reference=(Map<?,?>)((java.util.List<?>)result.get("artifacts")).getFirst();
-        assertEquals(java.util.Set.of("id","type","name","size","sha256","expires_at","status","paths"),reference.keySet());
+        assertEquals(Set.of("id","type","name","size","files","expires_at","status","paths"),reference.keySet());
+        var expectedFiles=List.of(
+                Map.of("file_id","artifact:report.txt","path","report.txt","size",1L,"sha256","0".repeat(64)),
+                Map.of("file_id","artifact:details.csv","path","details.csv","size",2L,"sha256","1".repeat(64)))
+                .subList(0,fileCount);
+        assertEquals(expectedFiles,reference.get("files"));
+        assertFalse(json.writeValueAsString(result).contains("9".repeat(64)));
+        var presentation=(com.skillforge.core.chat.contract.ProcessPresentation)result.get("public_presentation");
+        var publicFiles=(com.skillforge.core.chat.contract.ChatInputReference.ArtifactFiles)presentation.references().getFirst().source();
+        assertEquals(List.of(
+                new com.skillforge.core.chat.contract.ChatInputReference.ArtifactFile("artifact","report.txt"),
+                new com.skillforge.core.chat.contract.ChatInputReference.ArtifactFile("artifact","details.csv"))
+                .subList(0,fileCount),publicFiles.files());
     }
 
     @Test void publishesVerifiedInputProvenanceWithTheNewArtifact()throws Exception {

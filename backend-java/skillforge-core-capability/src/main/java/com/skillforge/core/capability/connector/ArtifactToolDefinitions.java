@@ -80,7 +80,7 @@ final class ArtifactToolDefinitions {
         return PlatformToolCatalog.Entry.builder()
                 .name("render_artifact")
                 .title("转换成果文件")
-                .publishedVersionKey("builtin:11")
+                .publishedVersionKey("builtin:12")
                 .description(renderArtifactDescription())
                 .parametersSchema(renderArtifactInput())
                 .outputSchema(programOutputSchema(schemas, false))

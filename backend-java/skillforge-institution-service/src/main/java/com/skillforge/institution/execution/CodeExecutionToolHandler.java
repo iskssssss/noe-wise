@@ -317,7 +317,18 @@ public class CodeExecutionToolHandler implements PlatformMediaToolHandler {
                         try(var timer=new ScheduledThreadPoolExecutor(1,
                                 Thread.ofPlatform().name("code-artifact-transfer-deadline").daemon().factory())) {
                             var timeout=timer.schedule(()->{try{body.close();}catch(IOException ignored){}},Math.max(1,Duration.between(Instant.now(),end).toMillis()),TimeUnit.MILLISECONDS);
-                            try{var artifact=artifacts.publish(deliveryContext,files,provenance,body);result.put("artifacts",List.of(Map.of("id",artifact.id(),"type",artifact.type(),"name",artifact.name(),"size",artifact.size(),"sha256",artifact.sha256(),"expires_at",com.skillforge.common.time.BusinessTime.format(artifact.expiresAt()),"status",artifact.status(),"paths",artifact.files().stream().map(ArtifactMetadata.File::path).toList())));result.put("delivery_status","ready");}
+                            try {
+                                var artifact=artifacts.publish(deliveryContext,files,provenance,body);
+                                var publishedFiles=artifact.files().stream().map(file->Map.<String,Object>of(
+                                        "file_id",artifact.id()+":"+file.path(),"path",file.path(),
+                                        "size",file.size(),"sha256",file.sha256())).toList();
+                                result.put("artifacts",List.of(Map.of(
+                                        "id",artifact.id(),"type",artifact.type(),"name",artifact.name(),"size",artifact.size(),
+                                        "expires_at",com.skillforge.common.time.BusinessTime.format(artifact.expiresAt()),
+                                        "status",artifact.status(),"files",publishedFiles,
+                                        "paths",artifact.files().stream().map(ArtifactMetadata.File::path).toList())));
+                                result.put("delivery_status","ready");
+                            }
                             finally{timeout.cancel(false);}
                         }
                     }

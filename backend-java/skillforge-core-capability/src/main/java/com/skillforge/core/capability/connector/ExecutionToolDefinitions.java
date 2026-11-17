@@ -1,6 +1,7 @@
 package com.skillforge.core.capability.connector;
 
 import static com.skillforge.core.capability.connector.ExecutionToolSchemas.artifactProvenanceOutputSchema;
+import static com.skillforge.core.capability.connector.ExecutionToolSchemas.artifactsOutputSchema;
 import static com.skillforge.core.capability.connector.ExecutionToolSchemas.attachmentIdsSchema;
 import static com.skillforge.core.capability.connector.ExecutionToolSchemas.attachmentInputsOutputSchema;
 import static com.skillforge.core.capability.connector.ExecutionToolSchemas.codeAttachmentIdsSchema;
@@ -34,7 +35,7 @@ final class ExecutionToolDefinitions {
         return PlatformToolCatalog.Entry.builder()
                 .name("code_execute")
                 .title("执行代码")
-                .publishedVersionKey("builtin:28")
+                .publishedVersionKey("builtin:29")
                 .description(codeExecuteDescription())
                 .parametersSchema(codeExecuteInput())
                 .outputSchema(codeExecuteOutput(schemas))
@@ -121,22 +122,7 @@ final class ExecutionToolDefinitions {
                     Map.entry("public_presentation", schemas.codePublicPresentationSchema()),
                     Map.entry("attachment_inputs", attachmentInputsOutputSchema()),
                     Map.entry("input_provenance", artifactProvenanceOutputSchema()),
-                    Map.entry(
-                        "artifacts",
-                        arraySchema(
-                            Map.of(
-                                "type", "object",
-                                "properties", Map.ofEntries(
-                                    Map.entry("id", property("string")),
-                                    Map.entry("type", property("string")),
-                                    Map.entry("name", property("string")),
-                                    Map.entry("size", property("integer")),
-                                    Map.entry("sha256", property("string")),
-                                    Map.entry("expires_at", property("string")),
-                                    Map.entry("paths", arraySchema(property("string"))),
-                                    Map.entry("status", property("string"))),
-                                "required", List.of("id", "type", "name", "size", "sha256", "expires_at", "status"),
-                                "additionalProperties", false)))),
+                    Map.entry("artifacts", artifactsOutputSchema())),
                 List.of("success"));
     }
 
@@ -245,7 +231,7 @@ final class ExecutionToolDefinitions {
         return PlatformToolCatalog.Entry.builder()
                 .name("run_code")
                 .title("编排工具执行")
-                .publishedVersionKey("builtin:22")
+                .publishedVersionKey("builtin:23")
                 .description(runCodeDescription())
                 .parametersSchema(runCodeInput())
                 .outputSchema(programOutputSchema(schemas, true))

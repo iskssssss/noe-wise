@@ -562,7 +562,7 @@ class PlatformToolCatalogTest {
         assertEquals(List.of("plan"), entry("exit_plan_mode").parametersSchema().get("required"));
 
         PlatformToolCatalog.Entry codeExecute = entry("code_execute");
-        assertEquals("builtin:28", codeExecute.publishedVersionKey());
+        assertEquals("builtin:29", codeExecute.publishedVersionKey());
         for (String name : List.of("code_execute", "run_code")) {
             assertFalse(inputProperties(name).containsKey("public_result_file"));
             String description = ((Map<?, ?>) inputProperties(name).get("code")).get("description").toString();
@@ -586,6 +586,12 @@ class PlatformToolCatalogTest {
         assertEquals(32768, ((Map<?, ?>) outputProperties("code_execute").get("stdout")).get("maxLength"));
         assertEquals(Map.of("type", "string", "maxLength", 32768), outputProperties("code_execute").get("stdout"));
         for (String tool : List.of("code_execute", "run_code", "render_artifact")) {
+            var artifact = (Map<?, ?>) ((Map<?, ?>) outputProperties(tool).get("artifacts")).get("items");
+            var artifactFields = (Map<?, ?>) artifact.get("properties");
+            assertFalse(artifactFields.containsKey("sha256"), "清单摘要不能作为下载文件校验值返回");
+            var file = (Map<?, ?>) ((Map<?, ?>) artifactFields.get("files")).get("items");
+            assertEquals(Set.of("file_id", "path", "size", "sha256"), ((Map<?, ?>) file.get("properties")).keySet());
+            assertEquals(List.of("file_id", "path", "size", "sha256"), file.get("required"));
             var logs = (Map<?, ?>) outputProperties(tool).get("logs");
             var fields = (Map<?, ?>) ((Map<?, ?>) logs.get("items")).get("properties");
             assertEquals(Map.of("type", "integer"), fields.get("characters"));
@@ -605,13 +611,13 @@ class PlatformToolCatalogTest {
         assertAttachmentIdsInputSchema("code_execute");
 
         PlatformToolCatalog.Entry renderArtifact = entry("render_artifact");
-        assertEquals("builtin:11", renderArtifact.publishedVersionKey());
+        assertEquals("builtin:12", renderArtifact.publishedVersionKey());
         assertEquals(List.of("artifact_id", "path", "format"), renderArtifact.parametersSchema().get("required"));
         assertEquals(Set.of("artifact_id", "path", "format", "output_name"), inputProperties("render_artifact").keySet());
 
 
         PlatformToolCatalog.Entry runCode = entry("run_code");
-        assertEquals("builtin:22", runCode.publishedVersionKey());
+        assertEquals("builtin:23", runCode.publishedVersionKey());
         String program = ((Map<?, ?>) inputProperties("run_code").get("code")).get("description").toString();
         assertTrue(program.contains("最多" + com.skillforge.execution.ExecutionLimits.PROGRAM_CALLS + "次"));
         assertFalse(runCode.description().contains("console.log("));
