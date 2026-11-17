@@ -34,7 +34,29 @@ class RuntimeCompletedAnswerReaderTest {
         assertFalse(blocked.message().toString().contains("private-material"));
         var partial = reader.read(List.of(completed(1, "FAILED", "已核实的局部结果")), guard).getFirst();
         assertEquals("已核实的局部结果", partial.content()); assertEquals("failed", partial.state());
-        assertTrue(reader.read(List.of(completed(1, "CANCELLED", "  ")), guard).isEmpty());
+        var cancelled = reader.read(List.of(completed(1, "CANCELLED", "  ")), guard).getFirst();
+        assertEquals("cancelled", cancelled.state());
+        assertTrue(cancelled.content().contains("已取消"));
+    }
+
+    @Test void emptyFailurePublishesSafeNoticeWithOriginalIdentityWithoutInventingSuccess() throws Exception {
+        for (String status : List.of("FAILED", "TERMINATED")) {
+            var saved = completed(3, status, "");
+            var answer = reader.read(List.of(saved), guard).getFirst();
+            assertEquals("failed", answer.state());
+            assertFalse(answer.content().isBlank());
+            assertEquals(saved.event().id().value(), answer.messageId());
+            assertEquals(saved.occurredAt(), answer.createdAt());
+            assertEquals(3, answer.sequence());
+        }
+        assertTrue(reader.read(List.of(completed(1, "COMPLETED", "")), guard).isEmpty());
+        var batch = event(4, "batch-rejected", AgentExecutionProgram.COMPLETED_EVENT, AgentExecutionProgram.COMPLETED_SCHEMA,
+                json.writeValueAsString(Map.of("text", "", "status", "FAILED", "reason", "tool_batch_ineligible", "inputId", "input-1",
+                        "rootInputId", "root-1", "traceId", "trace-1", "spanId", "span-1", "agentId", "9")));
+        var answer = reader.read(List.of(batch), guard).getFirst();
+        assertTrue(answer.content().contains("这组操作未执行"));
+        assertTrue(answer.content().contains("拆成单步"));
+        assertFalse(answer.content().contains("tool_batch_ineligible"));
     }
 
     @Test void corruptedCompletionDuplicateSourcesAndCrossTenantBatchFailClosed() throws Exception {

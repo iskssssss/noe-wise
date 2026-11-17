@@ -103,6 +103,27 @@ class AgentRuntimePlatformToolProviderTest {
         }
     }
 
+    @Test void executionToolsPreserveBusinessFailureInTheRuntimeEnvelope() throws Exception {
+        for (Class<? extends PlatformToolHandler> type : List.of(
+                com.skillforge.institution.execution.CodeExecutionToolHandler.class,
+                com.skillforge.institution.execution.ProgramCodeToolHandler.class,
+                com.skillforge.institution.execution.RenderArtifactToolHandler.class)) {
+            var handler = mock(type, org.mockito.Mockito.CALLS_REAL_METHODS);
+            var fixture = fixture(handler);
+            for (boolean success : List.of(false, true)) {
+                var output = Map.<String,Object>of("success", success, "state", success ? "completed" : "rejected",
+                        "content", List.of(Map.of("type", "text", "text", success ? "执行完成" : "本次尚未执行")));
+                org.mockito.Mockito.doReturn(output).when(handler).execute(any(), any());
+                var direct = directFixture(handler.toolName(), "{}");
+                var result = assertInstanceOf(ToolOutcome.Succeeded.class,
+                        fixture.provider.invokeRegistered(direct.receipt().registered(), direct.receipt().prepared(), direct.call()));
+                var body = new ObjectMapper().readTree(result.observation().canonicalJson());
+                assertEquals(!success, body.path("isError").booleanValue(), handler.toolName());
+                assertEquals(success, body.path("structuredContent").path("success").booleanValue());
+            }
+        }
+    }
+
     @Test void unrecognizedBusinessFieldsDoNotBecomeProtocolErrors() throws Exception {
         var handler = new PlatformToolHandler() {
             @Override public String toolName() { return "lookup"; }

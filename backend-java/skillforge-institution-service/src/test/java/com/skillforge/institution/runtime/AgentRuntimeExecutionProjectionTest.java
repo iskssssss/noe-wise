@@ -594,6 +594,25 @@ class AgentRuntimeExecutionProjectionTest {
         assertEquals("run-1", fixture.outputs.getFirst().runtimeRunId());
     }
 
+    @Test void emptyRejectedBatchPublishesFailureToLiveStreamAndHistoryFromTheSameSavedEvent() throws Exception {
+        var fixture = new Fixture(); var body = fixture.base();
+        body.put("text", ""); body.put("status", "FAILED"); body.put("reason", "tool_batch_ineligible");
+        fixture.events(AgentExecutionProgram.COMPLETED_EVENT, AgentExecutionProgram.COMPLETED_SCHEMA, body);
+        fixture.projection.reconcile(fixture.session);
+        assertEquals(List.of("message.delta", "execution.completed"), fixture.types());
+        var message = fixture.data("message.delta");
+        assertEquals("failed", message.get("state"));
+        assertEquals("event-1", message.get("message_id"));
+        assertTrue(message.get("content").toString().contains("这组操作未执行"));
+        assertEquals("tool_batch_ineligible", fixture.data("execution.completed").get("reason"));
+        var owner = com.skillforge.runtime.api.port.SessionOwner.user(fixture.session,
+                new com.skillforge.runtime.api.AgentId("agent-1"), new com.skillforge.runtime.api.EndUserId(9));
+        var history = fixture.projection.project(owner, fixture.store.events(fixture.session, 0, 100));
+        assertEquals(1, history.messages().size());
+        assertEquals(message.get("content"), history.messages().getFirst().content());
+        assertEquals("failed", history.messages().getFirst().metadata().get("state"));
+    }
+
     @Test void terminalPhaseNeverPromotesFailureOrRejectedOutputToCompleted() throws Exception {
         for (String status : List.of("FAILED", "CANCELLED", "COMPLETED")) {
             var fixture = new Fixture(); var body = fixture.base();

@@ -9,6 +9,7 @@ import com.skillforge.core.chat.dto.response.ChatHistoryResponse;
 import com.skillforge.core.chat.message.ChatMessageRecord;
 import com.skillforge.core.chat.session.SessionView;
 import com.skillforge.core.chat.integration.publicread.PublicOutputGuard;
+import com.skillforge.core.chat.integration.publicread.RuntimeCompletedAnswerReader;
 import com.skillforge.core.chat.session.SessionMailboxService;
 import com.skillforge.core.chat.session.SessionOutboxEventProjector;
 import com.skillforge.core.chat.session.SessionOutboxEntry;
@@ -36,7 +37,7 @@ import org.apache.ibatis.session.SqlSession;
 
 /** 消费执行链的准确保存事件或持久事件页；不恢复 Run、Action 或旧 SessionLog。 */
 public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventProjection, ChatRuntimeHistory {
-    private static final String POLICY = "execution-events-v1/" + PublicOutputGuard.POLICY_VERSION;
+    private static final String POLICY = "execution-events-v2/" + PublicOutputGuard.POLICY_VERSION;
     private final ExecutionStore store;
     private final SessionMailboxService mailbox;
     private final PublicOutputGuard guard;
@@ -454,7 +455,8 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
             if (!AgentExecutionProgram.COMPLETED_EVENT.equals(event.type())
                     || !AgentExecutionProgram.COMPLETED_SCHEMA.equals(event.data().schemaId()))
                 throw new IllegalStateException("execution_public_event_unsupported");
-            String body = value.path("text").asText();
+            String body = RuntimeCompletedAnswerReader.completionText(value.path("text").asText(),
+                    text(value, "status"), value.path("reason").asText());
             var scope = guard.capture();
             boolean rejected = scope.rejects(body) || AgentRuntimeExecutionPublicEvents.citationsRejected(value, scope);
             String status = rejected ? "FAILED" : text(value, "status");
@@ -466,7 +468,8 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
                 message.put("citations", rejected ? List.of() : AgentRuntimeExecutionPublicEvents.citations(value));
                 message.put("references", List.of());
                 message.put("author",agentAuthor(saved,value));
-                message.put("role", "assistant"); message.put("state", "COMPLETED".equals(status) ? "completed" : "failed");
+                message.put("role", "assistant");
+                message.put("state", "COMPLETED".equals(status) ? "completed" : "CANCELLED".equals(status) ? "cancelled" : "failed");
                 // 此处只投影已提交的正式终态事件；phase不授予成功状态，失败与公开输出拒绝仍保持failed。
                 message.put("phase", "final");
                 sink.sendRuntime("message.delta", message, saved.run().runId());

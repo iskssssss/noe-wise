@@ -37,6 +37,11 @@ public final class RenderArtifactToolHandler implements PlatformMediaToolHandler
     }
 
     @Override
+    public boolean isError(Map<String,Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
+
+    @Override
     public Map<String, Object> execute(Map<String, Object> arguments, PlatformToolExecutionContext context)
             throws Exception {
         RenderRequest request;

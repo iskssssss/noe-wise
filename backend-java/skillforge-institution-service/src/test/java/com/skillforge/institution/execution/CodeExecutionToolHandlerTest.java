@@ -614,6 +614,7 @@ class CodeExecutionToolHandlerTest {
 
         assertEquals(false, result.get("success"));
         assertEquals("code_execution_disabled", result.get("error"));
+        assertTrue(fixture.handler().isError(result));
         verifyNoInteractions(fixture.scripts(), fixture.storage(), fixture.access());
     }
 

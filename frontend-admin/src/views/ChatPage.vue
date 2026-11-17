@@ -359,7 +359,11 @@
                     ? '智能体'
                     : message.role
               }}</strong
-              ><ElTag v-if="message.metadata?.phase" size="small" type="info">{{
+              ><ElTag v-if="message.metadata?.state === 'failed'" size="small" type="danger"
+                >未完成</ElTag
+              ><ElTag v-else-if="message.metadata?.state === 'cancelled'" size="small" type="info"
+                >已取消</ElTag
+              ><ElTag v-else-if="message.metadata?.phase" size="small" type="info">{{
                 message.metadata.phase === 'final'
                   ? '最终回答'
                   : message.metadata.phase === 'commentary'
@@ -471,18 +475,22 @@
         <p v-if="budgetError && budget" class="admin-field-help">
           刷新失败，以下保留上次读取的额度观察。
         </p>
+        <div class="toolbar">
+          <span>查看运行</span>
+          <ElSelect v-model="budgetRunId" placeholder="选择运行" aria-label="查看运行" filterable>
+            <ElOption
+              v-for="option in budgetRuns"
+              :key="option.value"
+              :value="option.value"
+              :label="option.label"
+            />
+          </ElSelect>
+        </div>
+        <p class="admin-field-help">默认显示最近一次运行；选择其他时间可查看对应过程与停止原因。</p>
         <p v-if="budgetStopReason" role="status">停止原因：{{ budgetStopReason }}</p>
         <details class="secondary-panel">
           <summary>运行额度观察</summary>
           <div class="toolbar">
-            <ElSelect v-model="budgetRunId" placeholder="选择运行" aria-label="额度观察运行">
-              <ElOption
-                v-for="option in budgetRuns"
-                :key="option.value"
-                :value="option.value"
-                :label="option.label"
-              />
-            </ElSelect>
             <ElButton
               :disabled="!budgetRunId || budgetLoading"
               :loading="budgetLoading"
@@ -495,13 +503,17 @@
         <h3>公开运行过程</h3>
         <ElTable
           table-layout="auto"
-          :data="processes"
-          empty-text="当前会话尚无执行过程，发起对话后可在这里查看"
+          :data="selectedRunProcesses"
+          :empty-text="
+            budgetRunId
+              ? '本次运行没有公开过程，可查看停止原因或对话中的结果'
+              : '当前会话尚无执行过程，发起对话后可在这里查看'
+          "
+          ><ElTableColumn min-width="140" show-overflow-tooltip prop="type" label="类型"
+            ><template #default="{ row }">{{
+              chatProcessZhCN.processType[row.type as ChatProcessItem['type']] ?? row.type
+            }}</template></ElTableColumn
           ><ElTableColumn
-            min-width="140"
-            show-overflow-tooltip
-            prop="type"
-            label="类型" /><ElTableColumn
             min-width="200"
             show-overflow-tooltip
             prop="presentation.title"
@@ -509,7 +521,11 @@
             width="128"
             show-overflow-tooltip
             prop="status"
-            label="状态" /><ElTableColumn
+            label="状态"
+            ><template #default="{ row }">{{
+              chatProcessZhCN.processStatus[row.status as ChatProcessItem['status']] ?? row.status
+            }}</template></ElTableColumn
+          ><ElTableColumn
             min-width="280"
             show-overflow-tooltip
             prop="presentation.summary"
@@ -845,6 +861,8 @@ import SessionMessageContent from '../components/SessionMessageContent.vue'
 import CitationDetail from '../components/CitationDetail.vue'
 import { browserBridge, connectionBridgeMessage } from '@skillforge/shared/utils/browserConnection'
 import { CHAT_CONNECTION_STATES } from '@skillforge/shared/utils/stream'
+import { chatProcessZhCN } from '@skillforge/shared/i18n/chatProcess.zh-CN'
+import { statusLabel } from '@skillforge/shared/admin/presentation'
 import {
   api,
   type AgentItem,
@@ -1105,12 +1123,26 @@ const budget = ref<RunBudget>(),
 let budgetEpoch = 0
 const budgetRuns = computed(() => {
   const runs = new Map<string, string>()
+  const waitingStatuses: Record<string, string> = {
+    waiting_hitl: '等待回复',
+    waiting_dependency: '等待关联任务',
+    suspended: '已挂起'
+  }
   for (const activity of history.value?.activities ?? [])
-    if (activity.node_type === 'agent_runtime' && typeof activity.node_id === 'string')
-      runs.set(activity.node_id, `${activity.node_id} · ${activity.status ?? '状态待核实'}`)
+    if (activity.node_type === 'agent_runtime' && typeof activity.node_id === 'string') {
+      runs.set(
+        activity.node_id,
+        `${formatDateTime(activity.started_at)} · ${waitingStatuses[activity.status ?? ''] ?? statusLabel(activity.status?.toUpperCase())}`
+      )
+    }
   if (runId.value && !runs.has(runId.value)) runs.set(runId.value, `${runId.value} · 当前运行`)
   return Array.from(runs, ([value, label]) => ({ value, label }))
 })
+const selectedRunProcesses = computed(() =>
+  processes.value.filter(
+    (process) => process.run_id === budgetRunId.value || process.root_run_id === budgetRunId.value
+  )
+)
 const budgetStopReason = computed(() => {
   const reason = history.value?.activities?.find((item) => item.node_id === budgetRunId.value)
     ?.render?.reason
@@ -1120,7 +1152,7 @@ const budgetStopReason = computed(() => {
 })
 watch(budgetRuns, (options) => {
   if (!options.some((option) => option.value === budgetRunId.value))
-    budgetRunId.value = runId.value || options[0]?.value || ''
+    budgetRunId.value = runId.value || options.at(-1)?.value || ''
 })
 watch([sessionId, budgetRunId], () => {
   budgetEpoch++

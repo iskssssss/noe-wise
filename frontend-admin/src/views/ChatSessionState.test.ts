@@ -107,6 +107,39 @@ async function setup() {
   return { sessions, input }
 }
 describe('聊天会话原子切换', () => {
+  it('保留历史失败与取消说明，不标为最终回答，正常回答仍可辨认', async () => {
+    mocks.history.mockResolvedValue({
+      ...history('A'),
+      messages: [
+        {
+          message_id: 'failed',
+          role: 'assistant',
+          content: '这组操作未执行，请拆成单步。',
+          metadata: { phase: 'final', state: 'failed' }
+        },
+        {
+          message_id: 'cancelled',
+          role: 'assistant',
+          content: '请求已取消。',
+          metadata: { phase: 'final', state: 'cancelled' }
+        },
+        {
+          message_id: 'done',
+          role: 'assistant',
+          content: '已完成核对。',
+          metadata: { phase: 'final', state: 'completed' }
+        }
+      ]
+    })
+    await setup()
+    const cards = wrapper.findAll('.debug-message')
+    expect(cards[0]?.text()).toContain('未完成')
+    expect(cards[0]?.text()).toContain('这组操作未执行')
+    expect(cards[0]?.text()).not.toContain('最终回答')
+    expect(cards[1]?.text()).toContain('已取消')
+    expect(cards[2]?.text()).toContain('最终回答')
+  })
+
   it.each([
     ['tool_output_invalid', '工具已执行，但返回内容未通过格式校验'],
     ['tool_outcome_unknown', '工具执行结果尚未确认'],
@@ -191,6 +224,57 @@ describe('聊天会话原子切换', () => {
     await flushPromises()
     expect(mocks.createGoal).toHaveBeenLastCalledWith('A', expect.any(String), '继续业务交付', 1024)
   })
+  it('按所选运行展示过程，默认最新轮次并保留关联子任务', async () => {
+    const process = (run: string, title: string, root = run) => ({
+      process_id: title,
+      run_id: run,
+      root_run_id: root,
+      type: 'tool',
+      status: 'failed',
+      presentation: { title, summary: '工具调用失败', results: [], references: [] }
+    })
+    mocks.history.mockResolvedValue({
+      ...history('A'),
+      activities: [
+        {
+          node_id: 'run:A',
+          node_type: 'agent_runtime',
+          status: 'failed',
+          started_at: '2026-11-17T04:00:00Z'
+        },
+        {
+          node_id: 'run:B',
+          node_type: 'agent_runtime',
+          status: 'completed',
+          started_at: '2026-11-17T04:01:00Z'
+        }
+      ],
+      processes: [
+        process('run:A', '较早轮次的工具'),
+        process('run:B', '最新轮次的工具'),
+        process('child', '本轮关联子任务', 'run:B')
+      ]
+    })
+    await setup()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '运行过程')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('最新轮次的工具')
+    expect(wrapper.text()).toContain('本轮关联子任务')
+    expect(wrapper.text()).not.toContain('较早轮次的工具')
+    expect(wrapper.text()).not.toContain('succeeded')
+    wrapper
+      .findAllComponents(ElSelect)
+      .find((select) => select.props('placeholder') === '选择运行')!
+      .vm.$emit('update:modelValue', 'run:A')
+    await flushPromises()
+    expect(wrapper.text()).toContain('较早轮次的工具')
+    expect(wrapper.text()).not.toContain('最新轮次的工具')
+    expect(wrapper.text()).not.toContain('本轮关联子任务')
+  })
+
   it('运行额度按明确选择读取，迟到的其他运行回执不能覆盖当前观察', async () => {
     mocks.history.mockResolvedValue({
       ...history('A'),
@@ -215,6 +299,13 @@ describe('聊天会话原子切换', () => {
       .findAll('[role="tab"]')
       .find((tab) => tab.text() === '运行过程')!
       .trigger('click')
+    await flushPromises()
+    const runSelection = wrapper
+      .findAllComponents(ElSelect)
+      .find((select) => select.props('placeholder') === '选择运行')!
+    expect(runSelection.props('modelValue')).toBe('run:B')
+    expect(wrapper.text()).not.toContain('任务根的工具调用额度已耗尽。')
+    runSelection.vm.$emit('update:modelValue', 'run:A')
     await flushPromises()
     const resources = {
       business_model_calls: '10',
@@ -403,6 +494,14 @@ describe('聊天会话原子切换', () => {
   it('运行过程表按正式 presentation 显示步骤和业务摘要', async () => {
     mocks.history.mockResolvedValue({
       ...history('A'),
+      activities: [
+        {
+          node_id: 'run:A',
+          node_type: 'agent_runtime',
+          status: 'completed',
+          started_at: '2026-11-17T04:00:00Z'
+        }
+      ],
       processes: [
         {
           process_id: 'process:A:tool',

@@ -16,6 +16,9 @@ public final class ProgramCodeToolHandler implements PlatformMediaToolHandler {
         this.execution = execution; this.tools = tools;
     }
     @Override public String toolName() { return "run_code"; }
+    @Override public boolean isError(Map<String,Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
     @Override public Map<String,Object> execute(Map<String,Object> arguments, PlatformToolExecutionContext context) throws Exception {
         if(context.programChild()||context.workflowNode())throw new IllegalArgumentException("program_recursion_forbidden");
         if (!Set.of("code", "dependencies", "artifact_inputs", "attachment_ids", "input_files", "output_files", "use_workspace").containsAll(arguments.keySet())

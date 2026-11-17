@@ -86,6 +86,9 @@ public class CodeExecutionToolHandler implements PlatformMediaToolHandler {
         this.workspaces=workspaces;
     }
     @Override public String toolName(){return "code_execute";}
+    @Override public boolean isError(Map<String,Object> result) {
+        return Boolean.FALSE.equals(result.get("success"));
+    }
     @Override public Map<String,Object> execute(Map<String,Object> args,PlatformToolExecutionContext context)throws Exception {
         return executeInternal(args, context, null, null, true);
     }

@@ -57,15 +57,29 @@ public final class RuntimeCompletedAnswerReader {
             var body = body(saved);
             String status = text(body, "status");
             if (!Set.of("COMPLETED", "FAILED", "CANCELLED", "TERMINATED").contains(status)) throw invalid(null);
-            String output = string(body, "text");
+            String output = completionText(string(body, "text"), status, body.path("reason").asText());
             if (output.isBlank()) continue;
             boolean rejected = guard.rejects(output);
             String id = saved.event().id().value();
             messages.put(id, new Answer(id, saved.run().runId(), text(body, "rootInputId"), ChatMessageRecord.INITIAL_VERSION,
-                    rejected ? PublicOutputGuard.SAFE_MESSAGE : output, "final", rejected || !"COMPLETED".equals(status) ? "failed" : "completed",
+                    rejected ? PublicOutputGuard.SAFE_MESSAGE : output, "final",
+                    rejected ? "failed" : "CANCELLED".equals(status) ? "cancelled" : "COMPLETED".equals(status) ? "completed" : "failed",
                     saved.sequence(), saved.sequence(), id, saved.occurredAt()));
         }
         return List.copyOf(messages.values());
+    }
+
+    /** 空正文的失败仍须可见；只解释已保存的终态，不改写执行结果或触发重试。 */
+    public static String completionText(String output, String status, String reason) {
+        if (!output.isBlank()) return output;
+        return switch (status) {
+            case "FAILED" -> "tool_batch_ineligible".equals(reason)
+                    ? "本次请求未能完成：智能体同时发起了不能一起执行的工具操作，这组操作未执行。请将任务拆成单步后重新发送；若仍失败，请联系管理员查看运行过程。"
+                    : "本次请求未能完成。请查看运行过程核对已执行的操作，确认后再决定是否重新发送，或联系管理员处理。";
+            case "TERMINATED" -> "本次请求已停止，尚未完成。请查看运行过程核对已执行的操作，再决定是否继续。";
+            case "CANCELLED" -> "本次请求已取消。已执行的操作不会自动撤销，可在运行过程中核对。";
+            default -> output;
+        };
     }
 
     private JsonNode body(ExecutionStore.SavedEvent saved) {
