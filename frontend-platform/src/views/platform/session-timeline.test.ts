@@ -613,6 +613,49 @@ describe('会话详情实际接线', () => {
     expect(calls.modelAttemptDetail).not.toHaveBeenCalled()
     expect(calls.trajectoryContent).not.toHaveBeenCalled()
   })
+  it('公开结果和助手消息使用安全 Markdown，用户输入保持原文', async () => {
+    const content = [
+      '## 文件结果',
+      '',
+      '| 文件 | 状态 |',
+      '| --- | --- |',
+      '| report.txt | 已生成 |',
+      '',
+      '- 内容已核验',
+      '',
+      '```html',
+      '<script>example()</script>',
+      '```',
+      '',
+      '<script>alert(1)</script><img src="x" onerror="alert(1)">',
+      '[危险链接](javascript:alert(1))'
+    ].join('\n')
+    const input = '**原样输入** <b>标签文本</b>'
+    const trajectory = trajectoryFixture()
+    trajectory.summary.input = input
+    trajectory.summary.output = content
+    calls.trajectoryDetail.mockResolvedValue(trajectory)
+    calls.messages.mockResolvedValue({
+      items: [message(content), { ...message(input), message_id: 'user-message', role: 'user' }],
+      next_cursor: null
+    })
+    const { wrapper } = await open()
+    const output = wrapper.get('.trajectory-overview .markdown-content')
+    expect(output.get('h2').text()).toBe('文件结果')
+    expect(output.get('table').text()).toContain('report.txt')
+    expect(output.get('li').text()).toBe('内容已核验')
+    expect(output.get('pre code').text()).toContain('<script>example()</script>')
+    expect(output.find('script, [onerror], a[href^="javascript:"]').exists()).toBe(false)
+    expect(wrapper.get('.overview-content .readable').text()).toBe(input)
+    expect(wrapper.find('.overview-content .readable b').exists()).toBe(false)
+    await wrapper.get('#tab-messages').trigger('click')
+    await flushPromises()
+    const messagesPanel = wrapper.get('#pane-messages')
+    expect(messagesPanel.get('.markdown-content table').text()).toContain('已生成')
+    expect(messagesPanel.find('script, [onerror], a[href^="javascript:"]').exists()).toBe(false)
+    expect(messagesPanel.get('.prewrap').text()).toBe(input)
+    expect(messagesPanel.find('.prewrap b').exists()).toBe(false)
+  })
   it('页面从当前轨迹的持久终止记录显示预算原因，旧记录不编造不足数值', async () => {
     const value = trajectoryFixture()
     value.summary.status = 'TERMINATED'

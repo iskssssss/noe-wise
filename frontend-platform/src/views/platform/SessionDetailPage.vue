@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { AdminPage, statusLabel, useResource } from '@skillforge/shared/admin'
 import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import ObservationTree from '@skillforge/shared/observation/ObservationTree.vue'
+import MarkdownContent from '@skillforge/shared/components/MarkdownContent.vue'
 import { observationAnswerStatus } from '@skillforge/shared/observation/presentation'
 import type {
   ObservationNode,
@@ -626,7 +627,11 @@ watch(canReadDiagnostics, (allowed) => {
                   <ElTag v-if="message.state" type="info">{{ messageState(message.state) }}</ElTag>
                   <small>{{ formatDateTime(message.created_at) }}</small>
                 </div>
-                <div class="prewrap">{{ message.content ?? '未记录内容' }}</div>
+                <MarkdownContent
+                  v-if="message.role === 'assistant'"
+                  :content="message.content ?? '未记录内容'"
+                />
+                <div v-else class="prewrap">{{ message.content ?? '未记录内容' }}</div>
               </ElCard>
               <ElEmpty
                 v-if="

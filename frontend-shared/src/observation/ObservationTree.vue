@@ -17,6 +17,7 @@ import { guardFormEnter } from '../admin/keyboard'
 import { statusLabel } from '../admin/presentation'
 import { formatDateTime } from '../utils/datetime'
 import JsonViewer from '../components/JsonViewer.vue'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import BudgetTerminationNotice from './BudgetTerminationNotice.vue'
 import {
   canReadObservationContent,
@@ -407,7 +408,7 @@ function nodeLabel(kind: string) {
         </section>
         <section class="overview-content">
           <h4>公开结果</h4>
-          <p class="readable">{{ summary.output ?? '尚无可见最终结果' }}</p>
+          <MarkdownContent :content="summary.output ?? '尚无可见最终结果'" />
         </section>
       </div>
       <BudgetTerminationNotice

@@ -82,6 +82,7 @@ const html = computed(() =>
   max-width: 100%;
   display: block;
   overflow: auto;
+  overflow-wrap: normal;
 }
 .markdown-content :deep(td),
 .markdown-content :deep(th) {
