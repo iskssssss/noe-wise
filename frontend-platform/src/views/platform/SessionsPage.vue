@@ -10,7 +10,7 @@ import { AdminPage, EntitySelect, useResource } from '@skillforge/shared/admin'
 import { formatDateTime, toBeijingDateTime } from '@skillforge/shared/utils/datetime'
 import { loadTenantOptions, resolveTenantOption } from '../../api/entityOptions'
 import { api, type SessionListQuery } from '../../api'
-import { messageState } from './sessionTimeline'
+import { observationAnswerStatus } from '@skillforge/shared/observation/presentation'
 const range = ref<[string, string]>()
 const advancedOpen = ref(false)
 const advancedCount = computed(
@@ -82,8 +82,10 @@ const channelOptions = sessionOptionSource('channel')
 
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
-function answerStatusLabel(value: string) {
-  if (value === 'NONE' || value === 'IN_PROGRESS') return messageState(value)
+function filterStatusLabel(value: string) {
+  if (value === 'COMPLETED') return '执行已完成或已记录回复'
+  if (value === 'FAILED') return '执行失败或未形成最终回复'
+  if (value === 'NONE' || value === 'IN_PROGRESS') return observationAnswerStatus(value)
   return statusLabel(value)
 }
 function reload() {
@@ -139,8 +141,8 @@ const formTipId = useId()
         :aria-describedby="formTipId + '-group-0'"
         v-model="query.status"
         clearable
-        placeholder="全部回答或执行状态"
-        aria-label="回答或执行状态"
+        placeholder="全部回复或执行状态"
+        aria-label="回复或执行状态"
       >
         <ElOption
           v-for="s in [
@@ -156,7 +158,7 @@ const formTipId = useId()
           ]"
           :key="s"
           :value="s"
-          :label="answerStatusLabel(s)"
+          :label="filterStatusLabel(s)"
         />
       </ElSelect>
       <ElButton native-type="submit" type="primary" :loading="load.loading.value">查询</ElButton>
@@ -222,7 +224,7 @@ const formTipId = useId()
       </div>
 
       <FieldTip :id="formTipId + '-group-0'"
-        >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配回答或执行任一状态；例如执行完成但无最终回答也会匹配“已完成”。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
+        >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配公开回复或执行任一状态；已记录回复包含失败说明，执行结果以“执行”状态为准。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
       >
     </ElForm>
     <FeedbackNotice
@@ -272,7 +274,7 @@ const formTipId = useId()
         <template #default="{ row }">
           <div>{{ row.user_name }} · {{ row.agent_name }}</div>
           <div class="admin-field-help">
-            回答：{{ answerStatusLabel(row.answer_status) }}
+            公开回复：{{ observationAnswerStatus(row.answer_status) }}
             <ElTag
               size="small"
               :type="

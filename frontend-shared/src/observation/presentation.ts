@@ -4,6 +4,18 @@ import type {
   TokenTotals,
   TrajectoryCostCoverage
 } from './types'
+import { statusLabel } from '../admin/presentation'
+
+/** 公开回复包含失败说明，记录完成不代表执行成功。 */
+export function observationAnswerStatus(value?: string | null): string {
+  const labels: Record<string, string> = {
+    COMPLETED: '已记录回复',
+    IN_PROGRESS: '回复处理中',
+    FAILED: '未形成最终回复',
+    NONE: '暂无回复'
+  }
+  return value ? (labels[value] ?? statusLabel(value)) : '未记录'
+}
 
 export interface ObservationTreeItem extends ObservationNode {
   children: ObservationTreeItem[]

@@ -213,6 +213,26 @@ describe('共享执行树', () => {
     expect(wrapper.get('.attempt-content').text()).toContain('原始请求 · 未记录')
     expect(wrapper.get('.attempt-content').text()).toContain('原始返回 · 未记录')
     expect(wrapper.get('.attempt-content').findAll('button')).toHaveLength(0)
+    await wrapper.setProps({
+      detail: {
+        ...detail,
+        summary: { ...detail.summary, status: 'FAILED', answer_status: 'COMPLETED' }
+      }
+    })
+    expect(wrapper.get('.overview-heading').text()).toContain('执行：失败')
+    expect(wrapper.get('.overview-metrics').text()).toContain('公开回复已记录回复')
+    expect(wrapper.get('.overview-metrics').text()).not.toContain('已完成')
+    expect(wrapper.get('.trajectory-overview').text()).toContain('公开回复包含失败说明')
+    for (const [state, label] of [
+      ['IN_PROGRESS', '回复处理中'],
+      ['FAILED', '未形成最终回复'],
+      ['NONE', '暂无回复']
+    ]) {
+      await wrapper.setProps({
+        detail: { ...detail, summary: { ...detail.summary, answer_status: state } }
+      })
+      expect(wrapper.get('.overview-metrics').text()).toContain(label)
+    }
   })
 
   it('步骤搜索交由服务端，当前页节点不被本地关键词隐藏', async () => {

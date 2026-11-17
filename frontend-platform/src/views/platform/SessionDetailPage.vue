@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { AdminPage, statusLabel, useResource } from '@skillforge/shared/admin'
 import { formatDateTime } from '@skillforge/shared/utils/datetime'
 import ObservationTree from '@skillforge/shared/observation/ObservationTree.vue'
+import { observationAnswerStatus } from '@skillforge/shared/observation/presentation'
 import type {
   ObservationNode,
   ObservationPage,
@@ -523,8 +524,8 @@ watch(canReadDiagnostics, (allowed) => {
             <ElDescriptionsItem label="Agent">{{
               detail.agent_name ?? detail.agent_id
             }}</ElDescriptionsItem>
-            <ElDescriptionsItem label="回答状态">{{
-              messageState(detail.answer_status)
+            <ElDescriptionsItem label="公开回复">{{
+              observationAnswerStatus(detail.answer_status)
             }}</ElDescriptionsItem>
             <ElDescriptionsItem label="可见消息数">{{ detail.message_count }}</ElDescriptionsItem>
           </ElDescriptions>

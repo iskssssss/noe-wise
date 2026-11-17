@@ -236,7 +236,7 @@
         >先选择终端用户和智能体或团队，再发送消息；加载历史会话会切换会话上下文，已有会话期间不能更换用户或对话对象。</FieldTip
       >
     </div>
-    <ElTabs @tab-change="refreshPanels"
+    <ElTabs v-model="activePanel" @tab-change="refreshPanels"
       ><ElTabPane label="对话">
         <p v-if="pendingItems.length" class="pending-summary" role="status">
           {{ pendingItems.length }} 项待处理 · 完成下方回复后继续
@@ -619,11 +619,30 @@
           </div></ElForm
         ></ElTabPane
       >
-      <ElTabPane label="成果文件"
-        ><ElTable
+      <ElTabPane label="成果文件" name="artifacts">
+        <FeedbackNotice v-if="artifactsError" :title="artifactsError" type="error" />
+        <div class="toolbar">
+          <ElButton :disabled="!sessionId" :loading="artifactsLoading" @click="loadArtifacts">
+            {{ artifactsError ? '重新读取成果' : '刷新成果' }}
+          </ElButton>
+          <span v-if="artifactsLoading" role="status">正在读取成果文件…</span>
+          <span v-else-if="artifactsError && artifacts?.length" role="status">
+            刷新未完成，以下保留上次读取的成果。
+          </span>
+        </div>
+        <ElTable
+          v-loading="artifactsLoading"
           table-layout="auto"
           :data="artifacts"
-          empty-text="当前会话尚无成果文件，生成后会显示在这里"
+          :empty-text="
+            !sessionId
+              ? '请先选择历史会话，或在对话中创建会话。'
+              : artifactsLoading
+                ? '正在读取成果文件…'
+                : artifactsError
+                  ? '尚未读取到成果文件，请重新读取。'
+                  : '当前会话尚无成果文件，可在对话中请智能体生成文件。'
+          "
           ><ElTableColumn
             min-width="200"
             show-overflow-tooltip
@@ -632,18 +651,31 @@
           /><ElTableColumn width="96" prop="revision" label="修订" /><ElTableColumn
             width="128"
             show-overflow-tooltip
-            prop="status"
             label="状态"
-          /><ElTableColumn min-width="360" label="文件"
+            ><template #default="{ row }">
+              <ElTag :type="row.status === 'ready' ? 'success' : 'warning'" effect="plain">
+                {{ artifactStatusLabels[row.status as ChatArtifact['status']] }}
+              </ElTag>
+            </template></ElTableColumn
+          ><ElTableColumn min-width="360" label="文件"
             ><template #default="{ row }"
               ><div v-for="file in row.files" :key="file.file_id" class="toolbar">
                 <span>{{ file.path }}</span
-                ><ElButton link :disabled="busy" @click="download(row.id, file.file_id)"
+                ><ElButton
+                  link
+                  :disabled="busy || row.status !== 'ready'"
+                  @click="download(row.id, file.file_id)"
                   >下载</ElButton
-                ><ElButton link :disabled="busy" @click="preview(row.id, file.file_id)"
+                ><ElButton
+                  link
+                  :disabled="busy || row.status !== 'ready'"
+                  @click="preview(row.id, file.file_id)"
                   >预览</ElButton
                 >
-              </div></template
+              </div>
+              <p v-if="row.status !== 'ready'" class="muted">
+                文件{{ row.status === 'expired' ? '已过期' : '不可用' }}，无法下载或预览。
+              </p></template
             ></ElTableColumn
           ></ElTable
         ></ElTabPane
@@ -845,7 +877,13 @@ import type { UploadFile, UploadInstance } from 'element-plus'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { AdminPage, useTask, useUnsavedChanges, useDrawerClose } from '@skillforge/shared/admin'
+import {
+  AdminPage,
+  useTask,
+  useResource,
+  useUnsavedChanges,
+  useDrawerClose
+} from '@skillforge/shared/admin'
 import MarkdownContent from '@skillforge/shared/components/MarkdownContent.vue'
 import {
   artifactPreviewOrigin,
@@ -2372,8 +2410,34 @@ function appendSteeringToMessage() {
 const objective = ref(''),
   maxRounds = ref(CHAT_GOAL_DEFAULT_MAX_ROUNDS),
   goal = ref<ChatGoalStatus>(),
-  artifacts = ref<ChatArtifact[]>([]),
   devices = ref<BrowserDevices>()
+const activePanel = ref('0')
+const {
+  data: artifacts,
+  loading: artifactsLoading,
+  error: artifactsError,
+  reload: loadArtifacts,
+  invalidate: invalidateArtifacts
+} = useResource((signal) => api.chat.artifacts(sessionId.value, signal), [])
+const artifactStatusLabels: Record<ChatArtifact['status'], string> = {
+  ready: '可下载',
+  expired: '已过期',
+  failed: '不可用'
+}
+watch(
+  [sessionId, activePanel, () => auth.identityVersion],
+  ([session, panel, identity], [previousSession, , previousIdentity]) => {
+    invalidateArtifacts()
+    if (session !== previousSession || identity !== previousIdentity) {
+      artifacts.value = []
+      artifactsError.value = ''
+    }
+    if (session && panel === 'artifacts') void loadArtifacts()
+  }
+)
+watch(runId, (run, previous) => {
+  if (!run && previous && sessionId.value && activePanel.value === 'artifacts') void loadArtifacts()
+})
 const browserTasks = ref<BrowserTask[]>([]),
   browserPanelActive = ref(false),
   browserBusy = ref(false),
@@ -2469,12 +2533,11 @@ function browserTaskCleanup(item: BrowserTask) {
 }
 async function refreshPanels(tab?: string | number) {
   browserPanelActive.value = tab === 'browser'
-  if (browserPanelActive.value) return
+  if (browserPanelActive.value || tab === 'artifacts') return
   if (!sessionId.value) return
   await run(async () => {
-    ;[goal.value, artifacts.value, collaboration.value] = await Promise.all([
+    ;[goal.value, collaboration.value] = await Promise.all([
       api.chat.goals(sessionId.value),
-      api.chat.artifacts(sessionId.value),
       api.chat.collaboration(sessionId.value)
     ])
   })

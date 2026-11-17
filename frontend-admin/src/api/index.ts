@@ -1804,9 +1804,10 @@ export const api = {
         `/chat/history?${new URLSearchParams({ session_id: sessionId, limit: '30', ...(before ? { before_message_id: before } : {}) })}`
       ),
     /** 会话最终成果的修订视图；包含历史以支持当前成果的版本详情。 */
-    artifacts: (sessionId: string) =>
+    artifacts: (sessionId: string, signal?: AbortSignal) =>
       get<ChatArtifact[]>(
-        `/chat/sessions/deliverables?${new URLSearchParams({ sessionId, includeHistory: 'true' })}`
+        `/chat/sessions/deliverables?${new URLSearchParams({ sessionId, includeHistory: 'true' })}`,
+        { signal, silent: true }
       ).then((items) => items.map(normalizeChatArtifact)),
     /** 获取浏览器原生流式下载入口，不在前端读取或缓存产物字节。 */
     downloadTicket: (revisionId: string, fileId: string) =>

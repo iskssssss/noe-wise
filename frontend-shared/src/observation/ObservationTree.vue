@@ -23,6 +23,7 @@ import {
   formatObservationDuration,
   formatObservationCosts,
   formatObservationTokens,
+  observationAnswerStatus,
   observationAvailability,
   observationCoverage,
   observationCostCoverage,
@@ -395,9 +396,9 @@ function nodeLabel(kind: string) {
     <section v-if="summary" class="trajectory-overview" aria-label="任务输入与结果">
       <header class="section-heading overview-heading">
         <h3>任务概览</h3>
-        <ElTag size="small" :type="tagType(summary.status)">{{
-          statusLabel(summary.status)
-        }}</ElTag>
+        <ElTag size="small" :type="tagType(summary.status)"
+          >执行：{{ statusLabel(summary.status) }}</ElTag
+        >
       </header>
       <div class="question-answer">
         <section class="overview-content">
@@ -416,8 +417,10 @@ function nodeLabel(kind: string) {
       <div class="overview-statistics" aria-label="运行概况">
         <dl class="overview-metrics">
           <div>
-            <dt>回答状态</dt>
-            <dd>{{ statusLabel(summary.answer_status) }}</dd>
+            <dt>公开回复</dt>
+            <dd>
+              {{ observationAnswerStatus(summary.answer_status) }}
+            </dd>
           </div>
           <div>
             <dt>执行轮</dt>
@@ -444,6 +447,7 @@ function nodeLabel(kind: string) {
             <dd>{{ formatObservationDuration(summary.duration_ms) }}</dd>
           </div>
         </dl>
+        <p class="muted">公开回复包含失败说明；是否执行成功请看任务概览中的执行状态。</p>
         <p class="muted coverage-note">用量：{{ observationCoverage(summary.coverage?.status) }}</p>
         <div v-if="detail?.usage_summary" class="cost-summary">
           <span

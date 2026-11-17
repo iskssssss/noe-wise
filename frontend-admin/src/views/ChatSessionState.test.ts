@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   submit: vi.fn(),
   budget: vi.fn(),
+  artifacts: vi.fn(),
+  goals: vi.fn(),
+  collaboration: vi.fn(),
   createGoal: vi.fn()
 }))
 vi.mock('../api', () => ({
@@ -44,9 +47,9 @@ vi.mock('../api', () => ({
       submit: mocks.submit,
       runBudget: mocks.budget,
       createGoal: mocks.createGoal,
-      goals: async () => ({ goal: null }),
-      artifacts: async () => [],
-      collaboration: async () => ({})
+      goals: mocks.goals,
+      artifacts: mocks.artifacts,
+      collaboration: mocks.collaboration
     },
     agents: { list: async () => ({ items: [] }) },
     teams: { list: async () => [] }
@@ -86,6 +89,9 @@ beforeEach(() => {
   mocks.history.mockImplementation(async (id: string) => history(id))
   mocks.observe.mockResolvedValue(undefined)
   mocks.confirm.mockResolvedValue(true)
+  mocks.artifacts.mockResolvedValue([])
+  mocks.goals.mockResolvedValue({ goal: null })
+  mocks.collaboration.mockResolvedValue({})
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -107,6 +113,151 @@ async function setup() {
   return { sessions, input }
 }
 describe('聊天会话原子切换', () => {
+  const artifact = (name: string, status = 'ready') => ({
+    id: name,
+    name,
+    revision: 1,
+    status,
+    files: [{ file_id: name + ':file', path: name + '.txt' }]
+  })
+  const artifactPanel = () => wrapper.get('[id="pane-artifacts"]')
+  async function openArtifacts() {
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '成果文件')!
+      .trigger('click')
+    await flushPromises()
+  }
+  it('未选择会话时说明前置条件，选择会话后自动读取当前成果', async () => {
+    wrapper = mount(ChatPage, { attachTo: document.body })
+    await flushPromises()
+    await openArtifacts()
+    expect(artifactPanel().text()).toContain('请先选择历史会话')
+    expect(mocks.artifacts).not.toHaveBeenCalled()
+    mocks.artifacts.mockResolvedValue([artifact('A成果')])
+    wrapper
+      .findAllComponents(ElSelect)
+      .find((field) => field.props('placeholder') === '历史会话')!
+      .vm.$emit('change', 'A')
+    await flushPromises()
+    expect(artifactPanel().text()).toContain('A成果')
+    expect(artifactPanel().text()).toContain('可下载')
+  })
+  it('成果独立读取期间显示加载状态，不显示成功空态或锁住整个会话', async () => {
+    await setup()
+    let resolve!: (value: unknown[]) => void
+    mocks.artifacts.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await openArtifacts()
+    expect(artifactPanel().text()).toContain('正在读取成果文件')
+    expect(artifactPanel().text()).not.toContain('当前会话尚无成果文件')
+    expect(
+      wrapper
+        .findAllComponents(ElSelect)
+        .find((field) => field.props('placeholder') === '历史会话')!
+        .props('disabled')
+    ).toBe(false)
+    expect(mocks.goals).not.toHaveBeenCalled()
+    expect(mocks.collaboration).not.toHaveBeenCalled()
+    resolve([])
+    await flushPromises()
+    expect(artifactPanel().text()).toContain('当前会话尚无成果文件')
+  })
+  it('首次读取失败提供重新读取入口，刷新失败保留已有成果', async () => {
+    await setup()
+    mocks.artifacts.mockRejectedValueOnce(new Error('成果读取暂时失败'))
+    await openArtifacts()
+    expect(artifactPanel().text()).toContain('尚未读取到成果文件，请重新读取')
+    expect(artifactPanel().text()).not.toContain('当前会话尚无成果文件')
+    mocks.artifacts.mockResolvedValueOnce([artifact('已读取成果')])
+    await artifactPanel()
+      .findAll('button')
+      .find((button) => button.text() === '重新读取成果')!
+      .trigger('click')
+    await flushPromises()
+    expect(artifactPanel().text()).toContain('已读取成果')
+    mocks.artifacts.mockRejectedValueOnce(new Error('刷新失败'))
+    await artifactPanel()
+      .findAll('button')
+      .find((button) => button.text() === '刷新成果')!
+      .trigger('click')
+    await flushPromises()
+    expect(artifactPanel().text()).toContain('以下保留上次读取的成果')
+    expect(artifactPanel().text()).toContain('已读取成果')
+  })
+  it('成果页内切换会话取消旧读取，迟到结果不能覆盖新会话', async () => {
+    const { sessions } = await setup()
+    let resolveOld!: (value: unknown[]) => void
+    mocks.artifacts.mockReturnValueOnce(
+      new Promise((done) => {
+        resolveOld = done
+      })
+    )
+    await openArtifacts()
+    const oldSignal = mocks.artifacts.mock.calls[0]![1] as AbortSignal
+    mocks.artifacts.mockResolvedValueOnce([artifact('B成果')])
+    sessions.vm.$emit('change', 'B')
+    await flushPromises()
+    expect(oldSignal.aborted).toBe(true)
+    expect(artifactPanel().text()).toContain('B成果')
+    resolveOld([artifact('A旧成果')])
+    await flushPromises()
+    expect(artifactPanel().text()).not.toContain('A旧成果')
+    expect(artifactPanel().text()).toContain('B成果')
+  })
+  it('停留在成果页时，运行结束后自动读取新成果', async () => {
+    mocks.history.mockImplementation(async (id: string) => ({
+      ...history(id),
+      activities: [{ node_id: 'run:' + id, node_type: 'agent_runtime', status: 'running' }]
+    }))
+    await setup()
+    await openArtifacts()
+    expect(artifactPanel().text()).toContain('当前会话尚无成果文件')
+    mocks.artifacts.mockResolvedValueOnce([artifact('刚生成的成果')])
+    const observation = mocks.observe.mock.calls[0]![1] as {
+      onHistory: (session: string, value: object) => void
+    }
+    observation.onHistory('A', {
+      ...history('A'),
+      activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'completed' }]
+    })
+    await flushPromises()
+    expect(artifactPanel().text()).toContain('刚生成的成果')
+  })
+  it('离开成果页和卸载时取消读取，过期或失败文件说明原因且禁用操作', async () => {
+    await setup()
+    mocks.artifacts.mockResolvedValue([
+      artifact('旧成果', 'expired'),
+      artifact('失败成果', 'failed')
+    ])
+    await openArtifacts()
+    expect(artifactPanel().text()).toContain('已过期')
+    expect(artifactPanel().text()).toContain('不可用')
+    const actions = artifactPanel()
+      .findAll('button')
+      .filter((button) => ['下载', '预览'].includes(button.text()))
+    expect(actions).toHaveLength(4)
+    actions.forEach((button) => expect(button.attributes('disabled')).toBeDefined())
+    mocks.artifacts.mockReturnValue(new Promise(() => {}))
+    await artifactPanel()
+      .findAll('button')
+      .find((button) => button.text() === '刷新成果')!
+      .trigger('click')
+    const pendingSignal = mocks.artifacts.mock.calls.at(-1)![1] as AbortSignal
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text() === '对话')!
+      .trigger('click')
+    await flushPromises()
+    expect(pendingSignal.aborted).toBe(true)
+    await openArtifacts()
+    const lastSignal = mocks.artifacts.mock.calls.at(-1)![1] as AbortSignal
+    wrapper.unmount()
+    expect(lastSignal.aborted).toBe(true)
+  })
   it('保留历史失败与取消说明，不标为最终回答，正常回答仍可辨认', async () => {
     mocks.history.mockResolvedValue({
       ...history('A'),
