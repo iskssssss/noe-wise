@@ -489,20 +489,15 @@ public class ChatController {
     }
 
     /**
-     * 获取当前租户 ID，缺失时抛 401。
+     * 会话详情（右侧会话详情面板）。
      *
-     * @return 租户 ID
-     */    /**
-     * 会话详情聚合（右侧会话详情面板）。
-     *
-     * <p>返回选中会话的关联信息：会话本体、绑定 Agent、工作流执行记录、
-     * 运行时任务（挂起/完成）、按执行关联的回调注册。跨租户会话 404。
+     * <p>返回会话本体与绑定 Agent；执行记录由轨迹查询接口提供。跨租户会话 404。
      *
      * @param sessionId 会话 ID
      * @return 会话详情聚合
      */
-    @Operation(summary = "会话详情聚合",
-            description = "返回会话本体/绑定 Agent/工作流执行记录/运行时任务/回调注册；跨租户会话 404")
+    @Operation(summary = "会话详情",
+            description = "返回会话本体与绑定 Agent；执行记录使用轨迹查询接口；跨租户会话 404")
     @RequirePermission("foundation.sessions.read")
     @GetMapping("/chat/sessions/detail")
     public ApiResponse<SessionDetailResponse> sessionDetail(@RequestParam("sessionId") String sessionId) {
@@ -516,18 +511,13 @@ public class ChatController {
                         agentDO.getId(), agentDO.getAgentKey(), agentDO.getName(), agentDO.getStatus());
             }
         }
-        List<SessionDetailResponse.ExecutionItem> executionItems = List.of();
-        List<SessionDetailResponse.TaskItem> taskItems = List.of();
-        List<SessionDetailResponse.CallbackItem> callbackItems = List.of();
         SessionDetailResponse.Session sessionItem = new SessionDetailResponse.Session(
                 session.getSessionId(), session.getSummaryText(), session.getMessageCount(),
                 session.getUpdatedAt(), session.getAgentId(), session.getTeamId());
-        log.info("会话详情聚合 tenant={} session={} executions={} tasks={} callbacks={}",
-                tenantId, sessionId, executionItems.size(), taskItems.size(), callbackItems.size());
         return ApiResponses.wrap(new SessionDetailResponse(sessionItem,
                 session.getEndUserId() == null ? null : session.getEndUserId().toString(),
                 session.getAgentId() == null ? null : session.getAgentId().toString(),
-                sessionService.isOpenPlatformClosed(session), agent, executionItems, taskItems, callbackItems));
+                sessionService.isOpenPlatformClosed(session), agent));
     }
 
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */

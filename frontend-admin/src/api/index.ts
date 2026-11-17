@@ -190,30 +190,6 @@ export interface SessionDetail {
     name: string
     status: string
   } | null
-  executions: Array<{
-    execution_id: string
-    workflow_id: string
-    workflow_name?: string | null
-    state: string
-    created_at: string
-    updated_at: string
-  }>
-  tasks: Array<{
-    execution_id: string
-    node_id: string
-    task_type: string
-    status: string
-    hitl_expires_at?: string | null
-    created_at: string
-  }>
-  callbacks: Array<{
-    callback_id: string
-    execution_id?: string | null
-    workflow_id?: string | null
-    action: string
-    status: string
-    created_at: string
-  }>
 }
 
 export interface MarketWorkflow {
@@ -1873,7 +1849,7 @@ export const api = {
       post<{ session_id: string; status: 'closed' }>('/chat/sessions/close', {
         session_id: sessionId
       }),
-    /** 会话详情聚合：会话本体 / 绑定 Agent / 工作流执行记录 / 运行时任务 / 回调注册 */
+    /** 会话详情：会话本体与绑定 Agent；执行记录使用 trajectories 查询 */
     sessionDetail: (sessionId: string) =>
       get<SessionDetail>(`/chat/sessions/detail?sessionId=${encodeURIComponent(sessionId)}`)
   },

@@ -51,7 +51,12 @@ async function render(
     history: createMemoryHistory(),
     routes: [
       { path: '/first', component: { render: () => h('h1', '第一页') } },
-      { path: '/second', component: { render: () => h('h1', '第二页') } }
+      { path: '/second', component: { render: () => h('h1', '第二页') } },
+      {
+        path: '/first/detail',
+        component: { render: () => h('h1', '执行详情') },
+        meta: { title: '执行详情', navigationPath: '/second' }
+      }
     ]
   })
   const host = defineComponent({
@@ -90,6 +95,18 @@ async function openNavigation() {
 }
 
 describe('共享布局响应式导航', () => {
+  it('详情页按明确归属高亮菜单，标题与面包屑保留当前详情名称', async () => {
+    mobile = false
+    const { router } = await render()
+    await router.push('/first/detail')
+    await flushPromises()
+    expect(document.querySelector('.el-menu-item.is-active')?.textContent).toContain('第二页')
+    expect(document.querySelector('[aria-label="面包屑"]')?.textContent).toContain('第二页')
+    expect(document.querySelector('.admin-breadcrumb [aria-current="page"]')?.textContent).toBe(
+      '执行详情'
+    )
+    expect(document.title).toBe('执行详情 · 机构后台')
+  })
   it('窄屏首次不占侧栏，无偏好写权也能打开导航；Esc关闭恢复按钮焦点', async () => {
     const { compactChange } = await render()
     expect(document.querySelector('.admin-layout--narrow')).not.toBeNull()

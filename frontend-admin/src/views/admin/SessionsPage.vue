@@ -75,7 +75,7 @@
             >{{ row.summary || '未命名会话' }}</ElButton
           ><small class="session-id">{{ row.session_id }}</small></template
         > </ElTableColumn
-      ><ElTableColumn width="96" prop="message_count" label="消息数" /><ElTableColumn
+      ><ElTableColumn width="110" prop="message_count" label="请求次数" /><ElTableColumn
         width="190"
         show-overflow-tooltip
         prop="updated_at"
@@ -84,11 +84,13 @@
       ><ElTableColumn width="120" class-name="admin-table-actions" label="操作"
         ><template #default="{ row }"
           ><RouterLink :to="'/admin/chat/sessions/' + row.session_id + '/trace'"
-            >追踪</RouterLink
+            >执行轨迹</RouterLink
           ></template
         ></ElTableColumn
       ></ElTable
-    ><ElDrawer
+    >
+    <p class="session-count">请求次数统计已受理的会话请求，不包含助手回复。</p>
+    <ElDrawer
       v-model="open"
       title="会话详情"
       size="min(960px, 100vw)"
@@ -106,8 +108,8 @@
           ><ElDescriptionsItem label="更新时间">{{
             formatDateTime(detail.session.updated_at)
           }}</ElDescriptionsItem></ElDescriptions
-        ><ElTabs
-          ><ElTabPane label="问答消息"
+        ><ElTabs v-model="detailTab"
+          ><ElTabPane label="问答消息" name="messages"
             ><ElButton v-if="!history" :loading="busy" @click="loadHistory">{{
               busy ? '正在读取消息' : '重新读取消息'
             }}</ElButton>
@@ -124,81 +126,78 @@
               style="margin-top: 12px"
               ><div class="muted">
                 {{ statusLabel(message.role) }} · {{ formatDateTime(message.created_at) }}
+                <ElTag v-if="message.metadata?.state === 'failed'" size="small" type="danger"
+                  >未完成</ElTag
+                >
+                <ElTag v-else-if="message.metadata?.state === 'cancelled'" size="small" type="info"
+                  >已取消</ElTag
+                >
               </div>
               <SessionMessageContent
                 :session="history!.session_id"
                 :message="message"
                 @citation="citationSelection = $event" /></ElCard></ElTabPane
-          ><ElTabPane label="工作流执行"
-            ><ElTable
+          ><ElTabPane label="执行记录" name="executions">
+            <p class="session-count">
+              按请求查看执行结果；进入执行轨迹可查看工具调用、工作流与等待过程。
+            </p>
+            <ElButton
+              v-if="executions.error.value"
+              :loading="executions.loading.value"
+              @click="executions.reload"
+              >重新读取执行记录</ElButton
+            >
+            <p v-if="executions.data.value" class="session-count" role="status">
+              共 {{ executions.data.value.total }} 次执行 · 第 {{ executions.data.value.page }} 页
+              <span v-if="executions.error.value">；本次读取失败，仍显示上次结果。</span>
+            </p>
+            <ElTable
               table-layout="auto"
-              :data="detail.executions"
-              empty-text="本会话暂无工作流执行记录"
-              ><ElTableColumn
-                min-width="200"
-                show-overflow-tooltip
-                prop="workflow_name"
-                label="工作流"
-              /><ElTableColumn
-                min-width="200"
-                show-overflow-tooltip
-                prop="execution_id"
-                label="执行 ID"
-              /><ElTableColumn width="128" show-overflow-tooltip label="状态"
-                ><template #default="{ row }">{{ statusLabel(row.state) }}</template></ElTableColumn
-              ><ElTableColumn width="190" show-overflow-tooltip prop="updated_at" label="更新"
-                ><template #default="{ row }">{{
-                  formatDateTime(row.updated_at)
-                }}</template></ElTableColumn
-              ></ElTable
-            ></ElTabPane
-          ><ElTabPane label="任务"
-            ><ElTable table-layout="auto" :data="detail.tasks" empty-text="本会话暂无任务记录"
-              ><ElTableColumn
-                min-width="140"
-                show-overflow-tooltip
-                prop="task_type"
-                label="类型"
-              /><ElTableColumn
-                min-width="200"
-                show-overflow-tooltip
-                prop="node_id"
-                label="节点"
-              /><ElTableColumn width="128" show-overflow-tooltip label="状态"
+              :data="executions.data.value?.items ?? []"
+              v-loading="executions.loading.value"
+              :empty-text="
+                executions.data.value
+                  ? '本会话暂无执行记录'
+                  : executions.loading.value
+                    ? '正在读取执行记录…'
+                    : '执行记录尚未读取，请重新读取'
+              "
+            >
+              <ElTableColumn min-width="240" show-overflow-tooltip label="请求">
+                <template #default="{ row }"
+                  ><RouterLink
+                    :to="{
+                      path:
+                        '/admin/chat/sessions/' +
+                        encodeURIComponent(detail.session.session_id) +
+                        '/trace',
+                      query: { root_input_id: row.root_input_id }
+                    }"
+                    >{{ row.input || '查看本次执行' }}</RouterLink
+                  ></template
+                >
+              </ElTableColumn>
+              <ElTableColumn width="100" label="状态"
                 ><template #default="{ row }">{{
                   statusLabel(row.status)
                 }}</template></ElTableColumn
-              ><ElTableColumn
-                width="190"
-                show-overflow-tooltip
-                prop="hitl_expires_at"
-                label="等待截止"
+              >
+              <ElTableColumn width="100" prop="tool_calls" label="工具调用" />
+              <ElTableColumn width="190" label="开始时间"
                 ><template #default="{ row }">{{
-                  formatDateTime(row.hitl_expires_at)
+                  formatDateTime(row.started_at)
                 }}</template></ElTableColumn
-              ></ElTable
-            ></ElTabPane
-          ><ElTabPane label="回调"
-            ><ElTable table-layout="auto" :data="detail.callbacks" empty-text="本会话暂无回调记录"
-              ><ElTableColumn
-                min-width="200"
-                show-overflow-tooltip
-                prop="callback_id"
-                label="回调 ID"
-              /><ElTableColumn
-                min-width="160"
-                show-overflow-tooltip
-                prop="action"
-                label="操作"
-              /><ElTableColumn width="128" show-overflow-tooltip label="状态"
-                ><template #default="{ row }">{{
-                  statusLabel(row.status)
-                }}</template></ElTableColumn
-              ></ElTable
-            ></ElTabPane
-          ></ElTabs
-        ></template
-      ></ElDrawer
+              >
+            </ElTable>
+            <ElPagination
+              v-if="executions.data.value && executions.data.value.total > executionPageSize"
+              :current-page="executions.data.value.page"
+              :page-size="executionPageSize"
+              :total="executions.data.value.total"
+              :disabled="executions.loading.value"
+              layout="prev, pager, next"
+              @current-change="loadExecutions"
+            /> </ElTabPane></ElTabs></template></ElDrawer
     ><CitationDetail
       v-if="citationSelection"
       :selection="citationSelection"
@@ -268,6 +267,7 @@ const appliedUserName = computed(() =>
 const pageError = computed(() =>
   [
     error.value || loadError.value,
+    executions.error.value,
     agentDirectory.error.value && `智能体选项读取失败：${agentDirectory.error.value}`,
     userDirectory.error.value && `终端用户选项读取失败：${userDirectory.error.value}`
   ]
@@ -279,11 +279,40 @@ const { busy, error, run } = useTask(),
   pendingSession = ref(''),
   detail = ref<SessionDetail>(),
   history = ref<ChatHistoryResponse>()
+const detailTab = ref('messages')
+const executionPageSize = 20
+const executionPage = ref(1)
+const executions = useResource(async (signal) => {
+  const page = executionPage.value
+  const result = await api.trajectories.list(
+    {
+      session_id: detail.value!.session.session_id,
+      started_from: '1970-01-01T00:00:00Z',
+      page,
+      page_size: executionPageSize
+    },
+    { signal, silent: true }
+  )
+  return { ...result, page }
+})
+function loadExecutions(page: number) {
+  executionPage.value = page
+  void executions.reload()
+}
+watch(detailTab, (tab) => {
+  if (tab === 'executions' && !executions.data.value) loadExecutions(1)
+})
 const citationSelection = ref<{ session: string; message: string; citation: string }>()
 watch(
   open,
   (value) => {
-    if (!value) citationSelection.value = undefined
+    if (!value) {
+      citationSelection.value = undefined
+      executions.invalidate()
+      executions.data.value = undefined
+      executions.error.value = ''
+      detailTab.value = 'messages'
+    }
   },
   { flush: 'sync' }
 )

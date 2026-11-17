@@ -91,7 +91,7 @@ const router = createRouter({
         {
           path: 'chat/sessions/:sessionId/trace',
           component: () => import('../views/SessionTracePage.vue'),
-          meta: { titleKey: 'admin.route.sessionTrace' }
+          meta: { title: adminZhCN.route.sessionTrace, navigationPath: '/admin/trajectories' }
         },
         {
           path: 'home',

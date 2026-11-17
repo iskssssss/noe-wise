@@ -476,14 +476,11 @@ export const chatEndpoints: ApiDocEndpoint[] = [
       end_user_id: '9223372036854775806',
       target_agent_id: '101',
       closed: false,
-      agent: null,
-      executions: [],
-      tasks: [],
-      callbacks: []
+      agent: null
     },
     notes: [
       'end_user_id、target_agent_id 使用十进制字符串，恢复会话绑定时保持完整 ID 精度；closed 从会话权威关闭记录读取。Agent 不可见或已删除时仍保留原绑定，不改选其他对象。',
-      '当前 executions、tasks、callbacks 返回空数组。执行过程请使用会话执行轨迹接口，调用用量请使用根请求诊断接口。'
+      '会话详情只返回会话与智能体信息。message_count 为已受理的会话请求次数，不包含助手回复；执行记录请使用会话执行轨迹接口，调用用量请使用根请求诊断接口。'
     ]
   },
   {

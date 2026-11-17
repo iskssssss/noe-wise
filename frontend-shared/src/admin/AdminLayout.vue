@@ -110,11 +110,16 @@ onScopeDispose(() => {
 watch(dark, (value) => document.documentElement.classList.toggle('dark', value), {
   immediate: true
 })
+const navigationPath = computed(() =>
+  typeof route.meta.navigationPath === 'string' ? route.meta.navigationPath : route.path
+)
 const activeMenu = computed(
   () =>
     navigationLeaves(props.menus)
       .filter(
-        (item) => item.path && (route.path === item.path || route.path.startsWith(`${item.path}/`))
+        (item) =>
+          item.path &&
+          (navigationPath.value === item.path || navigationPath.value.startsWith(`${item.path}/`))
       )
       .sort((a, b) => b.path!.length - a.path!.length)[0]
 )

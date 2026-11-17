@@ -8,7 +8,7 @@ import java.time.Instant;
  *
  * @param sessionId    会话 ID（续聊时回传）
  * @param summary      会话画像摘要，可为空
- * @param messageCount 消息数
+ * @param messageCount 已受理的会话请求次数，不包含助手回复
  * @param updatedAt    最近更新时间
  * @param agentId      单 Agent 目标，可空
  * @param teamId       Team 目标，可空
@@ -17,7 +17,7 @@ import java.time.Instant;
 public record SessionItemResponse(
         @Schema(description = "会话 ID（续聊时回传）") String sessionId,
         @Schema(description = "会话画像摘要，可为空", nullable = true) String summary,
-        @Schema(description = "消息数") Integer messageCount,
+        @Schema(description = "已受理的会话请求次数，不包含助手回复") Integer messageCount,
         @Schema(description = "最近更新时间") Instant updatedAt,
         @Schema(description = "单 Agent 目标，可空", nullable = true) Long agentId,
         @Schema(description = "Team 目标，可空", nullable = true) String teamId,

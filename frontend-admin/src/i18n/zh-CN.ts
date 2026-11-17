@@ -1358,7 +1358,7 @@ export const adminZhCN = {
         sessionDetail: {
           title: '会话管理详情',
           summary:
-            '查询会话基本信息与绑定的 Agent。执行、任务和回调字段当前为空，诊断请使用执行轨迹接口。',
+            '查询会话基本信息与绑定的 Agent；请求次数不包含助手回复，执行记录请使用执行轨迹接口。',
           sessionDescription: '当前租户的会话 ID；跨租户返回 404。',
           responseType: 'application/json · 会话聚合详情'
         },

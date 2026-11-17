@@ -321,7 +321,7 @@ class ChatControllerTest {
     void sessionDetailReturnsAuthoritativeBindingsAndClosedStateWhenAgentWasDeleted() throws Exception {
         var sessions = mock(SessionService.class);
         var session = SessionView.builder().sessionId("session-1").tenantId(7L)
-                .endUserId(9223372036854775806L).agentId(9223372036854775807L)
+                .endUserId(9223372036854775806L).agentId(9223372036854775807L).messageCount(17)
                 .metadata(Map.of("closed_at", "2026-10-29T00:00:00+08:00")).build();
         when(sessions.require("7", "session-1")).thenReturn(session);
         when(sessions.isOpenPlatformClosed(session)).thenCallRealMethod();
@@ -340,6 +340,10 @@ class ChatControllerTest {
         assertEquals("9223372036854775807", body.path("data").path("target_agent_id").textValue());
         assertEquals(true, body.path("data").path("closed").booleanValue());
         assertEquals(true, body.path("data").path("agent").isNull());
+        assertEquals(17, body.path("data").path("session").path("message_count").intValue());
+        for (String placeholder : List.of("executions", "tasks", "callbacks")) {
+            assertEquals(false, body.path("data").has(placeholder));
+        }
         verify(sessions).require("7", "session-1");
     }
 

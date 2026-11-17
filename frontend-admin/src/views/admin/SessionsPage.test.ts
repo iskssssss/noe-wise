@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElDrawer, ElSelect } from 'element-plus'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { ElButton, ElDrawer, ElPagination, ElSelect } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import CitationDetail from '../../components/CitationDetail.vue'
@@ -12,6 +12,7 @@ const calls = vi.hoisted(() => ({
   sessions: vi.fn(),
   detail: vi.fn(),
   history: vi.fn(),
+  trajectories: vi.fn(),
   get: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ identityVersion: 0 }) }))
@@ -19,6 +20,7 @@ vi.mock('../../api', () => ({
   get: calls.get,
   api: {
     agents: { list: calls.agents },
+    trajectories: { list: calls.trajectories },
     chat: {
       endUsers: calls.users,
       sessions: calls.sessions,
@@ -36,7 +38,11 @@ function button(wrapper: VueWrapper, label: string) {
 async function render() {
   const wrapper = mount(SessionsPage, {
     attachTo: document.body,
-    global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } }
+    global: {
+      stubs: {
+        RouterLink: { name: 'RouterLink', props: ['to'], template: '<a :href="to"><slot /></a>' }
+      }
+    }
   })
   wrappers.push(wrapper)
   await flushPromises()
@@ -46,6 +52,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   calls.agents.mockResolvedValue({ items: [{ id: 'agent-a', name: '客服助手' }] })
   calls.users.mockResolvedValue([{ id: 'user-a', display_name: '客户甲' }])
+  calls.trajectories.mockResolvedValue({ total: 0, items: [] })
   calls.sessions.mockResolvedValue([
     {
       session_id: 'session-a',
@@ -56,10 +63,7 @@ beforeEach(() => {
   ])
   calls.detail.mockResolvedValue({
     session: { session_id: 'session-a', message_count: 2, updated_at: '2026-10-30T00:00:00Z' },
-    agent: { name: '客服助手' },
-    executions: [],
-    tasks: [],
-    callbacks: []
+    agent: { name: '客服助手' }
   })
   calls.history.mockResolvedValue({
     session_id: 'session-a',
@@ -236,10 +240,7 @@ describe('会话筛选目录独立恢复', () => {
     expect(calls.history).toHaveBeenCalledWith('session-a')
     finishDetail({
       session: { session_id: 'session-a', updated_at: '2026-10-30T00:00:00Z' },
-      agent: { name: '客服助手' },
-      executions: [],
-      tasks: [],
-      callbacks: []
+      agent: { name: '客服助手' }
     })
     await flushPromises()
     expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(true)
@@ -258,10 +259,7 @@ describe('会话详情知识依据', () => {
     ])
     calls.detail.mockImplementation(async (id: string) => ({
       session: { session_id: id },
-      agent: { name: '客服助手' },
-      executions: [],
-      tasks: [],
-      callbacks: []
+      agent: { name: '客服助手' }
     }))
     calls.history.mockImplementation(async (id: string) => ({
       session_id: id,
@@ -344,10 +342,7 @@ describe('会话详情知识依据', () => {
     expect((calls.get.mock.calls[0]![1] as { signal: AbortSignal }).signal.aborted).toBe(true)
     finishDetail({
       session: { session_id: 'session-b' },
-      agent: { name: '客服助手' },
-      executions: [],
-      tasks: [],
-      callbacks: []
+      agent: { name: '客服助手' }
     })
     await flushPromises()
     await button(wrapper, '知识依据 1').trigger('click')
@@ -355,5 +350,108 @@ describe('会话详情知识依据', () => {
     expect(calls.get.mock.calls[1]![0]).toBe(
       '/chat/citations/content?session_id=session-b&message_id=reply-session-b&citation_id=k1234567890abcdef'
     )
+  })
+})
+
+describe('会话详情真实执行记录', () => {
+  async function showExecutions(wrapper: VueWrapper) {
+    await button(wrapper, '资料会话').trigger('click')
+    await flushPromises()
+    await new DOMWrapper(document.querySelector('#tab-executions')!).trigger('click')
+    await flushPromises()
+  }
+  it('明确请求计数口径，按会话读取全部时间范围的真实轮次并定位到所选执行', async () => {
+    calls.trajectories.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          root_input_id: 'request-failed',
+          input: '生成文件失败的请求',
+          status: 'FAILED',
+          tool_calls: 0,
+          started_at: '2026-11-14T04:14:11Z'
+        }
+      ]
+    })
+    const wrapper = await render()
+    expect(wrapper.text()).toContain('请求次数')
+    expect(wrapper.text()).toContain('不包含助手回复')
+    expect(calls.trajectories).not.toHaveBeenCalled()
+    await showExecutions(wrapper)
+    expect(calls.trajectories).toHaveBeenCalledWith(
+      { session_id: 'session-a', started_from: '1970-01-01T00:00:00Z', page: 1, page_size: 20 },
+      { signal: expect.any(AbortSignal), silent: true }
+    )
+    expect(document.body.textContent).toContain('共 1 次执行')
+    expect(document.body.textContent).toContain('失败')
+    const link = wrapper
+      .findAllComponents({ name: 'RouterLink' })
+      .find((item) => item.text() === '生成文件失败的请求')
+    expect(link?.props('to')).toEqual({
+      path: '/admin/chat/sessions/session-a/trace',
+      query: { root_input_id: 'request-failed' }
+    })
+    expect(document.querySelector('#tab-1')).toBeNull()
+  })
+  it('初次失败不冒充无记录，重新读取后显示真实空态', async () => {
+    calls.trajectories.mockRejectedValueOnce(new Error('执行记录读取失败'))
+    const wrapper = await render()
+    await showExecutions(wrapper)
+    expect(document.body.textContent).toContain('执行记录尚未读取')
+    expect(document.body.textContent).not.toContain('本会话暂无执行记录')
+    expect(document.querySelectorAll('.el-message')).toHaveLength(1)
+    await button(wrapper, '重新读取执行记录').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('本会话暂无执行记录')
+  })
+  it('翻页失败保留原页，重读请求失败的页后替换列表', async () => {
+    calls.trajectories.mockResolvedValueOnce({
+      total: 21,
+      items: [
+        { root_input_id: 'request-first', input: '第一页执行', status: 'COMPLETED', tool_calls: 1 }
+      ]
+    })
+    const wrapper = await render()
+    await showExecutions(wrapper)
+    calls.trajectories.mockRejectedValueOnce(new Error('下一页读取失败'))
+    wrapper.getComponent(ElPagination).vm.$emit('current-change', 2)
+    await flushPromises()
+    expect(document.body.textContent).toContain('第 1 页')
+    expect(document.body.textContent).toContain('第一页执行')
+    expect(document.body.textContent).toContain('仍显示上次结果')
+    calls.trajectories.mockResolvedValueOnce({
+      total: 21,
+      items: [
+        { root_input_id: 'request-last', input: '第二页执行', status: 'CANCELLED', tool_calls: 0 }
+      ]
+    })
+    await button(wrapper, '重新读取执行记录').trigger('click')
+    await flushPromises()
+    expect(calls.trajectories.mock.lastCall?.[0].page).toBe(2)
+    expect(document.body.textContent).toContain('第 2 页')
+    expect(document.body.textContent).not.toContain('第一页执行')
+    expect(document.body.textContent).toContain('第二页执行')
+  })
+  it('关闭详情取消读取，迟到结果不会进入重新打开的详情', async () => {
+    let finish!: (value: unknown) => void
+    calls.trajectories.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const wrapper = await render()
+    await showExecutions(wrapper)
+    const signal = calls.trajectories.mock.calls[0]![1].signal as AbortSignal
+    wrapper.getComponent(ElDrawer).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(signal.aborted).toBe(true)
+    await showExecutions(wrapper)
+    finish({
+      total: 1,
+      items: [{ root_input_id: 'late', input: '旧请求迟到内容', status: 'FAILED' }]
+    })
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('旧请求迟到内容')
+    expect(document.body.textContent).toContain('本会话暂无执行记录')
   })
 })
