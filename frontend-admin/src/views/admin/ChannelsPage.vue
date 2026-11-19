@@ -303,6 +303,16 @@
         type="warning"
         :closable="false"
       />
+      <p class="admin-field-help">
+        在独立会话端选择“渠道令牌”，填写本渠道的令牌。
+        <template v-if="selected?.type === 'openapi'">
+          如果使用 API Key 和 API Secret，请选择“API 凭据”并填写这两项。
+        </template>
+        服务地址和会话入口由机构统一提供；接入前请先为渠道绑定已发布智能体。
+      </p>
+      <p class="admin-field-help">
+        已保存的凭据可继续使用，无需重新签发。轮换会使对应旧凭据立即失效，请同步更新使用它的接入方。
+      </p>
       <p v-if="createdCredentials" class="admin-field-help">
         渠道已创建。请先保存本次令牌，关闭后无法再次查看。{{
           selectedAgents.length ? '所选智能体已绑定。' : '接入前还需绑定已发布智能体。'

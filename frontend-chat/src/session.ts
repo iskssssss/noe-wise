@@ -520,7 +520,8 @@ export function useConversation() {
       if (version === selection && request === artifactsRequest) artifacts.value = value
     } catch (cause) {
       if (version === selection && request === artifactsRequest)
-        artifactsError.value = cause instanceof Error ? cause.message : '成果读取失败。'
+        artifactsError.value =
+          cause instanceof RequestError ? cause.message : '成果读取失败，请检查网络后重新读取。'
     } finally {
       if (version === selection && request === artifactsRequest) artifactsLoading.value = false
     }

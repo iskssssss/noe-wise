@@ -85,6 +85,9 @@ const historyOpen = ref(false),
   selectedArtifact = ref(''),
   historyQuery = ref(''),
   headerMenuOpen = ref(false)
+watch(activePanel, (panel) => {
+  if (panel === 'artifacts' && !c.artifactsLoading) void c.refreshArtifacts()
+})
 watch(
   () => [c.client, c.userId, c.target],
   () => {
@@ -588,6 +591,8 @@ onMounted(async () => {
     if (!value || typeof value.address !== 'string' || !['token', 'hmac'].includes(value.mode))
       return
     Object.assign(settings, value)
+    // 先挂载已保存认证方式的字段，再校验，避免 API 凭据被旧令牌必填规则拦截。
+    await nextTick()
     await connect()
     if (!c.client || !selection) return
     const selected = JSON.parse(selection)
@@ -809,8 +814,10 @@ const formTipId = useId()
       label-position="top"
       class="connect-card"
       @submit.prevent="connect"
-      ><div class="brand-mark">灵</div>
-      <h1>灵知</h1>
+      ><header class="connect-heading">
+        <div class="brand-mark" aria-hidden="true">灵</div>
+        <h1>灵知 · 智能对话</h1>
+      </header>
       <p class="muted">填写机构提供的连接信息，选择智能体开始对话。</p>
       <ChatMessageNotice
         v-if="c.error"
@@ -826,66 +833,56 @@ const formTipId = useId()
           placeholder="http://localhost:8000"
         />
         <FieldTip :id="formTipId + '-field-0'"
-          >填写可访问的 灵知 服务地址，连接前核对地址和认证方式。</FieldTip
+          >通常保留当前地址；机构提供了其他服务地址时再修改。</FieldTip
         > </ChatFormItem
-      ><ChatFormItem label="你的称呼" prop="name"
+      ><ChatFormItem label="你的称呼（选填）" prop="name"
         ><ChatInput
-          v-described-by="formTipId + '-field-1'"
-          :aria-describedby="formTipId + '-field-1'"
           v-model="settings.name"
+          name="nickname"
+          autocomplete="nickname"
           maxlength="100"
-          placeholder="如何称呼你"
-        />
-        <FieldTip :id="formTipId + '-field-1'"
-          >选填，用于会话中的称呼；最多 100 个字符。</FieldTip
-        > </ChatFormItem
+          placeholder="如何称呼你，最多 100 个字符"
+        /> </ChatFormItem
       ><ChatFormItem label="认证方式" prop="mode"
         ><ChatSelect
           v-described-by="formTipId + '-field-2'"
           :aria-describedby="formTipId + '-field-2'"
           v-model="settings.mode"
-          ><ChatOption value="token" label="渠道令牌" /><ChatOption value="hmac" label="API 签名"
+          ><ChatOption value="token" label="渠道令牌" /><ChatOption value="hmac" label="API 凭据"
         /></ChatSelect>
         <FieldTip :id="formTipId + '-field-2'"
-          >选择渠道令牌或 API 凭据认证，填写对应认证信息。</FieldTip
+          >收到一项渠道令牌时选“渠道令牌”；收到 Key 和 Secret 时选“API 凭据”。</FieldTip
         > </ChatFormItem
       ><ChatFormItem v-if="settings.mode === 'token'" label="渠道令牌" prop="token"
         ><ChatInput
-          v-described-by="'connection-help' + ' ' + (formTipId + '-field-3')"
+          v-described-by="'connection-help'"
           v-model="settings.token"
-          :aria-describedby="'connection-help' + ' ' + (formTipId + '-field-3')"
+          aria-describedby="connection-help"
           type="password"
           autocomplete="off"
-        />
-        <FieldTip :id="formTipId + '-field-3'"
-          >填写管理员提供的渠道访问令牌，用于连接所选服务。</FieldTip
-        > </ChatFormItem
+          placeholder="粘贴机构管理员提供的渠道令牌"
+        /> </ChatFormItem
       ><template v-else
         ><ChatFormItem label="API Key" prop="apiKey"
           ><ChatInput
-            v-described-by="'connection-help' + ' ' + (formTipId + '-field-4')"
+            v-described-by="'connection-help'"
             v-model="settings.apiKey"
-            :aria-describedby="'connection-help' + ' ' + (formTipId + '-field-4')"
+            aria-describedby="connection-help"
             autocomplete="off"
-          />
-          <FieldTip :id="formTipId + '-field-4'"
-            >填写管理员提供的 API Key，与 API Secret 配套使用。</FieldTip
-          > </ChatFormItem
+          /> </ChatFormItem
         ><ChatFormItem label="API Secret" prop="secret"
           ><ChatInput
-            v-described-by="'connection-help' + ' ' + (formTipId + '-field-5')"
+            v-described-by="'connection-help'"
             v-model="settings.secret"
-            :aria-describedby="'connection-help' + ' ' + (formTipId + '-field-5')"
+            aria-describedby="connection-help"
             type="password"
             autocomplete="off"
-          />
-          <FieldTip :id="formTipId + '-field-5'">填写与 API Key 配套的 API Secret。</FieldTip>
-        </ChatFormItem></template
+          /> </ChatFormItem></template
       ><ChatButton native-type="submit" type="primary" class="full" :loading="c.connecting"
         >进入会话</ChatButton
       >
       <p id="connection-help" class="muted small">
-        服务地址与认证信息由机构管理员提供。认证信息仅保存在当前浏览器标签页，关闭标签页后清除。
+        请向机构管理员获取连接信息。凭据仅保存在当前标签页，关闭标签页后清除。
       </p></ChatForm
     >
   </main>
@@ -1015,7 +1012,7 @@ const formTipId = useId()
               session.session_id !== c.sessionId &&
               navigate(() => c.openSession(session.session_id), historyNavigationLocked)
             "
-            >{{ session.displayTitle }}<small>{{ session.message_count }} 条消息</small></ChatButton
+            >{{ session.displayTitle }}<small>{{ session.message_count }} 次请求</small></ChatButton
           >
         </nav>
         <footer class="sidebar-global-actions">

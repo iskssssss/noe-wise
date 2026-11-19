@@ -20,6 +20,7 @@ let wrapper: VueWrapper,
   posts: string[],
   submit: (body: string) => Promise<Response>,
   historyLoad: (id: string) => Promise<Response>,
+  deliverablesLoad: () => Promise<Response>,
   limitsLoad: () => Promise<Response>,
   attachmentLimits: Limits['attachments'],
   uploadedForms: FormData[],
@@ -239,6 +240,7 @@ beforeEach(() => {
   posts = []
   submit = async () => response({ status: 'accepted', execution_id: 'run', session_id: 's' })
   historyLoad = async (id) => response({ ...emptyHistory(), session_id: id })
+  deliverablesLoad = async () => response([])
   attachmentLimits = {
     max_file_bytes: 1000,
     max_files: 3,
@@ -295,7 +297,7 @@ beforeEach(() => {
         return response({ session_id: 's' })
       }
       if (path === '/api/v1/chat/history') return historyLoad(url.searchParams.get('session_id')!)
-      if (path === '/api/v1/chat/sessions/deliverables') return response([])
+      if (path === '/api/v1/chat/sessions/deliverables') return deliverablesLoad()
       if (path === '/api/v1/chat/runs/steering')
         return steeringReadDenied
           ? new Response(
@@ -370,6 +372,42 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 const connect = () => state.connect('http://localhost', { mode: 'token', token: 'test' }, '测试')
+it('成果刷新断网保留已读内容，恢复网络后重读清除错误', async () => {
+  await connect()
+  await state.ensureSession()
+  const artifact = {
+    id: 'revision-1',
+    deliverable_id: 'deliverable-1',
+    revision: 1,
+    current: true,
+    session_id: 's',
+    run_id: 'run-1',
+    type: 'file' as const,
+    name: '巡检成果',
+    size: 0,
+    sha256: 'digest',
+    expires_at: null,
+    status: 'ready' as const,
+    files: [],
+    artifact_inputs: [],
+    evidence: []
+  }
+  deliverablesLoad = async () => response([artifact])
+  await state.refreshArtifacts()
+  expect(state.artifacts.value).toEqual([artifact])
+  deliverablesLoad = async () => {
+    throw new TypeError('Failed to fetch')
+  }
+  await state.refreshArtifacts()
+  expect(state.artifacts.value).toEqual([artifact])
+  expect(state.artifactsError.value).toBe('成果读取失败，请检查网络后重新读取。')
+  expect(state.artifactsLoading.value).toBe(false)
+  deliverablesLoad = async () => response([])
+  await state.refreshArtifacts()
+  expect(state.artifacts.value).toEqual([])
+  expect(state.artifactsError.value).toBe('')
+  expect(posts).toHaveLength(0)
+})
 it('没有智能体时自动选择唯一可用团队并读取其会话', async () => {
   agentCatalog = []
   teamCatalog = [

@@ -113,6 +113,8 @@ function createState() {
     runStates: {},
     artifacts: [],
     artifactsRevision: 0,
+    artifactsLoading: false,
+    artifactsError: '',
     steering: { items: [] },
     steeringSending: false,
     steeringLoading: false,
@@ -196,6 +198,63 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it.each(['token', 'hmac'])('从断开状态恢复 %s 凭据后自动打开原会话', async (mode) => {
+    const connectedClient = holder.state.client
+    Object.assign(holder.state, { client: undefined })
+    holder.state.connect.mockImplementation(async () => {
+      holder.state.client = connectedClient
+    })
+    holder.state.changeTarget.mockImplementation((target: string) => {
+      holder.state.target = target
+    })
+    holder.state.openSession.mockImplementation((session: string) => {
+      holder.state.sessionId = session
+    })
+    sessionStorage.setItem(
+      'skillforge.chat.connection',
+      JSON.stringify({
+        address: 'http://localhost',
+        mode,
+        token: mode === 'token' ? 'test-token' : '',
+        apiKey: mode === 'hmac' ? 'test-key' : '',
+        secret: mode === 'hmac' ? 'test-secret' : '',
+        name: '巡检'
+      })
+    )
+    sessionStorage.setItem(
+      'skillforge.chat.selection',
+      JSON.stringify({
+        clientRef: 'c',
+        target: 'agent:a',
+        session: 'original-session'
+      })
+    )
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TeamManager: true,
+          BrowserDevices: true,
+          WorkspaceStatus: true,
+          ArtifactPanel: true
+        }
+      }
+    })
+    try {
+      await flushPromises()
+      expect(holder.state.connect).toHaveBeenCalledWith(
+        'http://localhost',
+        mode === 'token'
+          ? { mode: 'token', token: 'test-token' }
+          : { mode: 'hmac', apiKey: 'test-key', secret: 'test-secret' },
+        '巡检'
+      )
+      expect(holder.state.openSession).toHaveBeenCalledWith('original-session')
+      expect(wrapper.find('.connect-card').exists()).toBe(false)
+      expect(holder.state.submit).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('未知取消显示显式继续入口，在途禁用且确认后移除', async () => {
     holder.state.target = 'agent:a'
     holder.state.sessionId = 's'
@@ -346,11 +405,46 @@ describe('对话任务入口与单一侧栏', () => {
       await flushPromises()
       expect(wrapper.findComponent(ArtifactPanel).props('selectedId')).toBe('')
       expect(wrapper.findComponent(ArtifactPanel).props('modelValue')).toBe(false)
+      expect(holder.state.refreshArtifacts).not.toHaveBeenCalled()
       allowClose = true
       wrapper.findComponent(ConversationTimeline).vm.$emit('artifact', 'artifact-1')
       await flushPromises()
       expect(wrapper.findComponent(ArtifactPanel).props('selectedId')).toBe('artifact-1')
       expect(wrapper.findComponent(ArtifactPanel).props('modelValue')).toBe(true)
+      expect(holder.state.refreshArtifacts).toHaveBeenCalledOnce()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it('重新打开成果时读取当前列表，恢复失败提示且不重复在途读取', async () => {
+    holder.state.target = 'agent:a'
+    holder.state.sessionId = 's'
+    holder.state.artifactsError = '上次读取失败'
+    holder.state.refreshArtifacts.mockImplementation(async () => {
+      holder.state.artifactsError = ''
+      holder.state.artifactsLoading = true
+    })
+    const wrapper = mount(App, {
+      global: { stubs: { TeamManager: true, BrowserDevices: true, WorkspaceStatus: true } }
+    })
+    try {
+      await flushPromises()
+      const open = wrapper.findAll('button').find((item) => item.text() === '成果')!
+      await open.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('正在读取成果')
+      expect(holder.state.artifactsError).toBe('')
+      await wrapper.get('button[aria-label="关闭成果面板"]').trigger('click')
+      await open.trigger('click')
+      await flushPromises()
+      expect(holder.state.refreshArtifacts).toHaveBeenCalledOnce()
+      holder.state.artifactsLoading = false
+      await flushPromises()
+      expect(wrapper.text()).toContain('成果会出现在这里')
+      await wrapper.get('button[aria-label="关闭成果面板"]').trigger('click')
+      await open.trigger('click')
+      await flushPromises()
+      expect(holder.state.refreshArtifacts).toHaveBeenCalledTimes(2)
     } finally {
       wrapper.unmount()
     }
