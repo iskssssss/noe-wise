@@ -506,7 +506,7 @@ export function useConversation() {
     const api = client.value,
       id = sessionId.value,
       version = selection
-    if (!api || !id) return
+    if (!api || !id || targetDisabled.value) return
     const request = ++artifactsRequest
     artifactsLoading.value = true
     artifactsError.value = ''

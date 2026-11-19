@@ -46,7 +46,10 @@ async function panel(failure: Error = new TypeError('Failed to fetch')) {
 describe('团队创建的未知结果恢复', () => {
   it('停用确认说明停止续写并保留历史，提交原团队身份', async () => {
     const client = createClient('http://localhost', { mode: 'token', token: 'test' })
-    const json = vi.spyOn(client, 'json').mockResolvedValue({ ...team, status: 'disabled' })
+    const json = vi
+      .spyOn(client, 'json')
+      .mockResolvedValueOnce({ ...team, status: 'disabled', revision: 2 })
+      .mockResolvedValueOnce({ ...team, status: 'published', revision: 4 })
     const confirm = vi.spyOn(ChatMessageBox, 'confirm').mockResolvedValue()
     const wrapper = mount(TeamManager, {
       props: {
@@ -81,6 +84,29 @@ describe('团队创建的未知结果恢复', () => {
       expect.any(AbortSignal)
     )
     expect(wrapper.emitted('saved')?.[0]?.[0]).toMatchObject({ id: team.id, status: 'disabled' })
+    expect(wrapper.get('input[type="text"]').element).toHaveProperty('value', team.name)
+    expect(wrapper.findAll('button').some((item) => item.text() === '停用团队')).toBe(false)
+    expect(wrapper.get('button[type="submit"]').text()).toBe('保存并启用团队')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(json).toHaveBeenLastCalledWith(
+      '/chat/teams',
+      'PUT',
+      expect.objectContaining({ id: team.id, revision: 2 }),
+      expect.any(AbortSignal)
+    )
+    expect(wrapper.emitted('saved')?.[1]?.[0]).toMatchObject({
+      id: team.id,
+      status: 'published',
+      revision: 4
+    })
+    expect(wrapper.get('button[type="submit"]').text()).toBe('保存团队')
+    expect(wrapper.findAll('button').some((item) => item.text() === '停用团队')).toBe(true)
+    await wrapper.get('input[type="text"]').setValue('更新名称')
+    json.mockResolvedValueOnce({ ...team, name: '更新名称', status: 'published', revision: 6 })
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(json.mock.calls.at(-1)?.[2]).toMatchObject({ id: team.id, revision: 4 })
   })
   it('未知结果冻结草稿，关闭重开后也不能重复无ID新建', async () => {
     const { wrapper, json } = await panel()

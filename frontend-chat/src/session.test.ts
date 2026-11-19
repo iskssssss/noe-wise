@@ -486,6 +486,22 @@ describe('停用团队的历史与执行边界', () => {
     expect(state.composerLocked.value).toBe(true)
     expect(posts).toEqual([])
     expect(createdSessions).toBe(0)
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([url]) => new URL(String(url)).pathname === '/api/v1/chat/sessions/deliverables'
+        )
+    ).toBe(false)
+    state.teams.value[0]!.status = 'published'
+    await state.refreshArtifacts()
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([url]) => new URL(String(url)).pathname === '/api/v1/chat/sessions/deliverables'
+        )
+    ).toBe(true)
   })
   it('停用期间不重试未知输入，重新发布也不清除或自动发送原身份', async () => {
     teamCatalog = [{ ...team }]

@@ -33,6 +33,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [team: 
 const form = reactive({
   id: '',
   revision: 0,
+  status: '',
   name: '',
   description: '',
   primary_agent_id: '',
@@ -94,6 +95,7 @@ function assign(team?: Team) {
   Object.assign(form, {
     id: team?.id ?? '',
     revision: team?.revision ?? 0,
+    status: team?.status ?? '',
     name: team?.name ?? '',
     description: team?.description ?? '',
     primary_agent_id: team?.primary_agent_id ?? '',
@@ -126,7 +128,7 @@ async function save(disable = false) {
   if (
     disable &&
     !(await confirmAction(
-      `停用团队“${form.name}”后，不能新建会话或继续发送。已有会话和数据保留，可查看历史消息；重新发布后可继续对话。`,
+      `停用团队“${form.name}”后，不能新建会话或继续发送。已有会话和数据保留，可查看历史消息；在团队管理中重新启用后可继续对话。`,
       '停用团队',
       '停用团队'
     ))
@@ -158,9 +160,11 @@ async function save(disable = false) {
       abort.signal
     )
     if (!disposed) {
-      feedback.value = disable ? '团队已停用。' : '团队已保存，可在团队列表中查看。'
+      feedback.value = disable
+        ? '团队已停用，已有会话和数据保留。'
+        : '团队已保存并启用，可继续对话。'
       emit('saved', team)
-      assign()
+      assign(team)
     }
   } catch (cause) {
     if (!disposed) {
@@ -295,6 +299,9 @@ const formTipId = useId()
         />
       </ChatSelect>
     </div>
+    <p v-if="form.status === 'disabled'" class="muted">
+      团队已停用，已有会话仅可查看历史。点击“保存并启用团队”后，当前配置立即生效，可继续对话。
+    </p>
     <ChatForm
       ref="formRef"
       :model="form"
@@ -371,9 +378,15 @@ const formTipId = useId()
         >
       </ChatFormItem>
       <div class="actions">
-        <ChatButton type="primary" native-type="submit" :loading="busy" :disabled="creationUnknown"
-          >保存团队</ChatButton
-        ><ChatButton v-if="form.id" @click="save(true)">停用团队</ChatButton>
+        <ChatButton
+          type="primary"
+          native-type="submit"
+          :loading="busy"
+          :disabled="creationUnknown"
+          >{{ form.status === 'disabled' ? '保存并启用团队' : '保存团队' }}</ChatButton
+        ><ChatButton v-if="form.id && form.status !== 'disabled'" @click="save(true)"
+          >停用团队</ChatButton
+        >
       </div>
     </ChatForm>
     <template #footer

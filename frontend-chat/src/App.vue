@@ -248,17 +248,17 @@ const workspaceRefreshKey = computed(() =>
   ])
 )
 watch(
-  () => [c.client, c.target, c.userId],
+  () => [c.client, c.target, c.userId, c.targetDisabled],
   async () => {
     commands.value = []
     const api = c.client,
       target = c.target
-    if (!api || !target) return
+    if (!api || !target || c.targetDisabled) return
     try {
       const data = await api.json<{ items: typeof commands.value }>(
         `/chat/commands?${query({ ...c.selectedTarget, end_user_id: c.userId })}`
       )
-      if (c.client === api && c.target === target) commands.value = data.items
+      if (c.client === api && c.target === target && !c.targetDisabled) commands.value = data.items
     } catch {
       /* 命令目录不可用不影响手动输入和会话恢复。 */
     }
@@ -442,6 +442,10 @@ async function navigate(action: () => unknown, locked = c.locked) {
   }
 }
 async function openArtifact(id: string) {
+  if (c.targetDisabled) {
+    c.notice = '团队已停用，请在团队管理中重新启用后查看成果。'
+    return
+  }
   if (activePanel.value !== 'artifacts') {
     if (!(await closePanel())) return
     historyOpen.value = false
@@ -450,6 +454,10 @@ async function openArtifact(id: string) {
   selectedArtifact.value = id
 }
 async function openTask(id = '') {
+  if (c.targetDisabled) {
+    c.notice = '团队已停用，请在团队管理中重新启用后查看任务。'
+    return
+  }
   if (activePanel.value === 'tasks' && selectedWork.value === id) return
   if (!(await closePanel())) return
   if (id) selectedWork.value = id
@@ -673,11 +681,8 @@ function saveTeam(team: Team) {
   const wasDisabled = c.teams[index]?.status === 'disabled'
   if (index >= 0) c.teams[index] = team
   else c.teams.push(team)
-  if (c.target === `team:${team.id}`) {
-    if (team.status === 'disabled')
-      c.notice = '当前团队已停用，已保留当前会话与草稿。可查看历史，重新发布后可继续对话。'
-    else if (wasDisabled) c.notice = '当前团队已重新发布，可在原会话继续对话。'
-  }
+  if (c.target === `team:${team.id}` && wasDisabled && team.status !== 'disabled')
+    void c.refreshArtifacts()
 }
 async function send() {
   if (c.inputMode === 'supplement') {
@@ -1089,7 +1094,8 @@ const formTipId = useId()
             text
             class="header-action"
             :class="{ selected: activePanel === 'tasks' }"
-            :disabled="!c.sessionId"
+            :disabled="!c.sessionId || c.targetDisabled"
+            :title="c.targetDisabled ? '团队已停用，重新启用后可查看任务' : undefined"
             @click="activePanel === 'tasks' ? closePanel() : openTask()"
             >任务</ChatButton
           >
@@ -1097,7 +1103,8 @@ const formTipId = useId()
             text
             class="header-action"
             :class="{ selected: activePanel === 'artifacts' }"
-            :disabled="!c.sessionId"
+            :disabled="!c.sessionId || c.targetDisabled"
+            :title="c.targetDisabled ? '团队已停用，重新启用后可查看成果' : undefined"
             @click="openPanel('artifacts')"
             ><IconLayoutGrid class="ui-icon" aria-hidden="true" /><span>成果</span
             ><span v-if="c.artifacts.length" class="artifact-count">{{
@@ -1115,8 +1122,14 @@ const formTipId = useId()
             <div class="header-menu" role="group" aria-label="更多会话操作">
               <ChatButton
                 text
-                :disabled="!c.sessionId"
-                :title="!c.sessionId ? '发送首条消息后可使用会话工具' : '打开会话工具'"
+                :disabled="!c.sessionId || c.targetDisabled"
+                :title="
+                  c.targetDisabled
+                    ? '团队已停用，重新启用后可使用会话工具'
+                    : !c.sessionId
+                      ? '发送首条消息后可使用会话工具'
+                      : '打开会话工具'
+                "
                 @click="menuAction(() => openPanel('tools'))"
                 >会话工具</ChatButton
               >
@@ -1136,6 +1149,7 @@ const formTipId = useId()
         </div>
       </header>
       <WorkspaceStatus
+        v-if="!c.targetDisabled"
         :client="c.client!"
         :session="c.sessionId"
         :refresh-key="workspaceRefreshKey"
@@ -1385,7 +1399,7 @@ const formTipId = useId()
         >
           <ChatAlert
             v-if="c.targetDisabled"
-            title="当前团队已停用，仅可查看历史。当前会话与草稿保留，重新发布后可继续对话。"
+            title="当前团队已停用，仅可查看历史。当前会话与草稿保留，在团队管理中重新启用后可继续对话。"
             type="info"
             :closable="false"
           />
@@ -1551,7 +1565,7 @@ const formTipId = useId()
                       : !c.target
                         ? '请先选择对话对象'
                         : c.targetDisabled
-                          ? '团队已停用，重新发布后可继续对话'
+                          ? '团队已停用，在团队管理中重新启用后可继续对话'
                           : !c.draft.trim() && !messageHasResources
                             ? '请输入消息或添加附件'
                             : '发送消息'
