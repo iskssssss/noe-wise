@@ -37,7 +37,8 @@ export function artifactUrl(value: string, base: string) {
 }
 
 export function fileSize(bytes: number) {
+  if (bytes < 1000) return `${bytes} 字节`
   return bytes >= 1_000_000
     ? `${(bytes / 1_000_000).toFixed(1)} MB`
-    : `${Math.max(1, Math.ceil(bytes / 1024))} KB`
+    : `${(bytes / 1000).toFixed(1)} KB`
 }
