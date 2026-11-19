@@ -483,7 +483,12 @@ defineExpose({ focusField })
           @update:model-value="insertVariable('message', $event)"
       /></ElFormItem>
       <p v-if="model.type === 'end'" class="admin-field-help">
-        结束节点只终止流程。如需回复用户，请在前面添加“输出”节点；此处旧消息仅供查看。
+        结束节点只终止流程。如需返回文字，请添加“输出”节点，并在“工作流信息 →
+        能力治理”中开启“返回输出节点消息”；此处旧消息仅供查看。
+      </p>
+      <p v-if="model.type === 'output'" class="admin-field-help">
+        此节点生成工作流消息。要让测试与调用方收到文字，请在“工作流信息 →
+        能力治理”中开启“返回输出节点消息”，并校验输出 Schema。
       </p>
       <p v-if="model.type === 'async_task'" class="admin-field-help">
         本节点只等待已有任务的回调。请确认任务已启动；完成后保存结果，失败或超时按上方策略处理。

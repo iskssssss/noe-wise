@@ -219,6 +219,97 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('工作流公开输出与执行终态', () => {
+  function restoreTest(runStatus = 'completed') {
+    sessionStorage.setItem(
+      'noewise:workflow-test:' + JSON.stringify(['actor', 'flow']),
+      JSON.stringify({
+        requestId: 'request-fixed',
+        testSessionId: 'test:1',
+        initial: 'submitted',
+        closing: false
+      })
+    )
+    mocks.get.mockResolvedValue(receipt({ status: runStatus, runId: 'run:1', runStatus }))
+  }
+  it.each(['completed', 'failed', 'cancelled', 'terminated'])(
+    '%s 后停止运行轮询，关闭仍保留原测试身份与历史',
+    async (runStatus) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      restoreTest(runStatus)
+      const wrapper = render()
+      await flushPromises()
+      const reads = mocks.get.mock.calls.length
+      expect(dom().text()).toContain('本次执行已结束')
+      expect(dom().text()).not.toContain('关闭面板后测试仍会继续')
+      await vi.advanceTimersByTimeAsync(3000)
+      await flushPromises()
+      expect(mocks.get).toHaveBeenCalledTimes(reads)
+      mocks.close.mockResolvedValue(receipt({ status: 'closed', runStatus, closeStatus: 'closed' }))
+      await button(wrapper, '关闭测试并保留记录').trigger('click')
+      await flushPromises()
+      expect(mocks.close).toHaveBeenCalledWith('test:1', { silent: true })
+      expect(button(wrapper, '开始新测试').exists()).toBe(true)
+      expect(mocks.create).not.toHaveBeenCalled()
+      expect(mocks.submit).not.toHaveBeenCalled()
+    }
+  )
+  it.each([
+    { content: '{}', empty: true },
+    {
+      content: JSON.stringify({
+        messages: [{ role: 'assistant', content: '**中文巡检结果**' }],
+        total: 3
+      }),
+      empty: false
+    },
+    { content: JSON.stringify({ total: 3 }), empty: false }
+  ])('公开输出保留完整JSON并展示消息或空结果指引：$content', async ({ content, empty }) => {
+    restoreTest()
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      messages: [
+        { message_id: 'answer:1', role: 'assistant', content, created_at: '2026-11-20T00:00:00Z' }
+      ],
+      pending_interactions: []
+    })
+    render()
+    await flushPromises()
+    expect(dom().text()).toContain('工作流输出')
+    expect(dom().text().includes('此版本返回了空对象')).toBe(empty)
+    expect(dom().get<HTMLTextAreaElement>('[aria-label="工作流完整输出"]').element.value).toBe(
+      JSON.stringify(JSON.parse(content), null, 2)
+    )
+    if (content.includes('messages')) {
+      expect(
+        dom()
+          .findAll('strong')
+          .some((item) => item.text() === '中文巡检结果')
+      ).toBe(true)
+      expect(dom().get('article details').attributes('open')).toBeUndefined()
+    } else expect(dom().get('article details').attributes('open')).toBeDefined()
+  })
+  it('普通助手正文继续按Markdown显示', async () => {
+    restoreTest('failed')
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      messages: [
+        {
+          message_id: 'answer:1',
+          role: 'assistant',
+          content: '测试**未完成**，请检查配置。',
+          created_at: '2026-11-20T00:00:00Z'
+        }
+      ],
+      pending_interactions: []
+    })
+    render()
+    await flushPromises()
+    expect(dom().text()).toContain('测试未完成，请检查配置。')
+    expect(dom().find('[aria-label="工作流完整输出"]').exists()).toBe(false)
+  })
+})
+
 describe('原测试消息历史按需续页', () => {
   function restoreTest(status = 'completed') {
     sessionStorage.setItem(
@@ -1567,7 +1658,12 @@ describe('真实Workflow测试面板边界', () => {
       })
     )
     mocks.get.mockResolvedValue(
-      receipt({ status: 'completed', runId: 'run:1', closeStatus: 'cancelling' })
+      receipt({
+        status: 'cancelling',
+        runId: 'run:1',
+        runStatus: 'completed',
+        closeStatus: 'cancelling'
+      })
     )
     const wrapper = render()
     await flushPromises()
@@ -1575,7 +1671,7 @@ describe('真实Workflow测试面板边界', () => {
     await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
     expect(mocks.get.mock.calls.length).toBeGreaterThan(reads)
-    expect(button(wrapper, '取消并关闭测试').props('disabled')).toBe(true)
+    expect(button(wrapper, '关闭测试并保留记录').props('disabled')).toBe(true)
     expect(mocks.close).not.toHaveBeenCalled()
   })
   it('关闭请求悬挂时查询到关闭，可立即开始新测试且忽略迟到响应', async () => {

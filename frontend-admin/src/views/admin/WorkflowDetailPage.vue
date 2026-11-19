@@ -859,7 +859,7 @@ const nodeDescriptions: Record<string, string> = {
   human_input: '发送提示并挂起，等待用户提交或超时。',
   menu: '展示选项并按所选行动点跳转。',
   async_task: '挂起等待异步结果或超时。',
-  output: '向最终用户发送可读消息。',
+  output: '生成工作流消息；需在能力治理中开启“返回输出节点消息”，才会作为结果返回。',
   card: '发送结构化卡片，实际展现由终端渲染器决定。'
 }
 const nodePlacementOpen = ref(false),

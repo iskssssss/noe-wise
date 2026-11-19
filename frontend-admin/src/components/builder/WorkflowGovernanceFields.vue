@@ -51,7 +51,32 @@
                 .filter(Boolean)
             )
           "
-      /></ElFormItem>
+        />
+        <p class="admin-field-help">
+          只返回这里声明的字段；留空将返回空对象，不会返回输出节点的消息。
+        </p></ElFormItem
+      >
+      <ElFormItem label="返回输出节点消息">
+        <ElSwitch
+          :model-value="
+            Array.isArray(modelValue.export_fields) && modelValue.export_fields.includes('messages')
+          "
+          :disabled="readonly"
+          aria-label="返回输出节点消息"
+          @update:model-value="
+            set(
+              'export_fields',
+              $event
+                ? [...exportFields.filter((field) => field !== 'messages'), 'messages']
+                : exportFields.filter((field) => field !== 'messages')
+            )
+          "
+        />
+        <p class="admin-field-help">
+          开启后将 messages 加入导出字段，测试与调用方才能收到输出节点的文字；同时请确保输出 Schema
+          允许该字段。
+        </p>
+      </ElFormItem>
     </div>
     <template v-if="modelValue">
       <ElFormItem
@@ -77,7 +102,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { recommendedWorkflowCapability } from '../../utils/workflow'
 const props = defineProps<{ modelValue?: Record<string, unknown> | null; readonly?: boolean }>()
 const emit = defineEmits<{
@@ -86,6 +111,9 @@ const emit = defineEmits<{
 }>()
 const schemaText = reactive<Record<string, string>>({}),
   errors = reactive<Record<string, string>>({})
+const exportFields = computed(() =>
+  Array.isArray(props.modelValue?.export_fields) ? props.modelValue.export_fields : []
+)
 const booleanFields = [
   { key: 'model_invocable', label: '模型可调用' },
   { key: 'user_invocable', label: '用户可调用' },

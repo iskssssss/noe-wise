@@ -129,6 +129,36 @@ const sourceLabel = computed(() => {
     : '请选择已保存的测试目标'
 })
 const closed = computed(() => receipt.value?.closeStatus === 'closed')
+const runFinished = computed(() =>
+  ['completed', 'failed', 'cancelled', 'terminated'].includes(receipt.value?.runStatus ?? '')
+)
+const testMessages = computed(() =>
+  (history.value?.messages ?? []).map((item) => {
+    if (item.role !== 'assistant')
+      return { item, output: undefined, messages: undefined, empty: false }
+    try {
+      const output: unknown = JSON.parse(item.content)
+      if (!output || typeof output !== 'object' || Array.isArray(output))
+        return { item, output: undefined, messages: undefined, empty: false }
+      const messages = (output as Record<string, unknown>).messages
+      return {
+        item,
+        output: JSON.stringify(output, null, 2),
+        empty: Object.keys(output).length === 0,
+        messages:
+          Array.isArray(messages) &&
+          messages.every(
+            (message) =>
+              message && message.role === 'assistant' && typeof message.content === 'string'
+          )
+            ? messages.map((message) => String(message.content))
+            : undefined
+      }
+    } catch {
+      return { item, output: undefined, messages: undefined, empty: false }
+    }
+  })
+)
 const savingAndTesting = ref(false)
 const locked = computed(
   () =>
@@ -145,6 +175,8 @@ const statusLabels: Record<string, string> = {
   waiting: '等待回复',
   completed: '已完成',
   failed: '失败',
+  cancelled: '已取消',
+  terminated: '已终止',
   cancelling: '正在关闭',
   closed: '已关闭'
 }
@@ -593,7 +625,7 @@ function scheduleRefresh() {
     props.modelValue &&
     recovery.value &&
     !closed.value &&
-    (recovery.value.closing || !['completed', 'failed'].includes(receipt.value?.status ?? ''))
+    (recovery.value.closing || !runFinished.value)
   )
     timer = setTimeout(() => void refresh(), POLL_MS)
 }
@@ -1733,7 +1765,7 @@ onBeforeUnmount(() => {
             :loading="busy"
             :disabled="recovery.closing"
             @click="closeTest"
-            >取消并关闭测试</ElButton
+            >{{ runFinished ? '关闭测试并保留记录' : '取消并关闭测试' }}</ElButton
           >
           <ElButton v-if="closed" @click="newTest">开始新测试</ElButton>
         </div>
@@ -1741,7 +1773,11 @@ onBeforeUnmount(() => {
           已请求关闭，正在确认运行是否结束；确认前不会接受新的输入。
         </p>
         <p v-if="receipt && !closed" class="admin-field-help">
-          关闭面板后测试仍会继续。可重新打开查询，或选择“取消并关闭测试”。
+          {{
+            runFinished
+              ? '本次执行已结束。关闭测试后仍保留消息与执行记录，并可开始新测试。'
+              : '关闭面板后测试仍会继续。可重新打开查询，或选择“取消并关闭测试”。'
+          }}
         </p>
         <template v-if="receipt">
           <ElDescriptions v-if="trace" :column="2" border>
@@ -1836,11 +1872,31 @@ onBeforeUnmount(() => {
             <p v-if="!history?.messages.length" class="admin-field-help">
               尚无公开消息记录，可查询测试状态更新。
             </p>
-            <article v-for="item in history?.messages ?? []" :key="item.message_id">
+            <article
+              v-for="{ item, output, messages, empty } in testMessages"
+              :key="item.message_id"
+            >
               <strong>{{
-                item.role === 'user' ? '测试输入' : item.role === 'assistant' ? '回复' : item.role
-              }}</strong
-              ><MarkdownContent :content="item.content" />
+                item.role === 'user'
+                  ? '测试输入'
+                  : item.role === 'assistant'
+                    ? '工作流输出'
+                    : item.role
+              }}</strong>
+              <p v-if="empty" class="admin-field-help">
+                此版本返回了空对象。请检查“工作流信息 →
+                能力治理”的导出字段；要返回输出节点的文字，请开启“返回输出节点消息”并保存后新建测试。
+              </p>
+              <MarkdownContent
+                v-for="(content, index) in messages ?? []"
+                :key="index"
+                :content="content"
+              />
+              <details v-if="output" :open="!messages?.length">
+                <summary>完整输出（JSON）</summary>
+                <CodeEditor :model-value="output" label="工作流完整输出" language="json" readonly />
+              </details>
+              <MarkdownContent v-else :content="item.content" />
             </article>
           </section>
         </template>

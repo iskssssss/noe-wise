@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ElButton, ElInput, ElSelect } from 'element-plus'
+import { ElButton, ElInput, ElSelect, ElSwitch } from 'element-plus'
 import WorkflowGovernanceFields from './WorkflowGovernanceFields.vue'
 import WorkflowConfigFields from './WorkflowConfigFields.vue'
 import WorkflowScriptResources from './WorkflowScriptResources.vue'
@@ -12,6 +12,29 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('工作流治理和资源编辑', () => {
+  it('显式启用消息返回，关闭时保留其他导出字段与输出Schema，只读版本不可切换', async () => {
+    const original = { ...recommendedWorkflowCapability(), export_fields: ['result'] }
+    const wrapper = mount(WorkflowGovernanceFields, { props: { modelValue: original } })
+    try {
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+      expect(wrapper.text()).toContain('留空将返回空对象')
+      const toggle = wrapper.findComponent(ElSwitch)
+      expect(toggle.props('modelValue')).toBe(false)
+      toggle.vm.$emit('update:modelValue', true)
+      await flushPromises()
+      const enabled = { ...original, export_fields: ['result', 'messages'] }
+      expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([enabled])
+      await wrapper.setProps({ modelValue: enabled })
+      expect(toggle.props('modelValue')).toBe(true)
+      toggle.vm.$emit('update:modelValue', false)
+      await flushPromises()
+      expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([original])
+      await wrapper.setProps({ readonly: true })
+      expect(toggle.props('disabled')).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it.each(['switch', 'upload'] as const)(
     '脚本未保存时%s不能覆盖当前编辑，明确清空后可切换',
     async (action) => {
