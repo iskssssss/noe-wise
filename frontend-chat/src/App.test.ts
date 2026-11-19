@@ -198,6 +198,38 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it('团队面板刷新成员目录后同步会话对象选项，不切换当前会话或清空草稿', async () => {
+    holder.state.sessionId = 's'
+    holder.state.target = 'a'
+    holder.state.draft = '未发送需求'
+    const wrapper = mount(App)
+    try {
+      await flushPromises()
+      const catalog = [
+        {
+          id: 'a',
+          name: '助手',
+          is_default: true,
+          delegation_config: { enabled: true, target_agent_ids: ['reviewer'] }
+        },
+        {
+          id: 'reviewer',
+          name: '复核员',
+          is_default: false,
+          delegation_config: { enabled: false, target_agent_ids: [] }
+        }
+      ]
+      wrapper.getComponent(TeamManager).vm.$emit('agents-updated', catalog)
+      await flushPromises()
+      expect(wrapper.getComponent(TeamManager).props('agents')).toEqual(catalog)
+      expect(holder.state.agents).toEqual(catalog)
+      expect(holder.state.sessionId).toBe('s')
+      expect(holder.state.target).toBe('a')
+      expect(holder.state.draft).toBe('未发送需求')
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('任务空态开启规划保留已有草稿，原请求失败后重试沿用命令身份', async () => {
     holder.state.sessionId = 's'
     holder.state.target = 'a'

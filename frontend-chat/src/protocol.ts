@@ -7,6 +7,7 @@ export interface Agent {
   name: string
   is_default: boolean
   role_description?: string
+  delegation_config?: { enabled: boolean; target_agent_ids: string[] }
 }
 export interface Team {
   id: string

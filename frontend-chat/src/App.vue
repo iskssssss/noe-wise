@@ -1665,6 +1665,7 @@ const formTipId = useId()
       :client-ref="c.clientRef"
       :agents="c.agents"
       :teams="c.teams"
+      @agents-updated="c.agents = $event"
       @saved="saveTeam"
       @update:model-value="panelChanged('teams', $event)"
     />

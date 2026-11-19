@@ -29,7 +29,11 @@ const props = defineProps<{
   agents: Agent[]
   teams: Team[]
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [team: Team] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  saved: [team: Team]
+  'agents-updated': [agents: Agent[]]
+}>()
 const form = reactive({
   id: '',
   revision: 0,
@@ -50,6 +54,31 @@ const creationUnknown = ref(false),
   reconciliationNotice = ref('')
 const selectableTeams = computed(() => checkedTeams.value ?? props.teams)
 const dirty = computed(() => JSON.stringify(form) !== baseline.value)
+const primaryAgent = computed(() =>
+  props.agents.find((agent) => agent.id === form.primary_agent_id)
+)
+const incompatibleMembers = computed(() =>
+  form.members.filter(
+    (id) =>
+      id !== form.primary_agent_id &&
+      primaryAgent.value &&
+      (!primaryAgent.value.delegation_config?.enabled ||
+        !primaryAgent.value.delegation_config.target_agent_ids.includes(id))
+  )
+)
+const collaborationHint = computed(() => {
+  const primary = primaryAgent.value
+  if (!primary) return '选择成员和负责人后，可查看该负责人允许的协作范围。'
+  const config = primary.delegation_config
+  if (!config) return '尚未读取到负责人的协作范围，请刷新成员目录后再添加协作成员。'
+  if (!config.enabled) return `“${primary.name}”尚未启用成员协作，目前只能保存单成员团队。`
+  const available = props.agents.filter(
+    (agent) => agent.id !== primary.id && config.target_agent_ids.includes(agent.id)
+  )
+  return available.length
+    ? `“${primary.name}”可与以下成员协作：${available.map((agent) => agentChoiceName(agent, props.agents)).join('、')}。`
+    : `“${primary.name}”已启用成员协作，但当前渠道没有它可委派的成员。`
+})
 function protectUnknownCreation(event: BeforeUnloadEvent) {
   if (!creationUnknown.value) return
   event.preventDefault()
@@ -124,7 +153,7 @@ async function beforeClose(done: () => void) {
   if (await requestClose()) done()
 }
 async function save(disable = false) {
-  if (busy.value || creationUnknown.value) return
+  if (busy.value || creationUnknown.value || (!disable && incompatibleMembers.value.length)) return
   if (
     disable &&
     !(await confirmAction(
@@ -180,6 +209,29 @@ async function save(disable = false) {
         error.value = cause instanceof Error ? cause.message : '保存团队失败，请稍后再次操作。'
       }
     }
+  } finally {
+    if (!disposed) busy.value = false
+  }
+}
+async function refreshAgents() {
+  if (busy.value || creationUnknown.value) return
+  busy.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const catalog = await props.client.json<{ items: Agent[] }>(
+      '/chat/agents',
+      'GET',
+      undefined,
+      abort.signal
+    )
+    if (!disposed) {
+      emit('agents-updated', catalog.items)
+      feedback.value = '成员目录与协作范围已刷新，当前团队填写内容保留。'
+    }
+  } catch (cause) {
+    if (!disposed)
+      error.value = cause instanceof Error ? cause.message : '未能刷新成员目录，请稍后重试。'
   } finally {
     if (!disposed) busy.value = false
   }
@@ -354,7 +406,9 @@ const formTipId = useId()
           ></ChatCheckboxGroup
         >
       </ChatFormItem>
-      <p id="team-members-help" class="muted">成员按公开角色说明选择；负责人必须属于已选成员。</p>
+      <p id="team-members-help" class="muted">
+        成员按角色说明选择；负责人必须属于已选成员，其他成员需在负责人已发布的协作范围内。
+      </p>
       <ChatFormItem label="负责人" prop="primary_agent_id">
         <ChatSelect
           v-described-by="'team-members-help'"
@@ -377,12 +431,28 @@ const formTipId = useId()
           ></ChatSelect
         >
       </ChatFormItem>
+      <div class="panel-card" aria-label="团队协作范围">
+        <p role="status">{{ collaborationHint }}</p>
+        <p v-if="incompatibleMembers.length" class="chat-field__error" role="status">
+          以下已选成员暂不能参与协作：{{
+            incompatibleMembers
+              .map((id) => agents.find((agent) => agent.id === id)?.name ?? '不可用成员')
+              .join('、')
+          }}。请移除这些成员或选择允许该分工的负责人后保存。
+        </p>
+        <p class="muted">
+          需要增加协作成员时，请联系机构管理员在负责人的“运行与协作”中配置任务委派并发布，同时将成员绑定到当前渠道。配置完成后可刷新目录，已填写内容会保留。
+        </p>
+        <ChatButton :disabled="busy || creationUnknown" @click="refreshAgents"
+          >刷新成员目录</ChatButton
+        >
+      </div>
       <div class="actions">
         <ChatButton
           type="primary"
           native-type="submit"
           :loading="busy"
-          :disabled="creationUnknown"
+          :disabled="creationUnknown || Boolean(incompatibleMembers.length)"
           >{{ form.status === 'disabled' ? '保存并启用团队' : '保存团队' }}</ChatButton
         ><ChatButton v-if="form.id && form.status !== 'disabled'" @click="save(true)"
           >停用团队</ChatButton
