@@ -820,17 +820,30 @@ async function inspect(automatic = false) {
         pending?.request_id || original?.request_id || manualUnknown
       }}。未查到回执不代表失败，请勿重复提交。
     </p>
-    <ElInput
-      v-if="!pending && !original && !manualUnknown"
-      v-model="readRequestId"
-      placeholder="原请求 UUID"
-      aria-label="原请求 UUID"
-    />
+    <details v-if="!pending && !original && !manualUnknown" :open="receiptOnly">
+      <summary>查询历史接入回执</summary>
+      <p class="admin-field-help">
+        仅在之前的接入结果未知、原页面已关闭时使用。正常添加工作流不需要请求 ID。
+      </p>
+      <ElInput
+        v-model="readRequestId"
+        placeholder="输入原请求 ID（UUID）"
+        aria-label="原请求 UUID"
+      />
+      <ElButton :disabled="busy || !readRequestId.trim()" @click="inspect()">核对原操作</ElButton>
+    </details>
+    <ElButton v-else :disabled="busy" @click="inspect()">核对原操作</ElButton>
     <p v-if="storageError" role="status">{{ storageError }}</p>
-    <ElButton :disabled="busy" @click="inspect()">核对原操作</ElButton>
     <p v-if="receipt?.status === 'SUCCEEDED'" role="status">
-      接入已确认，安装修订 {{ receipt.installation_revision }} · 挂载 {{ receipt.mount_id }}。
+      接入已确认，安装修订
+      {{ receipt.installation_revision }}。工作流已加入智能体草稿，发布智能体后生效。
     </p>
+    <details v-if="receipt?.status === 'SUCCEEDED'">
+      <summary>查看接入回执</summary>
+      <p class="admin-field-help">
+        请求：{{ receipt.request_id }}<br />挂载：{{ receipt.mount_id }}
+      </p>
+    </details>
     <ElButton v-if="!receiptOnly && !catalogReady" :disabled="busy" @click="loadCatalog"
       >重新读取工作流目录</ElButton
     >
@@ -903,11 +916,14 @@ async function inspect(automatic = false) {
       >
       <template v-if="ready">
         <p v-if="currentInstance">
-          已有共享安装：{{ currentInstance.instanceId }} · 修订
-          {{ currentInstance.installationRevision }}。
+          已有共享安装，修订
+          {{
+            currentInstance.installationRevision
+          }}。沿用时保留现有配置；更新时会影响使用同一安装的智能体。
         </p>
         <details v-if="currentInstance">
           <summary>查看当前安装配置</summary>
+          <p class="admin-field-help">安装实例：{{ currentInstance.instanceId }}</p>
           <pre>{{ JSON.stringify(currentInstance.config, null, 2) }}</pre>
           <p>当前自定义提示：{{ currentInstance.customPrompt || '无' }}</p>
         </details>

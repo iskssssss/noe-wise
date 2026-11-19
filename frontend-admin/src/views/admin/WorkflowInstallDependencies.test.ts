@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ElButton, ElFormItem, ElInput, ElOption, ElSelect } from 'element-plus'
+import {
+  ElButton,
+  ElFormItem,
+  ElInput,
+  ElOption,
+  ElSelect,
+  ElMessageBox,
+  ElDrawer
+} from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import WorkflowDetailPage from './WorkflowDetailPage.vue'
@@ -103,6 +111,7 @@ async function openInstall() {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.instances.mockResolvedValue({ items: [] })
   mocks.requirementOptions.mockImplementation(async () => {
     const definitions = (await mocks.definitions(undefined, 'PUBLISHED')) ?? []
     const toolDefinitions = definitions.filter(
@@ -149,12 +158,70 @@ beforeEach(() => {
   published({})
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   wrapper?.unmount()
   clearFeedback()
   document.body.innerHTML = ''
 })
 
 describe('工作流安装只读取声明的依赖', () => {
+  it('更新共享安装回填原参数和提示，取消确认不写入，确认后保留空字符串与false', async () => {
+    published({
+      config_schema: [
+        { key: 'label', type: 'string', default: '默认文本' },
+        { key: 'enabled', type: 'boolean', default: true }
+      ]
+    })
+    mocks.instances.mockResolvedValue({
+      items: [
+        {
+          id: '42',
+          workflowId: 'flow',
+          instanceId: 'flow_7',
+          installationRevision: '3',
+          config: { label: '', enabled: false },
+          customPrompt: '保留的安装提示'
+        }
+      ]
+    })
+    const confirmation = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel')
+    await openInstall()
+    expect(document.body.textContent).toContain('当前已安装，修订 3')
+    expect(document.body.textContent).toContain('已回填安装参数和自定义提示')
+    const prompt = wrapper
+      .findAllComponents(ElFormItem)
+      .find((field) => field.props('label') === '自定义提示')!
+      .getComponent(ElInput)
+    expect(prompt.props('modelValue')).toBe('保留的安装提示')
+    const update = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text() === '更新共享安装')!
+    await update.trigger('click')
+    await flushPromises()
+    expect(mocks.install).not.toHaveBeenCalled()
+    confirmation.mockResolvedValue('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+    await update.trigger('click')
+    await flushPromises()
+    expect(mocks.install).toHaveBeenCalledOnce()
+    expect(mocks.install).toHaveBeenCalledWith(
+      'flow',
+      { capabilities: [], workflows: [], agents: [] },
+      { label: '', enabled: false },
+      '保留的安装提示'
+    )
+  })
+  it('当前安装读取失败不打开空配置表单或派发安装', async () => {
+    mocks.instances.mockRejectedValue(new Error('当前安装读取失败'))
+    await openInstall()
+    expect(document.body.textContent).toContain('当前安装读取失败')
+    expect(
+      wrapper
+        .findAllComponents(ElDrawer)
+        .find((drawer) => drawer.props('title') === '安装工作流')!
+        .props('modelValue')
+    ).toBe(false)
+    expect(mocks.install).not.toHaveBeenCalled()
+  })
   it('工具版本已选中后接入唯一实例，刷新即可直接安装', async () => {
     published({
       capability_requirements: [
@@ -398,21 +465,22 @@ describe('工作流安装只读取声明的依赖', () => {
       .trigger('click')
     await flushPromises()
     expect(mocks.install).toHaveBeenCalledOnce()
+    const result = wrapper.get('[aria-label="工作流安装结果"]')
+    expect(result.text()).toContain('能力挂载 → 添加能力')
+    expect(result.get('details').attributes('open')).toBeUndefined()
     expect(document.querySelectorAll('.el-message--success')).toHaveLength(1)
     expect(document.querySelector('.el-message--success')?.textContent).toContain('工作流已安装')
-    expect(wrapper.find('p.admin-field-help[role="status"]').text()).toBe(
+    expect(wrapper.find('[aria-label="工作流安装结果"] details p').text()).toBe(
       '已安装实例 instance-1 · 安装修订 2'
     )
     clearFeedback()
     await flushPromises()
     expect(document.querySelectorAll('.el-message')).toHaveLength(0)
-    expect(wrapper.find('p.admin-field-help[role="status"]').text()).toBe(
+    expect(wrapper.find('[aria-label="工作流安装结果"] details p').text()).toBe(
       '已安装实例 instance-1 · 安装修订 2'
     )
     expect(
-      wrapper
-        .findAllComponents(ElButton)
-        .some((button) => button.text() === '前往智能体挂载此工作流')
+      wrapper.findAllComponents(ElButton).some((button) => button.text() === '选择智能体')
     ).toBe(true)
   })
 

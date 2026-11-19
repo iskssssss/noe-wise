@@ -167,7 +167,8 @@ it('仅有 Agent 和工作流读取权限仍可核对原接入回执，不能提
   })
   wrappers.push(wrapper)
   await flushPromises()
-  await button(wrapper, '核对工作流接入').trigger('click')
+  await wrapper.get('#tab-capabilities').trigger('click')
+  await button(wrapper, '查询历史工作流接入回执').trigger('click')
   await flushPromises()
   const panel = wrapper.getComponent(WorkflowOnboarding)
   await panel.get('input').setValue(requestId)
@@ -934,10 +935,7 @@ describe('智能体主对象与辅助选项的读取归属', () => {
     expect(
       wrapper
         .findAllComponents(ElOption)
-        .some(
-          (option) =>
-            option.props('label') === '模型 · 标识 model-1' && option.props('value') === 'model-1'
-        )
+        .some((option) => option.props('label') === '模型' && option.props('value') === 'model-1')
     ).toBe(true)
     await button(wrapper, '刷新委派选项').trigger('click')
     await flushPromises()
@@ -2743,7 +2741,7 @@ describe('能力挂载关联一致性', () => {
     expect(capability.findAllComponents(ElOption).map((item) => item.props('value'))).toEqual([
       '10'
     ])
-    expect(document.body.textContent).toContain('已选用唯一安装实例：flow / first')
+    expect(document.body.textContent).toContain('唯一安装，修订 100')
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
@@ -2791,7 +2789,7 @@ describe('能力挂载关联一致性', () => {
     const { drawer } = await open('WORKFLOW')
     drawer.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', '10')
     await flushPromises()
-    expect(document.body.textContent).toContain('已选用唯一安装实例：workflow / first')
+    expect(document.body.textContent).toContain('唯一安装，修订 100')
     expect(drawer.findAllComponents(ElSelect)).toHaveLength(2)
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()

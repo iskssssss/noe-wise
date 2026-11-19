@@ -4,11 +4,6 @@
     description="配置提示词、模型、运行预算与可调用能力。"
     ><template #extra
       ><ElButton
-        v-if="can('foundation.agents.read') && can('foundation.workflows.read')"
-        :disabled="busy"
-        @click="workflowReceiptOpen = true"
-        >核对工作流接入</ElButton
-      ><ElButton
         v-if="loadError || refreshRequired"
         :loading="loading"
         :disabled="
@@ -272,6 +267,13 @@
               :disabled="editingBlocked || refreshRequired"
               @click="openMount"
               >添加能力</ElButton
+            >
+            <ElButton
+              v-if="can('foundation.agents.read') && can('foundation.workflows.read')"
+              link
+              :disabled="busy"
+              @click="workflowReceiptOpen = true"
+              >查询历史工作流接入回执</ElButton
             >
             <span class="admin-muted"
               >按任务需要挂载技能、工具、工作流或知识库；修改随智能体发布生效。</span
@@ -705,9 +707,19 @@
           class="admin-field-help"
           role="status"
         >
-          已选用唯一安装实例：{{ singleWorkflowInstance.workflowId }} /
-          {{ singleWorkflowInstance.instanceId }}
+          已选用“{{ selectedDefinition?.name }}”的唯一安装，修订
+          {{
+            singleWorkflowInstance.installationRevision
+          }}。点击“添加能力”加入当前智能体草稿，发布后生效。
         </p>
+        <details v-if="mountType === 'WORKFLOW' && singleWorkflowInstance">
+          <summary>查看安装标识</summary>
+          <p class="admin-field-help">
+            工作流：{{ singleWorkflowInstance.workflowId }}<br />安装实例：{{
+              singleWorkflowInstance.instanceId
+            }}
+          </p>
+        </details>
         <ElFormItem v-else-if="mountType === 'WORKFLOW'" label="工作流安装实例"
           ><ElSelect
             v-described-by="formTipId + '-field-9'"
@@ -832,6 +844,9 @@
       >
         {{ workflowOnboardingOpen ? '收起工作流接入' : '接入工作流' }}
       </ElButton>
+      <p v-if="mountType === 'WORKFLOW' && canOnboardWorkflow" class="admin-field-help">
+        已有安装可直接添加能力。需要安装其他工作流或调整共享安装时，再使用“接入工作流”。
+      </p>
       <p v-if="mountType === 'WORKFLOW' && workflowOptionsRefreshRequired" role="status">
         工作流接入已确认，智能体或挂载选项尚未刷新。
         <ElButton :disabled="busy || onboardingBusy" @click="refreshWorkflowOptions"
@@ -853,9 +868,11 @@
         @confirmed="workflowConfirmed"
       />
       <template #footer
-        ><ElButton @click="requestCloseMount" :disabled="editingBlocked || onboardingBusy"
-          >取消</ElButton
+        ><ElButton @click="requestCloseMount" :disabled="editingBlocked || onboardingBusy">{{
+          completedWorkflow ? '完成' : '取消'
+        }}</ElButton
         ><ElButton
+          v-if="!completedWorkflow"
           v-permission="['foundation.agents.create']"
           type="primary"
           :loading="busy"
@@ -884,7 +901,7 @@
     >
     <ElDrawer
       v-model="workflowReceiptOpen"
-      title="核对工作流接入"
+      title="查询历史工作流接入回执"
       size="680px"
       append-to-body
       :before-close="closeWorkflowReceipt"
@@ -2965,18 +2982,20 @@ async function toggleOnboarding() {
   onboardingLocked.value = false
   onboardingUnknown.value = false
 }
-async function requestCloseMount() {
-  if (onboardingBusy.value || busy.value) return
-  const completedWorkflow =
+const completedWorkflow = computed(
+  () =>
     workflowOnboardingOpen.value &&
     !workflowOptionsRefreshRequired.value &&
     !refreshRequired.value &&
     mountSnapshot(false) === mountSavedWithoutType.value &&
     workflowOnboarding.value?.canCloseConfirmed()
-  if ((onboardingOpen.value || workflowOnboardingOpen.value) && !completedWorkflow) {
+)
+async function requestCloseMount() {
+  if (onboardingBusy.value || busy.value) return
+  if ((onboardingOpen.value || workflowOnboardingOpen.value) && !completedWorkflow.value) {
     if (!(await confirmOnboardingExit())) return
   } else if (
-    !completedWorkflow &&
+    !completedWorkflow.value &&
     mountSnapshot() !== mountSaved.value &&
     !(await confirm({
       title: '关闭表单',

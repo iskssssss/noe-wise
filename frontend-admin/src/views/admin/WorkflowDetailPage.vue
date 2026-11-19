@@ -593,7 +593,7 @@
     >
     <ElDrawer
       v-model="installOpen"
-      title="安装工作流"
+      :title="existingInstallation ? '更新共享安装' : '安装工作流'"
       size="680px"
       :before-close="closeInstall"
       append-to-body
@@ -612,6 +612,15 @@
         title="安装使用已发布版本。完成资源绑定后，可将工作流添加到智能体；正在执行的任务不受影响。"
         type="info"
       />
+      <p v-if="existingInstallation" role="status" class="admin-field-help">
+        当前已安装，修订
+        {{
+          existingInstallation.installationRevision
+        }}。已回填安装参数和自定义提示；更新会影响使用此安装的智能体后续执行，已有执行继续原配置。
+        <template v-if="installSlots.length"
+          >请重新核对能力绑定；未选择的可选能力不会保留。</template
+        >
+      </p>
       <ElAlert
         v-if="installUncertain"
         :title="
@@ -653,17 +662,31 @@
           :loading="busy"
           :disabled="!!installUncertain || installStorageError"
           @click="install"
-          >安装</ElButton
+          >{{ existingInstallation ? '更新共享安装' : '安装' }}</ElButton
         ></template
       ></ElDrawer
     >
-    <p v-if="installReceipt" role="status" class="admin-field-help">
-      已安装实例 {{ installReceipt.instanceId }} · 安装修订
-      {{ installReceipt.installationRevision }}
-    </p>
-    <ElButton v-if="installReceipt" @click="router.push('/admin/agents')"
-      >前往智能体挂载此工作流</ElButton
+    <section
+      v-if="installReceipt"
+      class="admin-card workflow-install-result"
+      aria-label="工作流安装结果"
     >
+      <p role="status">工作流已安装，安装修订 {{ installReceipt.installationRevision }}。</p>
+      <p class="admin-field-help">
+        下一步：选择智能体，打开“能力挂载 →
+        添加能力”，类型选择“工作流”，选择本工作流后添加并发布智能体。
+      </p>
+      <div class="admin-actions">
+        <ElButton @click="router.push('/admin/agents')">选择智能体</ElButton>
+      </div>
+      <details>
+        <summary>查看安装回执</summary>
+        <p class="admin-field-help">
+          已安装实例 {{ installReceipt.instanceId }} · 安装修订
+          {{ installReceipt.installationRevision }}
+        </p>
+      </details>
+    </section>
     <ElDialog
       v-model="nodePlacementOpen"
       :title="nodePlacement?.kind === 'edge' ? '在连接中插入节点' : '添加后续节点'"
@@ -781,6 +804,7 @@ import {
   workflowTestRecoveryKey
 } from '../../components/builder/workflowTestRecovery'
 import type {
+  BuilderWorkflowInstance,
   WorkflowInstallReceipt,
   WorkflowPublicationDetail,
   WorkflowSaveAndPublishReceipt
@@ -2373,6 +2397,7 @@ const installOpen = ref(false),
   installConfigFields = ref<WorkflowConfigField[]>([]),
   installConfig = ref<Record<string, string | number | boolean | undefined>>({}),
   installReceipt = ref<{ instanceId: string; installationRevision: string }>(),
+  existingInstallation = ref<BuilderWorkflowInstance>(),
   installUncertain = ref(''),
   installStorageError = ref(false),
   knowledgeRevisions = ref<Record<string, number>>({})
@@ -2532,6 +2557,11 @@ async function openInstall() {
       workflowId.value,
       current.definitionVersionId
     )
+    existingInstallation.value = (await api.workflowDrafts.instances()).items.find(
+      (item) =>
+        item.workflowId === workflowId.value &&
+        item.instanceId === `${workflowId.value}_${auth.user?.tenant_id}`
+    )
     const raw = publication.definition.meta as
       { capability_requirements?: InstallSlot[]; config_schema?: WorkflowConfigField[] } | undefined
     installSlots.value = (raw?.capability_requirements ?? []).map((s) => ({
@@ -2540,12 +2570,18 @@ async function openInstall() {
     }))
     installConfigFields.value = workflowConfigFields(JSON.stringify(raw?.config_schema ?? []))
     installConfig.value = Object.fromEntries(
-      installConfigFields.value
-        .filter((f) => f.default !== undefined)
-        .map((f) => [f.key, f.default])
+      installConfigFields.value.map((field) => {
+        const saved = existingInstallation.value?.config[field.key]
+        return [
+          field.key,
+          typeof saved === 'string' || typeof saved === 'number' || typeof saved === 'boolean'
+            ? saved
+            : field.default
+        ]
+      })
     )
     acceptInstallDependencies(await readInstallDependencies(installSlots.value))
-    customPrompt.value = ''
+    customPrompt.value = existingInstallation.value?.customPrompt ?? ''
     installBaseline.value = installationSnapshot()
     installOpen.value = true
   })
@@ -2582,6 +2618,16 @@ async function install() {
         }
       })
     const config = workflowInstallationConfig(installConfigFields.value, installConfig.value)
+    if (
+      existingInstallation.value &&
+      !(await confirm({
+        title: '更新共享安装',
+        content:
+          '将使用本表单的参数、提示和能力绑定创建新安装修订。使用此安装的智能体后续执行将采用新配置，当前执行不受影响。',
+        confirmText: '确认更新'
+      }))
+    )
+      return
     const attempt = crypto.randomUUID()
     const owner = installOwner.value,
       session = getSessionId(),
@@ -2706,6 +2752,9 @@ const formTipId = useId()
   flex-direction: column;
   min-height: 0;
 }
+.workflow-install-result {
+  flex: none;
+}
 .workflow-editor :deep(.admin-page__header) {
   align-items: center;
   gap: 12px;
@@ -2735,9 +2784,6 @@ const formTipId = useId()
   flex: 1;
   min-height: 0;
   overflow: auto;
-}
-.workflow-editor.is-design .workflow-tabs :deep(.el-tabs__content) {
-  overflow: visible;
 }
 .workflow-tabs :deep(#pane-design) {
   height: 100%;

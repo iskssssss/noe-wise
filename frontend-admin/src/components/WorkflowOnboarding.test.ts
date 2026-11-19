@@ -885,7 +885,8 @@ describe('智能体内工作流接入', () => {
       ]
     })
     const wrapper = await open()
-    expect(wrapper.text()).toContain('flow_1 · 修订 4')
+    expect(wrapper.text()).toContain('已有共享安装，修订 4')
+    expect(wrapper.text()).toContain('安装实例：flow_1')
     wrapper.getComponent(ElRadioGroup).vm.$emit('update:modelValue', 'REUSE')
     await flushPromises()
     mocks.submit.mockResolvedValue({ status: 'PROCESSING', request_id: 'not-matching' })
@@ -1235,10 +1236,14 @@ describe('智能体内工作流接入', () => {
   it('写入未知时冻结原命令，只通过原请求 ID 核对，不再派发写入', async () => {
     mocks.submit.mockRejectedValueOnce(new Error('连接中断'))
     const wrapper = await open()
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.text()).toContain('正常添加工作流不需要请求 ID')
     await button(wrapper, '接入智能体').trigger('click')
     await flushPromises()
     const command = mocks.submit.mock.calls[0]![0]
     expect(wrapper.text()).toContain(command.request_id)
+    expect(wrapper.find('[aria-label="原请求 UUID"]').exists()).toBe(false)
+    expect(button(wrapper, '核对原操作').isVisible()).toBe(true)
     expect(button(wrapper, '接入智能体').props('disabled')).toBe(true)
     mocks.result.mockResolvedValueOnce(undefined)
     await button(wrapper, '核对原操作').trigger('click')
@@ -1423,6 +1428,8 @@ describe('智能体内工作流接入', () => {
       }
     })
     wrappers.push(wrapper)
+    expect(wrapper.get('details').attributes('open')).toBeDefined()
+    expect(button(wrapper, '核对原操作').props('disabled')).toBe(true)
     await wrapper.get('input').setValue(id.toUpperCase())
     await button(wrapper, '核对原操作').trigger('click')
     await flushPromises()

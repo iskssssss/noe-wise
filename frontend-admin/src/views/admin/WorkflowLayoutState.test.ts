@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   deployments: vi.fn(),
   install: vi.fn(),
   installReceipt: vi.fn(),
+  instances: vi.fn(),
   listRevisions: vi.fn()
 }))
 vi.mock('./workflowPublicationEvents', () => ({ notifyWorkflowPublished: mocks.notify }))
@@ -72,6 +73,7 @@ vi.mock('../../api', () => ({
       publicationDetail: mocks.publicationDetail,
       install: mocks.install,
       installReceipt: mocks.installReceipt,
+      instances: mocks.instances,
       installWithReceipt: async (requestId: string, id: string, ...args: unknown[]) => {
         const result = await mocks.install(id, ...args)
         return {
@@ -159,6 +161,7 @@ beforeEach(() => {
   testAuth.user.sub = '8'
   testAuth.user.permissions = ['foundation.workflows.read']
   vi.resetAllMocks()
+  mocks.instances.mockResolvedValue({ items: [] })
   mocks.requirementOptions.mockImplementation(async () => {
     const definitions = (await mocks.definitions(undefined, 'PUBLISHED')) ?? []
     const toolDefinitions = definitions.filter(
@@ -1861,7 +1864,7 @@ describe('工作流布局保存与恢复', () => {
     )
     expect(wrapper.text()).toContain('已安装实例 instance-9')
     expect(wrapper.text()).toContain('安装修订 7')
-    expect(button('前往智能体挂载此工作流').exists()).toBe(true)
+    expect(button('选择智能体').exists()).toBe(true)
   })
   it('仅新建提供可修改的开始结束骨架及与执行缺省一致的节点参数', async () => {
     routeParams.workflowId = ''
