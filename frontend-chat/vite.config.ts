@@ -1,5 +1,6 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
+import { closeInterruptedProxyResponses } from '../tools/frontend/proxy.ts'
 
 // 会话端自行持有构建配置，不读取后台的插件、别名或共享主题。
 export default defineConfig({
@@ -8,7 +9,13 @@ export default defineConfig({
   server: {
     port: 3200,
     strictPort: true,
-    proxy: { '/api': { target: 'http://localhost:8000', changeOrigin: true } }
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        configure: closeInterruptedProxyResponses
+      }
+    }
   },
   test: { environment: 'jsdom', restoreMocks: true }
 })

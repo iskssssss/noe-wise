@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import { frontendPlugins, runtimeDedupe } from '../tools/frontend/vite-shared'
+import { closeInterruptedProxyResponses } from '../tools/frontend/proxy.ts'
 import { artifactPreviewCsp, artifactPreviewOrigin } from './src/config/artifact-preview-policy.js'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -19,7 +20,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       proxy: {
-        '/api': { target: backend, changeOrigin: true, ws: true },
+        '/api': {
+          target: backend,
+          changeOrigin: true,
+          ws: true,
+          configure: closeInterruptedProxyResponses
+        },
         '/health': { target: backend, changeOrigin: true }
       }
     }
