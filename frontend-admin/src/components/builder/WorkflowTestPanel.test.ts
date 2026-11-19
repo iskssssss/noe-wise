@@ -289,6 +289,62 @@ describe('工作流公开输出与执行终态', () => {
       expect(dom().get('article details').attributes('open')).toBeUndefined()
     } else expect(dom().get('article details').attributes('open')).toBeDefined()
   })
+  it('历史输出展示信息卡字段与安全链接，菜单不恢复为可重复提交按钮', async () => {
+    restoreTest()
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      pending_interactions: [],
+      messages: [
+        {
+          message_id: 'card:1',
+          role: 'assistant',
+          content: JSON.stringify({
+            messages: [
+              {
+                role: 'assistant',
+                content: '请选择',
+                card: { type: 'select', actions: [{ id: 'again', label: '再次执行' }] }
+              },
+              {
+                role: 'assistant',
+                content: '',
+                card: {
+                  type: 'info',
+                  title: '巡检结果',
+                  body: '**已完成**',
+                  fields: [
+                    { label: '数量', value: 0 },
+                    { label: '通过', value: false },
+                    { label: '明细', value: { count: 1 } }
+                  ],
+                  actions: [
+                    { type: 'link', label: '查看记录', url: 'https://example.invalid/record' },
+                    { type: 'link', label: '危险链接', url: 'javascript:alert(1)' },
+                    { type: 'submit', label: '再次执行' }
+                  ]
+                }
+              }
+            ]
+          })
+        }
+      ]
+    })
+    render()
+    await flushPromises()
+    const card = dom().get('[aria-label="展示卡片"]')
+    expect(card.text()).toContain('巡检结果')
+    expect(card.findAll('dd').map((item) => item.text())).toEqual(['0', 'false', '{"count":1}'])
+    expect(card.get('strong').text()).toBe('已完成')
+    expect(card.findAll('a')).toHaveLength(1)
+    expect(card.get('a').attributes('href')).toBe('https://example.invalid/record')
+    expect(
+      dom()
+        .findAll('button')
+        .some((button) => button.text() === '再次执行')
+    ).toBe(false)
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+
   it('普通助手正文继续按Markdown显示', async () => {
     restoreTest('failed')
     mocks.history.mockResolvedValue({

@@ -232,6 +232,21 @@ it('菜单真实跳转形成上游范围，脚本输出类型仅读取真实Sche
   expect(options.find((item) => item.path === 'state.load')?.type).toBe('object')
 })
 
+it('展示卡添加链接操作，人工卡保留提交响应', async () => {
+  for (const interactive of [false, true]) {
+    const wrapper = mount(CardRowsEditor, { props: { kind: 'actions', variables, interactive } })
+    wrappers.push(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '添加操作')!
+      .trigger('click')
+    expect(JSON.parse(wrapper.emitted('update:modelValue')![0]![0] as string)[0].type).toBe(
+      interactive ? 'submit' : 'link'
+    )
+    expect(wrapper.text().includes('展示卡片不会等待回复')).toBe(!interactive)
+  }
+})
+
 it('卡片链接在选区替换变量并恢复中间光标', async () => {
   const wrapper = mount(CardRowsEditor, {
     attachTo: document.body,

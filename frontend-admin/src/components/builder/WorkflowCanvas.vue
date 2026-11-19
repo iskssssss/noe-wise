@@ -92,6 +92,29 @@ const pendingPath = computed(() => {
   const point = position(source)
   return curve({ x: point.x + nodeWidth / 2, y: point.y + nodeHeight }, pointer.value)
 })
+const menuConnections = computed(() =>
+  nodes.value
+    .filter((node) => node.type === 'menu')
+    .flatMap((node) =>
+      node.menuActions.flatMap((action, index) => {
+        const target = nodes.value.find((item) => item.id === action.to)
+        if (!target) return []
+        const a = position(node),
+          b = position(target)
+        return [
+          {
+            key: `${node.id}:${index}`,
+            nodeId: node.id,
+            label: `${node.label} · ${action.label} → ${target.label}`,
+            path: curve(
+              { x: a.x + nodeWidth / 2, y: a.y + nodeHeight },
+              { x: b.x + nodeWidth / 2, y: b.y - inputArrowGap }
+            )
+          }
+        ]
+      })
+    )
+)
 function toWorld(clientX: number, clientY: number) {
   const rect = surface.value!.getBoundingClientRect()
   return {
@@ -144,6 +167,10 @@ function editEdge(id: string) {
   setSelection([])
   selectedEdge.value = id
   emit('edit-edge', id)
+}
+function editMenuRoute(id: string) {
+  setSelection([id], id)
+  if (!props.busy) emit('edit-node', id)
 }
 function addNext(id: string) {
   if (locked.value || !nodes.value.some((node) => node.id === id && node.type !== 'end')) return
@@ -638,6 +665,25 @@ defineExpose({ focusNode, focusCanvas, fitView })
             class="workflow-canvas-pending"
             :marker-end="`url(#${arrowId})`"
           />
+          <g v-for="route in menuConnections" :key="route.key" class="workflow-canvas-edge">
+            <path
+              :d="route.path"
+              class="workflow-canvas-edge-line workflow-canvas-menu-line"
+              :marker-end="`url(#${arrowId})`"
+            />
+            <path
+              :d="route.path"
+              class="workflow-canvas-edge-hit"
+              role="button"
+              tabindex="0"
+              :aria-label="`配置菜单分支：${route.label}`"
+              @click.stop="editMenuRoute(route.nodeId)"
+              @keydown.enter.prevent="editMenuRoute(route.nodeId)"
+              @keydown.space.prevent="editMenuRoute(route.nodeId)"
+            >
+              <title>{{ route.label }}</title>
+            </path>
+          </g>
         </svg>
         <div
           v-for="node in nodes"
@@ -820,6 +866,9 @@ defineExpose({ focusNode, focusCanvas, fitView })
   stroke: transparent;
   stroke-width: 18;
   cursor: pointer;
+}
+.workflow-canvas-menu-line {
+  stroke-dasharray: 6 4;
 }
 .workflow-canvas-edge:hover .workflow-canvas-edge-line,
 .workflow-canvas-edge.selected .workflow-canvas-edge-line,

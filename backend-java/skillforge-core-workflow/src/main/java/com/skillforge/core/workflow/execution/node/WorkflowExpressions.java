@@ -218,7 +218,7 @@ public final class WorkflowExpressions {
      * 点选后按 action id 路由（恢复逻辑见引擎 run 主循环）。
      *
      * <p>menu 不再接受 card 配置（外观覆盖已删除，展示语义统一由 card 节点承担），
-     * 卡片固定默认外观，内容仅由 actions 决定。
+     * 卡片固定默认外观，提示与选项由 prompt/actions 决定。
      */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> buildMenuCard(
@@ -230,6 +230,8 @@ public final class WorkflowExpressions {
         Map<String, Object> card = new LinkedHashMap<>();
         card.put("card_id", "hitl_menu");
         card.put("type", "select");
+        card.put("body", interpolate(node.prompt() == null ? "" : node.prompt(),
+                config, state, extracted, extraVars));
         // 行动点统一为 actions 字段（与节点配置语义一致，不再转换为 options）
         List<Map<String, Object>> actions = new ArrayList<>();
         if (node.actions() != null) {

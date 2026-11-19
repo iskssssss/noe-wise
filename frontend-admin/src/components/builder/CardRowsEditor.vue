@@ -17,6 +17,7 @@ const props = defineProps<{
   kind: 'fields' | 'actions'
   variables: WorkflowVariableOption[]
   readonly?: boolean
+  interactive?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const items = ref<string[]>([])
@@ -63,7 +64,11 @@ function add() {
     'update:modelValue',
     writeArray([
       ...items.value,
-      props.kind === 'fields' ? '{"label":"","value":""}' : '{"id":"","label":"","type":"submit"}'
+      props.kind === 'fields'
+        ? '{"label":"","value":""}'
+        : props.interactive === false
+          ? '{"id":"","label":"","type":"link","url":""}'
+          : '{"id":"","label":"","type":"submit"}'
     ])
   )
 }
@@ -132,7 +137,11 @@ function insertVariable(index: number, key: string, value: string) {
             :disabled="readonly"
             :aria-label="'操作' + (index + 1) + '类型'"
             @update:model-value="update(index, 'type', $event)"
-            ><ElOption value="submit" label="提交响应" /><ElOption
+            ><ElOption
+              v-if="interactive !== false || get(index, 'type') === 'submit'"
+              value="submit"
+              :disabled="interactive === false"
+              :label="interactive === false ? '提交响应（展示卡不支持）' : '提交响应'" /><ElOption
               value="link"
               label="打开链接" /><ElOption
               v-if="get(index, 'type') && !['submit', 'link'].includes(get(index, 'type'))"
@@ -171,7 +180,9 @@ function insertVariable(index: number, key: string, value: string) {
         {{
           kind === 'fields'
             ? '尚无展示字段，按需添加。'
-            : '尚无操作按钮。如需用户确认、提交或打开链接，请添加操作。'
+            : interactive === false
+              ? '展示卡片不会等待回复。可按需添加“打开链接”按钮；需要用户确认时，请使用人工确认节点。'
+              : '尚无操作按钮。如需用户确认、提交或打开链接，请添加操作。'
         }}
       </p>
     </template>

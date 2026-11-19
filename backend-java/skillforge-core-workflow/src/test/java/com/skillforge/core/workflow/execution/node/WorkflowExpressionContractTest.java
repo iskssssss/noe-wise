@@ -125,6 +125,7 @@ class WorkflowExpressionContractTest {
         var outcome = new MenuNodeExecutor().doExecute(context);
         assertTrue(outcome.pending());
         assertEquals(List.of(Map.of("id", "confirm", "label", "灵知")), outcome.card().get("actions"));
+        assertEquals("灵知", outcome.card().get("body"), "等待交互投影必须保留菜单提示语");
         assertMessageConfigValues(context);
     }
 

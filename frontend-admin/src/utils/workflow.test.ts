@@ -971,8 +971,8 @@ describe('workflowDefinition（版本化 Builder API）', () => {
     expect(definition.nodes[5]).toMatchObject({
       merge_message_id: '${state.message}',
       card: {
-        card_id: 'hitl_confirm',
-        type: 'confirm',
+        card_id: 'hitl_info',
+        type: 'info',
         title: '确认',
         body: '继续？',
         fields: ['name'],
@@ -1203,6 +1203,27 @@ describe('parseWorkflowJson 新字段反序列化', () => {
 })
 
 describe('validateWorkflow 新规则（menu / on_error）', () => {
+  it('菜单目标视为已连接，未被选项引用的孤立节点仍报错', () => {
+    const nodes = [
+      node({ id: 's', type: 'start' }),
+      node({ id: 'e', type: 'end' }),
+      node({
+        id: 'm',
+        type: 'menu',
+        menuActions: [
+          { id: 'card', label: '查看卡片', to: 'c' },
+          { id: 'text', label: '查看文字', to: 't' }
+        ]
+      }),
+      node({ id: 'c', type: 'card', label: '结果卡', cardTitle: '完成' }),
+      node({ id: 't', type: 'output', label: '结果文字', message: '完成' })
+    ]
+    const edges = [{ id: 'sm', source: 's', target: 'm' }]
+    expect(validateWorkflow(nodes, edges)).toEqual([])
+    nodes.push(node({ id: 'orphan', type: 'output', label: '孤立结果', message: '未连接' }))
+    expect(validateWorkflow(nodes, edges)).toEqual(["节点 '孤立结果' 未连接"])
+  })
+
   it('menu 行动点 id 重复与 to 不存在被检出', () => {
     const nodes = [
       node({
@@ -1233,6 +1254,18 @@ describe('validateWorkflow 新规则（menu / on_error）', () => {
 })
 
 describe('card 展示卡节点', () => {
+  it('展示卡默认 info，人工确认默认 confirm，JSON 与 YAML 一致', () => {
+    for (const type of ['card', 'human_input']) {
+      const n = node({ type, cardTitle: '结果' })
+      const expected = type === 'card' ? 'info' : 'confirm'
+      expect(workflowYaml([n], [])).toContain(`      type: ${expected}`)
+      expect(workflowDefinition([n], []).nodes).toEqual([
+        expect.objectContaining({
+          card: expect.objectContaining({ type: expected, card_id: `hitl_${expected}` })
+        })
+      ])
+    }
+  })
   it('card 节点序列化与反序列化（卡片字段走通用块）', () => {
     const n = node({
       id: 'c',

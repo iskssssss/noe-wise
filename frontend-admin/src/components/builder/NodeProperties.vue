@@ -534,6 +534,7 @@ defineExpose({ focusField })
             ><CardRowsEditor
               v-model="model.cardActionsText"
               kind="actions"
+              :interactive="model.type === 'human_input'"
               :variables="cardVariables"
               :readonly="locked"
           /></ElFormItem>

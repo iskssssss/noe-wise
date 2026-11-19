@@ -79,6 +79,26 @@ async function action(wrapper: VueWrapper, label: string) {
   return wrapper.findAllComponents(ElButton).find((button) => button.text() === label)!
 }
 describe('工作流画布', () => {
+  it('菜单目标显示分支连线，键盘打开菜单配置且不新增普通边', async () => {
+    const wrapper = render()
+    const original = wrapper.props('nodes')
+    await wrapper.setProps({
+      nodes: [
+        {
+          ...original[0]!,
+          type: 'menu',
+          label: '选择路径',
+          menuActions: [{ id: 'done', label: '完成', to: 'end' }]
+        },
+        original[1]!
+      ]
+    })
+    const route = wrapper.get('[aria-label="配置菜单分支：选择路径 · 完成 → 结束"]')
+    expect(wrapper.findAll('.workflow-canvas-menu-line')).toHaveLength(1)
+    await route.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('edit-node')).toEqual([['start']])
+    expect(wrapper.props('edges')).toEqual([])
+  })
   it('批量编辑通过真实 Popover 打开操作菜单，完成选择后关闭并保留可见计数', async () => {
     const wrapper = render()
     expect(wrapper.findComponent(ElPopover).props('visible')).toBe(false)

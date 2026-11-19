@@ -372,8 +372,8 @@ export function workflowYaml(
     ) {
       lines.push(
         '    card:',
-        '      card_id: hitl_confirm',
-        '      type: confirm',
+        `      card_id: ${n.type === 'card' ? 'hitl_info' : 'hitl_confirm'}`,
+        `      type: ${n.type === 'card' ? 'info' : 'confirm'}`,
         `      title: ${yamlString(n.cardTitle ?? '')}`,
         `      body: ${yamlString(n.cardBody ?? '')}`
       )
@@ -633,8 +633,12 @@ function definitionNode(node: BuilderNode): Record<string, unknown> {
     const card: Record<string, unknown> = {
       ...(node.original?.card as Record<string, unknown> | undefined),
       card_id:
-        (node.original?.card as Record<string, unknown> | undefined)?.card_id ?? 'hitl_confirm',
-      type: (node.original?.card as Record<string, unknown> | undefined)?.type ?? 'confirm',
+        (node.original?.card as Record<string, unknown> | undefined)?.card_id ??
+        (node.type === 'card' ? 'hitl_info' : 'hitl_confirm'),
+      type:
+        node.type === 'card'
+          ? 'info'
+          : ((node.original?.card as Record<string, unknown> | undefined)?.type ?? 'confirm'),
       title: node.cardTitle ?? '',
       body: node.cardBody ?? ''
     }
@@ -1649,6 +1653,15 @@ export function validateWorkflow(
     connected.add(e.source)
     connected.add(e.target)
   })
+  nodes
+    .filter((node) => node.type === 'menu')
+    .forEach((node) => {
+      node.menuActions.forEach((action) => {
+        if (!action.to) return
+        connected.add(node.id)
+        connected.add(action.to)
+      })
+    })
   // 注：不做有向环检测——条件重试/确认回退等合法回边会被误报为死循环，
   // 且后端 validateWorkflowRules 无环校验（两端对齐，避免同一边界前后端矛盾，D7 缺陷）
   // start/end 结构性节点豁免「未连接」检查：start 允许无入边、end 允许无出边

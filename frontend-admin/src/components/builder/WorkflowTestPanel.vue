@@ -151,7 +151,46 @@ const testMessages = computed(() =>
             (message) =>
               message && message.role === 'assistant' && typeof message.content === 'string'
           )
-            ? messages.map((message) => String(message.content))
+            ? messages.map((message) => {
+                const card = message.card
+                return {
+                  content: String(message.content),
+                  card:
+                    card?.type === 'info'
+                      ? {
+                          title: typeof card.title === 'string' ? card.title : '',
+                          body: typeof card.body === 'string' ? card.body : '',
+                          fields: Array.isArray(card.fields)
+                            ? card.fields
+                                .filter((field: unknown) => field && typeof field === 'object')
+                                .map((field: Record<string, unknown>) => ({
+                                  label: String(field.label ?? field.key ?? ''),
+                                  value:
+                                    typeof field.value === 'object'
+                                      ? JSON.stringify(field.value)
+                                      : String(field.value ?? ''),
+                                  description:
+                                    typeof field.description === 'string' ? field.description : ''
+                                }))
+                            : [],
+                          links: Array.isArray(card.actions)
+                            ? card.actions
+                                .filter(
+                                  (action: Record<string, unknown> | null) =>
+                                    action?.type === 'link' &&
+                                    typeof action.url === 'string' &&
+                                    /^https?:\/\//i.test(action.url) &&
+                                    typeof action.label === 'string'
+                                )
+                                .map((action: { label: string; url: string }) => ({
+                                  label: action.label,
+                                  url: action.url
+                                }))
+                            : []
+                        }
+                      : undefined
+                }
+              })
             : undefined
       }
     } catch {
@@ -1902,11 +1941,30 @@ onBeforeUnmount(() => {
                 此版本返回了空对象。请检查“工作流信息 →
                 能力治理”的导出字段；要返回输出节点的文字，请开启“返回输出节点消息”并保存后新建测试。
               </p>
-              <MarkdownContent
-                v-for="(content, index) in messages ?? []"
-                :key="index"
-                :content="content"
-              />
+              <div v-for="(result, index) in messages ?? []" :key="index">
+                <MarkdownContent v-if="result.content" :content="result.content" />
+                <section v-if="result.card" class="test-output-card" aria-label="展示卡片">
+                  <h4 v-if="result.card.title">{{ result.card.title }}</h4>
+                  <MarkdownContent v-if="result.card.body" :content="result.card.body" />
+                  <dl v-if="result.card.fields.length">
+                    <template v-for="(field, fieldIndex) in result.card.fields" :key="fieldIndex">
+                      <dt>{{ field.label }}</dt>
+                      <dd>
+                        {{ field.value }}
+                        <p v-if="field.description">{{ field.description }}</p>
+                      </dd>
+                    </template>
+                  </dl>
+                  <a
+                    v-for="(link, linkIndex) in result.card.links"
+                    :key="linkIndex"
+                    :href="link.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >{{ link.label }}</a
+                  >
+                </section>
+              </div>
               <details v-if="output" :open="!messages?.length">
                 <summary>完整输出（JSON）</summary>
                 <CodeEditor :model-value="output" label="工作流完整输出" language="json" readonly />
@@ -1923,6 +1981,27 @@ onBeforeUnmount(() => {
   </ElDrawer>
 </template>
 <style scoped>
+.test-output-card {
+  margin-block: 12px;
+  padding: 16px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.test-output-card h4 {
+  margin: 0 0 12px;
+}
+.test-output-card dt {
+  color: var(--admin-muted);
+}
+.test-output-card dd {
+  margin: 4px 0 12px;
+}
+.test-output-card a {
+  display: inline-block;
+  margin-right: 12px;
+  color: var(--admin-accent);
+}
 .workflow-test-panel {
   display: flex;
   flex-direction: column;
