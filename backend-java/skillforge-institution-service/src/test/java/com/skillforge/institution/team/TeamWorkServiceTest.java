@@ -75,7 +75,7 @@ class TeamWorkServiceTest {
                 mock(TeamResultService.class),mock(TeamWorkInputs.class),mock(ArtifactAccess.class),mock(TeamRecoveryMapper.class),
                 hostJson(),Clock.systemUTC(),mock(AgentRunBindings.class),mock(SessionDelegationEngine.class),
                 mock(SessionDelegations.Store.class),mock(SessionLogPort.class),mock(com.skillforge.runtime.session.spi.ExecutionStore.class),
-                executionCodec(),planDependencies(),delegationHost());
+                executionCodec(),planDependencies(),delegationHost(), mock(TeamWorkProjection.class));
         var parent=mock(com.skillforge.runtime.session.spi.ExecutionStore.Run.class);
         when(bridge.fact(owner,run)).thenReturn(Optional.of(parent));
         for(var outcome:List.of(DagWork.TaskStatus.FAILED,DagWork.TaskStatus.CANCELLED,DagWork.TaskStatus.OUTCOME_UNKNOWN)) {
@@ -117,7 +117,7 @@ class TeamWorkServiceTest {
         var hosts=delegationHost();var host=hosts.getObject();when(host.planTask(work,admission)).thenReturn(frozenTask);
         var service=new TeamWorkService(mock(JdbcDagWorkPort.class),mock(TeamService.class),bridge,mock(TeamResultService.class),mock(TeamWorkInputs.class),
                 mock(ArtifactAccess.class),mock(TeamRecoveryMapper.class),hostJson(),Clock.systemUTC(),bindings,delegations,mock(SessionDelegations.Store.class),
-                mock(SessionLogPort.class),mock(com.skillforge.runtime.session.spi.ExecutionStore.class),executionCodec(),planDependencies(),hosts);
+                mock(SessionLogPort.class),mock(com.skillforge.runtime.session.spi.ExecutionStore.class),executionCodec(),planDependencies(),hosts,mock(TeamWorkProjection.class));
         service.ensureAccepted(work,execution);
         verify(host).admitPlan(entry,work.key(),admission,permit);
         org.mockito.Mockito.clearInvocations(host,delegations);
@@ -143,7 +143,7 @@ class TeamWorkServiceTest {
             var service = new TeamWorkService(works, mock(TeamService.class), bridge,
                     mock(TeamResultService.class), inputs, mock(ArtifactAccess.class), mock(TeamRecoveryMapper.class),
                     hostJson(), Clock.systemUTC(), mock(AgentRunBindings.class), mock(SessionDelegationEngine.class),
-                    mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                    mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
             var control = new TeamWorkInputs.Control("control-" + operation, "", operation,
                     "预算改为48000，先修订并等待批准", null, "", "", "");
             when(inputs.pending(work)).thenReturn(List.of(new TeamWorkInputs.Input(control, Instant.now(), "ACCEPTED", "")));
@@ -203,7 +203,7 @@ class TeamWorkServiceTest {
         var service = new TeamWorkService(mock(JdbcDagWorkPort.class), mock(TeamService.class), bridge,
                 mock(TeamResultService.class), mock(TeamWorkInputs.class), mock(ArtifactAccess.class), mock(TeamRecoveryMapper.class),
                 hostJson(), Clock.systemUTC(), mock(AgentRunBindings.class), mock(SessionDelegationEngine.class),
-                mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
         String summary = "分析结论";
         String outputText = "独立分析产出";
         String digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
@@ -272,7 +272,7 @@ class TeamWorkServiceTest {
         var service = new TeamWorkService(store, mock(TeamService.class), mock(TeamRuntimeBridge.class),
                 mock(TeamResultService.class), mock(TeamWorkInputs.class), mock(ArtifactAccess.class), mapper,
                 hostJson(), Clock.systemUTC(), mock(AgentRunBindings.class), delegates,
-                mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
         String previous = com.skillforge.common.context.TenantContext.getTenantId();
         service.recover(new TenantId("1"),100);
         service.recover(new TenantId("2"),100);
@@ -315,7 +315,7 @@ class TeamWorkServiceTest {
                 when(inputs.pending(work)).thenReturn(List.of(originalInput, unrelatedInput), List.of(unrelatedInput));
                 var service = new TeamWorkService(store, mock(TeamService.class), bridge, mock(TeamResultService.class),
                         inputs, mock(ArtifactAccess.class), mock(TeamRecoveryMapper.class), hostJson(), Clock.systemUTC(),
-                        mock(AgentRunBindings.class), mock(SessionDelegationEngine.class), mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                        mock(AgentRunBindings.class), mock(SessionDelegationEngine.class), mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
                 service.tick(key);
                 service.tick(key);
                 if (workStatus == DagWork.Status.CANCELLED && (runStatus == RunStatus.SUSPENDED || runStatus == RunStatus.RUNNING))
@@ -371,7 +371,7 @@ class TeamWorkServiceTest {
             var service = new TeamWorkService(store, mock(TeamService.class), bridge,
                     mock(TeamResultService.class), mock(TeamWorkInputs.class), mock(ArtifactAccess.class),
                     mock(TeamRecoveryMapper.class), hostJson(), Clock.systemUTC(), bindings,
-                    delegations, mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                    delegations, mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
 
             service.tick(key);
 
@@ -416,7 +416,7 @@ class TeamWorkServiceTest {
             var service = new TeamWorkService(store, mock(TeamService.class), bridge,
                     mock(TeamResultService.class), mock(TeamWorkInputs.class), mock(ArtifactAccess.class),
                     mock(TeamRecoveryMapper.class), hostJson(), Clock.systemUTC(), bindings,
-                    delegates, mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                    delegates, mock(SessionDelegations.Store.class), mock(SessionLogPort.class), mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
             if (failure instanceof SecurityException) {
                 service.tick(key);
                 assertEquals(DagWork.Status.CANCELLED, current.get().status());
@@ -452,7 +452,7 @@ class TeamWorkServiceTest {
                 mock(TeamResultService.class), mock(TeamWorkInputs.class),
                 mock(ArtifactAccess.class), mock(TeamRecoveryMapper.class), hostJson(),
                 Clock.systemUTC(), bindings, mock(SessionDelegationEngine.class),
-                mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost());
+                mock(SessionDelegations.Store.class), log, mock(com.skillforge.runtime.session.spi.ExecutionStore.class), executionCodec(), planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
         var event = new CommittedSessionEvent(owner, identity.agentId(), new InputId("plan-on"), Optional.empty(),
                 Optional.empty(), Optional.empty(), Optional.empty(), new EventId("plan-on"), 1,
                 "plan/selection", "1", identity.trace(),
@@ -599,7 +599,7 @@ class TeamWorkServiceTest {
                     mock(TeamResultService.class), mock(TeamWorkInputs.class), artifacts,
                     mock(TeamRecoveryMapper.class), hostJson(), Clock.systemUTC(), bindings,
                     mock(SessionDelegationEngine.class), mock(SessionDelegations.Store.class),
-                    mock(SessionLogPort.class), executions, codec, planDependencies(), delegationHost());
+                    mock(SessionLogPort.class), executions, codec, planDependencies(), delegationHost(), mock(TeamWorkProjection.class));
             var plan = new DagPlan(1, false, List.of(new DagPlan.Task("T1", "计算", new AgentId("8"),
                     "计算结果", List.of(), Set.of("answer"), Set.of())));
             assertions.accept(new ParentPlanFixture(service, parent, plan, works, artifacts, bindings, binding));

@@ -411,6 +411,7 @@ class AgentRuntimeExecutionProjectionTest {
             var fixture=new Fixture();var body=fixture.base();body.put("actionId","source-action");body.put("generation","3");body.put("kind",kind);body.put("requests",Map.of());body.put("question",null);
             fixture.events(AgentExecutionProgram.WAITING_EVENT,AgentExecutionProgram.WAITING_SCHEMA,body);fixture.projection.reconcile(fixture.session);
             assertEquals(List.of("execution.waiting","process.delta"),fixture.types());
+            assertEquals("plan".equals(kind) ? "plan_wait" : null, fixture.data("execution.waiting").get("reason"));
         }
         var fixture=new Fixture();var body=fixture.base();body.put("actionId","source-action");body.put("generation","3");body.put("kind","workflow");body.put("requests",Map.of());body.put("question",null);
         body.put("workflow",Map.of("executionId","actual-engine","suspendRef","actual-suspend","actionKey","actual-engine-action","executionRevision","9007199254740993",

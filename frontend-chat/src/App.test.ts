@@ -198,6 +198,39 @@ beforeEach(() => {
 })
 
 describe('对话任务入口与单一侧栏', () => {
+  it('任务空态开启规划保留已有草稿，原请求失败后重试沿用命令身份', async () => {
+    holder.state.sessionId = 's'
+    holder.state.target = 'a'
+    holder.state.draft = '我已写好的需求'
+    let attempt = 0
+    const requests: unknown[] = []
+    holder.state.client.json.mockImplementation(async (path: string, ...args: unknown[]) => {
+      if (path === '/chat/runs/plan-mode') {
+        requests.push(args[1])
+        if (++attempt === 1) throw new Error('回执未收到')
+        return { active: true, pending: false, selected_active: true }
+      }
+      return { items: [] }
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    try {
+      await flushPromises()
+      wrapper.findComponent(TaskDetailsPanel).vm.$emit('plan')
+      await flushPromises()
+      expect(holder.state.history.collaboration.selected_active).toBe(false)
+      expect(holder.state.draft).toBe('我已写好的需求')
+      wrapper.findComponent(TaskDetailsPanel).vm.$emit('plan')
+      await flushPromises()
+      expect(requests).toHaveLength(2)
+      expect(requests[1]).toEqual(requests[0])
+      expect(holder.state.history.collaboration.selected_active).toBe(true)
+      expect(holder.state.draft).toBe('我已写好的需求')
+      expect(document.activeElement?.id).toBe('message-input')
+      expect(holder.state.submit).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it.each(['token', 'hmac'])('从断开状态恢复 %s 凭据后自动打开原会话', async (mode) => {
     const connectedClient = holder.state.client
     Object.assign(holder.state, { client: undefined })

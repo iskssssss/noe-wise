@@ -578,24 +578,24 @@ describe('会话公开投影', () => {
     const receive = createProjection('s', history, changed)
     const waiting = (id: string, sequence: number) => ({
       id,
-      event: 'execution.completed',
+      event: 'execution.waiting',
       data: {
         session_id: 's',
         run_id: 'root',
         root_run_id: 'root',
         root_input_id: 'input',
-        status: 'waiting_hitl',
-        reason: 'plan_approval_required',
+        status: 'waiting_dependency',
+        reason: 'plan_wait',
         updated_sequence: sequence
       }
     })
     receive(waiting('first', 46))
     expect(history.activities?.[0]).toMatchObject({
-      status: 'waiting_hitl',
+      status: 'waiting_dependency',
       render: {
         root_run_id: 'root',
         root_input_id: 'input',
-        reason: 'plan_approval_required',
+        reason: 'plan_wait',
         updated_sequence: 46
       }
     })
@@ -604,13 +604,13 @@ describe('会话公开投影', () => {
       event: 'execution.accepted',
       data: { session_id: 's', run_id: 'root' }
     })
-    expect(history.activities?.[0]?.render).not.toHaveProperty('reason', 'plan_approval_required')
+    expect(history.activities?.[0]?.render).not.toHaveProperty('reason', 'plan_wait')
     receive(waiting('second', 161))
     receive(waiting('late-first', 46))
     expect(history.activities?.[0]).toMatchObject({
-      status: 'waiting_hitl',
+      status: 'waiting_dependency',
       render: {
-        reason: 'plan_approval_required',
+        reason: 'plan_wait',
         updated_sequence: 161
       }
     })

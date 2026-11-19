@@ -407,7 +407,7 @@ export function createProjection(
           : item
       )
       runChanged(String(data.run_id ?? ''), 'running')
-    } else if (event.event === 'execution.completed') {
+    } else if (event.event === 'execution.completed' || event.event === 'execution.waiting') {
       const run = String(data.run_id ?? '')
       // Live 与历史读取共用同一公开根状态；不要丢掉计划审批等待的可信原因。
       if (
@@ -444,7 +444,7 @@ export function createProjection(
         history.pending_interactions = history.pending_interactions.filter(
           (item) => item.execution_id !== run
         )
-      runChanged(run, String(data.status))
+      runChanged(run, event.event === 'execution.waiting' ? 'suspended' : String(data.status))
       // 冻结清单的工具回执早于正式发布；成功终态后重新读取实际成果。
       if (data.status === 'completed') artifactsChanged()
     } else if (

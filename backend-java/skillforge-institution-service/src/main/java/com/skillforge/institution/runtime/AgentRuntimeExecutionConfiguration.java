@@ -217,7 +217,7 @@ public class AgentRuntimeExecutionConfiguration {
         return new AgentRuntimeBodyPreview(mailbox, guard, json, properties.getMaxPayloadCodeUnits(), Duration.ofMillis(100), System::nanoTime);
     }
 
-    @Bean @Primary
+    @Bean
     AgentRuntimeExecutionProjection executionProjection(ExecutionStore store, SessionMailboxService mailbox, PublicOutputGuard guard, ObjectMapper json, AgentRuntimeProperties properties) {
         return new AgentRuntimeExecutionProjection(store, mailbox, guard, json,
                 properties.getMaxPayloadCodeUnits(), properties.getMaxPayloadNodes(), properties.getMaxPayloadDepth());

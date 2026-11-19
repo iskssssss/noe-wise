@@ -743,7 +743,7 @@ export function useConversation() {
         !workIsTerminal(work) &&
         ['active', 'queued'].includes(work.status) &&
         work.run_status === 'suspended' &&
-        render?.reason === 'plan_approval_required' &&
+        render?.reason === 'plan_wait' &&
         work.approval_required &&
         work.plan_revision > 0 &&
         (work.approved_revision ?? 0) < work.plan_revision

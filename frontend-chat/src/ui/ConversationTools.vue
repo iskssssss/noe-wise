@@ -25,7 +25,7 @@ import type { GoalStatus, Reference, RunDeliveryStatus, Work } from '../protocol
 import { mayDiscard, validateForm } from './panel'
 import TaskPlanCard from './TaskPlanCard.vue'
 import RunBudgetPanel from './RunBudgetPanel.vue'
-import { mergeWorkPlans } from '../workPlans'
+import { mergeWorkPlans, workPhase } from '../workPlans'
 import { deliveryStatusLabels } from './deliveryStatus'
 const props = defineProps<{
   modelValue: boolean
@@ -34,11 +34,14 @@ const props = defineProps<{
   run: string
   clientRef: string
   workPlans?: Work[]
+  planning?: boolean
+  planningDisabled?: boolean
 }>()
 const emit = defineEmits<{
   reference: [value: Reference]
   'update:modelValue': [value: boolean]
   task: [id: string]
+  plan: []
 }>()
 const section = ref('goal'),
   busy = ref(false),
@@ -86,7 +89,7 @@ const works = ref<Work[]>([]),
 const workOptions = computed(() =>
   works.value.map((item, index) => ({
     value: item.work_id,
-    label: `${item.title || '任务计划 ' + (index + 1)} · ${item.status}`
+    label: `${item.title || '任务计划 ' + (index + 1)} · ${workPhase(item)}`
   }))
 )
 const keys = new Map<string, string>()
@@ -415,7 +418,7 @@ const formTipId = useId()
         ></ChatTabPane
       >
       <ChatTabPane lazy name="work" label="任务计划"
-        ><ChatForm :disabled="busy" label-position="top"
+        ><ChatForm v-if="workOptions.length" :disabled="busy" label-position="top"
           ><ChatFormItem label="历史任务计划"
             ><ChatSelect
               v-described-by="formTipId + '-field-2'"
@@ -438,9 +441,16 @@ const formTipId = useId()
           @dirty="workText = $event ? 'unsaved' : ''"
           @open="emit('task', $event)"
         />
-        <p v-else-if="!busy && !error">
-          当前会话尚未生成任务计划，生成后会显示在这里。
-        </p></ChatTabPane
+        <div v-else-if="!busy && !error">
+          <p>还没有任务计划。</p>
+          <p class="muted">
+            开启规划模式后，在对话中描述需求。助手会先制定计划，等待你批准后执行；生成的计划和步骤进度会保留在这里。
+          </p>
+          <ChatButton :disabled="planningDisabled" @click="emit('plan')">{{
+            planning ? '已开启规划，去描述需求' : '开始规划'
+          }}</ChatButton>
+          <p v-if="planningDisabled" class="muted">请先处理当前任务或确认，再开始新的规划。</p>
+        </div></ChatTabPane
       > </ChatTabs
     ><template #footer
       ><ChatButton :disabled="busy" @click="requestClose">关闭</ChatButton></template

@@ -14,11 +14,14 @@ const props = defineProps<{
   selectedId?: string
   workPlans?: Work[]
   locked?: boolean
+  planning?: boolean
+  planningDisabled?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   selected: [id: string]
   updated: [work: Work]
+  plan: []
 }>()
 const works = ref<Work[]>([]),
   selected = ref(''),
@@ -186,8 +189,9 @@ defineExpose({ requestClose })
         <ChatButton text aria-label="关闭任务详情" @click="requestClose">关闭</ChatButton>
       </header>
       <div class="task-panel-body">
-        <label for="task-work-selector">查看任务</label>
+        <label v-if="workOptions.length" for="task-work-selector">查看任务</label>
         <ChatSelect
+          v-if="workOptions.length"
           id="task-work-selector"
           :model-value="selected"
           :options="workOptions"
@@ -232,14 +236,20 @@ defineExpose({ requestClose })
           "
         />
         <div v-else-if="!loading && !error">
-          <p>
-            {{
-              selected
-                ? '当前任务记录暂未返回，请重新读取。'
-                : '当前会话尚未生成任务计划，生成后会显示在这里。'
-            }}
-          </p>
-          <ChatButton text @click="refresh">重新读取任务</ChatButton>
+          <template v-if="selected">
+            <p>当前任务记录暂未返回，请重新读取。</p>
+            <ChatButton text @click="refresh">重新读取任务</ChatButton>
+          </template>
+          <template v-else>
+            <p>还没有任务计划。</p>
+            <p class="muted">
+              开启规划模式后，在对话中描述需求。助手会先制定计划，等待你批准后执行；生成的计划和步骤进度会保留在这里。
+            </p>
+            <ChatButton :disabled="planningDisabled" @click="emit('plan')">{{
+              planning ? '已开启规划，去描述需求' : '开始规划'
+            }}</ChatButton>
+            <p v-if="planningDisabled" class="muted">请先处理当前任务或确认，再开始新的规划。</p>
+          </template>
         </div>
       </div>
     </dialog>

@@ -502,6 +502,7 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
         if (dependency) {
             var data = new LinkedHashMap<>(base); data.put("execution_id", saved.run().runId());
             data.put("tool_wait", wait); data.put("status", "waiting_dependency");
+            if ("plan".equals(kind)) data.put("reason", "plan_wait");
             sink.sendRuntime("execution.waiting", data, saved.run().runId());
             dependencyProcess(saved, value, base, sink, false);
             if ("workflow".equals(kind) && value.has("workflow")) workflowHuman(saved, value, value.get("workflow"), base, wait, sink);

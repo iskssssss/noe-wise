@@ -64,6 +64,7 @@ public class TeamWorkService implements DagDriver.Runs, DagCoordinator.Access {
     private final ObjectProvider<AgentRuntimePlanDependencies> planDependencies;
     private final ObjectProvider<AgentDelegationHost> delegationHost;
     private final SessionCollaboration collaboration;
+    private final TeamWorkProjection projection;
     private final DagCoordinator coordinator;
     private final DagDriver driver;
     private final SessionLogPort log;
@@ -115,7 +116,7 @@ public class TeamWorkService implements DagDriver.Runs, DagCoordinator.Access {
             SessionLogPort log,
             ExecutionStore executions, AgentExecutionCodec executionCodec,
             ObjectProvider<AgentRuntimePlanDependencies> planDependencies,
-            ObjectProvider<AgentDelegationHost> delegationHost) {
+            ObjectProvider<AgentDelegationHost> delegationHost, TeamWorkProjection projection) {
         final long databaseStarted = System.nanoTime();
         DATABASE_LOG.debug("数据库业务方法进入 component={} method={} tenant={}", "TeamWorkService", "TeamWorkService", TenantContext.getTenantId());
         try {
@@ -135,6 +136,7 @@ public class TeamWorkService implements DagDriver.Runs, DagCoordinator.Access {
             this.planDependencies = planDependencies;
             this.delegationHost = delegationHost;
             this.collaboration = new SessionCollaboration(log);
+            this.projection = projection;
             this.log = log;
             this.clock = clock;
             this.coordinator = new DagCoordinator(works, this, Duration.ofMinutes(10));
@@ -255,7 +257,13 @@ public class TeamWorkService implements DagDriver.Runs, DagCoordinator.Access {
 
     /** 自有Store事务由外层返回后通知；普通领域写入在本次提交之后通知原父Run。 */
     private void notifyPlanChanged(DagWork work) {
-        if (planScope.get() == null) planDependencies.getObject().changed(work.request().controlRun());
+        if (planScope.get() != null) return;
+        planDependencies.getObject().changed(work.request().controlRun());
+        if (TransactionSynchronizationManager.isSynchronizationActive() && TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { projection.changed(work.key()); }
+            });
+        } else projection.changed(work.key());
     }
 
     /** 已完成审批的业务步骤已终态或确定阻塞，不表示主 Run 已完成最终汇总。 */

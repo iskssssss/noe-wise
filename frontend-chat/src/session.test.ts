@@ -718,7 +718,7 @@ for (const outcome of ['running', 'suspended', 'changed-session'] as const) {
                     root_run_id: 'root',
                     root_input_id: 'input',
                     updated_sequence: 46,
-                    reason: 'plan_approval_required'
+                    reason: 'plan_wait'
                   }
                 }
               ]
@@ -816,25 +816,25 @@ it('第二次真实计划待批SSE保留reason，随后工作挂起和无revisio
   const waiting = (id: string, sequence: number) =>
     publish({
       id,
-      event: 'execution.completed',
+      event: 'execution.waiting',
       data: {
         session_id: 's',
         run_id: 'root',
         root_run_id: 'root',
         root_input_id: 'input',
-        status: 'waiting_hitl',
-        reason: 'plan_approval_required',
+        status: 'waiting_dependency',
+        reason: 'plan_wait',
         updated_sequence: sequence
       }
     })
   waiting('first', 46)
   await flushPromises()
   expect(state.history.value.activities?.[0]).toMatchObject({
-    status: 'waiting_hitl',
+    status: 'waiting_dependency',
     render: {
       root_run_id: 'root',
       root_input_id: 'input',
-      reason: 'plan_approval_required',
+      reason: 'plan_wait',
       updated_sequence: 46
     }
   })
@@ -847,11 +847,11 @@ it('第二次真实计划待批SSE保留reason，随后工作挂起和无revisio
   waiting('second', 161)
   await flushPromises()
   expect(state.history.value.activities?.[0]).toMatchObject({
-    status: 'waiting_hitl',
+    status: 'waiting_dependency',
     render: {
       root_run_id: 'root',
       root_input_id: 'input',
-      reason: 'plan_approval_required',
+      reason: 'plan_wait',
       updated_sequence: 161
     }
   })
@@ -1974,7 +1974,7 @@ describe('独立会话交互状态', () => {
               render: {
                 root_run_id: 'external',
                 root_input_id: 'root-input',
-                reason: mismatch === 'reason' ? undefined : 'plan_approval_required'
+                reason: mismatch === 'reason' ? undefined : 'plan_wait'
               }
             }
           ]

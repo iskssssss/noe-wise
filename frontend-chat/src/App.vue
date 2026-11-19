@@ -710,6 +710,20 @@ async function send() {
     await c.submit()
     return
   }
+  await executeCommand(c.draft, parsed)
+}
+async function startPlanning() {
+  if (commandBusy.value || c.composerLocked || c.historyReadFailed || c.active) return
+  if (
+    !c.history.collaboration.selected_active &&
+    !(await executeCommand('/plan', { kind: 'plan', active: true }))
+  )
+    return
+  if (!(await closePanel())) return
+  await nextTick()
+  messageInputRef.value?.focus()
+}
+async function executeCommand(source: string, parsed: NonNullable<ReturnType<typeof command>>) {
   if (c.history.pending_interactions.length) {
     c.error = '请先处理当前确认或补充信息。'
     return
@@ -719,7 +733,6 @@ async function send() {
   if (!api) return
   commandBusy.value = true
   c.error = ''
-  const source = c.draft
   let id = commandKeys.get(source)
   if (!id) {
     id = crypto.randomUUID()
@@ -792,6 +805,7 @@ async function send() {
     }
     commandKeys.delete(source)
     if (c.draft === source) c.draft = ''
+    return true
   } catch (error) {
     if (api === c.client && selected === c.target) c.fail(error)
   } finally {
@@ -1251,6 +1265,9 @@ const formTipId = useId()
             <h2>今天想完成什么？</h2>
             <p>向{{ c.targetName || '智能体' }}描述需求，也可以附上资料和图片。</p>
             <ChatButton v-if="!c.target" @click="historyOpen = true">选择对话对象</ChatButton>
+            <ChatButton v-else :disabled="commandBusy || c.composerLocked" @click="startPlanning">{{
+              c.history.collaboration.selected_active ? '已开启规划，去描述需求' : '先制定计划'
+            }}</ChatButton>
           </section>
           <ConversationTimeline
             :history="c.history"
@@ -1604,6 +1621,15 @@ const formTipId = useId()
       :selected-id="selectedWork"
       :work-plans="c.history.work_plans"
       :locked="c.composerLocked"
+      :planning="c.history.collaboration.selected_active"
+      :planning-disabled="
+        commandBusy ||
+        c.composerLocked ||
+        c.historyReadFailed ||
+        c.active ||
+        Boolean(c.history.pending_interactions.length)
+      "
+      @plan="startPlanning"
       @selected="selectedWork = $event"
       @updated="c.updateWork"
       @update:model-value="panelChanged('tasks', $event)"
@@ -1618,6 +1644,15 @@ const formTipId = useId()
       :run="c.runId"
       :client-ref="c.clientRef"
       :work-plans="c.history.work_plans"
+      :planning="c.history.collaboration.selected_active"
+      :planning-disabled="
+        commandBusy ||
+        c.composerLocked ||
+        c.historyReadFailed ||
+        c.active ||
+        Boolean(c.history.pending_interactions.length)
+      "
+      @plan="startPlanning"
       @reference="c.reference"
       @task="openTask"
       @update:model-value="panelChanged('tools', $event)"
