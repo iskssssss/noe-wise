@@ -39,7 +39,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, u
 import { useConversation } from './session'
 import { command } from './commands'
 import { query } from './client'
-import type { Collaboration, GoalStatus, Pending, Team } from './protocol'
+import type { Collaboration, GoalStatus, Pending, RunDeliveryStatus, Team } from './protocol'
 import ConversationTimeline from './ui/ConversationTimeline.vue'
 import ComposerAttachments from './ui/ComposerAttachments.vue'
 import ArtifactPanel from './ui/ArtifactPanel.vue'
@@ -52,6 +52,7 @@ import TaskDetailsPanel from './ui/TaskDetailsPanel.vue'
 import TeamManager from './ui/TeamManager.vue'
 import { mayDiscard, validateForm, type ClosablePanel } from './ui/panel'
 import { agentChoiceName } from './ui/agentChoice'
+import { deliveryStatusLabels } from './ui/deliveryStatus'
 const c = reactive(useConversation())
 /** 只消除同一执行已展示的提问，其他待办或用户文本不会吞掉当前问题。 */
 function pendingQuestionDisplayed(pending: Pending) {
@@ -748,13 +749,12 @@ async function send() {
       c.history.collaboration = value
       c.notice = parsed.active ? '已选择规划模式。' : '已选择普通模式。'
     } else if (parsed.kind === 'delivery') {
-      const result = await api.json<{
-        runtime_status: string
-        sse: { status: string }
-        webhook: { status: string }
-      }>(`/chat/runs/delivery?${query({ session_id: session, run_id: c.runId })}`)
+      const result = await api.json<RunDeliveryStatus>(
+        `/chat/runs/delivery?${query({ session_id: session, run_id: c.runId })}`
+      )
       if (api !== c.client || session !== c.sessionId) return
-      c.notice = `运行：${result.runtime_status}；事件回放：${result.sse.status}；Webhook：${result.webhook.status}。送达状态不表示用户已读。`
+      const labels = deliveryStatusLabels(result)
+      c.notice = `本次执行：${labels.runtime}；会话回复：${labels.sse}；外部回调：${labels.webhook}。这些状态不代表用户已读。`
     } else {
       let value: GoalStatus
       if (parsed.kind === 'goal-create')

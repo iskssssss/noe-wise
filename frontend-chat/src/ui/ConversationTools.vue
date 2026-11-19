@@ -21,11 +21,12 @@ import {
 import { computed, onBeforeUnmount, ref, watch, useId } from 'vue'
 import { query, type Client } from '../client'
 import { GOAL_DEFAULT_MAX_ROUNDS, GOAL_MAX_ROUNDS } from '../commands'
-import type { GoalStatus, Reference, Work } from '../protocol'
+import type { GoalStatus, Reference, RunDeliveryStatus, Work } from '../protocol'
 import { mayDiscard, validateForm } from './panel'
 import TaskPlanCard from './TaskPlanCard.vue'
 import RunBudgetPanel from './RunBudgetPanel.vue'
 import { mergeWorkPlans } from '../workPlans'
+import { deliveryStatusLabels } from './deliveryStatus'
 const props = defineProps<{
   modelValue: boolean
   client: Client
@@ -49,7 +50,8 @@ let deliveryRequest: AbortController | undefined
 const goal = ref<GoalStatus>(),
   objective = ref(''),
   rounds = ref(GOAL_DEFAULT_MAX_ROUNDS),
-  delivery = ref<Record<string, unknown>>()
+  delivery = ref<RunDeliveryStatus>()
+const deliveryLabels = computed(() => delivery.value && deliveryStatusLabels(delivery.value))
 const goalStateLabels: Record<string, string> = {
   ACTIVE: '进行中',
   PAUSED: '已暂停',
@@ -120,14 +122,6 @@ async function selectWork(id: string) {
 }
 function beforeTabLeave() {
   return !busy.value
-}
-const deliveryState = (key: string) => {
-  const value = delivery.value?.[key]
-  return value && typeof value === 'object' && 'status' in value
-    ? String(value.status)
-    : value === null || value === undefined
-      ? '—'
-      : String(value)
 }
 defineExpose({ requestClose })
 const key = (scope: string) => {
@@ -226,7 +220,7 @@ async function readDelivery() {
   error.value = ''
   feedback.value = ''
   try {
-    const value = await client.json<Record<string, unknown>>(
+    const value = await client.json<RunDeliveryStatus>(
       `/chat/runs/delivery?${query({ session_id: session, run_id: run })}`,
       'GET',
       undefined,
@@ -397,17 +391,19 @@ const formTipId = useId()
         />
         <template v-if="run"
           ><ChatButton native-type="button" :disabled="busy" @click="readDelivery"
-            >查看送达状态</ChatButton
-          ><ChatDescriptions v-if="delivery" :column="1" border title="送达状态"
-            ><ChatDescriptionsItem label="运行状态">{{
-              deliveryState('runtime_status')
+            >查看执行与送达</ChatButton
+          ><ChatDescriptions v-if="deliveryLabels" :column="1" border title="执行与送达"
+            ><ChatDescriptionsItem label="本次执行">{{
+              deliveryLabels.runtime
             }}</ChatDescriptionsItem
-            ><ChatDescriptionsItem label="事件回放">{{ deliveryState('sse') }}</ChatDescriptionsItem
-            ><ChatDescriptionsItem label="Webhook">{{
-              deliveryState('webhook')
+            ><ChatDescriptionsItem label="会话回复">{{ deliveryLabels.sse }}</ChatDescriptionsItem
+            ><ChatDescriptionsItem label="外部回调">{{
+              deliveryLabels.webhook
             }}</ChatDescriptionsItem></ChatDescriptions
           >
-          <p v-if="delivery" class="muted">送达状态不表示用户已读。</p></template
+          <p v-if="delivery" class="muted">
+            可重新读取表示能从历史记录恢复回复；外部回调由机构接入方接收。这些状态不代表用户已读。
+          </p></template
         ></ChatTabPane
       >
       <ChatTabPane lazy name="work" label="任务计划"

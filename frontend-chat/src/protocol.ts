@@ -269,6 +269,12 @@ export interface GoalStatus {
   continuation_enabled: boolean
   completion_pending: boolean
 }
+/** 运行执行与渠道送达的只读状态；不表示终端用户已读。 */
+export interface RunDeliveryStatus {
+  runtime_status: string
+  sse: { status: 'replay_available' | 'unknown' }
+  webhook: { status: 'pending' | 'delivered' | 'failed' | 'unknown' }
+}
 export interface Deliverable {
   id: string
   deliverable_id: string
