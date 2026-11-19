@@ -830,19 +830,14 @@ const formTipId = useId()
           v-described-by="'connection-help' + ' ' + (formTipId + '-field-0')"
           v-model="settings.address"
           :aria-describedby="'connection-help' + ' ' + (formTipId + '-field-0')"
+          type="url"
+          name="service-url"
+          autocomplete="url"
           placeholder="http://localhost:8000"
         />
         <FieldTip :id="formTipId + '-field-0'"
           >通常保留当前地址；机构提供了其他服务地址时再修改。</FieldTip
         > </ChatFormItem
-      ><ChatFormItem label="你的称呼（选填）" prop="name"
-        ><ChatInput
-          v-model="settings.name"
-          name="nickname"
-          autocomplete="nickname"
-          maxlength="100"
-          placeholder="如何称呼你，最多 100 个字符"
-        /> </ChatFormItem
       ><ChatFormItem label="认证方式" prop="mode"
         ><ChatSelect
           v-described-by="formTipId + '-field-2'"
@@ -859,7 +854,8 @@ const formTipId = useId()
           v-model="settings.token"
           aria-describedby="connection-help"
           type="password"
-          autocomplete="off"
+          name="channel-token"
+          autocomplete="section-channel current-password"
           placeholder="粘贴机构管理员提供的渠道令牌"
         /> </ChatFormItem
       ><template v-else
@@ -868,7 +864,8 @@ const formTipId = useId()
             v-described-by="'connection-help'"
             v-model="settings.apiKey"
             aria-describedby="connection-help"
-            autocomplete="off"
+            name="api-key"
+            autocomplete="section-api username"
           /> </ChatFormItem
         ><ChatFormItem label="API Secret" prop="secret"
           ><ChatInput
@@ -876,8 +873,17 @@ const formTipId = useId()
             v-model="settings.secret"
             aria-describedby="connection-help"
             type="password"
-            autocomplete="off"
+            name="api-secret"
+            autocomplete="section-api current-password"
           /> </ChatFormItem></template
+      ><ChatFormItem label="你的称呼（选填）" prop="name"
+        ><ChatInput
+          v-model="settings.name"
+          name="nickname"
+          autocomplete="section-profile nickname"
+          maxlength="100"
+          placeholder="如何称呼你，最多 100 个字符"
+        /> </ChatFormItem
       ><ChatButton native-type="submit" type="primary" class="full" :loading="c.connecting"
         >进入会话</ChatButton
       >
