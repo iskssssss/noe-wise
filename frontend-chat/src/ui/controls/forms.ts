@@ -106,6 +106,17 @@ export const ChatFormItem = defineComponent({
       const value = props.rules ?? form?.rules.value[String(props.prop)] ?? []
       return Array.isArray(value) ? value : [value]
     })
+    const modelValue = computed(() => {
+      if (!props.prop || !form) return undefined
+      const path = Array.isArray(props.prop) ? props.prop : props.prop.split('.')
+      return path.reduce<unknown>(
+        (current, key) =>
+          current && typeof current === 'object'
+            ? (current as Record<string, unknown>)[key]
+            : undefined,
+        form.model.value
+      )
+    })
     const field: Field = {
       clear() {
         error.value = ''
@@ -113,14 +124,7 @@ export const ChatFormItem = defineComponent({
       async validate() {
         error.value = ''
         if (!props.prop || !form) return true
-        const path = Array.isArray(props.prop) ? props.prop : props.prop.split('.')
-        const value = path.reduce<unknown>(
-          (current, key) =>
-            current && typeof current === 'object'
-              ? (current as Record<string, unknown>)[key]
-              : undefined,
-          form.model.value
-        )
+        const value = modelValue.value
         try {
           for (const rule of rules.value) {
             if (rule.validator)
@@ -157,6 +161,14 @@ export const ChatFormItem = defineComponent({
         }
       }
     }
+    // 已报错字段在修正时更新提示，避免等到点击下一控件才移除错误并推动布局。
+    watch(
+      modelValue,
+      () => {
+        if (error.value) void field.validate()
+      },
+      { deep: true }
+    )
     form?.fields.add(field)
     onBeforeUnmount(() => form?.fields.delete(field))
     return () =>

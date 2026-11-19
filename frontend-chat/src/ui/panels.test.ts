@@ -211,6 +211,46 @@ describe('会话抽屉与请求隔离', () => {
     expect(leader.props('modelValue')).toBe('')
     wrapper.unmount()
   })
+  it('空表单校验后选中唯一成员，自动负责人可以直接保存', async () => {
+    const json = vi.fn(async () => ({ id: 'team-1', name: '巡检团队', revision: 1 }))
+    const wrapper = mount(TeamManager, {
+      ...options,
+      props: {
+        modelValue: true,
+        client: { json } as unknown as Client,
+        clientRef: 'c',
+        agents: [{ id: 'agent-1', name: '助手一', is_default: true }],
+        teams: []
+      }
+    })
+    try {
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.text()).toContain('请从团队成员中选择负责人')
+      await wrapper.get('input[type="text"]').setValue('巡检团队')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('请填写团队名称')
+      await wrapper.get('input[type="checkbox"]').setValue(true)
+      await flushPromises()
+      expect(wrapper.getComponent(ChatSelect).props('modelValue')).toBe('agent-1')
+      expect(wrapper.text()).not.toContain('至少选择一个成员')
+      expect(wrapper.text()).not.toContain('请从团队成员中选择负责人')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(json).toHaveBeenCalledWith(
+        '/chat/teams',
+        'PUT',
+        expect.objectContaining({
+          name: '巡检团队',
+          primary_agent_id: 'agent-1',
+          members: [{ agent_id: 'agent-1' }]
+        }),
+        expect.any(AbortSignal)
+      )
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('同名团队成员展示角色说明与标识，负责人仍提交对应智能体 ID', async () => {
     const agents = [
       { id: 'agent-1', name: '助手', is_default: true, role_description: '负责申请' },

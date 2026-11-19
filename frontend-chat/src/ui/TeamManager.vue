@@ -81,6 +81,7 @@ const rules: FormRules = {
   ],
   primary_agent_id: [
     {
+      required: true,
       validator: (_rule, value, callback) =>
         callback(
           form.members.includes(String(value)) ? undefined : new Error('请从团队成员中选择负责人')
