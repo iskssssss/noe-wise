@@ -10,6 +10,17 @@ import org.junit.jupiter.api.Test;
 
 /** 本地真实HTTP边界；不连接Browser服务或设备。 */
 class BrowserClientDeviceOwnershipTest {
+    @Test void disconnectedServiceReadsExplainRecoveryWithoutChangingWriteFailures() {
+        // 端口 0 不提供服务，真实 HTTP 连接失败不依赖共享服务或释放后再占用端口。
+        var client=new BrowserClient("http://127.0.0.1:0","synthetic-token",new ObjectMapper());
+        var devices=assertThrows(ApiException.class,()->client.devices("1","2"));
+        assertEquals(503,devices.getStatus().value());
+        assertEquals("浏览器服务暂时无法连接，请稍后刷新；若持续失败，请联系管理员检查服务状态",devices.getMessage());
+        assertInstanceOf(java.net.ConnectException.class,devices.getCause());
+        assertEquals(503,assertThrows(ApiException.class,()->client.tasks("1","2")).getStatus().value());
+        assertThrows(java.net.ConnectException.class,()->client.pair("1","2","request"));
+    }
+
     @Test void missingServiceConfigurationReturnsExplicitUnavailable() {
         var client=new BrowserClient("http://127.0.0.1:8300","",new ObjectMapper());
         var error=assertThrows(ApiException.class,()->client.devices("1","2"));

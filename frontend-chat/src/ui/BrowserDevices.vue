@@ -282,7 +282,9 @@ const formTipId = useId()
     :close-on-press-escape="!busy"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <p class="device-intro">设备属于你的当前身份，可在不同对话中共用。</p>
+    <p class="device-intro">
+      连接自己的 Chrome 或 Edge 后，助手可以使用你授权的浏览器完成任务。设备可在不同对话中共用。
+    </p>
     <ChatMessageNotice v-if="error" :title="error" type="error" :closable="false" show-icon />
     <ChatMessageNotice
       v-if="feedback"
@@ -313,8 +315,16 @@ const formTipId = useId()
       配对操作已发出，结果尚未确认。请查看插件并刷新设备列表，不要重复配对。
     </p>
     <p class="device-intro">
-      适配扩展可直接接收配对；请先打开插件并信任当前站点。也可通过手动官方扩展配对入口复制地址。
+      已有灵知适配扩展：打开插件并信任当前站点，再点击“配对当前浏览器”。使用官方扩展：展开“其他配对方式”，生成地址后粘贴到扩展中连接。
     </p>
+    <a
+      v-if="devices?.installation_url?.startsWith('https://')"
+      class="pair-link"
+      :href="devices.installation_url"
+      target="_blank"
+      rel="noopener noreferrer"
+      >查看官方扩展安装说明（新标签页）</a
+    >
     <template v-if="devices?.items.length">
       <BrowserDeviceOptions v-model="selectedDevice" :devices="devices" :disabled="busy" />
       <ChatButton :disabled="busy || !selectedDevice" @click="browser('select', selectedDevice)"
@@ -445,6 +455,7 @@ const formTipId = useId()
 }
 .device-actions {
   display: flex;
+  align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
   margin: 14px 0;

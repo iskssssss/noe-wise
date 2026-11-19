@@ -25,7 +25,16 @@ public class BrowserClient {
         var req=HttpRequest.newBuilder(URI.create(base+"/internal/browser"+path)).timeout(body instanceof BrowserRequest browser?Duration.between(java.time.Instant.now(),browser.deadlineAt()).isNegative()?Duration.ofMillis(1):Duration.between(java.time.Instant.now(),browser.deadlineAt()).plusSeconds(2):Duration.ofSeconds(180))
                 .header("X-Browser-Service-Token",token).header("Content-Type","application/json");
         req.method(method,body==null?HttpRequest.BodyPublishers.noBody():HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(body)));
-        var reply=http.send(req.build(),HttpResponse.BodyHandlers.ofByteArray());
+        HttpResponse<byte[]> reply;
+        try {
+            reply=http.send(req.build(),HttpResponse.BodyHandlers.ofByteArray());
+        } catch (ConnectException failure) {
+            // 只读查询可在服务恢复后刷新；写操作保留原异常和结果核对语义。
+            if (!"GET".equals(method)) throw failure;
+            throw new com.skillforge.core.shared.exception.ApiException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "浏览器服务暂时无法连接，请稍后刷新；若持续失败，请联系管理员检查服务状态", failure);
+        }
         // 仅设备偏好入口的稳定归属拒绝是业务403；服务认证与未知故障不改写。
         if(reply.statusCode()==403&&Set.of("/select","/rename").contains(path))
             throw new com.skillforge.core.shared.exception.ApiException(org.springframework.http.HttpStatus.FORBIDDEN,"浏览器设备不属于当前用户");
