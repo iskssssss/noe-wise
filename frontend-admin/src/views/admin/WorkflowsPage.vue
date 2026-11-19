@@ -40,9 +40,14 @@
             row.name || row.workflowId
           }}</RouterLink>
           <div class="admin-field-help">
-            {{ statusLabel(row.status) }} ·
-            {{ row.activeDefinitionVersionId ? '已发布' : '尚未发布' }} ·
-            {{ row.status === 'draft' ? '草稿待发布' : '与发布一致' }}
+            {{ statusLabel(row.status) }}
+            <template v-if="row.status === 'draft'">
+              ·
+              {{
+                row.activeDefinitionVersionId ? '已有发布版本，草稿待发布' : '尚未发布'
+              }}</template
+            >
+            <template v-else-if="row.status === 'published'"> · 与发布一致</template>
           </div></template
         ></ElTableColumn
       ><ElTableColumn

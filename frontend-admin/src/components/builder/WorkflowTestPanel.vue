@@ -1223,7 +1223,8 @@ const canRespond = computed(
 async function submitPending(
   response: ChatHitlResponse,
   key: string,
-  item: RuntimePendingInteraction
+  item: RuntimePendingInteraction,
+  messageText = ''
 ) {
   if (!canRespond.value || replyLocked(item)) return
   const value = receipt.value!
@@ -1288,6 +1289,7 @@ async function submitPending(
     await api.chat.submit({
       session_id: value.sessionId,
       agent_id: value.agentId,
+      message: messageText,
       ...(operation ? { client_message_id: operation.inputId } : {}),
       hitl_response: response,
       context: { end_user_id: value.endUserId }
@@ -1321,7 +1323,8 @@ function respond(item: RuntimePendingInteraction, action?: string) {
           human_input: { wait: { ...item.tool_wait }, text: replies[key]! }
         },
         key,
-        item
+        item,
+        replies[key]!
       )
     } else {
       if (
@@ -1332,6 +1335,8 @@ function respond(item: RuntimePendingInteraction, action?: string) {
         !item.resume_action_key
       )
         throw Error('工作流待办身份不完整，请重新查询测试状态')
+      const actionLabel = actions(item).find((candidate) => candidate.id === action)?.label
+      const replyText = replies[key] ?? ''
       void submitPending(
         {
           execution_id: item.execution_id,
@@ -1352,7 +1357,10 @@ function respond(item: RuntimePendingInteraction, action?: string) {
           }
         },
         key,
-        item
+        item,
+        actionLabel
+          ? `已选择：${actionLabel}${replyText.trim() ? '\n' + replyText : ''}`
+          : replyText
       )
     }
   } catch (reason) {
@@ -1841,12 +1849,17 @@ onBeforeUnmount(() => {
               @keydown.capture="guardFormEnter"
             >
               <p>{{ item.card?.body || item.card?.message || item.question }}</p>
-              <ElFormItem label="待办回复"
+              <ElFormItem
+                :label="item.interaction_type === 'user_input' ? '待办回复' : '补充说明（可选）'"
+                :required="item.interaction_type === 'user_input'"
                 ><ElInput
                   v-model="replies[waitKey(item)]"
                   type="textarea"
                   :rows="3"
                   :aria-label="'待办回复 ' + item.execution_id"
+                  :placeholder="
+                    actions(item).length ? '可直接点击下方按钮，也可补充说明' : '填写回复内容'
+                  "
               /></ElFormItem>
               <ElButton v-if="!actions(item).length" native-type="submit" type="primary"
                 >提交回复</ElButton
@@ -1878,7 +1891,9 @@ onBeforeUnmount(() => {
             >
               <strong>{{
                 item.role === 'user'
-                  ? '测试输入'
+                  ? item.message_id === receipt.initialInputId
+                    ? '测试输入'
+                    : '待办回复'
                   : item.role === 'assistant'
                     ? '工作流输出'
                     : item.role
@@ -1896,7 +1911,10 @@ onBeforeUnmount(() => {
                 <summary>完整输出（JSON）</summary>
                 <CodeEditor :model-value="output" label="工作流完整输出" language="json" readonly />
               </details>
-              <MarkdownContent v-else :content="item.content" />
+              <MarkdownContent v-else-if="item.content.trim()" :content="item.content" />
+              <p v-else class="admin-field-help">
+                {{ item.role === 'user' ? '此条交互未附加文字。' : '此条消息没有文字内容。' }}
+              </p>
             </article>
           </section>
         </template>

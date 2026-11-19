@@ -308,6 +308,25 @@ describe('工作流公开输出与执行终态', () => {
     expect(dom().text()).toContain('测试未完成，请检查配置。')
     expect(dom().find('[aria-label="工作流完整输出"]').exists()).toBe(false)
   })
+  it('原按钮回复没有文字时保留记录并区别初始测试输入', async () => {
+    restoreTest()
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      messages: [
+        { message_id: 'initial:1', role: 'user', content: '开始确认巡检' },
+        { message_id: 'reply:1', role: 'user', content: '' }
+      ],
+      pending_interactions: []
+    })
+    render()
+    await flushPromises()
+    const records = dom().findAll('[aria-label="测试消息记录"] article')
+    expect(records).toHaveLength(2)
+    expect(records[0]!.text()).toContain('测试输入')
+    expect(records[1]!.text()).toContain('待办回复')
+    expect(records[1]!.text()).toContain('此条交互未附加文字')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
 })
 
 describe('原测试消息历史按需续页', () => {
@@ -1818,9 +1837,12 @@ describe('真实Workflow测试面板边界', () => {
       '草稿消息'
     )
   })
-  it.each([400, 503])(
-    '真实Pending收到 %i 时保留原wait，迟到history错误不覆盖新来源',
-    async (status) => {
+  it.each([
+    { status: 400, reply: '' },
+    { status: 503, reply: '已核对信息' }
+  ])(
+    '真实Pending收到 $status 时保留原wait，操作文字不改变结构化回复',
+    async ({ status, reply }) => {
       const item = {
         interaction_type: 'workflow_input',
         execution_id: 'run:1',
@@ -1849,6 +1871,8 @@ describe('真实Workflow测试面板边界', () => {
       await flushPromises()
       await dom().get('form').trigger('submit')
       await flushPromises()
+      expect(dom().text()).toContain('补充说明（可选）')
+      await dom().get('textarea[aria-label="待办回复 run:1"]').setValue(reply)
       const pendingFailure = new HttpClientError({ status, userMessage: '受理暂未确认' })
       mocks.submit.mockRejectedValueOnce(pendingFailure)
       await button(wrapper, '继续此分支').trigger('click')
@@ -1859,6 +1883,7 @@ describe('真实Workflow测试面板边界', () => {
       expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
         session_id: 'session:1',
         agent_id: 'agent:1',
+        message: '已选择：继续此分支' + (reply ? '\n' + reply : ''),
         context: { end_user_id: 'user:1' },
         hitl_response: {
           execution_id: 'run:1',
@@ -1871,7 +1896,7 @@ describe('真实Workflow测试面板边界', () => {
             action_key: 'menu-node',
             response: {
               schema_id: 'application/json',
-              canonical_json: '{"action":"continue","response":""}'
+              canonical_json: JSON.stringify({ action: 'continue', response: reply })
             }
           }
         }
@@ -2133,6 +2158,7 @@ describe('真实Workflow测试面板边界', () => {
       session_id: 'session:1',
       client_message_id: operation.inputId,
       agent_id: 'agent:1',
+      message: '用户补充',
       context: { end_user_id: 'user:1' },
       hitl_response: {
         execution_id: 'run:1',
