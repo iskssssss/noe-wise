@@ -670,7 +670,7 @@ describe('长文本粘贴附件接入', () => {
         expect(holder.state.upload).not.toHaveBeenCalled()
         expect(holder.state.draft).toBe('')
         expect(holder.state.notice).toBe(
-          '持续目标：进行中 · 0/256 轮。完整目标可在“会话工具”中查看。'
+          '持续目标：进行中 · 已自动继续 0/256 轮。完整目标可在“会话工具”中查看。'
         )
         expect(holder.state.notice).not.toContain(long)
         expect(holder.state.notice.length).toBeLessThan(100)
@@ -695,7 +695,7 @@ describe('长文本粘贴附件接入', () => {
       await wrapper.get('.composer-form').trigger('submit')
       await flushPromises()
       expect(holder.state.notice).toBe(
-        '持续目标：状态待核实 · 2/5 轮。完整目标可在“会话工具”中查看。'
+        '持续目标：状态待核实 · 已自动继续 2/5 轮。完整目标可在“会话工具”中查看。'
       )
       expect(holder.state.notice).not.toContain('完整目标完整目标')
       expect(holder.state.submit).not.toHaveBeenCalled()

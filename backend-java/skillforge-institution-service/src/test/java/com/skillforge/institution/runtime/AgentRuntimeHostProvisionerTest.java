@@ -281,6 +281,21 @@ class AgentRuntimeHostProvisionerTest {
         verifyNoInteractions(f.runs,f.settings,f.models);
     }
 
+    @Test void goalContinuationPreparationKeepsRegisteredRootAndFrozenLimits() {
+        var f=new Fixture();
+        var root=new com.skillforge.runtime.api.RunRef(new TenantId("1"),"goal-original");
+        var prior=f.budgets.register(BudgetTestFacts.registration(root));
+        var run=new com.skillforge.runtime.api.RunRef(new TenantId("1"),"run");
+        var inherited=new com.skillforge.runtime.api.port.ExecutionBudgetPort.Registration(run,root,
+                com.skillforge.runtime.api.port.ExecutionBudgetPort.Role.PRIMARY,prior.policy());
+        f.budgets.register(inherited);
+        var binding=binding("服务助手","负责申请",3);
+        var prepared=f.host.prepareExecutionRun("1","7","run",binding,capabilities(binding));
+        assertEquals(inherited,prepared.budget());
+        assertEquals(prior.policy(),prepared.budget().policy());
+        verify(f.bindings).authorize(binding);
+    }
+
     /** 辅助额度不占业务循环次数，较大的辅助额度也不能使本地业务上限溢出。 */
     @Test void loopBudgetUsesOnlyFrozenRunBusinessModelCalls() {
         var resources = new com.skillforge.runtime.api.port.ExecutionBudgetPort.Resources(7, Long.MAX_VALUE, 4, 2, 80, 20, 100);
@@ -321,6 +336,7 @@ class AgentRuntimeHostProvisionerTest {
         final com.skillforge.core.foundation.runtimeconfig.RunSettingsMapper mapper = mock(com.skillforge.core.foundation.runtimeconfig.RunSettingsMapper.class);
         final com.skillforge.core.shared.config.SkillForgeProperties resources = new com.skillforge.core.shared.config.SkillForgeProperties();
         final AgentRunBindings bindings = mock(AgentRunBindings.class);
+        final com.skillforge.runtime.api.port.ExecutionBudgetPort budgets = BudgetTestFacts.ledger();
         final com.skillforge.core.foundation.runtimeconfig.RunSettingsService runs;
         final AgentRuntimeHostProvisioner host;
         Fixture() {
@@ -349,7 +365,7 @@ class AgentRuntimeHostProvisionerTest {
             when(bindings.find(new com.skillforge.runtime.api.RunRef(new TenantId("1"), "run"))).thenReturn(Optional.of(binding("服务助手", "负责申请", 3)));
             host = new AgentRuntimeHostProvisioner(mock(ServicePrincipalMapper.class), mock(ServicePrincipalService.class),
                     mock(AgentRuntimeSystemGrants.class), new AgentRuntimeProperties(), resources, models, catalog, settings, runs,
-                    bindings, BudgetTestFacts.ledger());
+                    bindings, budgets);
         }
     }
 

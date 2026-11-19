@@ -146,7 +146,8 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
         if (response.isPresent() && previous.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "execution_run_missing");
         var actor = previous.map(value -> value.identity().agentId()).orElseGet(() -> bindings.currentPrimaryAgent(owner));
         var trace = previous.map(value -> value.identity().trace()).orElseGet(() -> new TraceEnvelope(
-                requireTrace(), "span:" + UUID.randomUUID(), new InputId(context(submission, "root_input_id", inputId)), Optional.empty()));
+                source == SubmissionSource.GOAL_ROUND ? inputId : requireTrace(),
+                "span:" + UUID.randomUUID(), new InputId(context(submission, "root_input_id", inputId)), Optional.empty()));
         var entryService = external == null ? null : integration(external,session);
         var verified = external == null ? verify(owner, actor, trace, new InputId(inputId))
                 : verify(owner,actor,trace,new InputId(inputId),entryService,"open-platform");

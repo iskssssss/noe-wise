@@ -404,11 +404,13 @@ public class AgentRuntimeHostProvisioner {
                 () -> runSettings.read(config, com.skillforge.core.foundation.runtimeconfig.ChatBudgetSettings.GROUP));
     }
 
-    /** 预算按本次捕获值或原冻结精确修订计算；成员继承父根，不读取平台当前配置。 */
+    /** 已登记续轮复用原根与冻结额度；新 Run 按捕获值计算，成员继承父根。 */
     private ExecutionBudgetPort.Registration budgetRegistration(
             String tenantId, String runId, AgentRunBindings.Binding binding,
             AgentExecutionConfig executionConfig, Supplier<OperationalSettingsService.Snapshot> taskBudget) {
         var run = new com.skillforge.runtime.api.RunRef(tenant(tenantId), runId);
+        var registered = budgets.find(run);
+        if (registered.isPresent()) return registered.orElseThrow();
         var role = binding != null && binding.role()==AgentRunBindings.Role.DELEGATE
                 ? com.skillforge.runtime.api.port.ExecutionBudgetPort.Role.MEMBER : com.skillforge.runtime.api.port.ExecutionBudgetPort.Role.PRIMARY;
         var parent = binding == null ? Optional.<com.skillforge.runtime.api.port.ExecutionBudgetPort.Registration>empty()

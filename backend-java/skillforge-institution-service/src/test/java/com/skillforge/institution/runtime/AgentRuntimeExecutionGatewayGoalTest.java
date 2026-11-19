@@ -48,6 +48,26 @@ class AgentRuntimeExecutionGatewayGoalTest {
         var fixture=new Fixture(true);TenantContext.runWithTenant("1",()->fixture.gateway.submitGoalRound(fixture.submission));
         verify(fixture.store).resume(any());verifyNoInteractions(fixture.goals);
     }
+    @Test void scheduledGoalRoundReachesAuthorizationWithoutHttpRequestTrace() {
+        var fixture=new Fixture(true);
+        var input="goal-round:scheduled:1:3";
+        var submission=new ChatRuntimeGateway.Submission(new ChatRequest("继续目标","session","7",null,
+                null,null,null,null,input,null,Map.of()),fixture.session,"7",9L,null);
+        var reachedAuthorization=new IllegalStateException("authorization_probe");
+        when(fixture.iam.verify(any())).thenAnswer(call->{
+            var request=call.getArgument(0,IdentityPolicyPort.IdentityRequest.class);
+            assertEquals(input,request.traceId());
+            throw reachedAuthorization;
+        });
+        String previous=com.skillforge.common.context.RequestContext.getTraceId();
+        try {
+            com.skillforge.common.context.RequestContext.setTraceId(null);
+            assertSame(reachedAuthorization,assertThrows(IllegalStateException.class,
+                    ()->TenantContext.runWithTenant("1",()->fixture.gateway.submitGoalRound(submission))));
+            assertNull(com.skillforge.common.context.RequestContext.getTraceId());
+            verify(fixture.store,never()).admit(any());
+        } finally {com.skillforge.common.context.RequestContext.setTraceId(previous);}
+    }
     @Test void duplicateResponseCannotDisableALaterGoalRegistration() {
         var fixture=new Fixture(false);TenantContext.runWithTenant("1",()->fixture.gateway.submit(fixture.submission));
         verify(fixture.store).resume(any());verifyNoInteractions(fixture.goals);

@@ -113,7 +113,8 @@ public class AgentRuntimeInboundGateway implements ChatRuntimeGateway {
             public AgentRuntimeGoalDriver.RoundAdmission submitRound(InputId input,String prompt) {
                 java.util.function.Supplier<AgentRuntimeGoalDriver.RoundAdmission> submit=()->{
                     var context=new LinkedHashMap<String,Object>();context.put("input_id",input.value());context.putAll(requester(session,owner));
-                    var request=new ChatRequest(prompt,session.getSessionId(),session.getAgentId()==null?null:session.getAgentId().toString(),session.getTeamId(),null,null,null,null,input.value(),null,context);
+                    // Goal 使用完整内部输入身份，不占用公开用户消息的 clientMessageId。
+                    var request=new ChatRequest(prompt,session.getSessionId(),session.getAgentId()==null?null:session.getAgentId().toString(),session.getTeamId(),null,null,null,null,null,null,context);
                     var accepted=executions.submitGoalRound(new Submission(request,session,bindings.currentPrimaryAgent(owner).value(),owner.requireUser().value(),null));
                     var reference=new RunRef(owner.sessionRef().tenantId(),accepted.executionId());owned(owner,reference).orElseThrow(()->new IllegalStateException("goal_round_source_missing"));
                     return new AgentRuntimeGoalDriver.RoundAdmission(owner.sessionRef(),input,Optional.of(reference),true);

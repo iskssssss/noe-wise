@@ -58,6 +58,7 @@ export function executionStopReason(reason: string) {
     return `${match[1] === 'root' ? '任务根' : '当前运行'}的${resource}额度已耗尽。`
   }
   const known: Record<string, string> = {
+    user_cancelled: '已按用户请求停止本次执行。',
     tool_output_invalid: '工具已执行，但返回内容未通过格式校验；请核对结果后再决定是否重试。',
     tool_outcome_unknown: '工具执行结果尚未确认，请先核对原操作，避免重复执行。',
     tool_progress_stopped:

@@ -75,6 +75,22 @@ class AgentRuntimeInboundGatewayTest {
             assertNull(com.skillforge.common.context.TenantContext.getTenantId());
             assertTrue(callback.idle());
             assertNull(com.skillforge.common.context.TenantContext.getTenantId());
+            when(fixture.bindings.withContinuationRequester(eq(owner),any())).thenAnswer(invocation->
+                    invocation.<java.util.function.Supplier<?>>getArgument(1).get());
+            var reachedAdmission=new IllegalStateException("admission_probe");
+            for(var internalInput:java.util.List.of("goal-start:"+"c".repeat(200),
+                    "goal-round:goal-"+"a".repeat(64)+":1:3")) {
+                doAnswer(invocation->{
+                    var submission=invocation.getArgument(0,ChatRuntimeGateway.Submission.class);
+                    assertEquals(internalInput,submission.request().context().get("input_id"));
+                    assertNull(submission.request().clientMessageId());
+                    assertEquals("1",com.skillforge.common.context.TenantContext.getTenantId());
+                    throw reachedAdmission;
+                }).when(fixture.executions).submitGoalRound(any());
+                assertSame(reachedAdmission,assertThrows(IllegalStateException.class,
+                        ()->callback.submitRound(new InputId(internalInput),"继续目标")));
+                assertNull(com.skillforge.common.context.TenantContext.getTenantId());
+            }
             doAnswer(invocation->{assertEquals("1",com.skillforge.common.context.TenantContext.getTenantId());return null;})
                     .when(fixture.executions).wakeGoalRound(run);
             callback.wake(run);

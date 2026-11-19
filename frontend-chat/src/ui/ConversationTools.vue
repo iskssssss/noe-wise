@@ -58,8 +58,12 @@ const goalStateLabels: Record<string, string> = {
   COMPLETE: '已完成',
   BLOCKED: '受阻'
 }
+const hasUnfinishedGoal = computed(() =>
+  ['ACTIVE', 'PAUSED'].includes(goal.value?.goal?.state ?? '')
+)
 /** 宿主停止原因在界面使用业务文案，保留模型或用户提供的具体业务说明。 */
 const goalReasonLabels: Record<string, string> = {
+  user_paused: '你已暂停目标；点击“继续目标”恢复执行。',
   run_cancelled: '本次执行已取消。',
   run_failed: '本次执行失败。',
   run_terminated: '本次执行已结束。',
@@ -196,7 +200,7 @@ async function goalCommand(action: 'create' | 'pause' | 'resume') {
     }
     feedback.value =
       action === 'create'
-        ? '持续目标已创建。'
+        ? '持续目标已创建，可关闭面板查看执行进度。'
         : action === 'pause'
           ? '持续目标已暂停。'
           : '持续目标已继续。'
@@ -315,7 +319,7 @@ const formTipId = useId()
         <article v-if="goal?.goal" class="panel-card">
           <h3>{{ goal.goal.objective }}</h3>
           <p>
-            {{ goalStateLabels[goal.goal.state] || '状态待核实' }} ·
+            {{ goalStateLabels[goal.goal.state] || '状态待核实' }} · 已自动继续
             {{ goal.goal.rounds_started }} / {{ goal.goal.max_rounds }} 轮
           </p>
           <p v-if="goalReason">{{ goalReason }}</p>
@@ -333,7 +337,10 @@ const formTipId = useId()
             >继续目标</ChatButton
           >
         </article>
-        <details class="new-goal" :open="!goal?.goal">
+        <p v-if="hasUnfinishedGoal" class="muted">
+          当前目标结束后可创建新目标；如需处理其他目标，请关闭面板后新建会话。
+        </p>
+        <details v-else class="new-goal" :open="!goal?.goal">
           <summary>创建持续目标</summary>
           <ChatForm
             ref="goalRef"
@@ -351,10 +358,10 @@ const formTipId = useId()
                 maxlength="8000"
                 :rows="4"
               /><small id="goal-objective-help"
-                >描述希望持续推进的结果，最多 8000 字。Enter 换行，点击创建目标提交。</small
+                >创建后立即开始执行，后续可暂停或继续。目标最多 8000 字，Enter 换行。</small
               ></ChatFormItem
             ><ChatFormItem
-              label="最大轮数"
+              label="自动继续轮数上限"
               prop="rounds"
               :rules="[
                 {
@@ -374,10 +381,11 @@ const formTipId = useId()
                 :max="GOAL_MAX_ROUNDS"
                 aria-describedby="goal-rounds-help"
               /><small id="goal-rounds-help"
-                >允许 1 至 {{ GOAL_MAX_ROUNDS }} 轮；达到轮数上限后不再自动继续。</small
+                >首次执行不计入。允许再自动继续 1 至
+                {{ GOAL_MAX_ROUNDS }} 轮，每轮可能包含多次模型调用；达到上限后停止自动继续。</small
               ></ChatFormItem
             ><ChatButton native-type="submit" :disabled="busy" type="primary"
-              >创建目标</ChatButton
+              >创建并开始</ChatButton
             ></ChatForm
           >
         </details></ChatTabPane

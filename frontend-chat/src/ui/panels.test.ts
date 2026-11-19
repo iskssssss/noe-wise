@@ -68,8 +68,8 @@ async function tools(records: Work[] = [work('w1'), work('w2')]) {
   return { wrapper, json, resolve }
 }
 describe('会话抽屉与请求隔离', () => {
-  it('目标表单提交默认 256 轮，允许 1024 轮并在提交后恢复默认值', async () => {
-    const json = vi.fn(async (_path: string, method?: string, body?: unknown) =>
+  it.each([256, 1024])('目标提交 %s 轮后关闭新建入口，完成后恢复默认表单', async (maxRounds) => {
+    const json = vi.fn(async (_path: string, method?: string, body?: unknown): Promise<unknown> =>
       method === 'POST'
         ? { goal: { ...(body as object), state: 'ACTIVE', rounds_started: 0 } }
         : { goal: null }
@@ -89,24 +89,32 @@ describe('会话抽屉与请求隔离', () => {
       expect(wrapper.getComponent(ChatInputNumber).props('modelValue')).toBe(256)
       expect(wrapper.getComponent(ChatInputNumber).props('max')).toBe(1024)
       await wrapper.get('textarea').setValue('完成文件交付')
+      wrapper.getComponent(ChatInputNumber).vm.$emit('update:modelValue', maxRounds)
       await wrapper.get('form').trigger('submit')
       await flushPromises()
       expect(json).toHaveBeenCalledWith(
         '/chat/goals/create',
         'POST',
-        expect.objectContaining({ objective: '完成文件交付', max_rounds: 256 }),
+        expect.objectContaining({ objective: '完成文件交付', max_rounds: maxRounds }),
         expect.any(AbortSignal)
       )
-      await wrapper.get('textarea').setValue('继续文件交付')
-      wrapper.getComponent(ChatInputNumber).vm.$emit('update:modelValue', 1024)
-      await wrapper.get('form').trigger('submit')
+      expect(wrapper.find('form').exists()).toBe(false)
+      expect(wrapper.text()).toContain('当前目标结束后可创建新目标')
+      json.mockResolvedValueOnce({
+        goal: {
+          objective: '完成文件交付',
+          state: 'COMPLETE',
+          rounds_started: 0,
+          max_rounds: maxRounds
+        }
+      })
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '刷新')!
+        .trigger('click')
       await flushPromises()
-      expect(json).toHaveBeenLastCalledWith(
-        '/chat/goals/create',
-        'POST',
-        expect.objectContaining({ objective: '继续文件交付', max_rounds: 1024 }),
-        expect.any(AbortSignal)
-      )
+      expect(wrapper.find('form').exists()).toBe(true)
+      expect(wrapper.get('textarea').element.value).toBe('')
       expect(wrapper.getComponent(ChatInputNumber).props('modelValue')).toBe(256)
     } finally {
       wrapper.unmount()
@@ -126,6 +134,7 @@ describe('会话抽屉与请求隔离', () => {
     wrapper.unmount()
   })
   it.each([
+    ['PAUSED', 'user_paused', '你已暂停目标；点击“继续目标”恢复执行。'],
     ['PAUSED', 'run_cancelled', '本次执行已取消。'],
     ['BLOCKED', 'run_failed', '本次执行失败。'],
     ['BLOCKED', 'run_completed', '本次执行未形成可发布的成果。'],
@@ -160,12 +169,12 @@ describe('会话抽屉与请求隔离', () => {
   })
 
   it.each([
-    ['ACTIVE', '进行中'],
-    ['PAUSED', '已暂停'],
-    ['COMPLETE', '已完成'],
-    ['BLOCKED', '受阻'],
-    ['UNRECOGNIZED', '状态待核实']
-  ])('目标状态 %s 使用用户可读文案', async (state, label) => {
+    ['ACTIVE', '进行中', false],
+    ['PAUSED', '已暂停', false],
+    ['COMPLETE', '已完成', true],
+    ['BLOCKED', '受阻', true],
+    ['UNRECOGNIZED', '状态待核实', true]
+  ])('目标状态 %s 使用用户可读文案并控制新建入口', async (state, label, canCreate) => {
     const wrapper = mount(ConversationTools, {
       ...options,
       props: {
@@ -184,6 +193,7 @@ describe('会话抽屉与请求隔离', () => {
       await flushPromises()
       expect(wrapper.get('.panel-card').text()).toContain(label)
       expect(wrapper.get('.panel-card').text()).not.toContain(state)
+      expect(wrapper.find('form').exists()).toBe(canCreate)
     } finally {
       wrapper.unmount()
     }

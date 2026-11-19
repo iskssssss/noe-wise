@@ -475,6 +475,11 @@ public final class AgentRuntimeGoalDriver {
                     catch (RuntimeException ignored) { /* 竞争失败后只尽力取消本机提交。 */ }
                 });
             } else {
+                var safe = new RuntimeException(rejected.getClass().getName());
+                safe.setStackTrace(rejected.getStackTrace());
+                LOG.warn("Goal 续轮启动失败 tenant={} inputTag={} failureType={}",
+                        owner.sessionRef().tenantId().value(), inputId.value().hashCode(),
+                        rejected.getClass().getSimpleName(), safe);
                 stop(owner, registration, reserved, "round_launch_failed", submitted);
             }
         }

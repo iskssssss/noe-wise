@@ -787,7 +787,7 @@ async function send() {
         BLOCKED: '受阻'
       }
       c.notice = value.goal
-        ? `持续目标：${stateLabels[value.goal.state] ?? '状态待核实'} · ${value.goal.rounds_started}/${value.goal.max_rounds} 轮。完整目标可在“会话工具”中查看。`
+        ? `持续目标：${stateLabels[value.goal.state] ?? '状态待核实'} · 已自动继续 ${value.goal.rounds_started}/${value.goal.max_rounds} 轮。完整目标可在“会话工具”中查看。`
         : '当前没有持续目标。'
     }
     commandKeys.delete(source)
