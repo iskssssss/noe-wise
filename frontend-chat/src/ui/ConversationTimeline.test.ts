@@ -23,6 +23,119 @@ function timestampTimeline(messages: Message[]) {
   })
 }
 
+describe('公开工作流卡片', () => {
+  const card = {
+    type: 'info',
+    title: '菜单巡检结果卡',
+    body: '固定内容',
+    fields: [
+      { label: '巡检状态', value: '已完成' },
+      { label: '数量', value: 0 },
+      { label: '启用', value: false }
+    ],
+    actions: [
+      { type: 'link', label: '查看工作流列表', url: 'http://localhost:3000/admin/workflows' },
+      { type: 'link', label: '非法地址', url: 'javascript:alert(1)' },
+      { type: 'submit', label: '不应重新提交', id: 'confirm' }
+    ]
+  }
+  it.each(['stream', 'history'] as const)(
+    '%s显示完整字段与安全链接，不恢复历史提交按钮',
+    (source) => {
+      const wrapper = timestampTimeline([
+        {
+          message_id: 'result',
+          message_version: 1,
+          role: 'assistant',
+          content: '已选择卡片路径。',
+          ...(source === 'stream' ? { card } : { metadata: { card } })
+        }
+      ])
+      try {
+        const rendered = wrapper.get('[aria-label="展示卡片"]')
+        expect(rendered.text()).toContain('菜单巡检结果卡')
+        expect(rendered.text()).toContain('固定内容')
+        expect(rendered.findAll('dd').map((field) => field.text())).toEqual([
+          '已完成',
+          '0',
+          'false'
+        ])
+        expect(rendered.get('a').attributes('href')).toBe('http://localhost:3000/admin/workflows')
+        expect(rendered.get('a').attributes('rel')).toContain('noopener')
+        expect(rendered.findAll('a')).toHaveLength(1)
+        expect(rendered.findAll('button')).toHaveLength(0)
+        expect(rendered.text()).not.toContain('非法地址')
+        expect(rendered.text()).not.toContain('不应重新提交')
+      } finally {
+        wrapper.unmount()
+      }
+    }
+  )
+  it('已结束菜单只保留原提问，避免正文卡重复且不提供过期选项', () => {
+    const wrapper = timestampTimeline([
+      {
+        message_id: 'menu',
+        message_version: 1,
+        role: 'assistant',
+        content: '请选择路径',
+        metadata: {
+          card: { type: 'select', body: '请选择路径', actions: [{ id: 'card', label: '查看卡片' }] }
+        }
+      }
+    ])
+    try {
+      expect(wrapper.find('.message-card').exists()).toBe(false)
+      expect(wrapper.text()).toContain('请选择路径')
+      expect(wrapper.text()).not.toContain('查看卡片')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it('同一运行的用户选择按公开源序插入等待之后、结果之前', () => {
+    const history = {
+      ...emptyHistory(),
+      messages: [
+        {
+          message_id: 'input',
+          message_version: 1,
+          role: 'user',
+          content: '运行菜单',
+          metadata: { root_run_id: 'r', source_sequence: 1 }
+        },
+        {
+          message_id: 'wait',
+          message_version: 1,
+          role: 'assistant',
+          content: '请选择',
+          metadata: { root_run_id: 'r', source_sequence: 5 }
+        },
+        {
+          message_id: 'choice',
+          message_version: 1,
+          role: 'user',
+          content: '已选择：查看卡片',
+          metadata: { root_run_id: 'r', source_sequence: 6 }
+        },
+        {
+          message_id: 'result',
+          message_version: 1,
+          role: 'assistant',
+          content: '已完成',
+          metadata: { root_run_id: 'r', source_sequence: 9, card }
+        }
+      ]
+    }
+    const turns = conversationTurns(history)
+    expect(turns).toHaveLength(1)
+    expect(conversationEntries(turns[0]!).map((entry) => entry.key)).toEqual([
+      'input',
+      'wait',
+      'choice',
+      'result'
+    ])
+  })
+})
+
 describe('正文消息时间', () => {
   it('按正式完成原因展示具体预算资源，并在重放后保留原未知原因', async () => {
     const wrapper = timestampTimeline([

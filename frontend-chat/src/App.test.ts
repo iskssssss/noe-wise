@@ -1352,6 +1352,42 @@ describe('会话输入控件', () => {
       wrapper.unmount()
     }
   })
+  it('工作流选项将原恢复身份和可读回复一起交给会话发送', async () => {
+    holder.state.sessionId = 's'
+    holder.state.target = 'agent:a'
+    holder.state.history.pending_interactions = [
+      {
+        execution_id: 'r',
+        run_revision: '6',
+        interaction_type: 'workflow_input',
+        tool_wait: { action_id: 'a', generation: '1' },
+        suspend_ref: 'wait:4',
+        workflow_execution_id: 'workflow',
+        execution_revision: '4',
+        resume_action_key: 'wait:4',
+        card: { type: 'select', actions: [{ id: 'card', label: '查看卡片' }] }
+      }
+    ]
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { stubs: { TeamManager: true } }
+    })
+    try {
+      await flushPromises()
+      await wrapper.getComponent(PendingForm).get('.actions button').trigger('click')
+      await flushPromises()
+      expect(holder.state.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          execution_id: 'r',
+          workflow_input: expect.objectContaining({ action_key: 'wait:4' })
+        }),
+        false,
+        '已选择：查看卡片'
+      )
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it.each(['tool_input', 'plan_review'] as const)(
     '历史读取期间%s待办禁提交，读取后保留草稿并恢复',
     async (kind) => {
@@ -1497,7 +1533,9 @@ describe('会话输入控件', () => {
               })
             })
           })
-        })
+        }),
+        false,
+        undefined
       )
     } finally {
       wrapper.unmount()

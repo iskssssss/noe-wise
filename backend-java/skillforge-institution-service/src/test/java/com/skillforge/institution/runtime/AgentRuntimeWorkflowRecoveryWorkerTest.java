@@ -84,6 +84,21 @@ class AgentRuntimeWorkflowRecoveryWorkerTest {
         }
         verifyNoInteractions(commit,fixture.worker,fixture.workflows);
     }
+    @Test void userSelectionIsCommittedBeforeResolutionUsingTheSameAcceptedDependency() {
+        var fixture = new Fixture();
+        var message = new ExecutionStore.Event(new EventId("selection"), AgentRuntimeExecutionResponses.USER_MESSAGE_EVENT,
+                new TypedPayload(AgentRuntimeExecutionResponses.USER_MESSAGE_SCHEMA, "{}"));
+        when(fixture.store.acceptDependency(any(), any())).thenReturn(new ExecutionStore.ResumeResult(run(false), waiting(EXACT), true));
+        fixture.subject.respondHuman(run(false), ACTOR, new InputId("choice"), WAIT, 9,
+                new TypedPayload("application/json", "{\"action\":\"card\",\"response\":\"\"}"), message);
+        var command = ArgumentCaptor.forClass(ExecutionStore.Resume.class);
+        verify(fixture.store).acceptDependency(command.capture(), any());
+        assertEquals(message, command.getValue().events().getFirst());
+        assertEquals(2, command.getValue().events().size());
+        assertEquals(IDENTITY.runRef(), command.getValue().run());
+        assertEquals(WAIT, command.getValue().waiting());
+        verify(fixture.worker).wake(IDENTITY.runRef());
+    }
     @Test void currentWorkflowIamRejectionCannotConfirmOriginalCallbackProofOrWake() {
         var fixture=new Fixture();var sql=mock(SqlSession.class);var commit=mock(AgentRuntimeWorkflowRecoveryWorker.ResponseCommit.class);
         when(fixture.identities.authorize(eq(sql),any())).thenReturn(new IdentityPolicyPort.AuthorizationResult.Denied("workflow_permission_revoked",2,new ResultRef("denied")));

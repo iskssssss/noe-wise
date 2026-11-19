@@ -56,13 +56,17 @@ import { deliveryStatusLabels } from './ui/deliveryStatus'
 const c = reactive(useConversation())
 /** 只消除同一执行已展示的提问，其他待办或用户文本不会吞掉当前问题。 */
 function pendingQuestionDisplayed(pending: Pending) {
-  const question = (pending.card?.title || pending.question || '').trim()
+  const question = (
+    (pending.card?.type === 'select' ? pending.card.body : pending.card?.title) ||
+    pending.question ||
+    ''
+  ).trim()
   return Boolean(
     question &&
     c.history.messages.some(
       (message) =>
         message.role === 'assistant' &&
-        message.run_id === pending.execution_id &&
+        (message.run_id ?? message.metadata?.run_id) === pending.execution_id &&
         message.content.trim() === question
     )
   )
@@ -1314,7 +1318,7 @@ const formTipId = useId()
               :disabled="c.loading || c.historyReadFailed || c.sessionClosed || c.targetDisabled"
               :cancel-disabled="c.locked"
               :question-displayed="pendingQuestionDisplayed(pending)"
-              @submit="c.submit($event)"
+              @submit="(value, message) => c.submit(value, false, message)"
               @cancel="c.cancel(pending.execution_id)"
             />
           </section>

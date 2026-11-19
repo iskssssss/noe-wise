@@ -90,6 +90,7 @@ export interface Message {
   sequence?: number
   created_at?: string
   metadata?: {
+    card?: Card
     content_parts?: Content[]
     citations?: Citation[]
     phase?: MessagePhase

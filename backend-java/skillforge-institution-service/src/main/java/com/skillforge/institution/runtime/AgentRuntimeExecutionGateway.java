@@ -156,7 +156,9 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
             var saved = switch (reply) {
                 case AgentRuntimeExecutionResponses.ToolReply tool -> resume(previous.orElseThrow(), verified, new InputId(inputId), tool.waiting(), tool.revision(), tool.responses());
                 case AgentRuntimeExecutionResponses.HumanReply human -> resumeHuman(previous.orElseThrow(), verified, new InputId(inputId), human, submission.request().clientMessageId());
-                case AgentRuntimeExecutionResponses.WorkflowReply workflow -> resumeWorkflow(previous.orElseThrow(), verified, new InputId(inputId), workflow);
+                case AgentRuntimeExecutionResponses.WorkflowReply workflow -> resumeWorkflow(previous.orElseThrow(), verified, new InputId(inputId), workflow,
+                        submission.request().content().isEmpty() ? Optional.empty() : Optional.of(userEvent(previous.orElseThrow().identity(), new InputId(inputId),
+                                submission.request().message(), submission.request().clientMessageId(), submission.request().content(), Optional.empty())));
             };
             if(saved.accepted()&&source==SubmissionSource.USER&&tests.session(owner.sessionRef()).isEmpty())goals.getObject().yieldToUser(owner);
             return result(saved.run(), inputId, !saved.accepted());
@@ -488,6 +490,11 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
     /** Workflow Human只交给SDK专有接受事务；普通Human/Tool恢复不读取或补齐SDK身份。 */
     private ExecutionStore.ResumeResult resumeWorkflow(ExecutionStore.Run run, VerifiedIdentity actor, InputId input,
             AgentRuntimeExecutionResponses.WorkflowReply reply) {
+        return resumeWorkflow(run, actor, input, reply, Optional.empty());
+    }
+
+    private ExecutionStore.ResumeResult resumeWorkflow(ExecutionStore.Run run, VerifiedIdentity actor, InputId input,
+            AgentRuntimeExecutionResponses.WorkflowReply reply, Optional<ExecutionStore.Event> userMessage) {
         var accepted = store.response(run.identity().runRef(), input);
         var waiting = accepted.or(() -> store.waiting(run.identity().runRef(), reply.waiting()))
                 .orElseThrow(AgentRuntimeExecutionGateway::workflowConflict);
@@ -504,7 +511,9 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
                     || !pending.executionRef().equals(reply.execution()) || pending.expectedRevision() != reply.executionRevision()
                     || !pending.suspendRef().equals(reply.suspendRef()) || !pending.actionKey().equals(reply.actionKey())) throw workflowConflict();
         }
-        try { return workflows.respond(run, actor, input, reply.waiting(), reply.revision(), reply.response()); }
+        try { return userMessage.isPresent()
+                ? workflows.respondHuman(run, actor, input, reply.waiting(), reply.revision(), reply.response(), userMessage.orElseThrow())
+                : workflows.respond(run, actor, input, reply.waiting(), reply.revision(), reply.response()); }
         catch (ExecutionStore.Rejection rejected) { throw rejection(rejected); }
     }
 

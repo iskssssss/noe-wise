@@ -1403,6 +1403,35 @@ describe('长粘贴文本草稿生命周期', () => {
     expect(state.pastedTexts.value).toEqual(original)
   })
 
+  it('菜单回复正文与结构化动作一起冻结，重试不吸收草稿或新回复文字', async () => {
+    await connect()
+    state.draft.value = '下一条消息'
+    const hitl = {
+      execution_id: 'waiting',
+      run_revision: '6',
+      workflow_input: {
+        action_key: 'frozen-key',
+        response: {
+          schema_id: 'application/json',
+          canonical_json: '{"action":"card","response":""}'
+        }
+      }
+    }
+    submit = async () => {
+      throw new TypeError('offline')
+    }
+    await state.submit(hitl, false, '已选择：查看卡片')
+    expect(JSON.parse(posts[0]!)).toMatchObject({
+      content: [{ type: 'text', text: '已选择：查看卡片' }],
+      hitl_response: hitl
+    })
+    expect(state.draft.value).toBe('下一条消息')
+    submit = async () => response({ status: 'accepted', execution_id: 'waiting', session_id: 's' })
+    await state.submit(undefined, true, '不能替换原回复')
+    expect(posts[1]).toBe(posts[0])
+    expect(state.draft.value).toBe('下一条消息')
+  })
+
   it('结果未知输入重试只复用冻结请求，不重新上传或吸收下一条本地原文', async () => {
     await connect()
     state.stagePastedText(longText('a'))

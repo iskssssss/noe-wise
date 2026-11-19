@@ -1266,7 +1266,7 @@ export function useConversation() {
     )
     history.value.history_retention = fresh.history_retention ?? history.value.history_retention
   }
-  async function submit(hitl?: Record<string, unknown>, retry = false) {
+  async function submit(hitl?: Record<string, unknown>, retry = false, replyText = '') {
     if (
       targetDisabled.value ||
       sessionClosed.value ||
@@ -1344,7 +1344,9 @@ export function useConversation() {
             ...selectedTarget.value,
             client_message_id: crypto.randomUUID(),
             content: hitl
-              ? []
+              ? replyText.trim()
+                ? [{ type: 'text', text: replyText }]
+                : []
               : [
                   ...(message!.text.trim() ? [{ type: 'text' as const, text: message!.text }] : []),
                   ...message!.images.map((mediaId) => ({

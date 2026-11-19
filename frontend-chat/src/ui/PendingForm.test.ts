@@ -263,6 +263,117 @@ describe('紧凑补充信息', () => {
   })
 })
 
+describe('工作流菜单', () => {
+  const menu: Pending = {
+    execution_id: 'menu-run',
+    run_revision: '6',
+    interaction_type: 'workflow_input',
+    tool_wait: { action_id: 'workflow-action', generation: '1' },
+    workflow_execution_id: 'workflow-execution',
+    suspend_ref: 'workflow-wait:4',
+    execution_revision: '4',
+    resume_action_key: 'workflow-wait:4',
+    card: {
+      type: 'select',
+      body: '请选择查看卡片或查看文字。',
+      actions: [
+        { id: 'card', label: '查看卡片' },
+        { id: 'text', label: '查看文字' }
+      ]
+    }
+  }
+  it('展示真实选项，空说明可选择，保留恢复键与可读回复', async () => {
+    const wrapper = mount(PendingForm, { props: { pending: menu, busy: false } })
+    try {
+      expect(wrapper.get('h3').text()).toBe('请选择下一步')
+      expect(wrapper.text()).toContain('请选择查看卡片或查看文字。')
+      expect(wrapper.get('label').text()).toBe('补充说明（可选）')
+      expect(wrapper.find('button[type="submit"]').exists()).toBe(false)
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.emitted('submit')).toBeUndefined()
+      await wrapper.findAll('.actions button')[0]!.trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('submit')).toEqual([
+        [
+          {
+            execution_id: 'menu-run',
+            run_revision: '6',
+            workflow_input: {
+              wait: { action_id: 'workflow-action', generation: '1' },
+              execution_ref: 'workflow-execution',
+              suspend_ref: 'workflow-wait:4',
+              execution_revision: '4',
+              action_key: 'workflow-wait:4',
+              response: {
+                schema_id: 'application/json',
+                canonical_json: '{"action":"card","response":""}'
+              }
+            }
+          },
+          '已选择：查看卡片'
+        ]
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it('选项标识决定分支，文案仅用于历史，连续点击只提交一次', async () => {
+    const wrapper = mount(PendingForm, {
+      props: {
+        pending: { ...menu, card: { ...menu.card, actions: [{ id: 'text', label: '确认' }] } },
+        busy: false
+      }
+    })
+    try {
+      await wrapper.get('textarea').setValue('只查看文字')
+      await Promise.all([
+        wrapper.get('.actions button').trigger('click'),
+        wrapper.get('.actions button').trigger('click')
+      ])
+      await flushPromises()
+      expect(wrapper.emitted('submit')).toHaveLength(1)
+      expect(wrapper.emitted('submit')![0]).toEqual([
+        expect.objectContaining({
+          workflow_input: expect.objectContaining({
+            action_key: 'workflow-wait:4',
+            response: {
+              schema_id: 'application/json',
+              canonical_json: '{"action":"text","response":"只查看文字"}'
+            }
+          })
+        }),
+        '已选择：确认\n只查看文字'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it.each(['busy', 'disabled'] as const)('%s时不能选择', async (prop) => {
+    const wrapper = mount(PendingForm, { props: { pending: menu, busy: false, [prop]: true } })
+    try {
+      expect(wrapper.get('.actions button').attributes('disabled')).toBeDefined()
+      await wrapper.get('.actions button').trigger('click')
+      expect(wrapper.emitted('submit')).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it('缺少冻结恢复键时保留菜单且不提交', async () => {
+    const wrapper = mount(PendingForm, {
+      props: { pending: { ...menu, resume_action_key: undefined }, busy: false }
+    })
+    try {
+      await wrapper.get('.actions button').trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('submit')).toBeUndefined()
+      expect(wrapper.text()).toContain('工作流等待身份不完整')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('工作流确认卡', () => {
   const confirmation: Pending = {
     execution_id: 'workflow-run',
@@ -313,7 +424,8 @@ describe('工作流确认卡', () => {
                 canonical_json: '{"action":"confirm","response":""}'
               }
             }
-          }
+          },
+          '已选择：确认继续'
         ]
       ])
     } finally {

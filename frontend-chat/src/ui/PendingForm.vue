@@ -15,7 +15,7 @@ import {
 } from './controls'
 import { computed, nextTick, reactive, ref, useId } from 'vue'
 import { pendingIdentity } from '../projection'
-import type { Pending, Schema } from '../protocol'
+import type { Card, Pending, Schema } from '../protocol'
 import Markdown from './Markdown.vue'
 import { validateForm } from './panel'
 import FieldTip from './FieldTip.vue'
@@ -27,7 +27,10 @@ const props = defineProps<{
   cancelDisabled?: boolean
   questionDisplayed?: boolean
 }>()
-const emit = defineEmits<{ submit: [value: Record<string, unknown>]; cancel: [] }>()
+const emit = defineEmits<{
+  submit: [value: Record<string, unknown>, message?: string]
+  cancel: []
+}>()
 const fields = reactive<Record<string, Record<string, unknown>>>({}),
   feedback = ref(''),
   error = ref('')
@@ -57,9 +60,19 @@ const confirmationAction = computed(() => {
     : undefined
 })
 const workflowConfirmation = computed(() => Boolean(confirmationAction.value))
+const workflowSelection = computed(
+  () =>
+    !['user_input', 'tool_input', 'plan_review'].includes(props.pending.interaction_type ?? '') &&
+    Boolean(props.pending.suspend_ref) &&
+    props.pending.card?.type === 'select'
+)
+const selectionActions = computed(() =>
+  workflowSelection.value ? (props.pending.card?.actions ?? []).filter((action) => action.id) : []
+)
+const workflowCard = computed(() => workflowConfirmation.value || workflowSelection.value)
 const simpleInput = computed(
   () =>
-    !workflowConfirmation.value &&
+    !workflowCard.value &&
     !['tool_input', 'plan_review'].includes(props.pending.interaction_type ?? '')
 )
 const question = computed(() =>
@@ -70,12 +83,14 @@ const question = computed(() =>
 const heading = computed(() =>
   props.pending.interaction_type === 'plan_review'
     ? '确认计划'
-    : workflowConfirmation.value
-      ? question.value || '确认工作流'
-      : '补充信息'
+    : workflowSelection.value
+      ? question.value || '请选择下一步'
+      : workflowConfirmation.value
+        ? question.value || '确认工作流'
+        : '补充信息'
 )
 const feedbackRequired = computed(
-  () => props.pending.interaction_type !== 'plan_review' && !workflowConfirmation.value
+  () => props.pending.interaction_type !== 'plan_review' && !workflowCard.value
 )
 const submitLabel = computed(() =>
   props.pending.interaction_type === 'plan_review'
@@ -106,8 +121,10 @@ for (const request of requests.value)
     ])
   )
 const initialFields = JSON.stringify(fields)
-async function send(decision: string) {
+async function send(decision: string, selection?: NonNullable<Card['actions']>[number]) {
   if (props.busy || props.disabled || submitting.value) return
+  // 菜单只能由显式选择提交；表单 Enter 不默认选择首项。
+  if (workflowSelection.value && !selection) return
   submitting.value = true
   error.value = ''
   try {
@@ -148,20 +165,28 @@ async function send(decision: string) {
         tool_input: { wait: { ...props.pending.tool_wait }, responses }
       })
     } else if (props.pending.suspend_ref) {
-      emit('submit', {
-        ...identity,
-        workflow_input: {
-          wait: { ...props.pending.tool_wait },
-          execution_ref: props.pending.workflow_execution_id,
-          suspend_ref: props.pending.suspend_ref,
-          execution_revision: props.pending.execution_revision,
-          action_key: props.pending.resume_action_key,
-          response: {
-            schema_id: 'application/json',
-            canonical_json: JSON.stringify({ action: 'confirm', response: feedback.value })
+      const action = selection?.id ?? 'confirm'
+      const label = selection?.label?.trim() || selection?.id || submitLabel.value
+      emit(
+        'submit',
+        {
+          ...identity,
+          workflow_input: {
+            wait: { ...props.pending.tool_wait },
+            execution_ref: props.pending.workflow_execution_id,
+            suspend_ref: props.pending.suspend_ref,
+            execution_revision: props.pending.execution_revision,
+            action_key: props.pending.resume_action_key,
+            response: {
+              schema_id: 'application/json',
+              canonical_json: JSON.stringify({ action, response: feedback.value })
+            }
           }
-        }
-      })
+        },
+        workflowCard.value
+          ? `已选择：${label}${feedback.value.trim() ? `\n${feedback.value}` : ''}`
+          : feedback.value
+      )
     } else if (props.pending.interaction_type === 'user_input') {
       if (!feedback.value.trim()) throw new Error('请填写补充信息。')
       emit('submit', {
@@ -224,10 +249,13 @@ function validate(schema: Schema, value: unknown, required: boolean) {
         ><Square :size="12" aria-hidden="true"
       /></ChatButton>
     </header>
-    <p v-if="question && !questionDisplayed && !workflowConfirmation" class="pending-question">
+    <p v-if="question && !questionDisplayed && !workflowCard" class="pending-question">
       {{ question }}
     </p>
-    <Markdown v-if="workflowConfirmation && pending.card?.body" :text="pending.card.body" />
+    <Markdown
+      v-if="workflowCard && pending.card?.body && (!workflowSelection || !questionDisplayed)"
+      :text="pending.card.body"
+    />
     <ChatAlert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <Markdown v-if="pending.interaction_type === 'plan_review'" :text="pending.card?.plan" />
     <ChatForm
@@ -306,7 +334,7 @@ function validate(schema: Schema, value: unknown, required: boolean) {
         v-else
         class="pending-feedback"
         :validate-on-blur="false"
-        :label="workflowConfirmation ? '补充说明（可选）' : '补充说明'"
+        :label="workflowCard ? '补充说明（可选）' : '补充说明'"
         prop="feedback"
         :rules="
           feedbackRequired
@@ -316,13 +344,24 @@ function validate(schema: Schema, value: unknown, required: boolean) {
         ><ChatInput
           type="textarea"
           v-model="feedback"
-          :placeholder="workflowConfirmation ? '可填写确认说明' : '补充你的需求'"
+          :placeholder="workflowCard ? '可填写补充说明，或直接选择下方操作' : '补充你的需求'"
           :rows="2"
           autosize
           :required="feedbackRequired"
       /></ChatFormItem>
       <div class="actions">
+        <template v-if="workflowSelection">
+          <ChatButton
+            v-for="action in selectionActions"
+            :key="action.id"
+            native-type="button"
+            :loading="busy || submitting"
+            @click="send('accept', action)"
+            >{{ action.label?.trim() || action.id }}</ChatButton
+          >
+        </template>
         <ChatButton
+          v-else
           native-type="submit"
           type="primary"
           :class="{ 'pending-send': simpleInput }"

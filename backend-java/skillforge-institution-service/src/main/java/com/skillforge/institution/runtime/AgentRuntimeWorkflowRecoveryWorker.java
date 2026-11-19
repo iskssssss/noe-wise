@@ -84,10 +84,24 @@ public final class AgentRuntimeWorkflowRecoveryWorker {
     /** callback交付确认在同一个Store接受事务内完成，不伪造旧InputReceipt。 */
     ExecutionStore.ResumeResult respond(ExecutionStore.Run parent, VerifiedIdentity actor, InputId input,
             ExecutionStore.WaitRef waiting, long revision, TypedPayload response, ResponseCommit commit) {
+        return respond(parent, actor, input, waiting, revision, response, Optional.empty(), commit);
+    }
+
+    /** 人类回复的公开消息与原依赖响应同事务保存，不能丢失所属Run和源顺序。 */
+    ExecutionStore.ResumeResult respondHuman(ExecutionStore.Run parent, VerifiedIdentity actor, InputId input,
+            ExecutionStore.WaitRef waiting, long revision, TypedPayload response, ExecutionStore.Event userMessage) {
+        return respond(parent, actor, input, waiting, revision, response, Optional.of(userMessage), (session, execution) -> { });
+    }
+
+    private ExecutionStore.ResumeResult respond(ExecutionStore.Run parent, VerifiedIdentity actor, InputId input,
+            ExecutionStore.WaitRef waiting, long revision, TypedPayload response, Optional<ExecutionStore.Event> userMessage,
+            ResponseCommit commit) {
         if (!parent.identity().owner().equals(actor.owner())) throw rejected();
         var material = new ExecutionStore.Material(new ResultRef("execution-response:" + AgentExecutionCodec.digest(parent.identity().runRef() + "\0" + input.value())), response);
+        var events = new java.util.ArrayList<ExecutionStore.Event>();
+        userMessage.ifPresent(events::add); events.add(resolved(parent, input, waiting));
         var result = store.acceptDependency(new ExecutionStore.Resume(actor, parent.identity().runRef(), waiting, revision, input, material,
-                AgentExecutionCodec.digest(response.schemaId() + "\0" + response.canonicalJson()), Map.of(), List.of(resolved(parent, input, waiting))),
+                AgentExecutionCodec.digest(response.schemaId() + "\0" + response.canonicalJson()), Map.of(), events),
                 (session, current, actualWait, children, actualResponse) -> {
                     if (!current.identity().equals(parent.identity()) || !actualWait.reference().equals(waiting) || !children.isEmpty()
                             || !actualResponse.equals(material)) throw rejected();

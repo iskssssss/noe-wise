@@ -86,6 +86,49 @@ const turns = computed(() => {
   }))
 })
 const traceModes = ref<Record<string, boolean>>({})
+// SSE与历史metadata使用同一公开卡片；历史交互仅保留提问，不重建选择或确认动作。
+const cards = computed(() =>
+  Object.fromEntries(
+    props.history.messages.flatMap((message) => {
+      const card = message.card ?? message.metadata?.card
+      if (!card || ['select', 'confirm'].includes(card.type ?? '')) return []
+      return [
+        [
+          message.message_id,
+          {
+            title: card.title,
+            body: card.body === message.content ? '' : card.body,
+            fields:
+              card.type === 'info' && Array.isArray(card.fields)
+                ? card.fields
+                    .filter((field) => field && typeof field === 'object')
+                    .map((field) => ({
+                      label: String(field.label ?? field.key ?? ''),
+                      value:
+                        typeof field.value === 'object'
+                          ? JSON.stringify(field.value)
+                          : String(field.value ?? ''),
+                      description: typeof field.description === 'string' ? field.description : ''
+                    }))
+                : [],
+            links:
+              card.type === 'info'
+                ? (card.actions ?? [])
+                    .filter(
+                      (action) =>
+                        action.type === 'link' &&
+                        typeof action.url === 'string' &&
+                        /^https?:\/\//i.test(action.url) &&
+                        typeof action.label === 'string'
+                    )
+                    .map((action) => ({ label: action.label!, url: action.url as string }))
+                : []
+          }
+        ]
+      ]
+    })
+  )
+)
 watch(
   () => props.session,
   () => {
@@ -284,9 +327,29 @@ function pending(turn: ConversationTurn) {
             <MessageBody :created-at="message.created_at">
               <Markdown :text="message.content" :streaming="message.state === 'streaming'" />
             </MessageBody>
-            <section v-if="message.card" class="message-card">
-              <strong>{{ message.card.title }}</strong
-              ><Markdown :text="message.card.body" />
+            <section v-if="cards[message.message_id]" class="message-card" aria-label="展示卡片">
+              <strong v-if="cards[message.message_id]!.title">{{
+                cards[message.message_id]!.title
+              }}</strong>
+              <Markdown :text="cards[message.message_id]!.body" />
+              <dl v-if="cards[message.message_id]!.fields.length" class="card-fields">
+                <template v-for="(field, index) in cards[message.message_id]!.fields" :key="index">
+                  <dt>{{ field.label }}</dt>
+                  <dd>
+                    {{ field.value }}
+                    <p v-if="field.description">{{ field.description }}</p>
+                  </dd>
+                </template>
+              </dl>
+              <a
+                v-for="(link, index) in cards[message.message_id]!.links"
+                :key="index"
+                class="card-link"
+                :href="link.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                >{{ link.label }}</a
+              >
             </section>
             <p
               v-for="(reference, index) in message.references"
@@ -374,6 +437,30 @@ function pending(turn: ConversationTurn) {
 </template>
 
 <style scoped>
+.card-fields {
+  margin: 12px 0;
+}
+.card-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.card-fields dd {
+  margin: 4px 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.card-fields dd p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.card-link {
+  display: inline-block;
+  padding: 8px 0;
+  margin-right: 16px;
+  color: var(--accent);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
 .preview-message {
   padding: var(--space-3);
   border: 1px dashed var(--border);

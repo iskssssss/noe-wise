@@ -179,6 +179,43 @@ class AgentRuntimeExecutionProjectionTest {
         }
     }
 
+    @Test void workflowInformationCardUsesPublicExportAndStableIdentityWithoutReplayingMenu() throws Exception {
+        var fixture = new Fixture();
+        String output = """
+                {"messages":[
+                  {"role":"assistant","content":"请选择","card":{"type":"select","actions":[{"id":"card","label":"查看卡片"}]}},
+                  {"role":"assistant","content":"已选择卡片路径。","card":{"type":"info","title":"菜单巡检结果卡","body":"固定内容",
+                    "fields":[{"label":"巡检状态","value":"已完成"},{"label":"数量","value":0}],
+                    "actions":[{"type":"link","label":"查看列表","url":"http://localhost:3000/admin/workflows"}]}},
+                  {"role":"assistant","content":"普通输出不生成第二条回答"}
+                ],"private_engine_state":"不得当作消息"}
+                """;
+        fixture.events(AgentExecutionProgram.WORKFLOW_RESULT_EVENT, AgentExecutionProgram.WORKFLOW_RESULT_SCHEMA,
+                workflowBody(fixture, true, "COMPLETED", output));
+        fixture.projection.reconcile(fixture.session);
+        assertEquals(List.of("process.finished", "message.card"), fixture.types());
+        var message = fixture.data("message.card");
+        assertEquals("event-1:card:1", message.get("message_id"));
+        assertEquals("run-1", message.get("run_id"));
+        assertEquals("已选择卡片路径。", message.get("content"));
+        assertEquals("completed", message.get("state"));
+        assertEquals(fixture.json.readTree(output).path("messages").get(1).path("card"), fixture.json.valueToTree(message.get("card")));
+        assertFalse(fixture.json.writeValueAsString(fixture.outputs).contains("private_engine_state"));
+        assertFalse(fixture.json.writeValueAsString(fixture.outputs).contains("普通输出不生成第二条回答"));
+    }
+
+    @Test void rejectedWorkflowCardCannotBypassPublicOutputGuard() throws Exception {
+        var fixture = new Fixture();
+        String output = fixture.json.writeValueAsString(Map.of("messages", List.of(Map.of("role", "assistant", "content", "result",
+                "card", Map.of("type", "info", "body", fixture.privatePath)))));
+        fixture.events(AgentExecutionProgram.WORKFLOW_RESULT_EVENT, AgentExecutionProgram.WORKFLOW_RESULT_SCHEMA,
+                workflowBody(fixture, true, "COMPLETED", output));
+        fixture.projection.reconcile(fixture.session);
+        assertEquals(List.of("process.finished"), fixture.types());
+        assertEquals("failed", fixture.data("process.finished").get("status"));
+        assertFalse(fixture.json.writeValueAsString(fixture.outputs).contains(fixture.privatePath));
+    }
+
     private static Map<String, Object> workflowBody(Fixture fixture, boolean finished, String status, String output) {
         var body = fixture.base(); body.put("actionId", "workflow-action"); body.put("executionId", "workflow-execution");
         body.put("status", status); body.put("summary", finished ? "工作流执行结果已保存" : "工作流调用已登记");

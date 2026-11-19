@@ -37,7 +37,7 @@ import org.apache.ibatis.session.SqlSession;
 
 /** 消费执行链的准确保存事件或持久事件页；不恢复 Run、Action 或旧 SessionLog。 */
 public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventProjection, ChatRuntimeHistory {
-    private static final String POLICY = "execution-events-v2/" + PublicOutputGuard.POLICY_VERSION;
+    private static final String POLICY = "execution-events-v3/" + PublicOutputGuard.POLICY_VERSION;
     private final ExecutionStore store;
     private final SessionMailboxService mailbox;
     private final PublicOutputGuard guard;
@@ -654,6 +654,25 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
         if (finished) process.put("finished_at", saved.occurredAt().toString());
         process.put("presentation", Map.of("title", "工作流调用", "summary", text(value, "summary"), "results", List.of(), "references", List.of()));
         sink.sendRuntime(finished ? "process.finished" : "process.started", process, saved.run().runId());
+        // 只展示已公开导出的信息卡；普通结果仍归执行轨迹，历史菜单不能重新获得提交入口。
+        if (finished && "succeeded".equals(status)) {
+            final JsonNode output;
+            try { output = json.readTree(value.path("output").path("canonicalJson").textValue()); }
+            catch (java.io.IOException invalid) { throw new IllegalArgumentException("execution_workflow_output_invalid", invalid); }
+            var messages = output.path("messages");
+            if (!messages.isArray()) return;
+            for (int index = 0; index < messages.size(); index++) {
+                var item = messages.get(index); var card = item.path("card");
+                if (!"assistant".equals(item.path("role").asText()) || !item.path("content").isTextual()
+                        || !"info".equals(card.path("type").asText())) continue;
+                var message = new LinkedHashMap<>(base);
+                message.put("message_id", saved.event().id().value() + ":card:" + index);
+                message.put("message_version", 1); message.put("role", "assistant"); message.put("state", "completed");
+                message.put("author", agentAuthor(saved, value)); message.put("content", item.path("content").textValue());
+                message.put("card", card); message.put("references", List.of());
+                sink.sendRuntime("message.card", message, saved.run().runId());
+            }
+        }
     }
 
     /** 模型过程开始来自派发登记，结束来自真实结果；不把派发等同于首token或生成成功。 */
