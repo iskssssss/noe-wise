@@ -673,6 +673,19 @@ class AgentRuntimePublishedCapabilitiesTest {
                 .containsExactly("确认交付清单");
     }
 
+    @Test void freezesWorkflowDisplayMetadataFromTheExactAuthorizedVersion() {
+        var f = new Fixture();
+        var row = new AgentRuntimeExecutionMounts.WorkflowRow(); row.name = "菜单与展示卡片"; row.description = "等待用户选择后返回结果";
+        var target = f.workflowTarget;
+        when(f.executionMapper.workflow("1", target.capability().capabilityId(), target.capability().versionId())).thenReturn(row);
+        var parameters = new TypedPayload("application/json", "{}");
+        var frozen = f.subject.workflowBinding(f.frozenRun("workflow-label", List.of()), target, parameters);
+        row.name = "当前新名称"; row.description = "当前新用途";
+        assertThat(frozen.name()).isEqualTo("菜单与展示卡片"); assertThat(frozen.description()).isEqualTo("等待用户选择后返回结果");
+        assertThat(frozen.target()).isEqualTo(target); assertThat(frozen.parameters()).isEqualTo(parameters);
+        verify(f.executionMapper).workflow("1", target.capability().capabilityId(), target.capability().versionId());
+    }
+
     private static final class Fixture {
         private static final Instant NOW = Instant.parse("2026-09-14T00:00:00Z");
         private final TenantId tenant = new TenantId("1");
@@ -690,9 +703,10 @@ class AgentRuntimePublishedCapabilitiesTest {
         private final ToolCatalog catalog = mock(ToolCatalog.class);
         private final com.skillforge.institution.runtime.AgentRunBindings studioRuns =
                 mock(com.skillforge.institution.runtime.AgentRunBindings.class);
+        private final AgentRuntimeExecutionMounts.Mapper executionMapper = mock(AgentRuntimeExecutionMounts.Mapper.class);
         private final AgentRuntimePublishedCapabilities subject = new AgentRuntimePublishedCapabilities(
                 capabilities, tools, workflows, knowledge, mounts, mountResolver, catalog,
-                new ObjectMapper(), studioRuns, workflowPublisher, mock(AgentRuntimeExecutionMounts.Mapper.class), new com.skillforge.core.capability.connector.PlatformToolCatalog(new com.skillforge.core.chat.contract.ChatToolSchemaContributor()));
+                new ObjectMapper(), studioRuns, workflowPublisher, executionMapper, new com.skillforge.core.capability.connector.PlatformToolCatalog(new com.skillforge.core.chat.contract.ChatToolSchemaContributor()));
 
         private final com.skillforge.core.capability.CapabilityRef catalogRef =
                 new com.skillforge.core.capability.CapabilityRef(

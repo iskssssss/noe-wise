@@ -147,6 +147,8 @@ class AgentRuntimeExecutionCatalogTest {
         var restored = fixture.subject.read(frozen, fixture.identity);
         assertThat(restored.workflows()).hasSize(1); var workflow = restored.workflows().getFirst();
         assertThat(workflow.target()).isEqualTo(target); assertThat(workflow.evidenceRefs()).isEmpty();
+        assertThat(workflow.name()).isEqualTo("原工作流名称");
+        assertThat(workflow.description()).isEqualTo("原工作流用途");
         var parameters = fixture.json.readTree(workflow.parameters().canonicalJson());
         assertThat(parameters.path("user_input").textValue()).isEqualTo("原始任务\n后续要求");
         assertThat(parameters.path("extraParameters")).isEqualTo(fixture.json.readTree(inbound.canonicalJson()).path("extraParameters"));
@@ -248,6 +250,8 @@ class AgentRuntimeExecutionCatalogTest {
             when(capabilities.knowledge(identity, binding)).thenReturn(List.of());
             when(capabilities.skills(identity, binding)).thenReturn(List.of());
             when(capabilities.workflows(identity, binding)).thenReturn(List.of());
+            when(capabilities.workflowBinding(org.mockito.ArgumentMatchers.eq(identity), any(), any())).thenAnswer(call ->
+                    new com.skillforge.runtime.session.AgentExecutionProgram.WorkflowBinding(call.getArgument(1), "原工作流名称", "原工作流用途", call.getArgument(2), List.of()));
             when(binding.member()).thenReturn(member);
             when(member.mounts()).thenReturn(new CapabilityMountSetResult(1L, 2L, 1, List.of()));
             when(plans.getObject()).thenReturn(planHost); when(planHost.loadedState(identity, binding)).thenReturn(PlanPort.State.absent());

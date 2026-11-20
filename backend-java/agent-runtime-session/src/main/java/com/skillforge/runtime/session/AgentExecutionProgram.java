@@ -206,7 +206,11 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
             var schema = (com.fasterxml.jackson.databind.node.ObjectNode) SessionRuntimePayloadJson.parse(declaration.inputSchema().canonicalJson(), new CodecLimits(size, size, 128));
             var handles = ((com.fasterxml.jackson.databind.node.ObjectNode) schema.get("properties").get("handle")).putArray("enum");
             workflows.stream().map(binding -> binding.target().handle().value()).sorted().forEach(handles::add);
-            result.add(new ModelTool(declaration.wireName(), declaration.toolHandle(), declaration.description(), new TypedPayload(declaration.inputSchema().schemaId(), SessionRuntimePayloadJson.write(schema)),
+            String description = declaration.description() + "\n可用工作流（名称与用途对应唯一句柄；按用户要求选择，无法确定时先询问）：\n"
+                    + workflows.stream().sorted(java.util.Comparator.comparing(binding -> binding.target().handle().value()))
+                    .map(binding -> binding.target().handle().value() + ": " + binding.name() + " - " + binding.description())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            result.add(new ModelTool(declaration.wireName(), declaration.toolHandle(), description, new TypedPayload(declaration.inputSchema().schemaId(), SessionRuntimePayloadJson.write(schema)),
                     declaration.strict(), declaration.kind(), false));
         }
         return List.copyOf(result);
@@ -288,8 +292,8 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     /** 原受理输入及冻结工作流目录共同形成参数，不从模型handle推测或补造初始输入。 */
-    public record WorkflowBinding(FrozenWorkflowTarget target, TypedPayload parameters, List<EvidenceRef> evidenceRefs) {
-        public WorkflowBinding { Objects.requireNonNull(target); Objects.requireNonNull(parameters); evidenceRefs = List.copyOf(evidenceRefs); }
+    public record WorkflowBinding(FrozenWorkflowTarget target, String name, String description, TypedPayload parameters, List<EvidenceRef> evidenceRefs) {
+        public WorkflowBinding { Objects.requireNonNull(target); Objects.requireNonNull(name); Objects.requireNonNull(description); Objects.requireNonNull(parameters); evidenceRefs = List.copyOf(evidenceRefs); }
         @Override public String toString() { return "ExecutionWorkflowBinding[REDACTED]"; }
     }
 
@@ -451,9 +455,10 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         public PendingPlan { Objects.requireNonNull(waiting); Objects.requireNonNull(request); Objects.requireNonNull(sourceResult); Objects.requireNonNull(dependency); }
         @Override public String toString() { return "ExecutionPendingPlan[REDACTED]"; }
     }
-    /** Workflow挂起只保原dispatch和实际业务wait；续跑使用同Action的新真实Attempt。 */
-    public record PendingWorkflow(ExecutionStore.WaitRef waiting, SessionExecutionWorkflows.Dispatch original, ResultRef sourceResult, ExecutionStore.WorkflowWait dependency) implements PendingDependency {
-        public PendingWorkflow { Objects.requireNonNull(waiting); Objects.requireNonNull(original); Objects.requireNonNull(sourceResult); Objects.requireNonNull(dependency); }
+    /** Workflow挂起保留原dispatch、实际业务wait及已受理人工响应；续跑使用同Action的新真实Attempt。 */
+    public record PendingWorkflow(ExecutionStore.WaitRef waiting, SessionExecutionWorkflows.Dispatch original, ResultRef sourceResult, ExecutionStore.WorkflowWait dependency,
+            List<TypedPayload> humanResponses) implements PendingDependency {
+        public PendingWorkflow { Objects.requireNonNull(waiting); Objects.requireNonNull(original); Objects.requireNonNull(sourceResult); Objects.requireNonNull(dependency); humanResponses = List.copyOf(humanResponses); }
         @Override public String toString() { return "ExecutionPendingWorkflow[REDACTED]"; }
     }
 
@@ -1810,6 +1815,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     private Adoption<Materials> adoptWorkflow(Run run, Materials before, Prepared prepared, CapabilityResult actual) {
         if (before.pendingTool().isPresent() || before.pendingHuman().isPresent() || before.problem().isPresent()) throw invalid();
         var request = workflows.decode(prepared.request().content()); final SessionExecutionWorkflows.Dispatch original; final long generation;
+        var humanResponses = new ArrayList<TypedPayload>();
         if (request instanceof SessionExecutionWorkflows.Dispatch dispatch) {
             if(dispatch.origin() instanceof SessionExecutionWorkflows.AuthorizedInputOrigin) {
                 if(!dispatch.equals(authorizedWorkflowRequest(run,before))||prepared.ordinal()!=1)throw invalid();
@@ -1827,6 +1833,9 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
                     || !resume.suspendRef().equals(waiting.suspendRef()) || !resume.actionKey().equals(waiting.actionKey()) || resume.expectedRevision() != waiting.executionRevision()
                     || !resume.origin().equals(original.origin())) throw invalid();
             generation = Math.incrementExact(pending.waiting().generation());
+            humanResponses.addAll(pending.humanResponses());
+            var previous = workflows.decodeResult(requireMaterial(run, pending.sourceResult()).content());
+            if (previous.human().isPresent()) humanResponses.add(resume.response());
         } else throw invalid();
         if (!prepared.equals(prepare(run, before, ExecutionStore.Kind.WORKFLOW, prepared.ordinal(), prepared.request()))) throw invalid();
         var envelope = workflows.decodeResult(actual.result().content()); var snapshot = codec.decodeOutcome(envelope.outcome());
@@ -1837,7 +1846,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         if (result instanceof WorkflowResult.Suspended suspended) {
             var dependency = envelope.waiting().orElseThrow(AgentExecutionProgram::invalid);
             if (!dependency.execution().equals(suspended.executionRef()) || !dependency.suspendRef().equals(suspended.suspendRef()) || dependency.executionRevision() != suspended.revision()) throw invalid();
-            var reference = new ExecutionStore.WaitRef(prepared.action(), generation); pending = Optional.of(new PendingWorkflow(reference, original, actual.result().reference(), dependency));
+            var reference = new ExecutionStore.WaitRef(prepared.action(), generation); pending = Optional.of(new PendingWorkflow(reference, original, actual.result().reference(), dependency, humanResponses));
             if ((suspended.reason() == com.skillforge.runtime.api.LoopSuspendReason.WORKFLOW_HITL) != envelope.human().isPresent()) throw invalid();
             waiting = Optional.of(new ExecutionStore.WaitDeclaration(reference, ExecutionStore.WaitKind.WORKFLOW, Map.of(), Optional.of(dependency))); events = List.of(workflowWaiting(run, reference, dependency, envelope.human()));
         } else {
@@ -1847,9 +1856,9 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
             else {
                 var rejected = result instanceof WorkflowResult.Completed completed ? sources.capabilityContentRejection(run, List.of(completed.output())) : Optional.<String>empty();
                 if (rejected.isPresent()) problem = Optional.of(new Problem(ProblemKind.FAILED, rejected.orElseThrow()));
-                else if(original.origin() instanceof SessionExecutionWorkflows.ModelOrigin) messages = appendWorkflow(before, original, actual.feedback().orElseThrow().content());
+                else if(original.origin() instanceof SessionExecutionWorkflows.ModelOrigin) messages = appendWorkflow(before, original, actual.feedback().orElseThrow().content(), humanResponses);
             }
-            events = List.of(workflowResult(run, prepared, result, problem.isEmpty()));
+            events = List.of(workflowResult(run, before, prepared, result, problem.isEmpty()));
         }
         var context = context(before.context(), prepared, actual); var usage = before.usage().nextToolCall();
         var after = new Materials(before.configuration(), messages, usage, prepared.ordinal(), before.modelOrdinal(), pending.isPresent() ? before.model() : Optional.empty(),
@@ -1863,15 +1872,17 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     /** 每个原Workflow native调用只在终态后追加一次结果，不在挂起和续跑间制造半回合。 */
-    private List<ModelMessage> appendWorkflow(Materials before, SessionExecutionWorkflows.Dispatch original, TypedPayload value) {
+    private List<ModelMessage> appendWorkflow(Materials before, SessionExecutionWorkflows.Dispatch original, TypedPayload value, List<TypedPayload> humanResponses) {
         var decision = before.decision().orElseThrow(AgentExecutionProgram::invalid);
         if (!(decision instanceof AgentDecisionDecoder.Decoded decoded) || !(decoded.action() instanceof AgentAction.Dispatch dispatch)
                 || !original.target().handle().value().equals(dispatch.handle()) || !original.callId().equals(SessionNativeResponses.callId(before,0))) throw invalid();
         var assistant = SessionNativeResponses.assistant(before,List.of(new ModelToolCall(original.callId(), original.wireName(), original.arguments())));
+        String interaction = humanResponses.isEmpty() ? "" : "\n工作流曾等待用户操作，以下是等待期间已受理并用于恢复的用户响应（按提交顺序）。操作主体是用户，答复时用“你”指代选择者：\n"
+                + humanResponses.stream().map(TypedPayload::canonicalJson).collect(java.util.stream.Collectors.joining("\n")) + "\n";
         return ModelConversation.append(before.messages(), assistant, List.of(new ModelMessage("execution-workflow-" + before.modelOrdinal(), ModelRole.TOOL,
                 List.of(new ModelContent.Text("工作流执行回执：仅依据返回的实际状态和输出报告结果；失败、取消或未完成不能表述为业务成功。"
                         + "完成时 output.schemaId 和 output.canonicalJson 是结果封套，其中 canonicalJson 是表示业务输出的 JSON 字符串；"
-                        + "按用户要求使用解码后的业务内容，包含 messages 时区分消息内容与卡片，不要默认把封套作为最终答复。\n"+value.canonicalJson())), List.of(), Optional.of(original.callId()), Optional.empty())));
+                        + "按用户要求使用解码后的业务内容，包含 messages 时区分消息内容与卡片，不要默认把封套作为最终答复。\n" + interaction + value.canonicalJson())), List.of(), Optional.of(original.callId()), Optional.empty())));
     }
 
     /** 原typed结果均携带Execution身份，不能以其他挂载或另一次调用的回执推进。 */
@@ -2104,7 +2115,7 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     private Step.Dispatch dispatch(Run run, Materials materials, Prepared prepared, ExecutionBudgetPort.Category category, ExecutionBudgetPort.Resources resources) {
         String attempt = prepared.action().actionId() + ":attempt:1";
         var lifecycle = prepared.kind() == ExecutionStore.Kind.MODEL ? List.of(ExecutionModelLifecycle.started(run, prepared, codec))
-                : prepared.kind() == ExecutionStore.Kind.WORKFLOW ? List.of(workflowStarted(run, prepared)) : List.<ExecutionStore.Event>of();
+                : prepared.kind() == ExecutionStore.Kind.WORKFLOW ? List.of(workflowStarted(run, materials, prepared)) : List.<ExecutionStore.Event>of();
         var events = new ArrayList<>(lifecycle);
         events.addAll(observations.registered(run, materials, prepared, attempt));
         return new Step.Dispatch(prepared, attempt, new ExecutionBudgetPort.Demand(run.identity().runRef(), attempt, prepared.fingerprint(), category, resources, materials.output().map(value->value.policy().closing()).orElse(false)), materials.configuration().actor(), Optional.empty(), events);
@@ -2169,17 +2180,19 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
     }
 
     /** 只记录已登记的原 Workflow 派发，不推断节点已运行或请求已送达。 */
-    private ExecutionStore.Event workflowStarted(Run run, Prepared prepared) {
+    private ExecutionStore.Event workflowStarted(Run run, Materials before, Prepared prepared) {
         var value = trace(run.identity(), run.identity().causationInputId());
         value.put("actionId", prepared.action().actionId());
         value.put("executionId", workflows.decode(prepared.request().content()).executionRef().executionId());
-        value.put("status", "DISPATCHED"); value.put("summary", "工作流调用已登记");
+        var target = workflows.decode(prepared.request().content()).target();
+        var binding = before.configuration().workflows().stream().filter(candidate -> candidate.target().equals(target)).findFirst().orElseThrow();
+        value.put("status", "DISPATCHED"); value.put("summary", "工作流「" + binding.name() + "」调用已登记");
         return new ExecutionStore.Event(new EventId("execution-workflow-started:" + AgentExecutionCodec.digest(prepared.action().toString())),
                 WORKFLOW_STARTED_EVENT, codec.encode(WORKFLOW_STARTED_SCHEMA, value));
     }
 
     /** 只公开能力拥有者声明导出的 Completed.output，内部结果、恢复材料及安装配置不进入事件。 */
-    private ExecutionStore.Event workflowResult(Run run, Prepared prepared, WorkflowResult result, boolean accepted) {
+    private ExecutionStore.Event workflowResult(Run run, Materials before, Prepared prepared, WorkflowResult result, boolean accepted) {
         var value = trace(run.identity(), run.identity().causationInputId());
         value.put("actionId", prepared.action().actionId()); value.put("executionId", workflowExecution(result).executionId());
         String status; String summary; java.util.OptionalLong revision;
@@ -2191,7 +2204,9 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
             case WorkflowResult.OutcomeUnknown unknown -> { status = "UNKNOWN"; summary = "工作流结果未知"; revision = unknown.revision(); }
             default -> throw invalid();
         }
-        value.put("status", status); value.put("summary", summary);
+        var target = workflows.decode(prepared.request().content()).target();
+        var binding = before.configuration().workflows().stream().filter(candidate -> candidate.target().equals(target)).findFirst().orElseThrow();
+        value.put("status", status); value.put("summary", "「" + binding.name() + "」" + summary);
         if (revision.isPresent()) value.put("executionRevision", Long.toString(revision.getAsLong())); else value.putNull("executionRevision");
         boolean outputAccepted = result instanceof WorkflowResult.Completed && accepted;
         value.put("outputAccepted", outputAccepted);

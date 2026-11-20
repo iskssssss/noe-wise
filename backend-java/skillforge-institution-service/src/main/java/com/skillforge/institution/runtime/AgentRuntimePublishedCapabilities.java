@@ -355,6 +355,14 @@ public class AgentRuntimePublishedCapabilities implements SessionToolDirectory {
         return targets;
     }
 
+    /** 名称和用途随同一正式版本冻结；后续模型选择、恢复与公开记录不读取当前目录。 */
+    com.skillforge.runtime.session.AgentExecutionProgram.WorkflowBinding workflowBinding(RunIdentity run, FrozenWorkflowTarget target, TypedPayload parameters) {
+        var row = executionMapper.workflow(run.runRef().tenantId().value(), target.capability().capabilityId(), target.capability().versionId());
+        if (row == null || row.name == null || row.name.isBlank()) throw new IllegalStateException("execution_workflow_descriptor_missing");
+        return new com.skillforge.runtime.session.AgentExecutionProgram.WorkflowBinding(target, row.name,
+                row.description == null ? "" : row.description, parameters, List.of());
+    }
+
     /** schema只取准入已授权的同一精确正式版本，不采用输入携带的声明。 */
     TypedPayload workflowInputSchema(RunIdentity run,FrozenWorkflowTarget target) {
         var row=executionMapper.workflow(run.runRef().tenantId().value(),target.capability().capabilityId(),target.capability().versionId());

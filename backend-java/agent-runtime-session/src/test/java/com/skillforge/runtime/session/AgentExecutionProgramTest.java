@@ -1715,6 +1715,20 @@ class AgentExecutionProgramTest {
         assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
     }
 
+    @Test void modelWorkflowDirectoryMapsNamesAndPurposesToExactHandles() {
+        var first = workflowBinding(); var target = first.target();
+        var second = new AgentExecutionProgram.WorkflowBinding(new WorkflowPortal.FrozenWorkflowTarget(new WorkflowPortal.WorkflowHandle("workflow:second"),
+                "second-instance", 2, target.capability(), target.timeout(), 1), "固定文字", "仅返回固定文字，不等待选择", first.parameters(), List.of());
+        var f = new Fixture(first);
+        var declarations = AgentExecutionProgram.modelTools(f.configuration.profile(), List.of(), Map.of(), List.of(), List.of(), List.of(second, first), List.of());
+        var tool = declarations.stream().filter(value -> value.wireName().equals("run_workflow")).findFirst().orElseThrow();
+        assertTrue(tool.description().contains("workflow:main: 菜单与展示卡片 - 等待用户选择，再返回卡片或文字"));
+        assertTrue(tool.description().contains("workflow:second: 固定文字 - 仅返回固定文字，不等待选择"));
+        var schema = SessionNativeConversation.object(tool.inputSchema().canonicalJson());
+        assertEquals(List.of("workflow:main", "workflow:second"), ((Map<?, ?>) ((Map<?, ?>) schema.get("properties")).get("handle")).get("enum"));
+        assertFalse(tool.description().contains("原受理输入"));
+    }
+
     /** Workflow真实终态进入原native配对，恢复保留完整原PortalOutcome及真实输出。 */
     @Test
     void adoptsActualWorkflowTerminalFromFrozenBindingAndRestoresItsNativePair() {
@@ -1725,6 +1739,7 @@ class AgentExecutionProgramTest {
         var started = f.codec.parse(dispatched.events().getFirst().data(), AgentExecutionProgram.WORKFLOW_STARTED_SCHEMA);
         assertEquals(dispatched.action().action().actionId(), AgentExecutionCodec.string(started, "actionId"));
         assertEquals("DISPATCHED", AgentExecutionCodec.string(started, "status")); assertFalse(started.has("parameters"));
+        assertEquals("工作流「菜单与展示卡片」调用已登记", AgentExecutionCodec.string(started, "summary"));
         assertEquals(binding.parameters(), request.parameters()); assertEquals(binding.target(), request.target());
         f.commit(dispatched, f.workflow(dispatched, new WorkflowResult.Completed(request.executionRef(), new TypedPayload("application/json", "{\"answer\":\"ACTUAL_WORKFLOW_OUTPUT\"}"), 4, new ResultRef("actual-workflow-business-result")), Optional.empty()));
         assertEquals(1, f.materials.usage().toolCalls()); assertEquals("provider-call:1", f.materials.messages().getLast().toolCallId().orElseThrow());
@@ -1738,6 +1753,7 @@ class AgentExecutionProgramTest {
         assertFalse(SessionExecutionWorkflows.RESULT_SCHEMA.equals(event.data().schemaId()));
         var publicOutput = f.codec.parse(event.data(), AgentExecutionProgram.WORKFLOW_RESULT_SCHEMA);
         assertEquals("COMPLETED", AgentExecutionCodec.string(publicOutput, "status"));
+        assertEquals("「菜单与展示卡片」工作流已完成", AgentExecutionCodec.string(publicOutput, "summary"));
         assertTrue(publicOutput.path("outputAccepted").booleanValue());
         assertEquals(new TypedPayload("application/json", "{\"answer\":\"ACTUAL_WORKFLOW_OUTPUT\"}"), AgentExecutionCodec.readPayload(publicOutput.get("output")));
         assertFalse(event.data().canonicalJson().contains("actual-workflow-business-result"));
@@ -1790,6 +1806,7 @@ class AgentExecutionProgramTest {
         assertResumedObservation(resumed, ExecutionObservation.Kind.WORKFLOW, request.inputId());
         f.commit(resumed, f.workflow(resumed, new WorkflowResult.Completed(original.executionRef(), new TypedPayload("application/json", "{\"answer\":\"RESUMED_ACTUAL_OUTPUT\"}"), 8, new ResultRef("completed-business-result")), Optional.empty()));
         assertEquals(2, f.materials.usage().toolCalls()); assertEquals(3, f.materials.messages().size()); assertTrue(f.materials.messages().getLast().textContent().contains("RESUMED_ACTUAL_OUTPUT"));
+        assertFalse(f.materials.messages().getLast().textContent().contains("工作流曾等待用户操作"));
         assertEquals(AgentExecutionProgram.WORKFLOW_RESULT_EVENT, f.lastAdoption.events().getFirst().type());
         assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
         assertEquals(request.inputId(), f.materials.observationInput());
@@ -1809,6 +1826,33 @@ class AgentExecutionProgramTest {
         assertEquals("workflow", AgentExecutionCodec.string(event, "kind")); assertTrue(event.get("question").isNull()); assertTrue(event.get("requests").isEmpty());
         assertEquals(waiting.actionKey(), AgentExecutionCodec.string(event.get("workflow"), "actionKey")); assertEquals("7", AgentExecutionCodec.string(event.get("workflow"), "executionRevision"));
         assertEquals(card.card(), AgentExecutionCodec.readPayload(event.get("workflow").get("card"))); assertTrue(f.materials.pendingHuman().isEmpty());
+        assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
+    }
+
+    @Test void workflowKeepsAcceptedHumanChoicesAcrossFurtherWaitsAndRestoration() {
+        var f = new Fixture(workflowBinding()); var first = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        f.commit(first, f.model(new AgentAction.Dispatch("workflow:main"), 1));
+        var current = assertInstanceOf(Step.Dispatch.class, f.program.next(f.run, f.materials));
+        var protocol = new SessionExecutionWorkflows(Fixture.LIMITS);
+        var original = (SessionExecutionWorkflows.Dispatch) protocol.decode(current.action().request().content());
+        var card = new SessionExecutionWorkflows.HumanInteraction(new TypedPayload("application/json", "{\"type\":\"select\",\"actions\":[{\"id\":\"card\",\"label\":\"查看卡片\"}]}"));
+        for (int index = 1; index <= 2; index++) {
+            var waiting = new ExecutionStore.WorkflowWait(original.executionRef(), "human-" + index, "choice-" + index, index * 3);
+            f.commit(current, f.workflow(current, new WorkflowResult.Suspended(original.executionRef(), waiting.suspendRef(), waiting.executionRevision(),
+                    new ResultRef("suspended-" + index), com.skillforge.runtime.api.LoopSuspendReason.WORKFLOW_HITL), Optional.of(waiting), Optional.of(card)));
+            assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
+            var pending = (AgentExecutionProgram.PendingWorkflow) f.materials.pendingDependency().orElseThrow();
+            var response = new TypedPayload("application/json", "{\"action\":\"card\",\"text\":\"用户选择" + index + "\"}");
+            var accepted = f.accept(pending.waiting(), ExecutionStore.WaitKind.WORKFLOW, Map.of(), response, Optional.of(waiting));
+            current = assertInstanceOf(Step.Dispatch.class, f.program.continuation(f.run, f.materials, accepted, f.acceptedResponse));
+        }
+        f.commit(current, f.workflow(current, new WorkflowResult.Completed(original.executionRef(), new TypedPayload("application/json", "{}"), 9,
+                new ResultRef("completed")), Optional.empty()));
+        var feedback = f.materials.messages().getLast().textContent();
+        assertTrue(feedback.contains("工作流曾等待用户操作"));
+        assertTrue(feedback.contains("\"action\":\"card\""));
+        assertTrue(feedback.indexOf("用户选择1") < feedback.indexOf("用户选择2"));
+        assertEquals(3, f.materials.messages().size());
         assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
     }
 
@@ -1896,7 +1940,7 @@ class AgentExecutionProgramTest {
 
     private static AgentExecutionProgram.WorkflowBinding workflowBinding() {
         return new AgentExecutionProgram.WorkflowBinding(new WorkflowPortal.FrozenWorkflowTarget(new WorkflowPortal.WorkflowHandle("workflow:main"), "instance", 1,
-                new CapabilityRef(CapabilityType.WORKFLOW, "workflow", "v1"), Duration.ofSeconds(1), 1), new TypedPayload("application/json", "{\"user_input\":\"原受理输入\",\"extraParameters\":{}}"), List.of());
+                new CapabilityRef(CapabilityType.WORKFLOW, "workflow", "v1"), Duration.ofSeconds(1), 1), "菜单与展示卡片", "等待用户选择，再返回卡片或文字", new TypedPayload("application/json", "{\"user_input\":\"原受理输入\",\"extraParameters\":{}}"), List.of());
     }
 
     /** 受控模型重复消费原只读结果：第三轮收到事实，第五轮私有冻结并终止。 */

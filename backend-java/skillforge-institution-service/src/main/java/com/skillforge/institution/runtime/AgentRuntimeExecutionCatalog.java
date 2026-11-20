@@ -39,7 +39,7 @@ import org.springframework.beans.factory.ObjectProvider;
  * 只在本存储边界按明确record编码，不存Run进度、回执、Provider许可或递归checkpoint。
  */
 public final class AgentRuntimeExecutionCatalog {
-    public static final String SCHEMA = "skillforge.runtime.execution.capabilities.v3";
+    public static final String SCHEMA = "skillforge.runtime.execution.capabilities.v4";
     private final AgentRuntimePublishedCapabilities capabilities;
     private final JdbcKnowledgeBindings knowledge;
     private final ObjectMapper json;
@@ -71,7 +71,7 @@ public final class AgentRuntimeExecutionCatalog {
         Objects.requireNonNull(identity); Objects.requireNonNull(binding); Objects.requireNonNull(acceptedAt); Objects.requireNonNull(inbound);
         if(tests.session(identity.owner().sessionRef()).isPresent()) {
             var targets=capabilities.authorizedWorkflows(identity,binding);var intent=tests.initial(identity,targets);
-            var workflows=targets.stream().map(target->new WorkflowBinding(target,tests.parameters(identity),List.of())).toList();
+            var workflows=targets.stream().map(target->capabilities.workflowBinding(identity,target,tests.parameters(identity))).toList();
             return encode(new FrozenCatalog(identity,List.of(),Map.of(),List.of(),List.of(),
                     targets.stream().map(target->target.capability()).collect(java.util.stream.Collectors.toUnmodifiableSet()),workflows,
                     PlanPort.State.absent(),SessionCollaboration.Selection.inactive(),intent));
@@ -103,7 +103,7 @@ public final class AgentRuntimeExecutionCatalog {
         if (!targets.isEmpty()) {
             var parameters = workflowParameters(inbound);
             // input.v1只携带已选输入材料；没有已提交Observation的EvidenceRef，不将artifact引用伪造成证据。
-            for (var target : targets) workflows.add(new WorkflowBinding(target, parameters, List.of()));
+            for (var target : targets) workflows.add(capabilities.workflowBinding(identity, target, parameters));
         }
         var initialPlanState = plans.getObject().loadedState(identity, binding);
         var selection = identity.owner().target().kind() == com.skillforge.runtime.api.SessionTarget.Kind.GROUP
@@ -130,7 +130,7 @@ public final class AgentRuntimeExecutionCatalog {
                     "workflow_invocation_input_invalid","业务参数不符合正式Workflow input_schema",false);
         }
         return encode(new FrozenCatalog(identity,List.of(),Map.of(),List.of(),List.of(),Set.of(target.capability()),
-                List.of(new WorkflowBinding(target,invocation.parameters(),List.of())),PlanPort.State.absent(),SessionCollaboration.Selection.inactive(),
+                List.of(capabilities.workflowBinding(identity,target,invocation.parameters())),PlanPort.State.absent(),SessionCollaboration.Selection.inactive(),
                 Optional.of(new com.skillforge.runtime.session.AgentExecutionProgram.AuthorizedWorkflowInvocation(
                         "open-platform-workflow:"+identity.causationInputId().value(),target))));
     }
