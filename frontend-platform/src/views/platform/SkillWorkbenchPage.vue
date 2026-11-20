@@ -927,6 +927,7 @@ const formTipId = useId()
       <PackageFileWorkbench
         ref="fileWorkbench"
         v-model:files="draft.files"
+        :dirty="dirty"
         :readonly="
           !allowed('foundation.skills.update') || versionView || action.busy.value || writeLocked
         "
