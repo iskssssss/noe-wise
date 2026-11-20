@@ -176,6 +176,18 @@ public class WorkflowTestSessionService {
     }
 
     public Receipt byRequest(String requestId) { var test=tests.byRequest(tenant(),member(),requestId);if(test==null)throw missing();return receipt(test); }
+    @Transactional(readOnly=true)
+    public HistoryPage history(String workflowId,Long beforeId) {
+        long tenant=tenant(),member=member();
+        if(workflowId==null||workflowId.isBlank()||(beforeId!=null&&beforeId<=0))
+            throw invalid("workflow_test_history_invalid","请选择工作流并使用历史列表继续翻页");
+        management.require(tenant,workflowId,"read");
+        var rows=tests.history(tenant,member,workflowId,beforeId,21);
+        var items=rows.stream().limit(20).map(row->new HistoryItem(Long.toString(row.id()),row.sourceKind(),
+                row.draftRevision(),row.definitionVersionId()==null?null:row.definitionVersionId().toString(),
+                row.initialMessage(),row.status(),row.createdAt())).toList();
+        return new HistoryPage(items,rows.size()>20?items.getLast().testSessionId():null);
+    }
     /** 仅确认原等待的输入已受理；无记录或身份不一致时不推断请求是否发生。 */
     @Transactional(readOnly=true)
     public ReplyReceipt replyReceipt(String testSessionId,String inputId,String runId,String actionId,long generation,

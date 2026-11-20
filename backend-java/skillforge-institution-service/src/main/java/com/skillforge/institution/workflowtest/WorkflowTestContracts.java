@@ -24,6 +24,12 @@ public final class WorkflowTestContracts {
             Bindings bindings, @JsonProperty("user_input") String userInput,
             Map<String, Object> parameters, Budget budget) {}
     public record Close(@JsonProperty("test_session_id") String testSessionId) {}
+    public record HistoryItem(@JsonProperty("test_session_id") String testSessionId,
+            @JsonProperty("source_kind") String sourceKind,@JsonProperty("draft_revision") Long draftRevision,
+            @JsonProperty("definition_version_id") String definitionVersionId,
+            @JsonProperty("initial_message") String initialMessage,String status,
+            @JsonProperty("created_at") Instant createdAt) {}
+    public record HistoryPage(List<HistoryItem> items,@JsonProperty("next_before_id") String nextBeforeId) {}
     /** 原输入的受理事实；不包含用户回复正文。 */
     public record ReplyReceipt(@JsonProperty("test_session_id") String testSessionId,
             @JsonProperty("session_id") String sessionId, @JsonProperty("run_id") String runId,

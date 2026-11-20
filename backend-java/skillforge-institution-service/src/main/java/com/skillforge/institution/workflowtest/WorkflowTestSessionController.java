@@ -24,6 +24,12 @@ public class WorkflowTestSessionController {
     @PostMapping
     public ApiResponse<Receipt> create(@RequestBody Create command) {return ApiResponses.wrap(service.create(command));}
     @RequirePermission("foundation.workflows.read")
+    @GetMapping("/history")
+    public ApiResponse<HistoryPage> history(@RequestParam("workflowId") String workflowId,
+            @RequestParam(value="beforeId",required=false) Long beforeId) {
+        return ApiResponses.wrap(service.history(workflowId,beforeId));
+    }
+    @RequirePermission("foundation.workflows.read")
     @GetMapping("/by-request")
     public ApiResponse<Receipt> byRequest(@RequestParam("requestId") String requestId) {return ApiResponses.wrap(service.byRequest(requestId));}
     @RequirePermission("foundation.workflows.read")

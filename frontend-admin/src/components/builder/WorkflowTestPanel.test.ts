@@ -15,6 +15,7 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   options: vi.fn(),
+  testHistory: vi.fn(),
   create: vi.fn(),
   byRequest: vi.fn(),
   get: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('../../api', () => ({
   api: {
     workflowTests: {
       options: mocks.options,
+      history: mocks.testHistory,
       create: mocks.create,
       byRequest: mocks.byRequest,
       get: mocks.get,
@@ -177,6 +179,7 @@ beforeEach(() => {
     'request-fixed' as ReturnType<typeof crypto.randomUUID>
   )
   mocks.options.mockImplementation(async (_workflow, source) => options(source))
+  mocks.testHistory.mockResolvedValue({ items: [], nextBeforeId: null })
   mocks.create.mockResolvedValue(receipt())
   mocks.get.mockResolvedValue(receipt({ status: 'running', runId: 'run:1', runStatus: 'running' }))
   mocks.byRequest.mockResolvedValue(receipt())
@@ -217,6 +220,96 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
   vi.useRealTimers()
+})
+
+describe('重新登录后的工作流测试历史', () => {
+  const item = {
+    testSessionId: 'test:1',
+    sourceKind: 'draft',
+    draftRevision: 7,
+    definitionVersionId: null,
+    initialMessage: '原测试消息',
+    status: 'closed',
+    createdAt: '2026-11-20T00:00:00Z'
+  }
+  it('分页选择原记录只读取原测试，保留新建表单且不再次发送', async () => {
+    mocks.testHistory
+      .mockResolvedValueOnce({ items: [item], nextBeforeId: 'test:1' })
+      .mockResolvedValueOnce({
+        items: [{ ...item, testSessionId: 'test:0', initialMessage: '更早测试' }],
+        nextBeforeId: null
+      })
+    mocks.get.mockResolvedValue(
+      receipt({ status: 'closed', closeStatus: 'closed', runId: 'run:1', runStatus: 'completed' })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await dom().get('[aria-label="测试消息"]').setValue('尚未提交的新输入')
+    await button(wrapper, '测试历史').trigger('click')
+    await flushPromises()
+    await button(wrapper, '更早的测试').trigger('click')
+    await flushPromises()
+    expect(mocks.testHistory).toHaveBeenLastCalledWith('flow', 'test:1', { silent: true })
+    await dom().get('[aria-label="查看测试：原测试消息"]').trigger('click')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledWith('test:1', expect.any(Object))
+    expect(mocks.history).toHaveBeenCalledWith('session:1')
+    expect(dom().text()).toContain('已关闭')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(mocks.close).not.toHaveBeenCalled()
+    await button(wrapper, '开始新测试').trigger('click')
+    await flushPromises()
+    expect((dom().get('[aria-label="测试消息"]').element as HTMLTextAreaElement).value).toBe(
+      '尚未提交的新输入'
+    )
+  })
+  it('历史尚无Run回执时保留未知，不提供补发初始输入入口', async () => {
+    mocks.testHistory.mockResolvedValue({
+      items: [{ ...item, status: 'ready' }],
+      nextBeforeId: null
+    })
+    mocks.get.mockResolvedValue(receipt())
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '测试历史').trigger('click')
+    await flushPromises()
+    await dom().get('[aria-label="查看测试：原测试消息"]').trigger('click')
+    await flushPromises()
+    expect(dom().text()).toContain('结果尚未确认')
+    expect(dom().text()).not.toContain('开始已创建的测试')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('历史读取失败不伪装为空态，重试可恢复', async () => {
+    mocks.testHistory.mockRejectedValueOnce(new Error('历史读取失败'))
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '测试历史').trigger('click')
+    await flushPromises()
+    expect(dom().text()).toContain('历史读取失败')
+    expect(dom().text()).not.toContain('还没有测试记录')
+    await button(wrapper, '刷新历史').trigger('click')
+    await flushPromises()
+    expect(dom().text()).toContain('还没有测试记录')
+  })
+  it('身份切换后丢弃旧历史查询结果', async () => {
+    let finish!: (value: unknown) => void
+    mocks.testHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '测试历史').trigger('click')
+    localStorage.setItem('test.auth.session', 'other')
+    await wrapper.setProps({ identityVersion: 2 })
+    finish({ items: [item], nextBeforeId: null })
+    await flushPromises()
+    expect(dom().text()).not.toContain('原测试消息')
+    expect(mocks.get).not.toHaveBeenCalled()
+  })
 })
 
 describe('工作流公开输出与执行终态', () => {

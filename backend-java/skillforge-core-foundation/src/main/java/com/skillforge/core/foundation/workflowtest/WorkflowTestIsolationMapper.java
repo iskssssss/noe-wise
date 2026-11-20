@@ -11,6 +11,8 @@ public interface WorkflowTestIsolationMapper extends BaseMapper<WorkflowTestSess
     WorkflowTestSessionDO lockBySession(@Param("tenant") long tenant,@Param("session") String session);
     WorkflowTestSessionDO bySession(@Param("tenant") long tenant,@Param("session") String session);
     WorkflowTestSessionDO byRequest(@Param("tenant") long tenant,@Param("member") long member,@Param("request") String request);
+    List<WorkflowTestSessionDO> history(@Param("tenant") long tenant,@Param("member") long member,
+            @Param("workflow") String workflow,@Param("beforeId") Long beforeId,@Param("limit") int limit);
     WorkflowTestSessionDO byEndUser(@Param("tenant") long tenant,@Param("user") long user);
     WorkflowTestSessionDO byAgent(@Param("tenant") long tenant,@Param("agent") long agent);
     WorkflowTestSessionDO byInstance(@Param("tenant") long tenant,@Param("instance") long instance);

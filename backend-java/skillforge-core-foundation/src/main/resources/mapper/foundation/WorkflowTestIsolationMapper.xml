@@ -14,6 +14,13 @@
     <foreach collection="agentIds" item="agentId" open="(" separator="," close=")">#{agentId}</foreach>
   </select>
   <select id="byRequest" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND initiator_member_id=#{member} AND request_id=#{request}</select>
+  <select id="history" resultType="com.skillforge.core.foundation.workflowtest.WorkflowTestSessionDO">
+    SELECT id,source_kind,source_draft_revision,source_definition_version_id,initial_message,status,created_at
+    FROM nw_workflow_test_sessions
+    WHERE tenant_id=#{tenant} AND initiator_member_id=#{member} AND source_workflow_id=#{workflow}
+    <if test="beforeId != null">AND id &lt; #{beforeId}</if>
+    ORDER BY id DESC LIMIT #{limit}
+  </select>
   <select id="byInstance" resultMap="test">SELECT <include refid="columns"/> FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND instance_id=#{instance}</select>
   <select id="ownedResource" resultType="boolean">
     SELECT EXISTS(SELECT 1 FROM nw_workflow_test_sessions WHERE tenant_id=#{tenant} AND

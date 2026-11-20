@@ -25,6 +25,7 @@ import type {
   WorkflowTestOptions,
   WorkflowTestReceipt,
   WorkflowTestSource,
+  WorkflowTestHistoryItem,
   WorkflowReplyReceipt
 } from '../../api/workflowTests'
 import { workflowConfigFields, workflowInstallationConfig } from '../../utils/workflow'
@@ -77,6 +78,13 @@ let replyReceiptOwner = 0
 let replySubmitOwner = 0
 const recovery = ref<Recovery>()
 const recoveryStorageError = ref(false)
+const testHistory = ref<WorkflowTestHistoryItem[]>([])
+const historyOpen = ref(false),
+  historyLoading = ref(false),
+  historyLoaded = ref(false)
+const historyBeforeId = ref<string | null>(null)
+let historyReadVersion = 0
+const choosingHistory = ref(false)
 let disposed = false,
   epoch = 0,
   controller: AbortController | undefined,
@@ -1407,7 +1415,7 @@ function respond(item: RuntimePendingInteraction, action?: string) {
   }
 }
 function newTest() {
-  if (!closed.value) return
+  if (!closed.value || choosingHistory.value) return
   closeOwner++
   busy.value = false
   stopReads()
@@ -1420,6 +1428,96 @@ function newTest() {
   options.value = undefined
   void loadOptions()
 }
+async function loadHistory(more = false) {
+  if (historyLoading.value || !props.workflowId) return
+  historyOpen.value = true
+  historyLoading.value = true
+  error.value = ''
+  const version = ++historyReadVersion,
+    workflow = props.workflowId,
+    identity = props.identityVersion,
+    authSession = localStorage.getItem(authSessionKey)
+  try {
+    const page = await api.workflowTests.history(
+      workflow,
+      more ? (historyBeforeId.value ?? undefined) : undefined,
+      { silent: true }
+    )
+    if (
+      !props.modelValue ||
+      version !== historyReadVersion ||
+      !sameIdentity(identity, authSession, workflow)
+    )
+      return
+    testHistory.value = more ? [...testHistory.value, ...page.items] : page.items
+    historyBeforeId.value = page.nextBeforeId
+    historyLoaded.value = true
+  } catch (reason) {
+    claim(reason)
+    if (
+      props.modelValue &&
+      version === historyReadVersion &&
+      sameIdentity(identity, authSession, workflow)
+    )
+      error.value = errorText(reason, '无法读取测试历史，请重试')
+  } finally {
+    if (version === historyReadVersion) historyLoading.value = false
+  }
+}
+const canChooseHistory = computed(
+  () =>
+    !busy.value &&
+    !loading.value &&
+    !savingAndTesting.value &&
+    (!recovery.value ||
+      (closed.value &&
+        !initialUnknown.value &&
+        !recovery.value.replyOperations?.some((item) => !item.accepted)))
+)
+async function chooseHistory(item: WorkflowTestHistoryItem) {
+  if (!canChooseHistory.value) return
+  const workflow = props.workflowId,
+    identity = props.identityVersion,
+    authSession = localStorage.getItem(authSessionKey)
+  stopReads()
+  const version = epoch
+  choosingHistory.value = true
+  busy.value = true
+  error.value = ''
+  try {
+    const value = await api.workflowTests.get(item.testSessionId, { silent: true })
+    if (!props.modelValue || version !== epoch || !sameIdentity(identity, authSession, workflow))
+      return
+    if (value.testSessionId !== item.testSessionId || value.source.workflowId !== workflow)
+      throw Error('历史记录与当前工作流不匹配，请刷新列表')
+    // 历史选择只恢复读取；没有 Run 回执不代表初始输入从未发送，不能自动补发。
+    persist({
+      requestId: value.requestId,
+      testSessionId: value.testSessionId,
+      initial: value.runId ? 'submitted' : 'unknown',
+      closing: value.closeStatus !== 'open'
+    })
+    receipt.value = undefined
+    history.value = undefined
+    trace.value = undefined
+    readError.value = ''
+    Object.keys(replies).forEach((key) => delete replies[key])
+    Object.keys(replyUnknown).forEach((key) => delete replyUnknown[key])
+    autoCheckedReplies.clear()
+    applyReceipt(value)
+    historyOpen.value = false
+    await refresh()
+  } catch (reason) {
+    claim(reason)
+    if (version === epoch && sameIdentity(identity, authSession, workflow))
+      error.value = errorText(reason, '无法打开测试记录，请重试')
+  } finally {
+    if (version === epoch && sameIdentity(identity, authSession, workflow)) {
+      choosingHistory.value = false
+      busy.value = false
+    }
+  }
+}
 let recoveryScope = ''
 let formOwner = ''
 watch(
@@ -1430,6 +1528,13 @@ watch(
     const owner = JSON.stringify([props.identityVersion, localStorage.getItem(authSessionKey)])
     const scope = JSON.stringify([owner, props.workflowId])
     if (scope !== recoveryScope) {
+      choosingHistory.value = false
+      historyReadVersion++
+      historyLoading.value = false
+      historyLoaded.value = false
+      historyOpen.value = false
+      testHistory.value = []
+      historyBeforeId.value = null
       closeOwner++
       busy.value = false
       recoveryScope = scope
@@ -1452,6 +1557,12 @@ watch(
       formOwner = owner
     }
     if (!props.modelValue) {
+      if (choosingHistory.value) {
+        choosingHistory.value = false
+        busy.value = false
+      }
+      historyReadVersion++
+      historyLoading.value = false
       replyReceiptOwner++
       replyReceiptBusy.value = false
       autoCheckedReplies.clear()
@@ -1502,6 +1613,67 @@ onBeforeUnmount(() => {
         type="warning"
         :closable="false"
       />
+      <section aria-label="测试历史" class="test-history">
+        <div class="admin-actions">
+          <ElButton
+            :disabled="!workflowId"
+            :aria-expanded="historyOpen"
+            @click="historyOpen ? (historyOpen = false) : loadHistory()"
+            >{{ historyOpen ? '收起测试历史' : '测试历史' }}</ElButton
+          >
+          <ElButton v-if="historyOpen" :loading="historyLoading" @click="loadHistory()"
+            >刷新历史</ElButton
+          >
+        </div>
+        <template v-if="historyOpen">
+          <p class="admin-field-help">
+            当前账号在此工作流发起的测试，重新登录后仍可查看。选择记录不会重新执行测试。
+          </p>
+          <p v-if="recovery && !canChooseHistory" class="admin-field-help">
+            请先处理当前测试并关闭，结果未确认时保留原请求。
+          </p>
+          <p v-if="historyLoading && !historyLoaded" role="status">正在读取测试历史…</p>
+          <p v-else-if="historyLoaded && !testHistory.length" role="status">
+            还没有测试记录。填写下方测试消息，创建首次测试。
+          </p>
+          <ul v-if="testHistory.length" class="test-history-list">
+            <li v-for="item in testHistory" :key="item.testSessionId">
+              <div>
+                <time :datetime="item.createdAt">{{
+                  new Date(item.createdAt).toLocaleString()
+                }}</time>
+                <span>
+                  ·
+                  {{
+                    item.sourceKind === 'draft'
+                      ? '草稿修订 ' + item.draftRevision
+                      : publications.find((value) => value.id === item.definitionVersionId)
+                          ?.label || '已发布版本'
+                  }}
+                  ·
+                  {{
+                    item.status === 'closed'
+                      ? '已关闭'
+                      : item.status === 'closing'
+                        ? '正在关闭'
+                        : '未关闭'
+                  }}</span
+                >
+                <p class="test-history-message">{{ item.initialMessage }}</p>
+              </div>
+              <ElButton
+                :disabled="!canChooseHistory"
+                :aria-label="'查看测试：' + item.initialMessage"
+                @click="chooseHistory(item)"
+                >查看记录</ElButton
+              >
+            </li>
+          </ul>
+          <ElButton v-if="historyBeforeId" :loading="historyLoading" @click="loadHistory(true)"
+            >更早的测试</ElButton
+          >
+        </template>
+      </section>
       <template v-if="!recovery">
         <ElForm
           label-position="top"
@@ -1814,7 +1986,7 @@ onBeforeUnmount(() => {
             @click="closeTest"
             >{{ runFinished ? '关闭测试并保留记录' : '取消并关闭测试' }}</ElButton
           >
-          <ElButton v-if="closed" @click="newTest">开始新测试</ElButton>
+          <ElButton v-if="closed" :disabled="choosingHistory" @click="newTest">开始新测试</ElButton>
         </div>
         <p v-if="recovery.closing && !closed" class="test-warning" role="status">
           已请求关闭，正在确认运行是否结束；确认前不会接受新的输入。
@@ -2011,6 +2183,33 @@ onBeforeUnmount(() => {
 .workflow-test-panel h3 {
   font-size: 15px;
   margin-block: 12px;
+}
+.test-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.test-history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-block: 12px;
+  border-bottom: 1px solid var(--admin-border);
+}
+.test-history-list li > div {
+  flex: 1 1 240px;
+  min-width: 0;
+  color: var(--admin-muted);
+}
+.test-history-message {
+  color: var(--admin-text);
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .test-section-heading {
   display: flex;

@@ -156,6 +156,30 @@ class WorkflowTestIsolationDatabaseTest {
         });
     }
 
+    @Test void historyPagesOnlyTheCurrentMembersWorkflowWithRestrictedRole() throws Exception {
+        var first=own.row();
+        var second=resources(own.tenant()).row();
+        second.setInitiatorMemberId(own.member());
+        second.setSourceContainerId(first.getSourceContainerId());
+        second.setSourceWorkflowId(first.getSourceWorkflowId());
+        var otherMember=resources(own.tenant()).row();
+        otherMember.setSourceContainerId(first.getSourceContainerId());
+        otherMember.setSourceWorkflowId(first.getSourceWorkflowId());
+        var otherWorkflow=resources(own.tenant()).row();
+        otherWorkflow.setInitiatorMemberId(own.member());
+        for(var row:List.of(first,second,otherMember,otherWorkflow))
+            tenant(own.tenant(),()->mapper.insert(row));
+        tenant(foreign.tenant(),()->mapper.insert(foreign.row()));
+        var registry=new WorkflowTestRegistry(mapper);
+        var page=tenant(own.tenant(),()->registry.history(own.tenant(),own.member(),first.getSourceWorkflowId(),null,1));
+        assertEquals(List.of(second.getId()),page.stream().map(WorkflowTestRegistry.HistoryItem::id).toList());
+        assertEquals(first.getInitialMessage(),page.getFirst().initialMessage());
+        var older=tenant(own.tenant(),()->registry.history(own.tenant(),own.member(),first.getSourceWorkflowId(),page.getFirst().id(),2));
+        assertEquals(List.of(first.getId()),older.stream().map(WorkflowTestRegistry.HistoryItem::id).toList());
+        assertTrue(tenant(own.tenant(),()->registry.history(foreign.tenant(),foreign.member(),foreign.row().getSourceWorkflowId(),null,20)).isEmpty());
+        assertTrue(tenant(own.tenant(),()->registry.history(own.tenant(),own.member(),first.getSourceWorkflowId(),first.getId(),20)).isEmpty());
+    }
+
     @Test void forcedRlsRejectsCrossTenantReadsAndWritesForBothReceiptAndExactBindings() throws Exception {
         assertTrue(owner.queryForObject("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname='workflow_test_reader'", Boolean.class));
         assertEquals(2, owner.queryForObject("SELECT count(*) FROM pg_class WHERE relname IN ('nw_workflow_test_sessions','nw_workflow_test_capability_bindings') AND relrowsecurity AND relforcerowsecurity", Integer.class));

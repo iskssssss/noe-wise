@@ -60,6 +60,30 @@ const input: WorkflowTestCreate = {
 }
 
 describe('工作流测试资源公开API', () => {
+  it('历史只使用工作流与原分页游标，不提交成员身份且保留大整数ID', async () => {
+    const get = vi.fn().mockResolvedValue({
+      items: [
+        {
+          test_session_id: '9007199254740993',
+          source_kind: 'draft',
+          draft_revision: 7,
+          definition_version_id: null,
+          initial_message: '原测试',
+          status: 'closed',
+          created_at: '2026-11-20T00:00:00Z'
+        }
+      ],
+      next_before_id: '9007199254740993'
+    })
+    const client = createWorkflowTestsApi({ get, post: vi.fn() })
+    const value = await client.history('orders', '9007199254740995')
+    expect(get).toHaveBeenCalledExactlyOnceWith(
+      '/builder/workflows/test-sessions/history?workflowId=orders&beforeId=9007199254740995',
+      undefined
+    )
+    expect(value.items[0]?.testSessionId).toBe('9007199254740993')
+    expect(value.nextBeforeId).toBe('9007199254740993')
+  })
   it('候选及预算来自后端，精确目标与字符串身份在边界映射', async () => {
     const get = vi.fn().mockResolvedValue({
       source,

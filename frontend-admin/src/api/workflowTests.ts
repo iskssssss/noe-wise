@@ -64,6 +64,19 @@ export interface WorkflowTestReceipt {
   closeStatus: string
   blockingReason: string | null
 }
+export interface WorkflowTestHistoryItem {
+  testSessionId: string
+  sourceKind: string
+  draftRevision: number | null
+  definitionVersionId: string | null
+  initialMessage: string
+  status: string
+  createdAt: string
+}
+export interface WorkflowTestHistoryPage {
+  items: WorkflowTestHistoryItem[]
+  nextBeforeId: string | null
+}
 export interface WorkflowReplyIdentity {
   testSessionId: string
   sessionId: string
@@ -190,6 +203,39 @@ export function createWorkflowTestsApi(http: {
 }) {
   const root = '/builder/workflows/test-sessions'
   return {
+    history: async (
+      workflowId: string,
+      beforeId?: string,
+      options?: RequestOptions
+    ): Promise<WorkflowTestHistoryPage> => {
+      const query = new URLSearchParams({ workflowId })
+      if (beforeId) query.set('beforeId', beforeId)
+      const value = await http.get<{
+        items: Array<{
+          test_session_id: string
+          source_kind: string
+          draft_revision: number | null
+          definition_version_id: string | null
+          initial_message: string
+          status: string
+          created_at: string
+        }>
+        next_before_id: string | null
+      }>(root + '/history?' + query, options)
+      return {
+        items: value.items.map((item) => ({
+          testSessionId: identity(item.test_session_id),
+          sourceKind: item.source_kind,
+          draftRevision: item.draft_revision,
+          definitionVersionId:
+            item.definition_version_id === null ? null : identity(item.definition_version_id),
+          initialMessage: item.initial_message,
+          status: item.status,
+          createdAt: item.created_at
+        })),
+        nextBeforeId: value.next_before_id === null ? null : identity(value.next_before_id)
+      }
+    },
     options: async (
       workflowId: string,
       source: WorkflowTestSource,

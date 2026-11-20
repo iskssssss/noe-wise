@@ -91,6 +91,14 @@ public class WorkflowTestRegistry {
     }
     public Snapshot bySession(long tenant,String session) {return snapshot(mapper.bySession(tenant,session));}
     public Snapshot byRequest(long tenant,long member,String request) {return snapshot(mapper.byRequest(tenant,member,request));}
+    public record HistoryItem(long id,String sourceKind,Long draftRevision,Long definitionVersionId,
+            String initialMessage,String status,Instant createdAt) {}
+    /** 按当前成员和工作流读取轻量历史，不加载配置、参数或执行快照。 */
+    public List<HistoryItem> history(long tenant,long member,String workflow,Long beforeId,int limit) {
+        return mapper.history(tenant,member,workflow,beforeId,limit).stream().map(row->new HistoryItem(
+                row.getId(),row.getSourceKind(),row.getSourceDraftRevision(),row.getSourceDefinitionVersionId(),
+                row.getInitialMessage(),row.getStatus(),row.getCreatedAt())).toList();
+    }
     public Snapshot byAgent(long tenant,long agent) {return snapshot(mapper.byAgent(tenant,agent));}
     public Snapshot byInstance(long tenant,long instance) {return snapshot(mapper.byInstance(tenant,instance));}
     public Snapshot byEndUser(long tenant,long user) {return snapshot(mapper.byEndUser(tenant,user));}
