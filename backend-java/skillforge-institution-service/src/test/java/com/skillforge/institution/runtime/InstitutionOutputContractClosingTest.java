@@ -54,7 +54,7 @@ class InstitutionOutputContractClosingTest {
         when(f.goals.read(f.run.owner())).thenReturn(Optional.of(goalStatus));
         var abandoned=f.outputs.prepareOutput(actual,binding,List.of(stop));
         assertTrue(abandoned.hint().orElseThrow().runContext().contains("本轮文件交付状态：abandoned"));
-        assertEquals(List.of("持续 Goal 当前状态=ACTIVE；revision=3；目标=完成项目报告"),abandoned.closingSpec().facts());
+        assertEquals(List.of("持续目标：完成项目报告；当前进展：进行中"),abandoned.closingSpec().facts());
         assertTrue(abandoned.respondRejection().isEmpty());
         var rejection=abandoned.executionRejection().orElseThrow();
         assertEquals("TASK_OUTPUTS_FROZEN",rejection.code());
@@ -94,6 +94,43 @@ class InstitutionOutputContractClosingTest {
         }
     }
 
+    /** 动态目标进展用业务语言呈现，受阻原因仍可见，不能把暂停或阻塞说成完成。 */
+    @Test void goalProgressProjectionKeepsStateMeaningAndActualBlocker() throws Exception {
+        var f = new Fixture();
+        var actual = mock(ExecutionStore.Run.class); when(actual.identity()).thenReturn(f.run);
+        var binding = mock(AgentRunBindings.Binding.class);
+        when(binding.owner()).thenReturn(f.run.owner()); when(binding.actor()).thenReturn(f.run.agentId());
+        when(f.deliverables.prepareOutput(f.run)).thenReturn(
+                new DeliverableService.OutputPreparation(Optional.empty(), List.of(), Optional.empty(), false));
+        var messages = com.skillforge.runtime.session.AgentExecutionOutputs.class.getDeclaredMethod("messages", List.class,
+                Optional.class, long.class, com.skillforge.runtime.session.AgentExecutionCodec.class);
+        messages.setAccessible(true);
+        var codec = new com.skillforge.runtime.session.AgentExecutionCodec(new com.skillforge.runtime.json.CodecLimits(100000,10000,64));
+        for (var state : com.skillforge.runtime.session.SessionGoal.State.values()) {
+            var goal = new com.skillforge.runtime.session.SessionGoal.Snapshot("goal-report", 3, "完成项目报告",
+                    state, 10, 1, Optional.empty(), Optional.of(f.run.runRef()),
+                    switch (state) {
+                        case BLOCKED -> Optional.of("缺少用户的原始报表");
+                        case PAUSED -> Optional.of("用户暂停");
+                        default -> Optional.empty();
+                    });
+            var status = mock(AgentRuntimeGoalDriver.Status.class); when(status.goal()).thenReturn(goal);
+            when(f.goals.read(f.run.owner())).thenReturn(Optional.of(status));
+            var policy = f.outputs.prepareOutput(actual, binding, List.of());
+            @SuppressWarnings("unchecked") var projected = (List<com.skillforge.runtime.api.port.ModelPort.ModelMessage>) messages.invoke(
+                    null, List.of(), Optional.of(new com.skillforge.runtime.session.AgentExecutionOutputs.Directive(policy, 0)), 7L, codec);
+            var visible = projected.getLast().textContent();
+            assertTrue(visible.contains("持续目标：完成项目报告"));
+            assertFalse(visible.contains("revision")); assertFalse(visible.contains(state.name()));
+            switch (state) {
+                case ACTIVE -> assertTrue(visible.contains("当前进展：进行中"));
+                case PAUSED -> assertTrue(visible.contains("用户已暂停，等待用户显式恢复"));
+                case COMPLETE -> assertTrue(visible.contains("当前进展：已完成"));
+                case BLOCKED -> assertTrue(visible.contains("受阻；原因：缺少用户的原始报表"));
+            }
+        }
+    }
+
     /** 无成果时通用入口也省略提示；真实状态出现后才携带宿主事实。 */
     @Test void outputHintAppearsOnlyWhenDeliverableFactsExist() {
         var f = new Fixture();
@@ -129,6 +166,9 @@ class InstitutionOutputContractClosingTest {
         assertEquals(34_768, resources.resources().inputTokens());
         assertEquals(212, resources.activeSeconds());
         assertTrue(plan.facts().getLast().contains("成果最后冻结和最终答复之前"));
+        assertTrue(plan.facts().getLast().contains("不表示本次已启动浏览器任务"));
+        assertTrue(plan.facts().getLast().contains("未使用浏览器时无需操作，也无需在答复中说明"));
+        assertTrue(plan.facts().getLast().contains("停止失败或 UNKNOWN 如实保留"));
     }
 
     /** 两个收尾工具需要三轮模型，停止回执在后两轮各计一次。 */

@@ -47,8 +47,9 @@ public final class BrowserClosingBudget {
         // 多挂载也只保护一次停止；取最大冻结超时，不能用当前默认值低估原目标。
         long seconds = Math.addExact(timeout.getSeconds(), timeout.getNano() == 0 ? 0 : 1);
         var facts = new ArrayList<>(outputs.facts());
-        facts.add("原 Run 已挂载平台 browser_stop，宿主已预留一次既有任务停止及回执处理；"
-                + "仅对本次已确认的准确 task，在成果最后冻结和最终答复之前停止。没有已启动任务则不调用；"
+        facts.add("浏览器停止能力及收尾额度已预留，不表示本次已启动浏览器任务。"
+                + "确有需停止的已启动任务时，才对本次已确认的准确 task 在成果最后冻结和最终答复之前调用 browser_stop；"
+                + "未使用浏览器时无需操作，也无需在答复中说明未启动或未清理。"
                 + "不得为收尾新建 browser_start 或用 browser_call 扩展业务，停止失败或 UNKNOWN 如实保留，不能声称已结束或重放未知停止。");
         // 停止回执在其后的每一轮模型中均可能再次出现，不能只为两工具回执各计一次。
         long receiptInput = Math.addExact(outputs.receiptInputUpperBound(),

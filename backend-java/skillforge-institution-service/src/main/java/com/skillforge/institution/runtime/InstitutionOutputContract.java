@@ -240,8 +240,13 @@ public final class InstitutionOutputContract implements SessionOutputContract {
     private ClosingPlan closingPlan(RunIdentity run,Optional<SessionGoal.Snapshot> goal,boolean prepared,boolean hasOutputs,
             java.util.function.UnaryOperator<ClosingPlan> browser) {
         var facts=new ArrayList<String>();
-        goal.ifPresent(value -> facts.add("持续 Goal 当前状态="+value.state()
-                +"；revision="+value.revision()+"；目标="+value.objective()));
+        // 这里提供任务进展；精确版本与协议状态由 Goal 工具回执提供，避免收尾摘要诱导复述协议。
+        goal.ifPresent(value -> facts.add("持续目标：" + value.objective() + "；当前进展：" + switch (value.state()) {
+            case ACTIVE -> "进行中";
+            case PAUSED -> "用户已暂停，等待用户显式恢复";
+            case COMPLETE -> "已完成";
+            case BLOCKED -> "受阻；原因：" + value.reason().orElseThrow();
+        }));
         if (prepared)
             return new ClosingPlan(1,0,java.time.Duration.ofSeconds(1),0,facts);
         if (!hasOutputs)
