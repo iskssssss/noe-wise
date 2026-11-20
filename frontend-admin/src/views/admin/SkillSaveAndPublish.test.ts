@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElSelect } from 'element-plus'
+import { ElButton, ElOption, ElSelect } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import SkillWorkbenchPage from './SkillWorkbenchPage.vue'
 const mocks = vi.hoisted(() => ({
@@ -61,7 +61,7 @@ vi.mock('@skillforge/shared/feedback', async (original) => ({
 }))
 vi.mock('@skillforge/shared/components/PackageFileWorkbench.vue', () => ({
   default: {
-    props: ['files', 'readonly'],
+    props: ['files', 'readonly', 'dirty'],
     emits: ['update:files'],
     template: `<button @click="$emit('update:files', {'SKILL.md': '修改后'})">编辑文件</button><button @click="$emit('update:files', {'SKILL.md': String.fromCharCode(0xd800)})">非法字符</button>`
   }
@@ -243,6 +243,41 @@ describe('技能保存并发布', () => {
     await click('设为当前发布')
     expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
   })
+  it('当前发布有明确标记且不可重复设置，其他历史版本仍可切换', async () => {
+    mocks.definition.mockResolvedValue({
+      id: '11',
+      name: '技能',
+      revision: 7,
+      defaultVersionId: '42'
+    })
+    mocks.versions.mockResolvedValue([
+      { id: '42', versionKey: '1.0', status: 'PUBLISHED' },
+      { id: '43', versionKey: '0.9', status: 'PUBLISHED' }
+    ])
+    mocks.getVersion.mockResolvedValue(structuredClone(draft))
+    await open()
+    expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain(
+      '1.0 / 当前发布'
+    )
+    wrapper.findComponent(ElSelect).vm.$emit('change', '42')
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前发布 · 只读')
+    const current = wrapper
+      .findAllComponents(ElButton)
+      .find((item) => item.text() === '已是当前发布')!
+    expect(current.props('disabled')).toBe(true)
+    await current.trigger('click')
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(mocks.setDefault).not.toHaveBeenCalled()
+    wrapper.findComponent(ElSelect).vm.$emit('change', '43')
+    await flushPromises()
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .find((item) => item.text() === '设为当前发布')
+        ?.props('disabled')
+    ).toBe(false)
+  })
   it('组合发布在途时更换账号，迟到成功不通知新账号', async () => {
     let finish!: (value: unknown) => void
     mocks.combine.mockImplementationOnce(
@@ -287,6 +322,7 @@ describe('技能保存并发布', () => {
     expect(mocks.combine).toHaveBeenCalledOnce()
   })
   it('一次组合调用绑定两项修订并显示回执', async () => {
+    mocks.versions.mockResolvedValue([{ id: '42', versionKey: '1.0', status: 'PUBLISHED' }])
     mocks.combine.mockImplementation(async (request_id: string) => ({
       request_id,
       status: 'SUCCEEDED',
@@ -311,8 +347,35 @@ describe('技能保存并发布', () => {
     expect(mocks.save).not.toHaveBeenCalled()
     expect(mocks.publish).not.toHaveBeenCalled()
     expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(JSON.stringify(['tenant', 'user']))
-    expect(document.body.textContent).toContain('版本 42')
+    expect(document.body.textContent).toContain('技能发布已确认：版本 1.0')
+    expect(document.body.textContent).not.toContain('版本 42')
   })
+  it.each([true, false])(
+    '历史回执不使用当前未保存草稿的版本号（有摘要：%s）',
+    async (hasSummary) => {
+      mocks.versions.mockResolvedValue(
+        hasSummary ? [{ id: '42', versionKey: '0.9', status: 'PUBLISHED' }] : []
+      )
+      const requestId = '12345678-1234-1234-1234-123456789012'
+      mocks.result.mockResolvedValue({
+        request_id: requestId,
+        status: 'SUCCEEDED',
+        draft_id: '12',
+        definition_id: '11',
+        revision: 1,
+        publication: { version_id: '42', definition_revision: 6 }
+      })
+      await open()
+      await edit()
+      await wrapper.get('input[aria-label="原请求 ID"]').setValue(requestId)
+      await click('查询发布回执')
+      expect(wrapper.text()).toContain(hasSummary ? '技能发布已确认：版本 0.9' : '技能发布已确认。')
+      expect(wrapper.text()).not.toContain('技能发布已确认：版本 1.0')
+      expect(mocks.active).toHaveBeenCalledTimes(1)
+      expect(mocks.combine).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('有未保存修改')
+    }
+  )
   it('UNKNOWN 重建后仅原主体恢复并只读核对', async () => {
     mocks.combine.mockRejectedValueOnce(Error('断连'))
     mocks.result.mockResolvedValueOnce(undefined)

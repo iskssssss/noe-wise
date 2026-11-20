@@ -58,15 +58,17 @@
       </ElCollapseItem>
     </ElCollapse>
     <p v-if="publicationReceipt?.publication" class="admin-field-help" role="status">
-      技能发布已确认：版本 {{ publicationReceipt.publication.version_id }}，定义修订
-      {{ publicationReceipt.publication.definition_revision }}。
+      技能发布已确认<span v-if="publishedVersionKey">：版本 {{ publishedVersionKey }}</span
+      >。
     </p>
     <div v-if="definition" class="admin-toolbar" role="status">
       <ElTag :type="readonly ? 'info' : dirty ? 'warning' : 'success'">{{
         publicationRefreshRequired
           ? '已发布 · 待更新显示'
           : readonly
-            ? '历史发布 · 只读'
+            ? isCurrentVersion
+              ? '当前发布 · 只读'
+              : '历史发布 · 只读'
             : dirty
               ? '有未保存修改'
               : '工作草稿'
@@ -84,7 +86,7 @@
       技能已发布。请读取发布结果后继续编辑，避免重复发布同一草稿。
     </p>
     <p v-else-if="readonly" class="admin-field-help">
-      当前查看历史发布配置。恢复到工作草稿后修改，再发布才会生效。
+      当前查看已发布版本，内容只读。选择“当前草稿”可继续编辑；需要复用此版本时，选择“恢复为工作草稿”。
     </p>
     <p class="admin-field-help">
       格式校验检查包结构与平台配置；兼容性、脚本依赖和工具声明仍需在实际 Agent
@@ -134,7 +136,13 @@
                 v-for="version in versions"
                 :key="version.id"
                 :value="version.id"
-                :label="version.versionKey + ' / ' + statusLabel(version.status)" /></ElSelect
+                :label="
+                  version.versionKey +
+                  ' / ' +
+                  (version.id === definition.defaultVersionId
+                    ? '当前发布'
+                    : statusLabel(version.status))
+                " /></ElSelect
             ><ElButton
               v-permission="['foundation.skills.create']"
               v-if="readonly"
@@ -145,9 +153,9 @@
               >下载技能包</ElButton
             ><ElButton
               v-if="selectedVersion"
-              :disabled="busy || !!pending || !!storageError"
+              :disabled="busy || !!pending || !!storageError || isCurrentVersion"
               @click="setDefault"
-              >设为当前发布</ElButton
+              >{{ isCurrentVersion ? '已是当前发布' : '设为当前发布' }}</ElButton
             ><ElUpload
               v-described-by="formTipId + '-upload'"
               :aria-describedby="formTipId + '-upload'"
@@ -408,6 +416,15 @@ const draft = ref<SkillDraftContent>(),
   saved = ref(''),
   validation = ref<SkillDraftValidation>(),
   publicationRefreshRequired = ref(false)
+const publishedVersionKey = computed(
+  () =>
+    versions.value.find(
+      (version) => version.id === publicationReceipt.value?.publication?.version_id
+    )?.versionKey
+)
+const isCurrentVersion = computed(
+  () => !!selectedVersion.value && selectedVersion.value === definition.value?.defaultVersionId
+)
 const readonly = computed(
     () =>
       selectedVersion.value !== '' ||
@@ -880,7 +897,7 @@ async function download() {
   })
 }
 async function setDefault() {
-  if (pending.value || directPending.value || storageError.value) return
+  if (pending.value || directPending.value || storageError.value || isCurrentVersion.value) return
   const notice = noticeIdentity()
   await run(async () => {
     if (!definition.value) return

@@ -389,7 +389,8 @@ describe('平台 Element Plus 控件收口', () => {
       .find((button) => button.text() === '查询发布回执')!
       .trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('发布版本 9')
+    expect(wrapper.text()).toContain('技能已发布，可在版本管理中查看')
+    expect(wrapper.text()).not.toContain('发布版本 9')
     expect((version.get('input').element as HTMLInputElement).value).toBe('v2')
     expect(mocked.saveAndPublish).not.toHaveBeenCalled()
   })

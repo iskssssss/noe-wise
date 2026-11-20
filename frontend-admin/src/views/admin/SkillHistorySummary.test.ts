@@ -54,7 +54,7 @@ async function open() {
 function choice() {
   return wrapper!
     .findAllComponents(ElSelect)
-    .find((item) => item.props('placeholder') === '工作版本')!
+    .find((item) => item.props('ariaLabel') === '技能版本')!
 }
 async function switchTo(id: string) {
   choice().vm.$emit('change', id)

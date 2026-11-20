@@ -729,7 +729,7 @@ const formTipId = useId()
             ? '已拒绝'
             : '处理中'
       }}{{ manualReceipt.error_message ? ' · ' + manualReceipt.error_message : '' }}
-      {{ manualReceipt.publication ? ' · 发布版本 ' + manualReceipt.publication.version_id : '' }}
+      {{ manualReceipt.publication ? ' · 技能已发布，可在版本管理中查看' : '' }}
     </p>
     <p v-if="storageError" role="status">{{ storageError }}</p>
     <FeedbackNotice
