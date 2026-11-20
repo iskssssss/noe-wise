@@ -11,7 +11,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import { skillDraftSavePayload } from '@skillforge/shared/capabilities/skillDrafts'
 import { useAuthStore } from '../../stores/auth'
 import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { type UploadFile, type UploadInstance } from 'element-plus'
 import {
   AdminPage,
@@ -38,6 +38,7 @@ const fileWorkbench = ref<InstanceType<typeof PackageFileWorkbench>>()
 const skillSections = ref<string[]>([])
 let publicationReadFailure: Error | undefined
 const route = useRoute(),
+  router = useRouter(),
   id = String(route.params.definitionId ?? ''),
   load = useTask(),
   action = useTask({
@@ -179,9 +180,9 @@ function reload() {
       throw new Error('Skill 已发布，但当前草稿尚未读取；请点击“重新读取已保存内容”核对')
   })
 }
-function create() {
+async function create() {
   if (!allowed('foundation.skills.create') || writeLocked.value) return
-  void action.run(async () => {
+  const created = await action.run(async () => {
     const v = versionView.value ? displayedVersionId.value : definition.value?.defaultVersionId
     if (
       versionView.value &&
@@ -195,7 +196,9 @@ function create() {
       return
     accept(await checked('foundation.skills.create', () => api.skillDrafts.create(id, v)))
     versionView.value = false
+    return true
   })
+  if (created && route.query.versionId) await router.replace('/platform/skills/' + id)
 }
 async function saveCurrent() {
   if (!allowed('foundation.skills.update') || writeLocked.value) return
@@ -299,9 +302,21 @@ async function acceptPublication(
   }
   baseline.value = JSON.stringify(draft.value)
   message.success('Skill 已保存并发布')
-  const fresh = await api.skillDrafts.getActive(id)
+  const [freshDefinition, fresh] = await Promise.all([
+    api.capabilities.getDefinition(id),
+    api.skillDrafts.getActive(id)
+  ]).catch((reason) => {
+    if (reason instanceof HttpClientError) reason.claimFeedback()
+    publicationReadFailure = new Error(
+      'Skill 已发布，但页面信息读取失败；请点击“重新读取已保存内容”，不要重复发布',
+      { cause: reason }
+    )
+    throw publicationReadFailure
+  })
+  if (disposed || owner.value !== subject || !allowed('foundation.skills.read')) return
   if (!fresh || fresh.definitionId !== id)
     throw new Error('Skill 已发布，当前草稿尚未读取；请重新读取已保存内容')
+  definition.value = freshDefinition
   accept(fresh)
   issues.value = value.validation?.issues ?? []
   publicationReadPending.value = false
@@ -570,10 +585,13 @@ async function submitDirectPublish(
   versionView.value = false
   baseline.value = JSON.stringify(draft.value)
   message.success('Skill 已发布')
-  const value = await api.skillDrafts.getActive(id).catch((reason) => {
+  const [freshDefinition, value] = await Promise.all([
+    api.capabilities.getDefinition(id),
+    api.skillDrafts.getActive(id)
+  ]).catch((reason) => {
     if (reason instanceof HttpClientError) reason.claimFeedback()
     publicationReadFailure = new Error(
-      'Skill 已发布，但当前草稿读取失败；请点击“重新读取已保存内容”，不要重复发布',
+      'Skill 已发布，但页面信息读取失败；请点击“重新读取已保存内容”，不要重复发布',
       { cause: reason }
     )
     throw publicationReadFailure
@@ -588,6 +606,7 @@ async function submitDirectPublish(
   if (!value) return
   if (value.definitionId !== id)
     throw new Error('读取的草稿与当前能力不匹配，已停止采用该内容；请通过版本管理核对能力身份')
+  definition.value = freshDefinition
   accept(value)
   issues.value = result.validation?.issues ?? []
   displayedVersionId.value = undefined
@@ -647,6 +666,9 @@ const formTipId = useId()
     <template #extra>
       <RouterLink :to="'/platform/capabilities/' + id">
         <ElButton>版本管理</ElButton>
+      </RouterLink>
+      <RouterLink v-if="versionView" :to="'/platform/skills/' + id">
+        <ElButton>返回当前草稿</ElButton>
       </RouterLink>
       <ElTag v-if="dirty" type="warning">未保存</ElTag>
       <ElButton
@@ -757,7 +779,7 @@ const formTipId = useId()
     />
     <ElAlert
       v-if="publicationReadPending"
-      title="Skill 已发布，当前草稿尚未读取；请点击“重新读取已保存内容”核对，不要重复发布。"
+      title="Skill 已发布，页面信息尚未更新；请点击“重新读取已保存内容”核对，不要重复发布。"
       type="warning"
       :closable="false"
     />

@@ -299,6 +299,9 @@ describe('平台 Element Plus 控件收口', () => {
     expect(mocked.importZip).toHaveBeenNthCalledWith(2, '7', 3, file)
   })
   it('未保存技能通过一次请求保存发布并展示校验警告', async () => {
+    mocked.definition
+      .mockResolvedValueOnce({ id: '3', name: '创建时的名称', revision: 1 })
+      .mockResolvedValueOnce({ id: '3', name: '包内发布名称', revision: 2, defaultVersionId: '9' })
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(undefined as never)
     mocked.saveAndPublish.mockImplementation(async (requestId: string) => ({
       request_id: requestId,
@@ -330,6 +333,37 @@ describe('平台 Element Plus 控件收口', () => {
     expect(mocked.saveAndPublish).toHaveBeenCalledTimes(1)
     expect(mocked.publishDraft).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('依赖尚未核实')
+    expect(wrapper.get('h1').text()).toBe('包内发布名称')
+  })
+  it.each([true, false])('恢复发布版本只在确认成功后切换到当前草稿地址（%s）', async (restore) => {
+    const confirmation = vi.spyOn(ElMessageBox, 'confirm')
+    if (restore) confirmation.mockResolvedValue(undefined as never)
+    else confirmation.mockRejectedValue('cancel')
+    mocked.getVersion.mockResolvedValue({ ...structuredClone(draft), id: '44' })
+    mocked.createDraft.mockResolvedValue({ ...structuredClone(draft), revision: 3, versionKey: '' })
+    const wrapper = await open(
+      SkillWorkbenchPage,
+      '/platform/skills/3?versionId=44',
+      '/platform/skills/:definitionId'
+    )
+    await flushPromises()
+    expect(wrapper.get('a[href="/platform/skills/3"]').text()).toBe('返回当前草稿')
+    expect(mocked.createDraft).not.toHaveBeenCalled()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '恢复为工作草稿')!
+      .trigger('click')
+    await flushPromises()
+    if (restore) {
+      expect(mocked.createDraft).toHaveBeenCalledExactlyOnceWith('3', '44')
+      expect(wrapper.vm.$route.fullPath).toBe('/platform/skills/3')
+      expect(wrapper.text()).not.toContain('已发布版本 · 只读')
+      expect(wrapper.findAll('button').some((button) => button.text() === '保存草稿')).toBe(true)
+    } else {
+      expect(mocked.createDraft).not.toHaveBeenCalled()
+      expect(wrapper.vm.$route.fullPath).toBe('/platform/skills/3?versionId=44')
+      expect(wrapper.text()).toContain('已发布版本 · 只读')
+    }
   })
   it('发布结果未知时保留原请求，核对只读取回执', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(undefined as never)
@@ -672,79 +706,88 @@ describe('平台 Element Plus 控件收口', () => {
         .attributes('disabled')
     ).toBeUndefined()
   })
-  it('Skill发布已成功但读取失败时保留成功身份并阻止重复发布', async () => {
-    mocked.validateDraft.mockResolvedValue({ valid: true, issues: [] })
-    mocked.publishDraft.mockResolvedValue({
-      versionId: '44',
-      definitionRevision: 2,
-      validation: {
-        valid: true,
-        issues: [
-          {
-            path: 'SKILL.md',
-            line: 1,
-            message: '请核对兼容性',
-            code: 'notice',
-            severity: 'WARNING'
-          }
-        ]
+  it.each(['draft', 'definition'])(
+    'Skill发布已成功但%s读取失败时保留成功身份并阻止重复发布',
+    async (failureSource) => {
+      mocked.validateDraft.mockResolvedValue({ valid: true, issues: [] })
+      mocked.publishDraft.mockResolvedValue({
+        versionId: '44',
+        definitionRevision: 2,
+        validation: {
+          valid: true,
+          issues: [
+            {
+              path: 'SKILL.md',
+              line: 1,
+              message: '请核对兼容性',
+              code: 'notice',
+              severity: 'WARNING'
+            }
+          ]
+        }
+      })
+      if (failureSource === 'draft') {
+        mocked.draft
+          .mockImplementationOnce(async () => structuredClone(draft))
+          .mockRejectedValueOnce(new Error('读取失败'))
+      } else {
+        mocked.definition
+          .mockResolvedValueOnce({ id: '3', name: '原技能名称', revision: 1 })
+          .mockRejectedValueOnce(new Error('读取失败'))
       }
-    })
-    mocked.draft
-      .mockImplementationOnce(async () => structuredClone(draft))
-      .mockRejectedValueOnce(new Error('读取失败'))
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
-      'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
-    )
-    const wrapper = await open(
-      SkillWorkbenchPage,
-      '/platform/skills/3',
-      '/platform/skills/:definitionId'
-    )
-    await flushPromises()
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === '发布')!
-      .trigger('click')
-    await flushPromises()
-    expect(mocked.publishDraft).toHaveBeenCalledTimes(1)
-    expect(mocked.validateDraft).not.toHaveBeenCalled()
-    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('已固定版本的 Agent 需显式更新挂载'),
-      '发布 Skill',
-      expect.any(Object),
-      undefined
-    )
-    const publicationStatus = wrapper
-      .findAll('.el-alert')
-      .filter((alert) => alert.text().includes('Skill 已发布'))
-    expect(publicationStatus).toHaveLength(1)
-    expect(publicationStatus[0]!.text()).toContain('当前草稿尚未读取')
-    expect(publicationStatus[0]!.text()).toContain('重新读取已保存内容')
-    expect(publicationStatus[0]!.text()).toContain('不要重复发布')
-    const publish = wrapper.findAll('button').find((button) => button.text() === '发布')!
-    expect(publish.attributes('disabled')).toBeDefined()
-    await publish.trigger('click')
-    await flushPromises()
-    expect(mocked.publishDraft).toHaveBeenCalledTimes(1)
-    mocked.draft.mockRejectedValueOnce(new Error('仍不可用'))
-    const reread = () =>
-      wrapper.findAll('button').find((button) => button.text() === '重新读取已保存内容')!
-    await reread().trigger('click')
-    await flushPromises()
-    expect(document.body.querySelector('.el-message--error')?.textContent).toContain('仍不可用')
-    expect(publish.attributes('disabled')).toBeDefined()
-    expect(
-      wrapper
+      vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
+        'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
+      )
+      const wrapper = await open(
+        SkillWorkbenchPage,
+        '/platform/skills/3',
+        '/platform/skills/:definitionId'
+      )
+      await flushPromises()
+      await wrapper
         .findAll('button')
-        .find((button) => button.text() === '保存草稿')!
-        .attributes('disabled')
-    ).toBeDefined()
-    mocked.draft.mockResolvedValueOnce({ ...structuredClone(draft), revision: 3 })
-    await reread().trigger('click')
-    await flushPromises()
-    expect(publish.attributes('disabled')).toBeUndefined()
-  })
+        .find((button) => button.text() === '发布')!
+        .trigger('click')
+      await flushPromises()
+      expect(mocked.publishDraft).toHaveBeenCalledTimes(1)
+      expect(mocked.validateDraft).not.toHaveBeenCalled()
+      expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+        expect.stringContaining('已固定版本的 Agent 需显式更新挂载'),
+        '发布 Skill',
+        expect.any(Object),
+        undefined
+      )
+      const publicationStatus = wrapper
+        .findAll('.el-alert')
+        .filter((alert) => alert.text().includes('Skill 已发布'))
+      expect(publicationStatus).toHaveLength(1)
+      expect(publicationStatus[0]!.text()).toContain('页面信息尚未更新')
+      expect(publicationStatus[0]!.text()).toContain('重新读取已保存内容')
+      expect(publicationStatus[0]!.text()).toContain('不要重复发布')
+      const publish = wrapper.findAll('button').find((button) => button.text() === '发布')!
+      expect(publish.attributes('disabled')).toBeDefined()
+      await publish.trigger('click')
+      await flushPromises()
+      expect(mocked.publishDraft).toHaveBeenCalledTimes(1)
+      mocked.draft.mockRejectedValueOnce(new Error('仍不可用'))
+      const reread = () =>
+        wrapper.findAll('button').find((button) => button.text() === '重新读取已保存内容')!
+      await reread().trigger('click')
+      await flushPromises()
+      expect(document.body.querySelector('.el-message--error')?.textContent).toContain('仍不可用')
+      expect(publish.attributes('disabled')).toBeDefined()
+      expect(
+        wrapper
+          .findAll('button')
+          .find((button) => button.text() === '保存草稿')!
+          .attributes('disabled')
+      ).toBeDefined()
+      mocked.draft.mockResolvedValueOnce({ ...structuredClone(draft), revision: 3 })
+      await reread().trigger('click')
+      await flushPromises()
+      expect(publish.attributes('disabled')).toBeUndefined()
+    }
+  )
   it('Skill 发布被服务端校验拒绝后读取问题，不重复发布', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
       'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
@@ -880,12 +923,19 @@ describe('平台 Element Plus 控件收口', () => {
     )
   })
   it('发布后继续编辑同一工作草稿，不新建业务身份', async () => {
-    mocked.definition.mockResolvedValue({
-      id: '3',
-      name: '测试 Skill',
-      revision: 1,
-      defaultVersionId: '12'
-    })
+    mocked.definition
+      .mockResolvedValueOnce({
+        id: '3',
+        name: '测试 Skill',
+        revision: 1,
+        defaultVersionId: '12'
+      })
+      .mockResolvedValueOnce({
+        id: '3',
+        name: '发布后的技能名称',
+        revision: 2,
+        defaultVersionId: '44'
+      })
     mocked.validateDraft.mockResolvedValue({ valid: true, issues: [] })
     mocked.publishDraft.mockResolvedValue({
       versionId: '44',
@@ -922,6 +972,7 @@ describe('平台 Element Plus 控件收口', () => {
     expect(mocked.draft).toHaveBeenCalledTimes(2)
     expect(mocked.createDraft).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('请核对兼容性')
+    expect(wrapper.get('h1').text()).toBe('发布后的技能名称')
     expect(wrapper.findAll('button').some((button) => button.text() === '保存草稿')).toBe(true)
     expect(
       wrapper

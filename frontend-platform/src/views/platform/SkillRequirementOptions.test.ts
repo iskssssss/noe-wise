@@ -27,6 +27,7 @@ vi.mock('../../api', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { definitionId: '11' }, query: {} }),
+  useRouter: () => ({ replace: vi.fn() }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
