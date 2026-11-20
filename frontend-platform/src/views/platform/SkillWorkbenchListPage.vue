@@ -170,7 +170,14 @@ onMounted(reload)
       </RouterLink>
       <ElButton :loading="load.busy.value" @click="reload">刷新</ElButton>
     </template>
-    <section v-if="creation.pending.value" class="admin-card" role="status">
+    <p v-if="creation.pending.value && createTask.busy.value && !createOpen" role="status">
+      正在处理技能创建请求，请稍候。
+    </p>
+    <section
+      v-if="creation.pending.value && !createTask.busy.value"
+      class="admin-card"
+      role="status"
+    >
       技能“{{ creation.pending.value?.name }}”创建结果尚未确认，请求号：{{
         creation.pending.value?.requestId
       }}。列表缺失不代表创建失败，未查到回执仍需等待。
@@ -279,7 +286,11 @@ onMounted(reload)
     >
       <p class="admin-field-help">新建后直接编辑工作草稿；ZIP 可随后导入，发布另行确认。</p>
       <p v-if="creationUnknown" role="status">
-        创建结果尚未确认，以下为原请求的技能名称，仅供核对。
+        {{
+          createTask.busy.value
+            ? '正在处理技能创建请求，请稍候。'
+            : '创建结果尚未确认，以下为原请求的技能名称，仅供核对。'
+        }}
       </p>
       <ElForm
         ref="formRef"
@@ -296,7 +307,7 @@ onMounted(reload)
           :rules="[{ required: true, whitespace: true, message: '请输入名称', trigger: 'blur' }]"
           ><ElInput v-model="name"
         /></ElFormItem>
-        <ElFormItem v-if="!creationUnknown" label="说明"
+        <ElFormItem v-if="!creationUnknown || createTask.busy.value" label="说明"
           ><ElInput v-model="description" type="textarea"
         /></ElFormItem>
       </ElForm>

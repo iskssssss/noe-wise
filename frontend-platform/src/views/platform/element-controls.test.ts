@@ -333,7 +333,12 @@ describe('平台 Element Plus 控件收口', () => {
   })
   it('发布结果未知时保留原请求，核对只读取回执', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(undefined as never)
-    mocked.saveAndPublish.mockRejectedValueOnce(new Error('连接中断'))
+    let rejectPublish!: (reason: Error) => void
+    mocked.saveAndPublish.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPublish = reject
+      })
+    )
     const wrapper = await open(
       SkillWorkbenchPage,
       '/platform/skills/3',
@@ -350,6 +355,10 @@ describe('平台 Element Plus 控件收口', () => {
       .trigger('click')
     await flushPromises()
     const requestId = mocked.saveAndPublish.mock.calls[0]![0]
+    expect(wrapper.text()).toContain('正在等待技能发布结果，请稍候。')
+    expect(wrapper.text()).not.toContain('发布结果未知')
+    rejectPublish(new Error('连接中断'))
+    await flushPromises()
     expect(wrapper.text()).toContain('发布结果未知')
     mocked.publishResult.mockResolvedValueOnce({
       request_id: requestId,
@@ -379,6 +388,14 @@ describe('平台 Element Plus 控件收口', () => {
       '/platform/skills/:definitionId'
     )
     await flushPromises()
+    expect(wrapper.get('input[aria-label="原请求 ID"]').isVisible()).toBe(false)
+    await wrapper
+      .findAll('[role="button"]')
+      .find((button) => button.text() === '查询历史发布回执')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('input[aria-label="原请求 ID"]').isVisible()).toBe(true)
+    expect(wrapper.text()).toContain('正常保存与发布不需要请求 ID')
     const version = wrapper
       .findAllComponents(ElFormItem)
       .find((item) => item.props('label') === '版本标识')!
@@ -569,7 +586,12 @@ describe('平台 Element Plus 控件收口', () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(
       'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
     )
-    mocked.publishDraft.mockRejectedValueOnce(new Error('回执丢失'))
+    let rejectPublish!: (reason: Error) => void
+    mocked.publishDraft.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPublish = reject
+      })
+    )
     const first = await open(
       SkillWorkbenchPage,
       '/platform/skills/3',
@@ -580,6 +602,10 @@ describe('平台 Element Plus 控件收口', () => {
       .findAll('button')
       .find((button) => button.text() === '发布')!
       .trigger('click')
+    await flushPromises()
+    expect(first.text()).toContain('正在等待技能发布结果，请稍候。')
+    expect(first.text()).not.toContain('技能发布结果尚未确认')
+    rejectPublish(new Error('回执丢失'))
     await flushPromises()
     expect(first.text()).toContain('技能发布结果尚未确认')
     const original = mocked.publishDraft.mock.calls[0]

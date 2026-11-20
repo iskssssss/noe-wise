@@ -60,7 +60,12 @@ const receipt = {
   files: {}
 }
 it('新建技能不要求标识，断连后保留原请求', async () => {
-  mocks.create.mockRejectedValueOnce(new HttpClientError({ status: 0, userMessage: '结果未知' }))
+  let rejectCreate!: (reason: Error) => void
+  mocks.create.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      rejectCreate = reject
+    })
+  )
   wrapper = mount(SkillWorkbenchListPage, {
     attachTo: document.body,
     global: { stubs: { RouterLink: stubLink } }
@@ -72,6 +77,13 @@ it('新建技能不要求标识，断连后保留原请求', async () => {
   expect(wrapper.findComponent(ElDrawer).text()).not.toContain('技能标识')
   await inputs[0]!.setValue('自动标识技能')
   await create()
+  expect(document.body.textContent).toContain('正在处理技能创建请求，请稍候。')
+  expect(document.body.textContent).not.toContain('创建结果尚未确认')
+  expect(wrapper.findComponent(ElDrawer).findAllComponents(ElInput)).toHaveLength(2)
+  rejectCreate(new HttpClientError({ status: 0, userMessage: '结果未知' }))
+  await flushPromises()
+  expect(document.body.textContent).toContain('创建结果尚未确认')
+  expect(document.body.textContent).not.toContain('正在处理技能创建请求')
   expect(mocks.create).toHaveBeenCalledExactlyOnceWith({
     name: '自动标识技能',
     description: ''

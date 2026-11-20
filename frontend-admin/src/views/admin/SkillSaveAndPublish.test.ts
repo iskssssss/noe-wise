@@ -122,9 +122,19 @@ async function edit(text = '编辑文件') {
 }
 describe('技能保存并发布', () => {
   it('直接发布未知后刷新保留身份，继续拒绝仍锁定，成功才解锁', async () => {
-    mocks.publish.mockRejectedValueOnce(Error('回执丢失'))
+    let rejectPublish!: (reason: Error) => void
+    mocks.publish.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPublish = reject
+      })
+    )
     await open()
     await click('发布')
+    expect(wrapper.text()).toContain('正在等待技能发布结果，请稍候。')
+    expect(wrapper.text()).not.toContain('技能发布结果尚未确认')
+    expect(wrapper.text()).not.toContain('历史发布 · 只读')
+    rejectPublish(Error('回执丢失'))
+    await flushPromises()
     expect(mocks.publish).toHaveBeenCalledWith('12', 2, 7, { silent: true })
     expect(wrapper.text()).toContain('技能发布结果尚未确认')
     expect(
@@ -377,11 +387,21 @@ describe('技能保存并发布', () => {
     }
   )
   it('UNKNOWN 重建后仅原主体恢复并只读核对', async () => {
-    mocks.combine.mockRejectedValueOnce(Error('断连'))
+    let rejectPublish!: (reason: Error) => void
+    mocks.combine.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPublish = reject
+      })
+    )
     mocks.result.mockResolvedValueOnce(undefined)
     await open()
     await edit()
     await click('保存并发布')
+    expect(wrapper.text()).toContain('正在等待技能发布结果，请稍候。')
+    expect(wrapper.text()).not.toContain('保存并发布结果未知')
+    rejectPublish(Error('断连'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('保存并发布结果未知')
     const request = mocks.combine.mock.calls[0]![0]
     wrapper.unmount()
     mocks.member = 'other'

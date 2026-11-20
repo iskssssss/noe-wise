@@ -683,7 +683,18 @@ const formTipId = useId()
         >
       </template>
     </template>
-    <section v-if="directPending" class="admin-card" aria-label="直接发布结果核对">
+    <p
+      v-if="(pending || directPending) && action.busy.value"
+      class="admin-field-help"
+      role="status"
+    >
+      正在等待技能发布结果，请稍候。
+    </p>
+    <section
+      v-if="directPending && !action.busy.value"
+      class="admin-card"
+      aria-label="直接发布结果核对"
+    >
       <p role="status">
         技能发布结果尚未确认，写入已锁定。草稿 {{ directPending.draftId }} · 修订
         {{ directPending.revision }}
@@ -696,7 +707,7 @@ const formTipId = useId()
         >继续原发布</ElButton
       >
     </section>
-    <section v-if="pending" class="admin-card" aria-label="技能发布结果核对">
+    <section v-if="pending && !action.busy.value" class="admin-card" aria-label="技能发布结果核对">
       <p role="status">
         保存并发布结果未知，写入已锁定。请求 ID：<code>{{ pending.requestId }}</code>
       </p>
@@ -708,29 +719,35 @@ const formTipId = useId()
         >核对原操作</ElButton
       >
     </section>
-    <section
-      v-else-if="allowed('foundation.skills.read')"
-      class="admin-toolbar"
-      aria-label="查询技能发布回执"
+    <ElCollapse
+      v-if="!pending && !directPending && allowed('foundation.skills.read')"
+      class="admin-card"
     >
-      <ElInput
-        v-model="receiptRequestId"
-        aria-label="原请求 ID"
-        placeholder="输入原请求 ID"
-        @input="manualReceipt = undefined"
-      />
-      <ElButton :loading="action.busy.value" @click="lookupPublication">查询发布回执</ElButton>
-    </section>
-    <p v-if="manualReceipt" role="status" class="admin-field-help">
-      原请求状态：{{
-        manualReceipt.status === 'SUCCEEDED'
-          ? '已完成'
-          : manualReceipt.status === 'REJECTED'
-            ? '已拒绝'
-            : '处理中'
-      }}{{ manualReceipt.error_message ? ' · ' + manualReceipt.error_message : '' }}
-      {{ manualReceipt.publication ? ' · 技能已发布，可在版本管理中查看' : '' }}
-    </p>
+      <ElCollapseItem title="查询历史发布回执" name="receipt">
+        <p class="admin-field-help">
+          仅在系统提示结果未知且原页面已关闭时使用。正常保存与发布不需要请求 ID。
+        </p>
+        <div class="admin-actions">
+          <ElInput
+            v-model="receiptRequestId"
+            aria-label="原请求 ID"
+            placeholder="输入原请求 ID"
+            @input="manualReceipt = undefined"
+          />
+          <ElButton :loading="action.busy.value" @click="lookupPublication">查询发布回执</ElButton>
+        </div>
+        <p v-if="manualReceipt" role="status" class="admin-field-help">
+          原请求状态：{{
+            manualReceipt.status === 'SUCCEEDED'
+              ? '已完成'
+              : manualReceipt.status === 'REJECTED'
+                ? '已拒绝'
+                : '处理中'
+          }}{{ manualReceipt.error_message ? ' · ' + manualReceipt.error_message : '' }}
+          {{ manualReceipt.publication ? ' · 技能已发布，可在版本管理中查看' : '' }}
+        </p>
+      </ElCollapseItem>
+    </ElCollapse>
     <p v-if="storageError" role="status">{{ storageError }}</p>
     <FeedbackNotice
       v-if="load.error.value || action.error.value"

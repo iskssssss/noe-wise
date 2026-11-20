@@ -14,7 +14,10 @@
       :closable="false"
       type="error"
     />
-    <section v-if="creation.pending.value" class="admin-card" role="status">
+    <p v-if="creation.pending.value && busy && !open" role="status">
+      正在处理技能创建请求，请稍候。
+    </p>
+    <section v-if="creation.pending.value && !busy" class="admin-card" role="status">
       技能“{{ creation.pending.value?.name }}”创建结果尚未确认，请求号：{{
         creation.pending.value?.requestId
       }}。列表缺失不代表创建失败，未查到回执仍需等待。
@@ -119,7 +122,11 @@
       :show-close="!busy"
       class="admin-drawer"
       ><p v-if="creationUnknown" role="status">
-        创建结果尚未确认，以下为原请求的技能名称，仅供核对。
+        {{
+          busy
+            ? '正在处理技能创建请求，请稍候。'
+            : '创建结果尚未确认，以下为原请求的技能名称，仅供核对。'
+        }}
       </p>
       <ElForm
         ref="formRef"
@@ -139,7 +146,7 @@
             v-model="name"
           />
           <FieldTip :id="formTipId + '-field-1'">填写技能的展示名称。</FieldTip> </ElFormItem
-        ><ElFormItem v-if="!creationUnknown" label="说明"
+        ><ElFormItem v-if="!creationUnknown || busy" label="说明"
           ><ElInput
             v-described-by="formTipId + '-field-2'"
             :aria-describedby="formTipId + '-field-2'"

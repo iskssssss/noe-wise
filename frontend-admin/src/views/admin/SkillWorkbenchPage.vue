@@ -24,7 +24,10 @@
         >保存草稿</ElButton
       ></template
     >
-    <section v-if="directPending" class="admin-card" aria-label="直接发布结果核对">
+    <p v-if="(pending || directPending) && busy" class="admin-field-help" role="status">
+      正在等待技能发布结果，请稍候。
+    </p>
+    <section v-if="directPending && !busy" class="admin-card" aria-label="直接发布结果核对">
       <p role="status">
         技能发布结果尚未确认，写入已锁定。草稿 {{ directPending.draftId }} · 修订
         {{ directPending.revision }}
@@ -37,7 +40,7 @@
         >继续原发布</ElButton
       >
     </section>
-    <section v-if="pending" class="admin-card" aria-label="技能发布结果核对">
+    <section v-if="pending && !busy" class="admin-card" aria-label="技能发布结果核对">
       <p role="status">
         保存并发布结果未知，写入已锁定。请求 ID：<code>{{ pending.requestId }}</code>
       </p>
@@ -46,7 +49,10 @@
         >核对原操作</ElButton
       >
     </section>
-    <ElCollapse v-if="!pending && can('foundation.skills.read')" class="admin-card">
+    <ElCollapse
+      v-if="!pending && !directPending && can('foundation.skills.read')"
+      class="admin-card"
+    >
       <ElCollapseItem title="查询历史发布回执" name="receipt">
         <p class="admin-field-help">
           仅在系统提示结果未知且原页面已关闭时使用。正常保存与发布不需要请求 ID。
@@ -65,13 +71,17 @@
       <ElTag :type="readonly ? 'info' : dirty ? 'warning' : 'success'">{{
         publicationRefreshRequired
           ? '已发布 · 待更新显示'
-          : readonly
-            ? isCurrentVersion
-              ? '当前发布 · 只读'
-              : '历史发布 · 只读'
-            : dirty
-              ? '有未保存修改'
-              : '工作草稿'
+          : pending || directPending
+            ? busy
+              ? '等待发布结果'
+              : '发布结果待核对'
+            : readonly
+              ? isCurrentVersion
+                ? '当前发布 · 只读'
+                : '历史发布 · 只读'
+              : dirty
+                ? '有未保存修改'
+                : '工作草稿'
       }}</ElTag>
       <span>{{ definition.capabilityKey }}</span>
       <span v-if="draft"
@@ -85,7 +95,7 @@
     <p v-else-if="publicationRefreshRequired" class="admin-field-help">
       技能已发布。请读取发布结果后继续编辑，避免重复发布同一草稿。
     </p>
-    <p v-else-if="readonly" class="admin-field-help">
+    <p v-else-if="selectedVersion" class="admin-field-help">
       当前查看已发布版本，内容只读。选择“当前草稿”可继续编辑；需要复用此版本时，选择“恢复为工作草稿”。
     </p>
     <p class="admin-field-help">
