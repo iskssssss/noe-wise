@@ -6,9 +6,15 @@ import { guardFormEnter } from '../admin/keyboard'
 import { isSkillTextFile } from '../capabilities/skillDrafts'
 import CodeEditor from './CodeEditor.vue'
 const props = withDefaults(
-  defineProps<{ files: Record<string, string>; readonly?: boolean; dirty?: boolean }>(),
+  defineProps<{
+    files: Record<string, string>
+    readonly?: boolean
+    readonlyLabel?: string
+    dirty?: boolean
+  }>(),
   {
     readonly: false,
+    readonlyLabel: '只读',
     dirty: false
   }
 )
@@ -245,9 +251,9 @@ async function remove() {
       <header>
         <div class="file-current">
           <strong>{{ selected || '文件编辑' }}</strong
-          ><span class="file-mode">{{
+          ><span v-if="selected" class="file-mode">{{
             readonly
-              ? '只读版本'
+              ? readonlyLabel
               : textFile
                 ? props.dirty
                   ? '草稿 · 修改后需保存'
@@ -286,7 +292,7 @@ async function remove() {
       />
       <ElEmpty
         v-else
-        :description="readonly ? '当前版本没有文件' : '新建文件，开始编写能力内容'"
+        :description="readonly ? '暂无文件可查看' : '新建文件，开始编写技能内容'"
         :image-size="72"
         ><ElButton v-if="!readonly" type="primary" @click="startCreate">新建文件</ElButton></ElEmpty
       >

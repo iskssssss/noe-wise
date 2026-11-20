@@ -37,6 +37,20 @@ function button(wrapper: VueWrapper, label: string) {
   return found
 }
 describe('包文件任务工作台', () => {
+  it('临时锁定保留草稿内容与未保存状态，恢复后仍可编辑', async () => {
+    const wrapper = render({ 'SKILL.md': '# 未保存内容' }, false, true)
+    await wrapper.setProps({ readonly: true, readonlyLabel: '操作处理中 · 暂不可编辑' })
+    expect(wrapper.text()).toContain('操作处理中 · 暂不可编辑')
+    expect(wrapper.text()).not.toContain('只读版本')
+    await wrapper.get('textarea').setValue('锁定期间不可写入')
+    expect(wrapper.emitted('update:files')).toBeUndefined()
+    expect(wrapper.props('files')['SKILL.md']).toBe('# 未保存内容')
+    await wrapper.setProps({ readonly: false })
+    expect(wrapper.text()).toContain('草稿 · 修改后需保存')
+    await wrapper.get('textarea').setValue('# 继续编辑')
+    await flushPromises()
+    expect(wrapper.props('files')['SKILL.md']).toBe('# 继续编辑')
+  })
   it('草稿文件状态区分已保存与待保存', async () => {
     const wrapper = render({ 'SKILL.md': '# 技能' }, false, true)
     expect(wrapper.text()).toContain('草稿 · 修改后需保存')
@@ -146,9 +160,11 @@ describe('包文件任务工作台', () => {
   })
   it('只读版本仍能定位和查看文件，隐藏写操作', async () => {
     const wrapper = render({ 'SKILL.md': '# 文档' }, true)
+    await wrapper.setProps({ readonlyLabel: '已发布版本 · 只读' })
     await flushPromises()
     expect(wrapper.findAll('button').some((item) => item.text() === '新建文件')).toBe(false)
     expect(wrapper.findAll('button').some((item) => item.text() === '删除文件')).toBe(false)
     expect(wrapper.get('textarea').attributes('readonly')).toBeDefined()
+    expect(wrapper.text()).toContain('已发布版本 · 只读')
   })
 })

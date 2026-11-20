@@ -85,7 +85,10 @@
       }}</ElTag>
       <span>{{ definition.capabilityKey }}</span>
       <span v-if="draft"
-        >{{ Object.keys(draft.files).length }} 个文件 · 版本 {{ draft.versionKey }}</span
+        >{{ Object.keys(draft.files).length }} 个文件 ·
+        {{
+          draft.versionKey ? '版本 ' + draft.versionKey : '尚未填写版本号，请在发布设置中填写'
+        }}</span
       >
       <span>{{ definition.defaultVersionId ? '已有当前发布' : '尚未发布' }}</span>
     </div>
@@ -204,6 +207,15 @@
               ref="packageWorkbench"
               v-model:files="draft.files"
               :dirty="dirty"
+              :readonly-label="
+                selectedVersion
+                  ? isCurrentVersion
+                    ? '当前发布 · 只读'
+                    : '历史发布 · 只读'
+                  : busy
+                    ? '操作处理中 · 暂不可编辑'
+                    : '暂不可编辑，请查看页面提示'
+              "
               :readonly="readonly || busy" /></ElTabPane
           ><ElTabPane label="发布设置" name="settings"
             ><ElForm

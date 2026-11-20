@@ -928,6 +928,15 @@ const formTipId = useId()
         ref="fileWorkbench"
         v-model:files="draft.files"
         :dirty="dirty"
+        :readonly-label="
+          versionView
+            ? '已发布版本 · 只读'
+            : action.busy.value
+              ? '操作处理中 · 暂不可编辑'
+              : !allowed('foundation.skills.update')
+                ? '缺少编辑权限 · 只读'
+                : '暂不可编辑，请查看页面提示'
+        "
         :readonly="
           !allowed('foundation.skills.update') || versionView || action.busy.value || writeLocked
         "
