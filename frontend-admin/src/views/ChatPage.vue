@@ -1591,7 +1591,9 @@ async function ensureSession() {
       creationActor.value === actor &&
       auth.identityVersion === identity &&
       cause instanceof HttpClientError &&
-      cause.code === 'SESSION_CREATE_REJECTED'
+      (cause.code === 'SESSION_CREATE_REJECTED' ||
+        // 此接口禁止自动重发；原始认证拒绝发生在创建控制器之前。
+        (cause.status === 401 && cause.code === 'UNAUTHORIZED'))
     ) {
       sessionStorage.removeItem(creationKey(actor))
       pendingSession.value = undefined

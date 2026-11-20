@@ -741,6 +741,50 @@ describe('后台纯资源用户消息历史可见', () => {
   })
 })
 
+it.each([
+  [401, 'UNAUTHORIZED'],
+  [422, 'SESSION_CREATE_REJECTED']
+])('创建首次明确拒绝 %s/%s 后保留草稿并解除创建锁', async (status, code) => {
+  mocks.createSession.mockRejectedValueOnce(
+    new HttpClientError({ status, code, userMessage: '会话创建被拒绝' })
+  )
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  await send('尚未发送的原草稿')
+  expect(mocks.createSession).toHaveBeenCalledOnce()
+  expect(mocks.submit).not.toHaveBeenCalled()
+  expect(mocks.sessionCreationResult).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem('skillforge.chat-session-create:1:member-1')).toBeNull()
+  expect(wrapper!.text()).not.toContain('会话创建结果尚未确认')
+  const composer = wrapper!
+    .findAllComponents(ElInput)
+    .find((field) => field.props('placeholder') === '输入消息')!
+  expect(composer.props('modelValue')).toBe('尚未发送的原草稿')
+  expect(composer.get('textarea').attributes('disabled')).toBeUndefined()
+})
+
+it.each([
+  [401, undefined],
+  [500, 'UNAUTHORIZED']
+])('创建响应 %s/%s 缺少明确拒绝契约时保留原请求', async (status, code) => {
+  mocks.createSession.mockRejectedValueOnce(
+    new HttpClientError({ status, code, userMessage: '创建结果未确认' })
+  )
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  await send('保留原请求')
+  expect(mocks.createSession).toHaveBeenCalledOnce()
+  expect(mocks.submit).not.toHaveBeenCalled()
+  expect(wrapper!.text()).toContain('会话创建结果尚未确认')
+  expect(
+    JSON.parse(sessionStorage.getItem('skillforge.chat-session-create:1:member-1')!)
+  ).toMatchObject({
+    requestId: mocks.createSession.mock.calls[0]![0]
+  })
+})
+
 it('会话创建响应中断后按原请求核对，未查到时不重复创建或发送', async () => {
   mocks.createSession.mockRejectedValueOnce(new Error('连接中断'))
   await open()
