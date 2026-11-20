@@ -15,6 +15,7 @@ const calls = vi.hoisted(() => ({
   replace: vi.fn(),
   update: vi.fn(),
   publish: vi.fn(),
+  test: vi.fn(),
   allowed: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({
@@ -122,6 +123,83 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = undefined
+})
+
+it('空表单逐项区分容量错误，只提示当前可配置的连接字段', async () => {
+  route.path = '/platform/models/new'
+  await open()
+  await wrapper!.get('form').trigger('submit')
+  await flushPromises()
+  const summary = wrapper!.get('[aria-label="配置错误摘要"]')
+  for (const label of ['支持最大输出 Token', '上下文窗口 Token', '本次输出 Token 上限']) {
+    expect(field(label).props('required')).toBe(true)
+    expect(summary.text()).toContain(`请填写${label}，须为 1–2147483647 的整数`)
+  }
+  expect(field('API 凭据').props('required')).toBe(true)
+  expect(summary.text()).not.toContain('请选择该服务支持的协议')
+  expect(summary.text()).not.toContain('请选择该服务支持的认证方式')
+  expect(calls.createWithReceipt).not.toHaveBeenCalled()
+  field('上下文窗口 Token').getComponent(ElInputNumber).vm.$emit('update:modelValue', 8192)
+  await flushPromises()
+  expect(summary.text()).not.toContain('请填写上下文窗口 Token')
+  expect(summary.text()).toContain('请填写本次输出 Token 上限')
+})
+
+it('已有模型两处保存均只在修改后可用，表单提交不会产生无修改的新修订', async () => {
+  await open()
+  const saveButtons = () =>
+    wrapper!.findAllComponents(ElButton).filter((b) => b.text() === '保存草稿')
+  expect(saveButtons()).toHaveLength(2)
+  expect(saveButtons().every((b) => b.props('disabled'))).toBe(true)
+  expect(field('API 凭据').props('required')).toBe(false)
+  await wrapper!.get('form').trigger('submit')
+  await flushPromises()
+  expect(calls.update).not.toHaveBeenCalled()
+  const saved = await calls.detail()
+  calls.update.mockResolvedValue({ ...saved, name: '改名后的草稿', revision: 2 })
+  field('名称').getComponent(ElInput).vm.$emit('update:modelValue', '改名后的草稿')
+  await flushPromises()
+  expect(saveButtons().every((b) => !b.props('disabled'))).toBe(true)
+  await wrapper!.get('form').trigger('submit')
+  await flushPromises()
+  expect(calls.update).toHaveBeenCalledExactlyOnceWith(
+    'model-1',
+    expect.objectContaining({
+      name: '改名后的草稿',
+      expected_revision: 1
+    })
+  )
+  expect(saveButtons().every((b) => b.props('disabled'))).toBe(true)
+})
+
+it('UNKNOWN 测试说明保留不确定性及安全下一步，不自动再次调用', async () => {
+  const check = { status: 'UNKNOWN', duration_ms: 311, reason_code: 'model_probe_outcome_unknown' }
+  calls.test.mockResolvedValue({
+    ok: false,
+    compatibility_report: {
+      draft_revision: 1,
+      tested_at: '2026-11-20T14:41:30Z',
+      duration_ms: 312,
+      status: 'UNKNOWN',
+      configuration_acceptance: check,
+      streaming: check,
+      tool_continuation: { status: 'NOT_RUN', duration_ms: 0 },
+      reason_code: 'model_probe_outcome_unknown'
+    }
+  })
+  await open()
+  await wrapper!
+    .findAllComponents(ElButton)
+    .find((b) => b.text() === '测试当前配置')!
+    .trigger('click')
+  await flushPromises()
+  const report = wrapper!.get('[aria-label="模型兼容性测试结果"]')
+  expect(report.text()).toContain('兼容性测试 · 结果未知')
+  expect(report.text()).toContain('未取得可确认的完整响应，无法判断本次测试结果')
+  expect(report.text()).toContain('先核对服务地址、连接状态及供应商侧记录')
+  expect(report.text()).not.toContain('未识别诊断')
+  expect(calls.test).toHaveBeenCalledExactlyOnceWith({ id: 'model-1' })
+  expect(calls.update).not.toHaveBeenCalled()
 })
 
 it('同一发现连接中编辑模型ID、名称和容量不会丢弃返回候选或覆盖草稿', async () => {

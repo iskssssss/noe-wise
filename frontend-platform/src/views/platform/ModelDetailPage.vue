@@ -502,6 +502,11 @@ const savedCredentialAvailable = computed(
     )
 )
 const fieldErrors = ref<Record<string, string>>({})
+const capacityFields = [
+  { key: 'supported_max_output_tokens', label: '支持最大输出 Token' },
+  { key: 'context_window_tokens', label: '上下文窗口 Token' },
+  { key: 'max_output_tokens', label: '本次输出 Token 上限' }
+] as const
 const modelForm = ref<FormInstance>()
 const pendingErrorField = ref<string>()
 watch(
@@ -635,9 +640,11 @@ function collectValidationErrors() {
     !configurableServices.value.some((entry) => entry.service_id === form.service_id)
   )
     errors.service_id = '请选择支持当前模型类型的国内或本地服务'
-  if (!selectedProtocol.value) errors.protocol = '请选择该服务支持的协议'
-  if (!form.authentication_scheme || !authSchemes.value.includes(form.authentication_scheme))
-    errors.authentication_scheme = '请选择该服务支持的认证方式'
+  if (!errors.service_id) {
+    if (!selectedProtocol.value) errors.protocol = '请选择该服务支持的协议'
+    if (!form.authentication_scheme || !authSchemes.value.includes(form.authentication_scheme))
+      errors.authentication_scheme = '请选择该服务支持的认证方式'
+  }
   if (form.kind === 'LLM') {
     if (reasoningInvalid.value) errors.reasoning = reasoningInvalid.value
     else if (reasoningSelection.value && !effectiveReasoningOptions.value)
@@ -646,14 +653,10 @@ function collectValidationErrors() {
         : reasoningError.value || '请先读取当前模型推理选项'
     if (errors.reasoning && !modelSections.value.includes('generation'))
       modelSections.value.push('generation')
-    for (const key of [
-      'supported_max_output_tokens',
-      'context_window_tokens',
-      'max_output_tokens'
-    ] as const) {
+    for (const { key, label } of capacityFields) {
       const value = form[key]
       if (!value || !Number.isInteger(value) || value < 1 || value > 2147483647)
-        errors[key] = '请填写模型输出上限与上下文容量，须为正整数'
+        errors[key] = `请填写${label}，须为 1–2147483647 的整数`
     }
     if (
       form.max_output_tokens &&
@@ -732,6 +735,7 @@ function validate() {
 }
 function save(continueToPublish = false) {
   if (
+    (item.value && !dirty.value) ||
     pendingCreate.value ||
     createStorageError.value ||
     !allowed(item.value ? 'foundation.models.update' : 'foundation.models.create')
@@ -1001,7 +1005,8 @@ const probeLabels: Record<ModelProbeStatus, string> = {
 const probeReasonLabels: Record<string, string> = {
   configuration_request_accepted: '供应商已接受配置请求',
   stream_completed_with_deltas: '流式响应完整返回',
-  native_tool_continuation_completed: '原生工具调用与续答完成'
+  native_tool_continuation_completed: '原生工具调用与续答完成',
+  model_probe_outcome_unknown: '未取得可确认的完整响应，无法判断本次测试结果'
 }
 function probeReasonLabel(value?: string | null) {
   if (!value) return '—'
@@ -1330,7 +1335,11 @@ const formTipId = useId()
               填写提供方实际 API 地址，须与选定服务和协议一致。
             </p>
           </ElFormItem>
-          <ElFormItem label="API 凭据" :error="fieldErrors['api_key']">
+          <ElFormItem
+            label="API 凭据"
+            :error="fieldErrors['api_key']"
+            :required="!savedCredentialAvailable"
+          >
             <ElInput
               v-described-by="'model-credential-help'"
               aria-describedby="model-credential-help"
@@ -1438,14 +1447,11 @@ const formTipId = useId()
           </ElFormItem>
           <template v-if="form.kind === 'LLM'">
             <ElFormItem
-              v-for="f in [
-                { key: 'supported_max_output_tokens', label: '支持最大输出 Token' },
-                { key: 'context_window_tokens', label: '上下文窗口 Token' },
-                { key: 'max_output_tokens', label: '本次输出 Token 上限' }
-              ] as const"
+              v-for="f in capacityFields"
               :key="f.key"
               :label="f.label"
               :error="fieldErrors[f.key]"
+              required
             >
               <ElInputNumber
                 v-described-by="formTipId + '-field-11' + '-' + encodeURIComponent(String(f.key))"
@@ -1919,6 +1925,7 @@ const formTipId = useId()
             v-permission="[item ? 'foundation.models.update' : 'foundation.models.create']"
             type="primary"
             native-type="submit"
+            :disabled="formBusy || !!pendingCreate || !!createStorageError || (!!item && !dirty)"
             :loading="action.busy.value"
             >保存草稿</ElButton
           >
@@ -1992,6 +1999,9 @@ const formTipId = useId()
           </p>
           <p class="admin-field-help">
             配置参数接受仅表示供应商接受了请求；不代表推理效果或缓存命中已验证。未执行和结果未知的项目均未通过验证。
+          </p>
+          <p v-if="compatibilityReport.status === 'UNKNOWN'" class="admin-field-help" role="status">
+            请保留本次测试时间与结果，先核对服务地址、连接状态及供应商侧记录，再决定是否发起新的测试。
           </p>
         </section>
       </ElForm>
