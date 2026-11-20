@@ -100,7 +100,8 @@ public class AgentRuntimeExecutionConfiguration {
     JdbcExecutionStore executionStore(DataSource source, JdbcIdentityPolicyPort identities, ExecutionBudgetPort budgets, ObjectProvider<AgentRuntimeExecutionSources> sources,
             ObjectProvider<AgentRuntimeExecutionProjection> projection, ObjectProvider<AgentRuntimeWorkflowNodeExecutions> nodes,
             ObjectProvider<AgentRuntimeProgramTools> programs, ObjectProvider<AgentRuntimeGoalDriver> goals,
-            AgentRuntimeGroupControl groupControl,WorkflowTestRuntimePolicy tests,AgentExecutionCodec codec,SessionExecutionWorkflows workflows) {
+            AgentRuntimeGroupControl groupControl,WorkflowTestRuntimePolicy tests,AgentExecutionCodec codec,SessionExecutionWorkflows workflows,
+            ObjectProvider<AgentRuntimeMemoryInputs> memoryInputs) {
         if (!(budgets instanceof JdbcExecutionBudgets jdbc)) throw new IllegalStateException("execution_transactional_budget_required");
         return new JdbcExecutionStore(source, identities, jdbc, (session, run, actor, prepared) -> tests.allowed(session,run,prepared,codec,workflows) && (AgentRuntimeProgramTools.owns(run)
                 ? programs.getObject().allowed(session, run, actor, prepared) : AgentRuntimeWorkflowNodeExecutions.owns(run)
@@ -118,8 +119,18 @@ public class AgentRuntimeExecutionConfiguration {
                     else sources.getObject().confirmActivity(session, run); },
                 (session, run, actor, operation, input) -> tests.control(session,run,operation) && sources.getObject().allowedControl(session, run, actor, operation, input),
                 session -> projection.getObject().outputsCommitted(session),
-                (session, owner, events, readAfter) -> projection.getObject().appendBorrowed(session, owner, events, readAfter),
+                (session, owner, events, readAfter) -> {
+                    memoryInputs.getObject().appendBorrowed(session, owner, events);
+                    projection.getObject().appendBorrowed(session, owner, events, readAfter);
+                },
                 groupControl);
+    }
+
+    @Bean
+    AgentRuntimeMemoryInputs executionMemoryInputs(JdbcExecutionStore store, SessionLogPort log,
+            AgentExecutionCodec codec, com.skillforge.core.foundation.workflowtest.WorkflowTestRegistry tests) {
+        if (!(log instanceof JdbcSessionLogPort jdbc)) throw new IllegalStateException("memory_transactional_source_required");
+        return new AgentRuntimeMemoryInputs(store, jdbc, codec, tests);
     }
 
     @Bean
