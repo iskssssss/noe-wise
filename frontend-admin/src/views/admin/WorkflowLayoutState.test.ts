@@ -1629,6 +1629,42 @@ describe('工作流布局保存与恢复', () => {
       expect.objectContaining({ source: 'start', target: 'end', priority: 6 })
     ])
   })
+  it('连接页区分菜单选项和超时后备，配置入口返回原菜单且保留原边', async () => {
+    mocks.get.mockResolvedValue({
+      ...value,
+      definition: {
+        ...value.definition,
+        nodes: [
+          { id: 'start', type: 'start' },
+          {
+            id: 'menu',
+            type: 'menu',
+            name: '选择服务',
+            actions: [{ id: 'yes', label: '继续办理', to: 'end' }]
+          },
+          { id: 'end', type: 'end', name: '结束' }
+        ],
+        edges: [
+          { from: 'start', to: 'menu' },
+          { from: 'menu', to: 'end', condition: '${state.timeout}', priority: 7, custom: false }
+        ]
+      }
+    })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    const canvas = wrapper.findComponent(WorkflowCanvas)
+    const before = structuredClone(JSON.parse(JSON.stringify(canvas.props('edges'))))
+    canvas.vm.$emit('edit-edge', 'edge_1')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="菜单选项分支"]').text()).toContain('继续办理 → 结束')
+    expect(wrapper.text()).toContain('菜单超时后备')
+    await button('配置选择服务的选项').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'NodeProperties' }).props('modelValue').id).toBe('menu')
+    expect(wrapper.find('[id="pane-design"]').isVisible()).toBe(true)
+    expect(canvas.props('edges')).toEqual(before)
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
   it('新建工作流校验当前输入，不创建草稿或保存布局', async () => {
     routeParams.workflowId = ''
     mocks.create.mockImplementation((workflowId: string, definition: Record<string, unknown>) =>

@@ -153,7 +153,8 @@ export function connectWorkflowNode(
   if (['start', 'end'].includes(node.type) && placement.kind !== 'after')
     throw Error('开始或结束节点不能插入已有连接')
   let nextNodes = [...nodes, node],
-    nextEdges = [...edges]
+    nextEdges = [...edges],
+    continuationTarget = ''
   const edgeId = () => crypto.randomUUID()
   if (placement.kind === 'edge') {
     const edge = edges.find((item) => item.id === placement.edgeId)
@@ -161,13 +162,7 @@ export function connectWorkflowNode(
     node.x = (nodes.find((item) => item.id === edge.source)?.x ?? 0) + 260
     node.y = (nodes.find((item) => item.id === edge.source)?.y ?? 0) + 40
     nextEdges = edges.map((item) => (item.id === edge.id ? { ...item, target: node.id } : item))
-    nextEdges.push({
-      id: edgeId(),
-      source: node.id,
-      target: edge.target,
-      condition: '',
-      priority: 0
-    })
+    continuationTarget = edge.target
   } else {
     const source = nodes.find((item) => item.id === placement.nodeId)
     if (!source || source.type === 'end') throw Error('所选节点不能添加后续节点')
@@ -186,19 +181,24 @@ export function connectWorkflowNode(
             }
           : item
       )
-      if (action.to)
-        nextEdges.push({
-          id: edgeId(),
-          source: node.id,
-          target: action.to,
-          condition: '',
-          priority: 0
-        })
+      continuationTarget = action.to
     } else
       nextEdges.push({
         id: edgeId(),
         source: source.id,
         target: node.id,
+        condition: '',
+        priority: 0
+      })
+  }
+  if (continuationTarget) {
+    if (node.type === 'menu')
+      node.menuActions = [{ id: 'continue', label: '继续', to: continuationTarget }]
+    else
+      nextEdges.push({
+        id: edgeId(),
+        source: node.id,
+        target: continuationTarget,
         condition: '',
         priority: 0
       })

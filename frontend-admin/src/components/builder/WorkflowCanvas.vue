@@ -77,11 +77,12 @@ const connections = computed(() =>
     return [
       {
         ...edge,
+        menuFallback: source.type === 'menu',
         path: curve(
           { x: a.x + nodeWidth / 2, y: a.y + nodeHeight },
           { x: b.x + nodeWidth / 2, y: b.y - inputArrowGap }
         ),
-        label: `${source.label || source.id} → ${target.label || target.id}${edge.condition ? '（有条件）' : ''}`
+        label: `${source.label || source.id} → ${target.label || target.id}${source.type === 'menu' ? '（菜单超时后备）' : ''}${edge.condition ? '（有条件）' : ''}`
       }
     ]
   })
@@ -245,7 +246,7 @@ function startPan(event: PointerEvent) {
   capture(event)
 }
 function startConnection(event: PointerEvent, node: BuilderNode) {
-  if (locked.value || event.button !== 0) return
+  if (locked.value || event.button !== 0 || node.type === 'menu') return
   connecting.value = node.id
   suppressOutputClick = false
   pointer.value = toWorld(event.clientX, event.clientY)
@@ -259,6 +260,11 @@ function chooseOutput(node: BuilderNode) {
     return
   }
   if (locked.value) return
+  if (node.type === 'menu') {
+    cancelConnection()
+    editMenuRoute(node.id)
+    return
+  }
   connecting.value = node.id
   pointer.value = { x: node.x + nodeWidth / 2, y: node.y + nodeHeight + 60 }
   notice.value = `已选择“${node.label}”输出，选择目标输入端口。`
@@ -591,8 +597,11 @@ defineExpose({ focusNode, focusCanvas, fitView })
       </template>
       <template v-else-if="activeNode">
         <span>已选择：{{ activeNode.label || activeNode.id }}</span>
+        <ElButton v-if="activeNode.type === 'menu'" @click="editMenuRoute(activeNode.id)"
+          >配置菜单选项</ElButton
+        >
         <ElButton v-if="activeNode.type !== 'end'" @click="addNext(activeNode.id)">
-          添加下一步
+          {{ activeNode.type === 'menu' ? '在选项分支中添加节点' : '添加下一步' }}
         </ElButton>
       </template>
     </div>
@@ -644,6 +653,7 @@ defineExpose({ focusNode, focusCanvas, fitView })
             <path
               :d="edge.path"
               class="workflow-canvas-edge-line"
+              :class="{ 'workflow-canvas-fallback-line': edge.menuFallback }"
               :marker-end="`url(#${arrowId})`"
             />
             <path
@@ -720,7 +730,9 @@ defineExpose({ focusNode, focusCanvas, fitView })
             v-if="node.type !== 'end'"
             type="button"
             class="workflow-canvas-port output"
-            :aria-label="`${node.label}的输出端口`"
+            :aria-label="
+              node.type === 'menu' ? `配置${node.label}的菜单选项` : `${node.label}的输出端口`
+            "
             :disabled="locked"
             @pointerdown.stop="startConnection($event, node)"
             @click.stop="chooseOutput(node)"
@@ -749,7 +761,7 @@ defineExpose({ focusNode, focusCanvas, fitView })
         notice ||
         (selectionMode
           ? '多选模式：逐个点击切换选择，拖动已选节点移动整组；空白处仍可平移。'
-          : '连线决定执行顺序；在节点参数中选择上游输出。点击节点配置，Shift / Ctrl / Command 加点击多选。')
+          : '普通连线决定执行顺序；菜单虚线按用户选项跳转，点线为超时后备。点击节点配置，Shift / Ctrl / Command 加点击多选。')
       }}<ElButton v-if="connecting" link @click="cancel">取消连线</ElButton>
     </div>
   </section>
@@ -869,6 +881,9 @@ defineExpose({ focusNode, focusCanvas, fitView })
 }
 .workflow-canvas-menu-line {
   stroke-dasharray: 6 4;
+}
+.workflow-canvas-fallback-line {
+  stroke-dasharray: 2 5;
 }
 .workflow-canvas-edge:hover .workflow-canvas-edge-line,
 .workflow-canvas-edge.selected .workflow-canvas-edge-line,

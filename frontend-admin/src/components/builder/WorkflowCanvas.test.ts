@@ -112,6 +112,35 @@ describe('工作流画布', () => {
     expect(wrapper.findComponent(ElPopover).props('visible')).toBe(false)
     expect(wrapper.props('selectedIds')).toEqual([])
   })
+  it('菜单输出入口配置选项，保留并区分原超时后备连线', async () => {
+    const wrapper = render()
+    const original = wrapper.props('nodes')
+    const fallback = { id: 'fallback', source: 'start', target: 'end', condition: '', priority: 3 }
+    await wrapper.setProps({
+      nodes: [
+        {
+          ...original[0]!,
+          type: 'menu',
+          label: '选择路径',
+          menuActions: [{ id: 'done', label: '完成', to: 'end' }]
+        },
+        original[1]!
+      ],
+      edges: [fallback]
+    })
+    const output = wrapper.get('[aria-label="配置选择路径的菜单选项"]')
+    await output.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10 })
+    await output.trigger('click')
+    await wrapper.get('[aria-label="结束的输入端口"]').trigger('click')
+    expect(wrapper.emitted('edit-node')).toEqual([['start']])
+    expect(wrapper.props('edges')).toEqual([fallback])
+    expect(wrapper.find('.workflow-canvas-pending').exists()).toBe(false)
+    expect(wrapper.find('.workflow-canvas-fallback-line').exists()).toBe(true)
+    await wrapper
+      .get('[aria-label="编辑连接：选择路径 → 结束（菜单超时后备）"]')
+      .trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('edit-edge')).toEqual([['fallback']])
+  })
   it('下一步与插入操作携带真实节点或边身份，并取消未完成连线', async () => {
     const wrapper = render()
     await wrapper.get('[aria-label="开始的输出端口"]').trigger('click')

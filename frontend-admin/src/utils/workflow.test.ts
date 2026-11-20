@@ -100,6 +100,36 @@ describe('工作流安装与无损编辑契约', () => {
     expect(graph.edges).toEqual([expect.objectContaining({ source: 'audit', target: 'end' })])
     expect(menu.menuActions[0]!.to).toBe('end')
   })
+  it('向普通连接或选项分支插入菜单，以继续选项保留原后续节点', () => {
+    const start = node({ id: 'start', type: 'start' }),
+      end = node({ id: 'end', type: 'end' })
+    const original = {
+      id: 'edge',
+      source: 'start',
+      target: 'end',
+      condition: '${state.ready}',
+      priority: 4
+    }
+    const menu = node({ id: 'menu', type: 'menu' })
+    const graph = connectWorkflowNode([start, end], [original], menu, {
+      kind: 'edge',
+      edgeId: 'edge'
+    })
+    expect(graph.edges).toEqual([{ ...original, target: 'menu' }])
+    expect(graph.nodes.find((node) => node.id === 'menu')?.menuActions).toEqual([
+      { id: 'continue', label: '继续', to: 'end' }
+    ])
+    const nested = node({ id: 'nested', type: 'menu' })
+    const next = connectWorkflowNode(graph.nodes, graph.edges, nested, {
+      kind: 'action',
+      nodeId: 'menu',
+      actionId: 'continue'
+    })
+    expect(next.edges).toEqual(graph.edges)
+    expect(next.nodes.find((node) => node.id === 'menu')?.menuActions[0]?.to).toBe('nested')
+    expect(nested.menuActions).toEqual([{ id: 'continue', label: '继续', to: 'end' }])
+    expect(original.target).toBe('end')
+  })
   it('有来源的引用问题可定位到节点字段与连接，条件能使用刚产出的值', () => {
     const nodes = [
       node({ id: 'producer', type: 'tool', tool: 'lookup' }),

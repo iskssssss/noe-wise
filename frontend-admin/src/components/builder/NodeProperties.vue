@@ -580,8 +580,8 @@ defineExpose({ focusField })
             >添加选项</ElButton
           >
         </div>
-        <p v-if="!model.menuActions.length" class="admin-field-help">
-          为用户添加可选操作，并指定选中后的节点。
+        <p class="admin-field-help">
+          每个选项单独指定跳转节点，用户选择后沿对应虚线执行。普通连接仅用于没有匹配选项的超时后备，不控制选项分支。
         </p>
         <div v-for="(item, index) in model.menuActions" :key="index" class="node-row">
           <div class="node-row-heading">
@@ -616,6 +616,15 @@ defineExpose({ focusField })
             ></ElFormItem>
           </div>
         </div>
+      </section>
+      <section v-if="model.type === 'menu'" class="node-section">
+        <h4>超时后备连接</h4>
+        <p class="admin-field-help">
+          需要处理等待超时时，再配置等待超时和后备连接；菜单选项在上方配置。
+        </p>
+        <ElButton :disabled="locked" @click="emit('edit-connections', model.id)"
+          >查看超时后备连接</ElButton
+        >
       </section>
       <section v-if="model.type === 'assign'" class="node-section" data-node-field="args">
         <div class="node-section-heading">

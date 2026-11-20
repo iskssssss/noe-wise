@@ -308,13 +308,35 @@
           </aside>
         </div></ElTabPane
       >
-      <ElTabPane :label="'连接与条件（' + edges.length + '）'" name="connections"
-        ><ElButton :disabled="readonly || busy || loadingDraft" @click="addEdge">添加连接</ElButton
+      <ElTabPane :label="'连接与条件（' + edges.length + '）'" name="connections">
+        <section v-if="menuNodes.length" class="admin-section" aria-label="菜单选项分支">
+          <h3>菜单选项分支</h3>
+          <p class="admin-field-help">用户选择后直接进入选项目标，不经过下方的普通连接条件。</p>
+          <div v-for="menu in menuNodes" :key="menu.id" class="workflow-menu-routes">
+            <strong>{{ menu.label || menu.id }}</strong>
+            <ul v-if="menu.menuActions.length">
+              <li v-for="(action, index) in menu.menuActions" :key="index">
+                {{ action.label || '未命名选项' }} →
+                {{
+                  nodes.find((node) => node.id === action.to)?.label || action.to || '尚未选择目标'
+                }}
+              </li>
+            </ul>
+            <p v-else class="admin-field-help">尚未配置选项，请添加选项并选择目标节点。</p>
+            <ElButton :disabled="busy || loadingDraft" @click="editMenuOptions(menu.id)"
+              >配置{{ menu.label || menu.id }}的选项</ElButton
+            >
+          </div>
+        </section>
+        <h3 v-if="menuNodes.length">普通连接与超时后备</h3>
+        <ElButton :disabled="readonly || busy || loadingDraft" @click="addEdge">{{
+          selected?.type === 'menu' ? '添加菜单超时后备连接' : '添加普通连接'
+        }}</ElButton
         ><ElTable
           ref="edgeTable"
           row-key="id"
           highlight-current-row
-          table-layout="auto"
+          table-layout="fixed"
           :data="edges"
           empty-text="暂无记录"
           ><ElTableColumn min-width="200" label="起点"
@@ -323,18 +345,25 @@
                 v-described-by="formTipId + '-group-1'"
                 :aria-describedby="formTipId + '-group-1'"
                 v-model="row.source"
+                :aria-label="'连接起点 ' + row.id"
                 :disabled="readonly || busy || loadingDraft"
                 ><ElOption
                   v-for="node in nodes"
                   :key="node.id"
                   :label="node.label"
-                  :value="node.id" /></ElSelect></template></ElTableColumn
+                  :value="node.id"
+              /></ElSelect>
+              <span v-if="menuNodes.some((node) => node.id === row.source)" class="admin-field-help"
+                >菜单超时后备</span
+              >
+            </template></ElTableColumn
           ><ElTableColumn min-width="200" label="终点"
             ><template #default="{ row }"
               ><ElSelect
                 v-described-by="formTipId + '-group-1'"
                 :aria-describedby="formTipId + '-group-1'"
                 v-model="row.target"
+                :aria-label="'连接终点 ' + row.id"
                 :disabled="readonly || busy || loadingDraft"
                 ><ElOption
                   v-for="node in nodes"
@@ -343,7 +372,10 @@
                   :value="node.id" /></ElSelect></template></ElTableColumn
           ><ElTableColumn min-width="280" label="条件表达式"
             ><template #default="{ row }"
-              ><ConditionEditor
+              ><p v-if="menuNodes.some((node) => node.id === row.source)" class="admin-field-help">
+                此连接不参与菜单选项跳转。仅在超时没有匹配选项时检查；需要设置菜单等待超时。
+              </p>
+              <ConditionEditor
                 v-described-by="formTipId + '-group-1'"
                 :aria-describedby="formTipId + '-group-1'"
                 v-model="row.condition"
@@ -375,7 +407,7 @@
           ></ElTable
         >
         <FieldTip :id="formTipId + '-group-1'"
-          >每条边指定起点、终点、条件和优先级；条件留空表示无条件跳转，节点引用须存在于当前工作流。</FieldTip
+          >普通连接按优先级检查条件，留空表示直接通过。菜单节点的普通出边是超时后备；用户选项请在“菜单选项分支”配置。</FieldTip
         >
       </ElTabPane>
       <ElTabPane label="工作流信息" name="info"
@@ -718,6 +750,9 @@
         ></ElFormItem>
         <p class="admin-field-help">
           {{ nodeDescriptions[placementNodeType] }} 已有分支的条件与优先级保留在进入新节点的连接上。
+        </p>
+        <p v-if="placementNodeType === 'menu'" class="admin-field-help">
+          插入菜单后，通过“继续”选项连接原后续节点；可在节点配置中修改选项标题或增加分支。
         </p>
       </ElForm>
       <template #footer
@@ -1270,6 +1305,12 @@ async function locateProblem(problem: WorkflowValidationProblem) {
 function editConnections(nodeId: string) {
   selectedId.value = nodeId
   activeTab.value = 'connections'
+}
+const menuNodes = computed(() => nodes.value.filter((node) => node.type === 'menu'))
+async function editMenuOptions(nodeId: string) {
+  activeTab.value = 'design'
+  await openNodeProperties(nodeId)
+  nodeProperties.value?.focusField?.('actions')
 }
 function resetEditors() {
   governanceValid.value = true
