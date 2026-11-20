@@ -40,7 +40,7 @@
         重新读取终端用户选项
       </ElButton>
     </div>
-    <div class="admin-toolbar admin-filters">
+    <div class="admin-toolbar admin-filters memory-filters" role="search" aria-label="筛选记忆">
       <ElSelect
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
@@ -48,7 +48,7 @@
         :disabled="reviews"
         clearable
         placeholder="全部范围"
-        style="width: 160px"
+        aria-label="记忆范围"
         ><ElOption label="会话" value="SESSION" /><ElOption
           label="用户与智能体"
           value="USER_AGENT" /><ElOption label="用户" value="USER" /></ElSelect
@@ -59,6 +59,7 @@
         :disabled="reviews"
         :options="agentOptions"
         placeholder="全部智能体"
+        aria-label="智能体"
       /><EntitySelect
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
@@ -66,20 +67,27 @@
         :disabled="reviews"
         :options="userOptions"
         placeholder="全部终端用户"
+        aria-label="终端用户"
+      /><ElInput
+        v-model="query"
+        class="memory-search"
+        clearable
+        aria-label="搜索记忆"
+        placeholder="搜索主体、关系或内容，点击查询应用"
       /><ElSwitch
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
         v-model="reviews"
         active-text="待审核"
+        aria-label="仅查看待审核记忆"
         @change="refresh"
       /><ElButton :loading="loading" @click="refresh">查询</ElButton>
-
-      <FieldTip :id="formTipId + '-group-0'">{{
-        reviews
-          ? '待审核显示机构审核队列；关闭后可按范围、智能体和终端用户查询记忆。'
-          : '按范围、智能体和终端用户组合查询，未选择的条件不限制结果。可加载更多结果。'
-      }}</FieldTip>
     </div>
+    <FieldTip :id="formTipId + '-group-0'">{{
+      reviews
+        ? '待审核显示机构审核队列，仍可按关键词查询；关闭后可按范围、智能体和终端用户查询记忆。'
+        : '选择范围、智能体、终端用户或填写关键词后，点击“查询”应用；未选择的条件不限制结果。'
+    }}</FieldTip>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
       {{
         refreshCause === 'write' ? '操作已完成，但当前列表尚未更新。' : '当前列表尚未更新。'
@@ -92,17 +100,12 @@
       当前结果：{{
         data.reviews
           ? '机构待审核队列'
-          : `范围 ${data.scope ? statusLabel(data.scope) : '全部'} · 智能体 ${data.agentId || '全部'} · 终端用户 ${data.endUserId || '全部'}`
+          : `范围 ${data.scope ? statusLabel(data.scope) : '全部'} · 智能体 ${resultAgentLabel} · 终端用户 ${resultUserLabel}`
       }}。
       <span v-if="pendingFilters">筛选条件已更改，请点击“查询”应用。</span>
     </p>
     <div class="admin-toolbar">
-      <ElInput
-        v-model="query"
-        clearable
-        aria-label="搜索记忆"
-        placeholder="搜索主体、关系或内容，点击查询应用"
-      /><span v-if="data" class="admin-muted" role="status"
+      <span v-if="data" class="admin-muted" role="status"
         >当前显示 {{ data.items.length }} 条{{ data.reviews ? '待审核记忆' : '记忆'
         }}{{ data.nextCursor ? '，仍有更多结果' : '' }}</span
       ><span v-else class="admin-muted" role="status">{{
@@ -124,7 +127,9 @@
               ? '没有匹配记忆，请调整关键词'
               : data?.reviews
                 ? '当前没有待审核记忆'
-                : '没有找到记忆，可调整查询范围'
+                : data.scope || data.agentId || data.endUserId
+                  ? '没有找到记忆，可调整查询范围'
+                  : '尚无记忆记录。这里仅展示已提取的记忆，不会保存全部聊天内容。'
       "
       ><ElTableColumn min-width="140" show-overflow-tooltip label="范围"
         ><template #default="{ row }">{{ statusLabel(row.scope) }}</template></ElTableColumn
@@ -677,6 +682,16 @@ onMounted(async () => {
 const userOptions = computed(() =>
   (userDirectory.data.value ?? []).map((u) => ({ id: u.id, label: u.display_name || '未命名用户' }))
 )
+const resultAgentLabel = computed(() =>
+  data.value?.agentId
+    ? (agentOptions.value.find((item) => item.id === data.value?.agentId)?.label ?? '名称暂不可用')
+    : '全部'
+)
+const resultUserLabel = computed(() =>
+  data.value?.endUserId
+    ? (userOptions.value.find((item) => item.id === data.value?.endUserId)?.label ?? '名称暂不可用')
+    : '全部'
+)
 const pageError = computed(() =>
   [
     error.value || loadError.value || moreError.value,
@@ -1032,6 +1047,18 @@ const formTipId = useId()
 </script>
 
 <style scoped>
+.memory-filters > .entity-select {
+  width: 220px;
+}
+.memory-filters > .memory-search {
+  width: 320px;
+}
+@media (max-width: 760px) {
+  .memory-filters > .entity-select,
+  .memory-filters > .memory-search {
+    width: 100%;
+  }
+}
 .memory-review-notice {
   display: block;
   white-space: normal;

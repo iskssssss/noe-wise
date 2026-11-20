@@ -586,6 +586,7 @@ describe('记忆筛选辅助目录独立恢复', () => {
     expect(wrapper.text()).toContain('当前结果：范围 全部 · 智能体 全部 · 终端用户 全部')
     wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'USER_AGENT')
     wrapper.findAllComponents(EntitySelect)[0]!.vm.$emit('update:modelValue', 'agent-a')
+    wrapper.findAllComponents(EntitySelect)[1]!.vm.$emit('update:modelValue', 'user-a')
     await flushPromises()
     expect(wrapper.text()).toContain('筛选条件已更改，请点击“查询”应用')
     expect(wrapper.text()).toContain('当前结果：范围 全部 · 智能体 全部')
@@ -596,8 +597,18 @@ describe('记忆筛选辅助目录独立恢复', () => {
     expect(wrapper.text()).toContain('筛选条件已更改')
     await button(wrapper, '查询').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('智能体 agent-a')
+    expect(mocks.page.mock.calls.at(-1)![0]).toMatchObject({
+      scope: 'USER_AGENT',
+      agent_id: 'agent-a',
+      end_user_id: 'user-a'
+    })
+    expect(wrapper.text()).toContain('智能体 客服助手 · 终端用户 客户甲')
     expect(wrapper.text()).not.toContain('筛选条件已更改')
+    wrapper.findAllComponents(EntitySelect)[0]!.vm.$emit('update:modelValue', '')
+    wrapper.findAllComponents(EntitySelect)[1]!.vm.$emit('update:modelValue', '')
+    await flushPromises()
+    expect(wrapper.text()).toContain('智能体 客服助手 · 终端用户 客户甲')
+    expect(wrapper.text()).toContain('筛选条件已更改')
   })
   it('首次读取失败不显示空队列，重试成功后显示真实结果', async () => {
     mocks.list.mockRejectedValueOnce(new Error('记忆读取失败'))
