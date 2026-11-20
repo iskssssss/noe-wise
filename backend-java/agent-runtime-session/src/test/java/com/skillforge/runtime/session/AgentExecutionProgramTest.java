@@ -1842,7 +1842,9 @@ class AgentExecutionProgramTest {
                     new ResultRef("suspended-" + index), com.skillforge.runtime.api.LoopSuspendReason.WORKFLOW_HITL), Optional.of(waiting), Optional.of(card)));
             assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
             var pending = (AgentExecutionProgram.PendingWorkflow) f.materials.pendingDependency().orElseThrow();
-            var response = new TypedPayload("application/json", "{\"action\":\"card\",\"text\":\"用户选择" + index + "\"}");
+            var response = new TypedPayload("application/json", index == 1
+                    ? "{\"action\":\"card\",\"response\":\"\"}"
+                    : "{\"action\":\"card\",\"response\":\"用户补充说明\"}");
             var accepted = f.accept(pending.waiting(), ExecutionStore.WaitKind.WORKFLOW, Map.of(), response, Optional.of(waiting));
             current = assertInstanceOf(Step.Dispatch.class, f.program.continuation(f.run, f.materials, accepted, f.acceptedResponse));
         }
@@ -1850,8 +1852,10 @@ class AgentExecutionProgramTest {
                 new ResultRef("completed")), Optional.empty()));
         var feedback = f.materials.messages().getLast().textContent();
         assertTrue(feedback.contains("工作流曾等待用户操作"));
-        assertTrue(feedback.contains("\"action\":\"card\""));
-        assertTrue(feedback.indexOf("用户选择1") < feedback.indexOf("用户选择2"));
+        assertTrue(feedback.contains("{\"action\":\"card\",\"response\":\"\"}"));
+        assertTrue(feedback.indexOf("\"response\":\"\"") < feedback.indexOf("用户补充说明"));
+        assertTrue(feedback.contains("response 为空只表示没有补充说明"));
+        assertTrue(feedback.contains("不表示未选择或工作流没有输出"));
         assertEquals(3, f.materials.messages().size());
         assertEquals(f.materials, new AgentExecutionProgram(f, f.core, Fixture.LIMITS).open(f.run, f.context));
     }

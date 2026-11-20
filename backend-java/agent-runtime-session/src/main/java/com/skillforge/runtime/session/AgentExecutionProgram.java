@@ -1877,7 +1877,8 @@ public final class AgentExecutionProgram implements ExecutionCoordinator.Program
         if (!(decision instanceof AgentDecisionDecoder.Decoded decoded) || !(decoded.action() instanceof AgentAction.Dispatch dispatch)
                 || !original.target().handle().value().equals(dispatch.handle()) || !original.callId().equals(SessionNativeResponses.callId(before,0))) throw invalid();
         var assistant = SessionNativeResponses.assistant(before,List.of(new ModelToolCall(original.callId(), original.wireName(), original.arguments())));
-        String interaction = humanResponses.isEmpty() ? "" : "\n工作流曾等待用户操作，以下是等待期间已受理并用于恢复的用户响应（按提交顺序）。操作主体是用户，答复时用“你”指代选择者：\n"
+        String interaction = humanResponses.isEmpty() ? "" : "\n工作流曾等待用户操作，以下是等待期间已受理并用于恢复的用户响应（按提交顺序）。操作主体是用户，答复时用“你”指代选择者。"
+                + "按钮响应的 action 是实际选择，response 是可选补充说明；response 为空只表示没有补充说明，不表示未选择或工作流没有输出，无需在答复中强调空字段：\n"
                 + humanResponses.stream().map(TypedPayload::canonicalJson).collect(java.util.stream.Collectors.joining("\n")) + "\n";
         return ModelConversation.append(before.messages(), assistant, List.of(new ModelMessage("execution-workflow-" + before.modelOrdinal(), ModelRole.TOOL,
                 List.of(new ModelContent.Text("工作流执行回执：仅依据返回的实际状态和输出报告结果；失败、取消或未完成不能表述为业务成功。"
