@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElPagination } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
+import type { KnowledgeRebuild } from '../../api/knowledgeRebuild'
 const mocks = vi.hoisted(() => ({ documents: vi.fn() }))
-vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ user: null, identityVersion: 0 }) }))
+vi.mock('../../stores/auth', () => ({
+  useAuthStore: () => ({
+    user: { tenant_id: 'tenant', sub: 'user', permissions: ['foundation.knowledge.read'] },
+    identityVersion: 1
+  })
+}))
 vi.mock('../../api', () => ({
   api: {
     knowledge: {
@@ -13,7 +19,23 @@ vi.mock('../../api', () => ({
     },
     settings: { availableModels: async () => [] }
   },
-  get: async () => ({ status: 'IDLE' }),
+  get: async () =>
+    ({
+      kb_id: 'kb-1',
+      job_id: null,
+      status: 'IDLE',
+      revision: null,
+      target_model_id: null,
+      target_model_revision: null,
+      target_dimensions: null,
+      document_count: 0,
+      ready_documents: 0,
+      unknown_batches: 0,
+      error_code: null,
+      published_revision: null,
+      write_locked: false,
+      base_revision: 0
+    }) satisfies KnowledgeRebuild,
   getSessionId: () => 'test-session',
   post: vi.fn()
 }))
@@ -26,9 +48,10 @@ vi.mock('@skillforge/shared/components/CodeEditor.vue', () => ({
   default: { template: '<div />' }
 }))
 let wrapper: VueWrapper
-const result = (title: string) => ({ items: [{ id: 'doc-1', title, status: 'READY' }], total: 101 })
+const result = (title: string) => ({ items: [{ id: 'doc-1', title, status: 'ready' }], total: 101 })
 beforeEach(() => {
   vi.resetAllMocks()
+  sessionStorage.clear()
   mocks.documents.mockResolvedValueOnce(result('第一页文档'))
 })
 afterEach(() => {
@@ -37,8 +60,13 @@ afterEach(() => {
 })
 async function open() {
   wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
-  await flushPromises()
-  return wrapper.findAllComponents(ElPagination)[0]!
+  const pagination = wrapper.findAllComponents(ElPagination)[0]!
+  await vi.waitFor(() => {
+    expect(mocks.documents).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('第一页文档')
+    expect(pagination.props('disabled')).toBe(false)
+  })
+  return pagination
 }
 describe('知识文档分页失败保留原状态', () => {
   it('下一页读取失败时保留原文档与页码', async () => {

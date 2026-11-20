@@ -2,10 +2,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElInput, ElSelect, ElPagination, ElTabs, ElUpload } from 'element-plus'
 import KnowledgeManagePage from './KnowledgeManagePage.vue'
+import type { KnowledgeRebuild } from '../../api/knowledgeRebuild'
 const mocks = vi.hoisted(() => ({ documents: vi.fn(), upload: vi.fn() }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({
-    user: { tenant_id: 'tenant', sub: 'user', permissions: [] },
+    user: { tenant_id: 'tenant', sub: 'user', permissions: ['foundation.knowledge.read'] },
     identityVersion: 1
   })
 }))
@@ -19,7 +20,23 @@ vi.mock('../../api', () => ({
     },
     settings: { availableModels: async () => [] }
   },
-  get: async () => ({ status: 'IDLE' }),
+  get: async () =>
+    ({
+      kb_id: 'kb-1',
+      job_id: null,
+      status: 'IDLE',
+      revision: null,
+      target_model_id: null,
+      target_model_revision: null,
+      target_dimensions: null,
+      document_count: 0,
+      ready_documents: 0,
+      unknown_batches: 0,
+      error_code: null,
+      published_revision: null,
+      write_locked: false,
+      base_revision: 0
+    }) satisfies KnowledgeRebuild,
   getSessionId: () => 'test-session',
   post: vi.fn()
 }))
@@ -52,7 +69,11 @@ function pagination() {
 }
 async function open() {
   wrapper = mount(KnowledgeManagePage, { attachTo: document.body })
-  await flushPromises()
+  await vi.waitFor(() => {
+    expect(mocks.documents).toHaveBeenCalledTimes(1)
+    expect(wrapper!.text()).toContain('原文档')
+    expect(pagination().props('disabled')).toBe(false)
+  })
 }
 async function fill(title: string, status = '') {
   titleInput().vm.$emit('update:modelValue', title)
@@ -233,13 +254,16 @@ it('上传后读取失败时顶部刷新恢复未筛选列表，不重复上传'
   expect(wrapper!.text()).toContain('文件已上传，最新文档列表尚未读取')
   mocks.documents.mockRejectedValueOnce(new Error('刷新仍失败'))
   await button('刷新').trigger('click')
-  await flushPromises()
+  await vi.waitFor(() => {
+    expect(mocks.documents).toHaveBeenCalledTimes(5)
+    expect(button('刷新').props('disabled')).toBe(false)
+  })
   expect(wrapper!.text()).toContain('文件已上传，最新文档列表尚未读取')
   expect(titleInput().props('modelValue')).toBe('旧标题')
   expect(pagination().props('currentPage')).toBe(2)
   mocks.documents.mockResolvedValueOnce(result('新文件'))
   await button('刷新').trigger('click')
-  await flushPromises()
+  await vi.waitFor(() => expect(wrapper!.text()).toContain('新文件'))
   expect(mocks.documents).toHaveBeenLastCalledWith('kb-1', { page: 1, page_size: 20 })
   expect(wrapper!.text()).toContain('新文件')
   expect(wrapper!.text()).not.toContain('文件已上传，最新文档列表尚未读取')
