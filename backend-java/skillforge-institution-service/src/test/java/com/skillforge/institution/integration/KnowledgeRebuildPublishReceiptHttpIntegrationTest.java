@@ -31,6 +31,16 @@ class KnowledgeRebuildPublishReceiptHttpIntegrationTest extends AbstractIntegrat
  @MockitoBean com.skillforge.institution.knowledge.KnowledgeRebuildScheduler scheduler;
  @MockitoBean EmbeddingProvider embedding; @MockitoBean SearchIndexer indexer; @LocalServerPort int port;
  final HttpClient http=HttpClient.newHttpClient();
+ @org.junit.jupiter.api.AfterAll
+ static void preserveDatabaseEvidence() throws Exception {
+  if (!POSTGRES.isRunning()) return;
+  var evidence=java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("build"),"knowledge-rebuild-receipt-evidence-");
+  var dump=POSTGRES.execInContainer("pg_dump","-U",POSTGRES.getUsername(),"-d",POSTGRES.getDatabaseName(),"--no-owner","--no-privileges");
+  java.nio.file.Files.writeString(evidence.resolve("database.private.sql"),dump.getStdout());
+  java.nio.file.Files.writeString(evidence.resolve("database-dump.stderr.log"),dump.getStderr());
+  java.nio.file.Files.writeString(evidence.resolve("postgres.log"),POSTGRES.getLogs());
+  assertEquals(0,dump.getExitCode(),"重建发布回执原库留证失败："+evidence);
+ }
  @Test void revokedPublisherCanFenceOnlyItsOwnRequest() throws Exception {
   String slug="rebuild-receipt-"+SnowflakeIds.nextId();String tenant=createTenant(tenants,plans,slug);
   TenantContext.setTenantId(tenant);long member=createTestTenantAdministrator(tenant,"receipt-admin","ReceiptTestPassword123");

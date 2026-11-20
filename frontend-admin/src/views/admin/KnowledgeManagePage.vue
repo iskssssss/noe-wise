@@ -237,7 +237,7 @@
         link
         type="warning"
         @click="activeTab = 'rebuild'"
-        >{{ '索引重建 · ' + statusLabel(rebuild.status) }}</ElButton
+        >{{ '索引重建 · ' + rebuildStatusLabel }}</ElButton
       >
     </div>
     <p v-if="rebuild?.write_locked" class="admin-field-help" role="status">
@@ -642,7 +642,7 @@
           type="warning"
           :closable="false"
         /><ElDescriptions v-if="rebuild" :column="1" border
-          ><ElDescriptionsItem label="状态">{{ statusLabel(rebuild.status) }}</ElDescriptionsItem
+          ><ElDescriptionsItem label="状态">{{ rebuildStatusLabel }}</ElDescriptionsItem
           ><ElDescriptionsItem label="文档进度"
             >{{ rebuild.ready_documents }} / {{ rebuild.document_count
             }}<ElProgress
@@ -1506,6 +1506,13 @@ const revisions = ref<KnowledgeBaseRevision[]>([]),
   modelId = ref('')
 const currentRevision = computed(() =>
   revisions.value.find((revision) => String(revision.id) === String(base.value?.active_revision_id))
+)
+const rebuildStatusLabel = computed(() =>
+  rebuild.value?.status === 'READY'
+    ? '重建完成，待发布'
+    : rebuild.value?.status === 'PUBLISHING'
+      ? '发布中'
+      : statusLabel(rebuild.value?.status)
 )
 const policy = {
   model_invocable: true,
