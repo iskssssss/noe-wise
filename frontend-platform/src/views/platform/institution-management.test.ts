@@ -514,6 +514,93 @@ describe('平台公共定义精确修订管理', () => {
     const existing = await open(AgentTemplateDetailPage, definitionPath)
     expect(formModel(existing).model_config_id).toBe('retired')
   })
+  it('空表单只展示必填错误，不发送创建请求或提示结果未知', async () => {
+    const { wrapper } = await openNewDefinition()
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    await expect.poll(() => wrapper.text()).toContain('请输入名称')
+    expect(wrapper.text()).toContain('请输入系统提示词')
+    expect(wrapper.text()).toContain('请选择分发方式')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.el-message--error')).toBeNull()
+    expect(wrapper.text()).not.toContain('操作结果待核对')
+  })
+  it('只缺分发方式时就地提示，补齐后可保存不完整草稿', async () => {
+    const { wrapper } = await openNewDefinition()
+    await fillNewDefinition(wrapper)
+    const distribution = wrapper
+      .findAllComponents(ElSelect)
+      .find((item) => item.props('placeholder') === '请选择分发方式')!
+    distribution.vm.$emit('update:modelValue', '')
+    await button(wrapper, '保存公共定义').trigger('click')
+    await flushPromises()
+    await expect
+      .poll(() => wrapper.findAll('.el-form-item__error').map((item) => item.text()))
+      .toEqual(['请选择分发方式'])
+    expect(mocks.create).not.toHaveBeenCalled()
+    distribution.vm.$emit('update:modelValue', 'OPEN_INSTALL')
+    await button(wrapper, '保存公共定义').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({ role_description: '' })
+      }),
+      expect.any(String)
+    )
+    expect(mocks.previewSaved).not.toHaveBeenCalled()
+  })
+  it('发布校验的角色说明错误就地展示，保留保存草稿能力', async () => {
+    const wrapper = await open(AgentTemplateDetailPage, definitionPath)
+    editPrompt(wrapper, '可保存的草稿')
+    mocks.detail.mockResolvedValueOnce(detail(3))
+    mocks.previewSaved.mockResolvedValueOnce({
+      validation: {
+        valid: false,
+        issues: [
+          { path: 'definition.role_description', code: 'REQUIRED', message: '请填写公开角色简介' }
+        ]
+      },
+      impact: null
+    })
+    await flushPromises()
+    await button(wrapper, '保存并验证').trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('发布前必填，保存草稿时可留空')
+    await expect
+      .poll(() => wrapper.findAll('.el-form-item__error').map((item) => item.text()))
+      .toContain('请填写公开角色简介')
+    expect(wrapper.text()).not.toContain('definition.role_description')
+    expect(button(wrapper, '发布').props('disabled')).toBe(true)
+  })
+  it('保存等待只显示正在提交，响应丢失后才提供原操作核对', async () => {
+    const wrapper = await open(AgentTemplateDetailPage, definitionPath)
+    const response = deferred<void>()
+    mocks.update.mockImplementationOnce(async () => {
+      await response.promise
+      throw failure(0)
+    })
+    editPrompt(wrapper, '等待保存')
+    await flushPromises()
+    await button(wrapper, '保存公共定义').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在提交，请稍候')
+    expect(wrapper.text()).not.toContain('操作结果待核对')
+    expect(
+      wrapper.findAllComponents(ElButton).some((item) => item.text() === '核对原操作回执')
+    ).toBe(false)
+    response.resolve()
+    await flushPromises()
+    expect(wrapper.text()).toContain('操作结果待核对')
+    expect(wrapper.text()).not.toContain('正在提交，请稍候')
+    expect(button(wrapper, '核对原操作回执').exists()).toBe(true)
+    const original = mocks.update.mock.calls[0]
+    await button(wrapper, '核对原操作回执').trigger('click')
+    await flushPromises()
+    expect(mocks.update.mock.calls[1]).toEqual(original)
+    expect(wrapper.text()).not.toContain('操作结果待核对')
+  })
   it('新建时一次保存并验证，详情展示服务端精确修订的验证与影响', async () => {
     const { wrapper, router } = await openNewDefinition()
     await fillNewDefinition(wrapper)
@@ -557,9 +644,11 @@ describe('平台公共定义精确修订管理', () => {
     mocks.detail.mockRejectedValueOnce(new Error('详情暂不可用'))
     await button(wrapper, '保存并验证').trigger('click')
     await flushPromises()
-    expect(document.body.querySelector('.el-message--error')?.textContent).toContain('模板已保存')
+    expect(document.body.querySelector('.el-message--error')?.textContent).toContain(
+      '公共定义已保存'
+    )
     expect(mocks.previewSaved).not.toHaveBeenCalled()
-    await button(wrapper, '重新读取模板').trigger('click')
+    await button(wrapper, '重新读取公共定义').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.previewSaved).toHaveBeenCalledTimes(1)
@@ -576,7 +665,7 @@ describe('平台公共定义精确修订管理', () => {
     mocks.detail.mockRejectedValueOnce(new Error('详情暂不可用')).mockResolvedValueOnce(detail(3))
     await button(wrapper, '保存并验证').trigger('click')
     await flushPromises()
-    await button(wrapper, '重新读取模板').trigger('click')
+    await button(wrapper, '重新读取公共定义').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.previewSaved).not.toHaveBeenCalled()
@@ -589,7 +678,7 @@ describe('平台公共定义精确修订管理', () => {
     await button(wrapper, '保存并验证').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('.el-message--error')?.textContent).toContain(
-      '模板已保存，但验证未完成'
+      '公共定义已保存，但验证未完成'
     )
     expect(button(wrapper, '发布').props('disabled')).toBe(true)
     await button(wrapper, '验证').trigger('click')
@@ -605,8 +694,8 @@ describe('平台公共定义精确修订管理', () => {
     await button(wrapper, '保存并验证').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/platform/agent-templates/new')
-    expect(wrapper.text()).toContain('模板已保存，请从模板列表进入详情后继续')
-    expect(button(wrapper, '保存模板').props('disabled')).toBe(true)
+    expect(wrapper.text()).toContain('公共定义已保存，请从公共定义列表进入详情后继续')
+    expect(button(wrapper, '保存公共定义').props('disabled')).toBe(true)
     expect(button(wrapper, '重读服务端草稿').props('disabled')).toBe(true)
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.previewSaved).not.toHaveBeenCalled()
@@ -626,7 +715,7 @@ describe('平台公共定义精确修订管理', () => {
   it('缺少读取或验证权限时新建页面只提供保存', async () => {
     mocks.auth.user.permissions = ['platform.agent_definitions.create']
     const { wrapper } = await openNewDefinition()
-    expect(button(wrapper, '保存模板').exists()).toBe(true)
+    expect(button(wrapper, '保存公共定义').exists()).toBe(true)
     expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '保存并验证')).toBe(
       false
     )
@@ -662,7 +751,7 @@ describe('平台公共定义精确修订管理', () => {
     await button(wrapper, '保存并验证').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('.el-message--error')?.textContent).toContain(
-      '模板已保存，但验证未完成'
+      '公共定义已保存，但验证未完成'
     )
     expect(button(wrapper, '发布').props('disabled')).toBe(true)
     mocks.previewSaved.mockResolvedValueOnce({
@@ -740,7 +829,7 @@ describe('平台公共定义精确修订管理', () => {
     expect(wrapper.findAllComponents(ElButton).some((item) => item.text() === '保存并验证')).toBe(
       false
     )
-    expect(button(wrapper, '保存模板')).toBeDefined()
+    expect(button(wrapper, '保存公共定义')).toBeDefined()
     expect(mocks.previewSaved).not.toHaveBeenCalled()
   })
   it('验证后自动更新同修订影响即可发布，展示具体绑定缺口及权限可见范围', async () => {
@@ -910,13 +999,13 @@ describe('平台公共定义精确修订管理', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('操作回执已确认，但当前服务端草稿尚未刷新')
-    expect(button(wrapper, '保存模板').props('disabled')).toBe(true)
+    expect(button(wrapper, '保存公共定义').props('disabled')).toBe(true)
     expect(formModel(wrapper).system_prompt).toBe('已经提交的草稿')
     expect(mocks.update).toHaveBeenCalledTimes(1)
     mocks.detail.mockResolvedValue(detail(3))
     await button(wrapper, '重读服务端草稿').trigger('click')
     await flushPromises()
-    expect(button(wrapper, '保存模板').props('disabled')).toBe(false)
+    expect(button(wrapper, '保存公共定义').props('disabled')).toBe(false)
     expect(mocks.update).toHaveBeenCalledTimes(1)
   })
   it('保存后读取实际配置；若已出现其他修订则保留本次内容并明确选择覆盖', async () => {
@@ -938,11 +1027,11 @@ describe('平台公共定义精确修订管理', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(formModel(wrapper).system_prompt).toBe('再次保存的提示词')
-    expect(button(wrapper, '保存模板').props('disabled')).toBe(true)
+    expect(button(wrapper, '保存公共定义').props('disabled')).toBe(true)
     expect(wrapper.text()).toContain('服务端草稿修订 5')
     await button(wrapper, '采用最新草稿（覆盖当前输入）').trigger('click')
     await flushPromises()
     expect(formModel(wrapper).system_prompt).toBe('其他管理者的提示词')
-    expect(button(wrapper, '保存模板').props('disabled')).toBe(false)
+    expect(button(wrapper, '保存公共定义').props('disabled')).toBe(false)
   })
 })

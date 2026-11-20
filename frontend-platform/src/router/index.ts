@@ -140,17 +140,17 @@ const router = createRouter({
         {
           path: 'agent-templates',
           component: () => import('../views/platform/AgentTemplatesPage.vue'),
-          meta: { title: '智能体模板' }
+          meta: { title: '公共定义' }
         },
         {
           path: 'agent-templates/new',
           component: () => import('../views/platform/AgentTemplateDetailPage.vue'),
-          meta: { title: '新建模板' }
+          meta: { title: '新建公共定义' }
         },
         {
           path: 'agent-templates/:id',
           component: () => import('../views/platform/AgentTemplateDetailPage.vue'),
-          meta: { title: '模板配置' }
+          meta: { title: '公共定义配置' }
         },
         {
           path: 'capabilities',

@@ -91,13 +91,13 @@ function startSetup() {
   void setupAction.run(async () => {
     const tenantId = selectedSetupTenant.value
     const definitionId = item.value?.definition_id
-    if (!definitionId) throw Error('模板详情不可用，请重新读取')
+    if (!definitionId) throw Error('公共定义详情不可用，请重新读取')
     if (!allowed('platform.agent_deployments.create')) throw Error('当前账号没有部署创建权限')
     if (!(await deploymentTenants.resolve(tenantId)))
       throw Error('所选机构不在当前部署范围内，请重新选择')
     if (!allowed('platform.agent_deployments.create')) throw Error('当前账号没有部署创建权限')
     if (selectedSetupTenant.value !== tenantId || item.value?.definition_id !== definitionId)
-      throw Error('机构或模板已变化，请重新选择')
+      throw Error('机构或公共定义已变化，请重新选择')
     setupTenant.value = tenantId
     setupDefinition.value = definitionId
     setupStarted.value = true
@@ -116,6 +116,7 @@ function startAnotherSetup() {
 }
 const auth = useAuthStore()
 const formRef = ref<FormInstance>()
+const validationAttempted = ref(false)
 const route = useRoute(),
   router = useRouter(),
   isNew = route.path.endsWith('/new'),
@@ -506,7 +507,7 @@ async function commit(command: NonNullable<typeof pending.value>) {
       if (failure) throw failure
     } catch {
       refreshRequired.value = true
-      message.warning('模板已保存，详情导航失败，请从模板列表重新进入。')
+      message.warning('公共定义已保存，详情导航失败，请从公共定义列表重新进入。')
     } finally {
       committedNavigation.value = false
     }
@@ -526,10 +527,10 @@ async function commit(command: NonNullable<typeof pending.value>) {
       } catch (reason) {
         if (reason instanceof HttpClientError) reason.claimFeedback()
         if (allowed(command.permission))
-          action.error.value = `模板已保存，但验证未完成：${reason instanceof Error ? reason.message : '请重新验证'}。`
+          action.error.value = `公共定义已保存，但验证未完成：${reason instanceof Error ? reason.message : '请重新验证'}。`
       }
     } else if (command.validateAfterSave && allowed(command.permission)) {
-      message.warning('模板已保存，请核对当前草稿后验证。')
+      message.warning('公共定义已保存，请核对当前草稿后验证。')
     }
   }
 }
@@ -549,9 +550,9 @@ function save(validateAfterSave = false) {
   )
     return
   void action.run(async () => {
-    await formRef.value?.validate()
-    if (!form.value.name.trim()) throw new Error('模板名称不能为空')
-    if (!meta.distribution_policy) throw new Error('请选择定义分发方式')
+    validationAttempted.value = true
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid || !meta.distribution_policy) return
     validateEntries()
     if (definition.capabilities.some((mount) => !mount.capability_definition_id))
       throw Error('请选择每个基础能力')
@@ -571,7 +572,7 @@ function save(validateAfterSave = false) {
     const key = crypto.randomUUID()
     const command = {
       permission: target ? 'platform.agent_definitions.edit' : 'platform.agent_definitions.create',
-      label: '模板已保存',
+      label: '公共定义已保存',
       validateAfterSave,
       definition: payload.definition,
       run: () =>
@@ -752,8 +753,10 @@ async function validateCurrent(afterSave = false) {
     result.validation.valid && result.impact ? target.draft_revision : undefined
   previewStale.value = !result.impact
   if (result.validation.valid && result.impact)
-    message.success(afterSave ? '模板已保存并验证，发布影响已更新' : '模板验证通过，发布影响已更新')
-  else if (afterSave) message.warning('模板已保存，但验证未通过或影响不可用，请检查结果。')
+    message.success(
+      afterSave ? '公共定义已保存并验证，发布影响已更新' : '公共定义验证通过，发布影响已更新'
+    )
+  else if (afterSave) message.warning('公共定义已保存，但验证未通过或影响不可用，请检查结果。')
 }
 watch(snapshot, () => {
   previewStale.value = true
@@ -800,7 +803,7 @@ async function reloadAfterCreate() {
     !allowed('platform.agent_definitions.validate') ||
     !allowed('platform.agent_definitions.read')
   ) {
-    message.warning('模板已保存，请核对当前草稿和权限后重新验证。')
+    message.warning('公共定义已保存，请核对当前草稿和权限后重新验证。')
     return
   }
   await action.run(async () => {
@@ -808,7 +811,7 @@ async function reloadAfterCreate() {
       await validateCurrent(true)
     } catch (reason) {
       if (reason instanceof HttpClientError) reason.claimFeedback()
-      action.error.value = `模板已保存，但验证未完成：${reason instanceof Error ? reason.message : '请重新验证'}。`
+      action.error.value = `公共定义已保存，但验证未完成：${reason instanceof Error ? reason.message : '请重新验证'}。`
     }
   })
 }
@@ -843,8 +846,8 @@ const formTipId = useId()
 
 <template>
   <AdminPage
-    :title="item?.name ?? '新建智能体模板'"
-    description="模板定义包含行为、预算、能力和机构安装时需要绑定的资源槽位"
+    :title="item?.name ?? '新建公共定义'"
+    description="公共定义包含行为、预算、能力和机构安装时需要绑定的资源槽位"
   >
     <template #extra>
       <RouterLink :to="{ path: '/platform/agent-templates', query: listContext }">
@@ -930,7 +933,7 @@ const formTipId = useId()
       </template>
     </template>
     <section v-if="setupOpened" v-show="setupOpen" class="admin-card" aria-label="向机构授权并部署">
-      <p class="admin-field-help">选择目标机构后继续；模板草稿保留在当前页面。</p>
+      <p class="admin-field-help">选择目标机构后继续；公共定义草稿保留在当前页面。</p>
       <ElButton
         v-for="tenant in setupStarted ? [] : recoverableTenants"
         :key="tenant"
@@ -983,7 +986,7 @@ const formTipId = useId()
       v-if="load.error.value || action.error.value || setupAction.error.value"
       :title="
         load.error.value && pendingValidationRevision
-          ? `模板已保存，但详情读取失败：${load.error.value}。请重新读取后继续验证。`
+          ? `公共定义已保存，但详情读取失败：${load.error.value}。请重新读取后继续验证。`
           : load.error.value || action.error.value || setupAction.error.value
       "
       :closable="false"
@@ -999,22 +1002,24 @@ const formTipId = useId()
       v-if="load.error.value && !ready"
       :loading="load.loading.value"
       @click="reloadAfterCreate()"
-      >重新读取模板</ElButton
+      >重新读取公共定义</ElButton
     >
     <ElAlert
       v-if="pending"
-      title="操作结果待核对，输入与原请求身份已保留；只能核对原操作，不能创建新的写入意图。"
-      type="warning"
+      :title="
+        action.busy.value
+          ? '正在提交，请稍候；请勿重复操作。'
+          : '操作结果待核对，输入与原请求身份已保留；只能核对原操作，不能创建新的写入意图。'
+      "
+      :type="action.busy.value ? 'info' : 'warning'"
       :closable="false"
     />
-    <ElButton v-if="pending" :loading="action.busy.value" @click="retryPending"
-      >核对原操作回执</ElButton
-    >
+    <ElButton v-if="pending && !action.busy.value" @click="retryPending">核对原操作回执</ElButton>
     <ElAlert
       v-if="refreshRequired"
       :title="
         isNew
-          ? '模板已保存，请从模板列表进入详情后继续；不要重复创建。'
+          ? '公共定义已保存，请从公共定义列表进入详情后继续；不要重复创建。'
           : '操作回执已确认，但当前服务端草稿尚未刷新。请重读服务端草稿后继续；不要重复提交已确认操作。'
       "
       type="warning"
@@ -1059,7 +1064,7 @@ const formTipId = useId()
       :stale="!previewCurrent"
     />
     <ElAlert
-      v-for="issue in issues"
+      v-for="issue in issues.filter((value) => value.path !== 'definition.role_description')"
       :key="issue.path + issue.code"
       :title="issue.path + ': ' + issue.message"
       type="warning"
@@ -1114,7 +1119,11 @@ const formTipId = useId()
           >
         </p>
         <div class="admin-form-grid">
-          <ElFormItem label="分发方式" required>
+          <ElFormItem
+            label="分发方式"
+            required
+            :error="validationAttempted && !meta.distribution_policy ? '请选择分发方式' : undefined"
+          >
             <ElSelect
               v-model="meta.distribution_policy"
               :disabled="Boolean(item?.published_at)"
@@ -1139,7 +1148,9 @@ const formTipId = useId()
               <ElOption label="付费" value="paid" />
             </ElSelect>
 
-            <FieldTip :id="formTipId + '-field-3'">选择免费或付费，付费模板需要填写价格。</FieldTip>
+            <FieldTip :id="formTipId + '-field-3'"
+              >选择免费或付费，付费公共定义需要填写价格。</FieldTip
+            >
           </ElFormItem>
           <ElFormItem v-if="meta.price_type === 'paid'" label="价格（分）">
             <ElInputNumber
@@ -1154,7 +1165,11 @@ const formTipId = useId()
               >以分为单位填写非负整数，例如 100 表示 1 元。</FieldTip
             >
           </ElFormItem>
-          <ElFormItem class="wide" label="角色说明">
+          <ElFormItem
+            class="wide"
+            label="角色说明"
+            :error="entryError('definition.role_description')"
+          >
             <ElInput
               v-described-by="formTipId + '-field-5'"
               :aria-describedby="formTipId + '-field-5'"
@@ -1163,7 +1178,9 @@ const formTipId = useId()
               :rows="3"
             />
 
-            <FieldTip :id="formTipId + '-field-5'">说明安装后智能体在协作中的职责。</FieldTip>
+            <FieldTip :id="formTipId + '-field-5'"
+              >说明安装后智能体在协作中的职责。发布前必填，保存草稿时可留空。</FieldTip
+            >
           </ElFormItem>
         </div>
         <ElCollapse>
@@ -1180,7 +1197,7 @@ const formTipId = useId()
                 />
 
                 <FieldTip :id="formTipId + '-field-0'"
-                  >填写模板所属分类，便于机构在模板目录中查找。</FieldTip
+                  >填写公共定义所属分类，便于机构在公共定义目录中查找。</FieldTip
                 >
               </ElFormItem>
               <ElFormItem label="标签">
@@ -1194,7 +1211,9 @@ const formTipId = useId()
                   allow-create
                 />
 
-                <FieldTip :id="formTipId + '-field-1'">选择或输入模板标签，支持多个标签。</FieldTip>
+                <FieldTip :id="formTipId + '-field-1'"
+                  >选择或输入公共定义标签，支持多个标签。</FieldTip
+                >
               </ElFormItem>
               <ElFormItem label="图标地址">
                 <ElInput
@@ -1203,7 +1222,7 @@ const formTipId = useId()
                   v-model="meta.icon_url"
                 />
 
-                <FieldTip :id="formTipId + '-field-2'">填写用于模板展示的图标 URL。</FieldTip>
+                <FieldTip :id="formTipId + '-field-2'">填写用于公共定义展示的图标 URL。</FieldTip>
               </ElFormItem>
             </div>
           </ElCollapseItem>
@@ -1211,8 +1230,8 @@ const formTipId = useId()
       </ElCard>
 
       <ElCard class="admin-card">
-        <h3>模板能力 · {{ definition.capabilities.length }} 项</h3>
-        <p class="admin-muted">按需添加固定能力；没有挂载时仍可保存模板。</p>
+        <h3>公共定义能力 · {{ definition.capabilities.length }} 项</h3>
+        <p class="admin-muted">按需添加固定能力；没有挂载时仍可保存公共定义。</p>
         <ElCard
           class="admin-card"
           v-for="(mount, index) in definition.capabilities"
@@ -1401,7 +1420,7 @@ const formTipId = useId()
                   />
 
                   <FieldTip :id="formTipId + '-field-13' + '-' + entryKey(slot)"
-                    >填写能力槽的稳定标识，供模板绑定引用。</FieldTip
+                    >填写能力槽的稳定标识，供公共定义绑定引用。</FieldTip
                   >
                 </ElFormItem>
                 <ElFormItem label="显示名称" :error="entryError(`resource_slots[${index}].label`)">
@@ -1412,7 +1431,7 @@ const formTipId = useId()
                   />
 
                   <FieldTip :id="formTipId + '-field-14' + '-' + entryKey(slot)"
-                    >填写机构安装模板时看到的槽位名称。</FieldTip
+                    >填写机构安装公共定义时看到的槽位名称。</FieldTip
                   >
                 </ElFormItem>
                 <ElFormItem label="类型">
@@ -1520,7 +1539,7 @@ const formTipId = useId()
           native-type="submit"
           :loading="action.busy.value"
           :disabled="conflict || !!pending || refreshRequired"
-          >保存模板</ElButton
+          >保存公共定义</ElButton
         >
         <ElButton
           v-if="
@@ -1538,7 +1557,7 @@ const formTipId = useId()
         >
       </div>
     </ElForm>
-    <ElDrawer v-model="historyOpen" title="模板发布历史" size="760px" append-to-body>
+    <ElDrawer v-model="historyOpen" title="公共定义发布历史" size="760px" append-to-body>
       <FeedbackNotice
         v-if="history.error.value || action.error.value"
         :title="history.error.value || action.error.value"

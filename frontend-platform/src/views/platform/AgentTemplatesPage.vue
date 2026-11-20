@@ -52,13 +52,13 @@ onMounted(reload)
 </script>
 
 <template>
-  <AdminPage title="智能体模板" description="编辑、验证与发布可开放安装或授权部署的公共定义">
+  <AdminPage title="公共定义" description="编辑、验证与发布可开放安装或授权部署的公共定义">
     <template #extra>
       <RouterLink
         v-permission="['platform.agent_definitions.create']"
         :to="{ path: '/platform/agent-templates/new', query: listContext }"
       >
-        <ElButton type="primary">新增模板</ElButton>
+        <ElButton type="primary">新增公共定义</ElButton>
       </RouterLink>
     </template>
     <ElForm
@@ -66,8 +66,8 @@ onMounted(reload)
       class="admin-filters filters"
       @submit.prevent="submitFilters"
     >
-      <ElInput v-model="name" aria-label="模板名称" placeholder="搜索名称" clearable />
-      <ElSelect v-model="status" aria-label="模板状态" clearable placeholder="全部状态">
+      <ElInput v-model="name" aria-label="公共定义名称" placeholder="搜索名称" clearable />
+      <ElSelect v-model="status" aria-label="公共定义状态" clearable placeholder="全部状态">
         <ElOption
           v-for="s in ['draft', 'published', 'deprecated', 'archived']"
           :key="s"
@@ -84,21 +84,21 @@ onMounted(reload)
       :closable="false"
       type="error"
     />
-    <p class="admin-muted" role="status">共 {{ total }} 个模板 · 点击名称维护定义与发布</p>
+    <p class="admin-muted" role="status">共 {{ total }} 个公共定义 · 点击名称维护定义与发布</p>
     <ElTable
       table-layout="auto"
       :empty-text="
         load.loading.value
-          ? '正在读取模板…'
+          ? '正在读取公共定义…'
           : load.error.value
-            ? '模板列表尚未读取，请查看上方错误'
-            : '当前已查询范围没有模板，可调整名称或状态后查询'
+            ? '公共定义列表尚未读取，请查看上方错误'
+            : '当前已查询范围没有公共定义，可调整名称或状态后查询'
       "
       :data="rows"
       v-loading="load.loading.value"
       style="width: 100%"
     >
-      <ElTableColumn prop="name" label="模板" min-width="220" show-overflow-tooltip>
+      <ElTableColumn prop="name" label="公共定义" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">
           <RouterLink
             :to="{ path: '/platform/agent-templates/' + row.definition_id, query: listContext }"

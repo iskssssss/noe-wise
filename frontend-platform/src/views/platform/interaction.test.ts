@@ -844,7 +844,7 @@ describe('新平台直接 Element Plus 交互', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(mocks.createTemplate).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('模板已保存，请从模板列表进入详情后继续')
+    expect(wrapper.text()).toContain('公共定义已保存，请从公共定义列表进入详情后继续')
     expect(mocks.updateTemplate).not.toHaveBeenCalled()
   })
   it('机构接入编辑抽屉保持右侧顶层且禁止遮罩关闭', async () => {

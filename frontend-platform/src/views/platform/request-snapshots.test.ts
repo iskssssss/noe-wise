@@ -98,7 +98,7 @@ describe('平台读取请求快照', () => {
       status: 'published',
       page: 3
     })
-    const input = wrapper.get('input[aria-label="模板名称"]')
+    const input = wrapper.get('input[aria-label="公共定义名称"]')
     expect((input.element as HTMLInputElement).value).toBe('客户')
     await input.setValue('尚未查询')
     const detail = wrapper.findAll('a').find((link) => link.text() === '客户助手')!
@@ -109,7 +109,7 @@ describe('平台读取请求快照', () => {
       list_status: 'published',
       list_page: '3'
     })
-    const create = wrapper.findAll('a').find((link) => link.text() === '新增模板')!
+    const create = wrapper.findAll('a').find((link) => link.text() === '新增公共定义')!
     expect(
       new URL(create.attributes('href')!, 'http://test.local').searchParams.get('list_page')
     ).toBe('3')
@@ -119,9 +119,9 @@ describe('平台读取请求快照', () => {
       status: 'published',
       page: 3
     })
-    expect((restored.get('input[aria-label="模板名称"]').element as HTMLInputElement).value).toBe(
-      '客户'
-    )
+    expect(
+      (restored.get('input[aria-label="公共定义名称"]').element as HTMLInputElement).value
+    ).toBe('客户')
   })
 
   it('模板筛选恢复时忽略无效状态和页码', async () => {
@@ -177,11 +177,11 @@ describe('平台读取请求快照', () => {
       ]
     })
     const wrapper = await open(SessionsPage)
-    expect(wrapper.text()).toContain('状态匹配回答或执行任一状态')
-    expect(wrapper.text()).toContain('无最终回答')
+    expect(wrapper.text()).toContain('状态匹配公开回复或执行任一状态')
+    expect(wrapper.text()).toContain('暂无回复')
     const select = wrapper
       .findAllComponents(ElSelect)
-      .find((item) => item.props('ariaLabel') === '回答或执行状态')!
+      .find((item) => item.props('ariaLabel') === '回复或执行状态')!
     expect(select.findAllComponents(ElOption).map((item) => item.props('value'))).toContain('NONE')
     select.vm.$emit('update:modelValue', 'NONE')
     await wrapper.get('form.filters').trigger('submit')
