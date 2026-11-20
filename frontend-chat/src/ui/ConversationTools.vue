@@ -19,7 +19,7 @@ import {
   type FormInstance
 } from './controls'
 import { computed, onBeforeUnmount, ref, watch, useId } from 'vue'
-import { query, type Client } from '../client'
+import { query, RequestError, type Client } from '../client'
 import { GOAL_DEFAULT_MAX_ROUNDS, GOAL_MAX_ROUNDS } from '../commands'
 import type { GoalStatus, Reference, RunDeliveryStatus, Work } from '../protocol'
 import { mayDiscard, validateForm } from './panel'
@@ -64,9 +64,10 @@ const goalStateLabels: Record<string, string> = {
 const hasUnfinishedGoal = computed(() =>
   ['ACTIVE', 'PAUSED'].includes(goal.value?.goal?.state ?? '')
 )
+const goalUnavailable = computed(() => goal.value?.support?.available === false)
 /** 宿主停止原因在界面使用业务文案，保留模型或用户提供的具体业务说明。 */
 const goalReasonLabels: Record<string, string> = {
-  user_paused: '你已暂停目标；点击“继续目标”恢复执行。',
+  user_paused: '你已暂停目标。',
   run_cancelled: '本次执行已取消。',
   run_failed: '本次执行失败。',
   run_terminated: '本次执行已结束。',
@@ -159,13 +160,15 @@ async function operation(action: () => Promise<void>) {
 async function read() {
   const signal = abort.signal
   await operation(async () => {
-    if (section.value === 'goal')
-      goal.value = await props.client.json<GoalStatus>(
+    if (section.value === 'goal') {
+      const latest = await props.client.json<GoalStatus>(
         `/chat/goals?${query({ session_id: props.session })}`,
         'GET',
         undefined,
         abort.signal
       )
+      if (!signal.aborted && !disposed) goal.value = latest
+    }
     if (section.value === 'work') {
       const list = await props.client.json<{ items: Work[] }>(
         `/chat/work/history?${query({ session_id: props.session })}`,
@@ -184,19 +187,47 @@ async function choose() {
   await read()
 }
 async function goalCommand(action: 'create' | 'pause' | 'resume') {
+  if (action !== 'pause' && goalUnavailable.value) return
   if (busy.value || (action === 'create' && !(await validateForm(goalRef.value)))) return
+  const signal = abort.signal
   await operation(async () => {
     const submitted = objective.value,
-      scope = `goal:${action}:${submitted}:${rounds.value}:${goal.value?.goal?.revision ?? 0}`
-    const value = await command<GoalStatus>(scope, `/chat/goals/${action}`, {
-      session_id: props.session,
-      command_id: key(scope),
-      ...(action === 'create'
-        ? { objective: submitted.trim(), max_rounds: rounds.value }
-        : { expected_revision: goal.value?.goal?.revision })
-    })
-    if (disposed) return
-    goal.value = value
+      scope = `${props.session}:goal:${action}`
+    let value: GoalStatus
+    try {
+      value = await command<GoalStatus>(scope, `/chat/goals/${action}`, {
+        session_id: props.session,
+        command_id: key(scope),
+        ...(action === 'create'
+          ? { objective: submitted.trim(), max_rounds: rounds.value }
+          : { expected_revision: goal.value?.goal?.revision })
+      })
+    } catch (cause) {
+      if (signal.aborted || disposed) return
+      if (
+        cause instanceof RequestError &&
+        ['goal_revision_conflict', 'goal_state_conflict', 'goal_tools_unavailable'].includes(
+          cause.code ?? ''
+        )
+      ) {
+        frozen.delete(scope)
+        keys.delete(scope)
+        try {
+          const latest = await props.client.json<GoalStatus>(
+            `/chat/goals?${query({ session_id: props.session })}`,
+            'GET',
+            undefined,
+            signal
+          )
+          if (!signal.aborted && !disposed) goal.value = latest
+        } catch {
+          throw new Error(`${cause.message} 最新状态未能读取，请点击“刷新”核对。`)
+        }
+      }
+      throw cause
+    }
+    if (disposed || signal.aborted) return
+    goal.value = { ...value, support: value.support ?? goal.value?.support }
     if (action === 'create' && objective.value === submitted) {
       objective.value = ''
       rounds.value = GOAL_DEFAULT_MAX_ROUNDS
@@ -204,9 +235,7 @@ async function goalCommand(action: 'create' | 'pause' | 'resume') {
     feedback.value =
       action === 'create'
         ? '持续目标已创建，可关闭面板查看执行进度。'
-        : action === 'pause'
-          ? '持续目标已暂停。'
-          : '持续目标已继续。'
+        : `持续目标：${goalStateLabels[value.goal?.state ?? ''] ?? '状态待核实'}。`
   })
 }
 async function readDelivery() {
@@ -259,6 +288,7 @@ watch(
     abort.abort()
     abort = new AbortController()
     works.value = []
+    goal.value = undefined
     work.value = undefined
     busy.value = false
     if (props.modelValue) void read()
@@ -318,7 +348,8 @@ const formTipId = useId()
     >
     <ChatTabs v-model="section" :before-leave="beforeTabLeave" @tab-change="choose">
       <ChatTabPane lazy name="goal" label="目标"
-        ><p v-if="!goal?.goal && !busy && !error" class="muted">暂无持续目标，可在下方创建。</p>
+        ><p v-if="goalUnavailable" class="muted">{{ goal?.support?.reason }}</p>
+        <p v-else-if="!goal?.goal && !busy && !error" class="muted">暂无持续目标，可在下方创建。</p>
         <article v-if="goal?.goal" class="panel-card">
           <h3>{{ goal.goal.objective }}</h3>
           <p>
@@ -333,9 +364,9 @@ const formTipId = useId()
             @click="goalCommand('pause')"
             >暂停目标</ChatButton
           ><ChatButton
-            v-if="goal.goal.state === 'PAUSED' || goal.goal.state === 'BLOCKED'"
+            v-if="goal.goal.state === 'PAUSED'"
             native-type="button"
-            :disabled="busy"
+            :disabled="busy || goalUnavailable"
             @click="goalCommand('resume')"
             >继续目标</ChatButton
           >
@@ -343,7 +374,7 @@ const formTipId = useId()
         <p v-if="hasUnfinishedGoal" class="muted">
           当前目标结束后可创建新目标；如需处理其他目标，请关闭面板后新建会话。
         </p>
-        <details v-else class="new-goal" :open="!goal?.goal">
+        <details v-else-if="goal && !goalUnavailable" class="new-goal" :open="!goal?.goal">
           <summary>创建持续目标</summary>
           <ChatForm
             ref="goalRef"

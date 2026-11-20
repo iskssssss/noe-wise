@@ -38,8 +38,15 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, useId } from 'vue'
 import { useConversation } from './session'
 import { command } from './commands'
-import { query } from './client'
-import type { Collaboration, GoalStatus, Pending, RunDeliveryStatus, Team } from './protocol'
+import { query, RequestError } from './client'
+import type {
+  Collaboration,
+  GoalStatus,
+  GoalSupport,
+  Pending,
+  RunDeliveryStatus,
+  Team
+} from './protocol'
 import ConversationTimeline from './ui/ConversationTimeline.vue'
 import ComposerAttachments from './ui/ComposerAttachments.vue'
 import ArtifactPanel from './ui/ArtifactPanel.vue'
@@ -220,6 +227,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', protectDraft))
 const commandBusy = ref(false),
   commands = ref<{ command: string; title: string; description: string }[]>([])
 const commandKeys = new Map<string, string>()
+const goalSupport = ref<GoalSupport | null>()
 const controlBodies = new Map<string, { path: string; body: unknown }>()
 const commandIndex = ref(0),
   commandDismissed = ref(false)
@@ -255,14 +263,18 @@ watch(
   () => [c.client, c.target, c.userId, c.targetDisabled],
   async () => {
     commands.value = []
+    goalSupport.value = undefined
     const api = c.client,
       target = c.target
     if (!api || !target || c.targetDisabled) return
     try {
-      const data = await api.json<{ items: typeof commands.value }>(
+      const data = await api.json<{ items: typeof commands.value; goal?: GoalSupport | null }>(
         `/chat/commands?${query({ ...c.selectedTarget, end_user_id: c.userId })}`
       )
-      if (c.client === api && c.target === target && !c.targetDisabled) commands.value = data.items
+      if (c.client === api && c.target === target && !c.targetDisabled) {
+        commands.value = data.items
+        goalSupport.value = data.goal
+      }
     } catch {
       /* 命令目录不可用不影响手动输入和会话恢复。 */
     }
@@ -735,6 +747,13 @@ async function executeCommand(source: string, parsed: NonNullable<ReturnType<typ
   const api = c.client,
     selected = c.target
   if (!api) return
+  if (
+    ['goal-create', 'goal-resume'].includes(parsed.kind) &&
+    goalSupport.value?.available === false
+  ) {
+    c.error = goalSupport.value.reason ?? '当前智能体暂不支持持续目标，请使用普通对话。'
+    return
+  }
   commandBusy.value = true
   c.error = ''
   let id = commandKeys.get(source)
@@ -743,6 +762,15 @@ async function executeCommand(source: string, parsed: NonNullable<ReturnType<typ
     commandKeys.set(source, id)
   }
   try {
+    if (['goal-create', 'goal-resume'].includes(parsed.kind) && !goalSupport.value) {
+      const catalog = await api.json<{ goal: GoalSupport }>(
+        `/chat/commands?${query({ ...c.selectedTarget, end_user_id: c.userId })}`
+      )
+      if (api !== c.client || selected !== c.target) return
+      goalSupport.value = catalog.goal
+      if (catalog.goal?.available === false)
+        throw new Error(catalog.goal.reason ?? '当前智能体暂不支持持续目标。')
+    }
     if (parsed.kind === 'delivery' && !c.runId) {
       c.notice = '当前没有可查询的运行。'
       return
@@ -757,9 +785,32 @@ async function executeCommand(source: string, parsed: NonNullable<ReturnType<typ
       const scope = `${c.clientRef}:${session}:${source}`,
         frozen = controlBodies.get(scope) ?? { path, body }
       controlBodies.set(scope, frozen)
-      const result = await api!.json<T>(frozen.path, 'POST', frozen.body)
-      controlBodies.delete(scope)
-      return result
+      try {
+        const result = await api!.json<T>(frozen.path, 'POST', frozen.body)
+        controlBodies.delete(scope)
+        return result
+      } catch (cause) {
+        if (
+          cause instanceof RequestError &&
+          ['goal_revision_conflict', 'goal_state_conflict', 'goal_tools_unavailable'].includes(
+            cause.code ?? ''
+          )
+        ) {
+          controlBodies.delete(scope)
+          commandKeys.delete(source)
+          let latest: GoalStatus
+          try {
+            latest = await api!.json<GoalStatus>(`/chat/goals?${query({ session_id: session })}`)
+          } catch {
+            throw new Error(`${cause.message} 最新状态未能读取，请打开“会话工具”刷新核对。`)
+          }
+          if (api === c.client && selected === c.target && session === c.sessionId) {
+            if (latest.support) goalSupport.value = latest.support
+          }
+          throw new Error(`${cause.message} 已读取最新状态，可在“会话工具”查看。`, { cause })
+        }
+        throw cause
+      }
     }
     if (parsed.kind === 'plan') {
       const value = await control<Collaboration>('/chat/runs/plan-mode', {

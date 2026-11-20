@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { RequestError } from './client'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
 import { ChatMessageBox, ChatPopover, ChatUpload } from './ui/controls'
@@ -72,7 +73,7 @@ afterAll(() => {
 function createState() {
   return reactive({
     client: {
-      json: vi.fn(async (_path: string): Promise<unknown> => ({
+      json: vi.fn(async (_path: string, _method?: string, _body?: unknown): Promise<unknown> => ({
         items: [
           { command: '/plan', title: '规划', description: '规划命令' },
           { command: '/goal', title: '目标', description: '目标命令' }
@@ -739,6 +740,72 @@ describe('长文本粘贴附件接入', () => {
         )
         expect(holder.state.notice).not.toContain(long)
         expect(holder.state.notice.length).toBeLessThan(100)
+      } finally {
+        wrapper.unmount()
+      }
+    }
+  )
+  it('手输目标命令时先确认能力，缺少工具不创建会话且保留正文', async () => {
+    holder.state.draft = '/goal --rounds 1 核对计算'
+    holder.state.client.json.mockResolvedValue({
+      items: [],
+      goal: { available: false, reason: '请配置目标工具后发布，也可以使用普通对话。' }
+    })
+    const wrapper = renderComposer()
+    try {
+      await wrapper.get('.composer-form').trigger('submit')
+      await flushPromises()
+      expect(holder.state.ensureSession).not.toHaveBeenCalled()
+      expect(holder.state.submit).not.toHaveBeenCalled()
+      expect(holder.state.draft).toBe('/goal --rounds 1 核对计算')
+      expect(holder.state.fail).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('请配置目标工具') })
+      )
+      expect(
+        holder.state.client.json.mock.calls.every(([path]) => path.startsWith('/chat/commands'))
+      ).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it.each(['goal_revision_conflict', 'network_unknown'])(
+    '目标命令按明确拒绝与未知结果处理原请求：%s',
+    async (code) => {
+      holder.state.sessionId = 's'
+      holder.state.draft = '/goal pause'
+      let writes = 0
+      let reads = 0
+      holder.state.client.json.mockImplementation(async (_path, method) => {
+        if (method === 'POST' && ++writes === 1)
+          throw new RequestError('未确认暂停', code === 'network_unknown' ? 0 : 409, code)
+        return {
+          goal: {
+            revision: ++reads === 1 ? 7 : 9,
+            state: method === 'POST' ? 'PAUSED' : 'ACTIVE',
+            rounds_started: 0,
+            max_rounds: 1
+          }
+        }
+      })
+      const wrapper = renderComposer()
+      try {
+        await wrapper.get('.composer-form').trigger('submit')
+        await flushPromises()
+        expect(writes).toBe(1)
+        expect(holder.state.draft).toBe('/goal pause')
+        await wrapper.get('.composer-form').trigger('submit')
+        await flushPromises()
+        const posts = holder.state.client.json.mock.calls.filter(
+          ([, method]) => method === 'POST'
+        ) as unknown as [string, string, { command_id: string; expected_revision: number }][]
+        expect(posts).toHaveLength(2)
+        expect(posts[0][2].expected_revision).toBe(7)
+        if (code === 'network_unknown') expect(posts[1][2]).toEqual(posts[0][2])
+        else {
+          expect(posts[1][2].expected_revision).toBe(9)
+          expect(posts[1][2].command_id).not.toBe(posts[0][2].command_id)
+        }
+        expect(holder.state.notice).toContain('已暂停')
       } finally {
         wrapper.unmount()
       }

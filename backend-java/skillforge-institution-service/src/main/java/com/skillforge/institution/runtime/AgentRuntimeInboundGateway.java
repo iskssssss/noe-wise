@@ -34,17 +34,19 @@ public class AgentRuntimeInboundGateway implements ChatRuntimeGateway {
     private final SessionLogPort log;
     private final Clock clock;
     private final AgentRuntimeGoalDriver goals;
+    private final AgentRuntimeGoalSupport goalSupport;
     private final DeliverableService deliverables;
     private final WorkflowPortal workflows;
     private final AgentRuntimeExecutionProjection projection;
 
     public AgentRuntimeInboundGateway(AgentRuntimeExecutionGateway executions,ExecutionStore store,AgentRunBindings bindings,
             SessionLogPort log,Clock clock,AgentRuntimeGoalDriver goals,DeliverableService deliverables,
-            WorkflowPortal workflows,AgentRuntimeExecutionProjection projection) {
+            WorkflowPortal workflows,AgentRuntimeExecutionProjection projection,AgentRuntimeGoalSupport goalSupport) {
         this.executions=Objects.requireNonNull(executions);this.store=Objects.requireNonNull(store);this.bindings=Objects.requireNonNull(bindings);
         this.log=Objects.requireNonNull(log);this.clock=Objects.requireNonNull(clock);this.goals=Objects.requireNonNull(goals);
         this.deliverables=Objects.requireNonNull(deliverables);this.workflows=Objects.requireNonNull(workflows);this.projection=Objects.requireNonNull(projection);
         collaboration=new SessionCollaboration(log);humans=new SessionHumanAssistance(log);
+        this.goalSupport=Objects.requireNonNull(goalSupport);
     }
     @Override public ChatResult submit(Submission submission) {
         return executions.submit(submission);
@@ -64,6 +66,11 @@ public class AgentRuntimeInboundGateway implements ChatRuntimeGateway {
     }
     public Optional<AgentRuntimeGoalDriver.Status> goal(SessionView session) {
         var actor=executions.authorizeSession(session,input("goal-query"),"runtime.session.query");return goals.read(actor.owner()).map(value->publication(actor.owner(),value));
+    }
+    public AgentRuntimeGoalSupport.Availability goalSupport(SessionView session) {
+        var actor=executions.authorizeSession(session,input("goal-support"),"runtime.session.query");
+        return goalSupport.read(Long.parseLong(actor.owner().sessionRef().tenantId().value()),
+                Long.parseLong(bindings.currentPrimaryAgent(actor.owner()).value()));
     }
     public AgentRuntimeGoalDriver.Status createGoal(SessionView session,String commandId,String objective,int maxRounds) {
         if(objective==null||objective.isBlank()||objective.length()>SessionGoal.MAX_OBJECTIVE_LENGTH||maxRounds<SessionGoal.MIN_ROUNDS||maxRounds>SessionGoal.MAX_ROUNDS)
@@ -85,6 +92,9 @@ public class AgentRuntimeInboundGateway implements ChatRuntimeGateway {
         var input=new InputId(commandId);var actor=executions.authorizeSession(session,input,"runtime.session.query");var owner=actor.owner();
         if(resume&&goals.read(owner).map(value->deliverables.completionView(owner,value.goal()).pending()).orElse(false))throw new ApiException(HttpStatus.CONFLICT,"goal_completion_pending");
         var primary=bindings.currentPrimaryAgent(owner);var callback=callback(session,owner);
+        // 已落盘命令回放仍由原回执处理；只有基于当前版本的新恢复需要检查当前发布能力。
+        if(resume&&goals.read(owner).filter(value->value.goal().revision()==revision).isPresent())
+            goalSupport.require(Long.parseLong(owner.sessionRef().tenantId().value()),Long.parseLong(primary.value()));
         var status=resume?goals.resume(owner,primary,revision,commandId,input,trace(input),callback)
                 :goals.pause(owner,primary,revision,commandId,input,trace(input),"user_paused",callback);
         return publication(owner,status);

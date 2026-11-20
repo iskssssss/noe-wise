@@ -32,6 +32,7 @@ import java.util.TreeMap;
 public final class SessionGoal {
     public static final String CHANGED = "goal/change";
     public static final int MIN_ROUNDS = 1;
+    public static final int DEFAULT_MAX_ROUNDS = 256;
     public static final int MAX_ROUNDS = 1_024;
     public static final int MAX_OBJECTIVE_LENGTH = 8_000;
     public static final int MAX_OPERATION_ID_LENGTH = 200;

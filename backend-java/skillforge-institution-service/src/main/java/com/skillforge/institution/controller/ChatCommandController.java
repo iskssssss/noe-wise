@@ -15,8 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class ChatCommandController {
     private final ChatChannelAccess access;
+    private final com.skillforge.institution.runtime.AgentRuntimeGoalSupport goals;
 
-    public ChatCommandController(ChatChannelAccess access) { this.access = access; }
+    public ChatCommandController(ChatChannelAccess access, com.skillforge.institution.runtime.AgentRuntimeGoalSupport goals) {
+        this.access = access; this.goals = goals;
+    }
 
     @Operation(summary = "读取智能体支持的聊天命令", description = "只读，不创建会话或执行；支持机构登录、渠道令牌或渠道 OpenAPI 签名")
     @GetMapping("/api/v1/chat/commands")
@@ -32,17 +35,25 @@ public class ChatCommandController {
             return ApiResponses.wrap(new Catalog(List.of(new ChatCommand("/plan", "开启计划模式", "主助手先给出可审查计划，批准后继续执行"),
                     new ChatCommand("/plan off", "关闭计划模式", "后续消息由主助手直接处理并按需委派"))));
         }
-        access.requireCommandAgent(agentId);
-        return ApiResponses.wrap(new Catalog(List.of(
+        long agent = access.requireCommandAgent(agentId);
+        var goal = goals.read(Long.parseLong(com.skillforge.institution.common.TenantIds.requireTenantId()), agent);
+        var items = new java.util.ArrayList<>(List.of(
                 new ChatCommand("/plan", "开启计划模式", "先规划再执行，也可在命令后继续输入任务内容"),
                 new ChatCommand("/plan off", "关闭计划模式", "切回普通对话模式"),
-                new ChatCommand("/goal", "设置持续目标", "在命令后输入明确目标；默认最多续行 3 轮，可用 --rounds 1~20 指定"),
                 new ChatCommand("/goal status", "查看目标", "读取当前目标、进度和续行状态"),
                 new ChatCommand("/goal pause", "暂停目标", "暂停后续轮次，并请求停止当前目标执行"),
-                new ChatCommand("/goal resume", "恢复目标", "显式恢复暂停或服务重启后的目标"),
-                new ChatCommand("/delivery", "查看送达状态", "按需读取当前执行的最新结果送达状态"))));
+                new ChatCommand("/delivery", "查看送达状态", "按需读取当前执行的最新结果送达状态")));
+        if (goal.available()) {
+            items.add(2, new ChatCommand("/goal", "设置持续目标", "在命令后输入明确目标；默认最多续行 "
+                    + com.skillforge.runtime.session.SessionGoal.DEFAULT_MAX_ROUNDS + " 轮，可用 --rounds 1~"
+                    + com.skillforge.runtime.session.SessionGoal.MAX_ROUNDS + " 指定"));
+            items.add(5, new ChatCommand("/goal resume", "恢复目标", "显式恢复暂停或服务重启后的目标"));
+        }
+        return ApiResponses.wrap(new Catalog(items, goal));
     }
 
     public record ChatCommand(String command, String title, String description) { }
-    public record Catalog(List<ChatCommand> items) { }
+    public record Catalog(List<ChatCommand> items, com.skillforge.institution.runtime.AgentRuntimeGoalSupport.Availability goal) {
+        public Catalog(List<ChatCommand> items) { this(items, null); }
+    }
 }

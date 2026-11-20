@@ -134,7 +134,7 @@ describe('会话抽屉与请求隔离', () => {
     wrapper.unmount()
   })
   it.each([
-    ['PAUSED', 'user_paused', '你已暂停目标；点击“继续目标”恢复执行。'],
+    ['PAUSED', 'user_paused', '你已暂停目标。'],
     ['PAUSED', 'run_cancelled', '本次执行已取消。'],
     ['BLOCKED', 'run_failed', '本次执行失败。'],
     ['BLOCKED', 'run_completed', '本次执行未形成可发布的成果。'],

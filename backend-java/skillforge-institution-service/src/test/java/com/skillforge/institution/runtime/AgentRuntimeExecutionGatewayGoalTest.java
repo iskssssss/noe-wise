@@ -31,6 +31,25 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 class AgentRuntimeExecutionGatewayGoalTest {
+    @Test void unsupportedNewGoalRejectsBeforeAdmissionPreparationAndWorkerDispatch() {
+        var f = new Fixture(true);
+        var frozen = new TypedPayload("input.v1", "{\"content\":[],\"extraParameters\":{}}");
+        when(f.references.request(anyList(), anyMap(), anyList())).thenReturn(frozen);
+        when(f.references.freeze(eq(f.session), eq(frozen), any())).thenReturn(frozen);
+        var material = mock(ExecutionStore.Material.class);
+        when(f.catalog.freeze(any(), any(), any(), eq(frozen))).thenReturn(material);
+        var directory = mock(AgentRuntimeExecutionCatalog.FrozenCatalog.class);
+        when(directory.tools()).thenReturn(List.of());
+        when(f.catalog.read(eq(material), any())).thenReturn(directory);
+        var input = new ChatRuntimeGateway.Submission(new ChatRequest("计算目标", "session", "7", null,
+                null, null, null, null, "goal-start:new", null, Map.of()), f.session, "7", 9L, null);
+        var rejected = assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                () -> TenantContext.runWithTenant("1", () -> f.gateway.submitGoalRound(input)));
+        assertEquals("goal_tools_unavailable", rejected.getCode());
+        verify(f.store, never()).admit(any()); verify(f.store, never()).resume(any());
+        verify(f.provisioner, never()).prepareExecutionRun(anyString(), anyString(), anyString(), any(), any());
+        verifyNoInteractions(f.worker, f.goals);
+    }
     @Test void groupProductSessionIsRejectedBeforePersonalRuntimeIdentityOrStoreWrites() {
         var fixture=new Fixture(true);
         var groupSession=fixture.session.toBuilder().groupBindingId(77L).endUserId(null).agentId(null).teamId(null).build();
@@ -117,6 +136,9 @@ class AgentRuntimeExecutionGatewayGoalTest {
         final com.skillforge.core.chat.session.SessionService product=mock(com.skillforge.core.chat.session.SessionService.class);
         final AgentRunBindings bindings=mock(AgentRunBindings.class);
         final ChatInputReferenceResolver references=mock(ChatInputReferenceResolver.class);
+        final AgentRuntimeExecutionCatalog catalog=mock(AgentRuntimeExecutionCatalog.class);
+        final AgentRuntimeExecutionWorker worker=mock(AgentRuntimeExecutionWorker.class);
+        final AgentRuntimeHostProvisioner provisioner=mock(AgentRuntimeHostProvisioner.class);
         final AgentExecutionCodec codec=new AgentExecutionCodec(new CodecLimits(1_000_000,100_000,128));
         final ChatRuntimeGateway.Submission submission;final AgentRuntimeExecutionGateway gateway;
         @SuppressWarnings("unchecked") Fixture(boolean accepted) {
@@ -134,9 +156,9 @@ class AgentRuntimeExecutionGatewayGoalTest {
             var response=Map.<String,Object>of("execution_id",identity.runRef().runId(),"run_revision","4","human_input",Map.of("wait",Map.of("action_id","human-action","generation","1"),"text","实际用户回复"));
             submission=new ChatRuntimeGateway.Submission(new ChatRequest("实际用户回复","session","7",null,null,null,null,null,"user-response",response,Map.of()),session,"7",9L,null);
             var goalProvider=(ObjectProvider<AgentRuntimeGoalDriver>)mock(ObjectProvider.class);when(goalProvider.getObject()).thenReturn(goals);
-            gateway=new AgentRuntimeExecutionGateway(store,mock(AgentExecutionProgram.class),mock(AgentRuntimeExecutionWorker.class),mock(AgentRuntimeHostProvisioner.class),access,iam,principals,
+            gateway=new AgentRuntimeExecutionGateway(store,mock(AgentExecutionProgram.class),worker,provisioner,access,iam,principals,
                     bindings,references,mock(MemoryService.class),codec,new ObjectMapper(),value->true,
-                    mock(AgentRuntimeExecutionProjection.class),mock(SessionMediaService.class),new PublicOutputGuard("./private-goal-artifacts"),mock(AgentRuntimeExecutionCatalog.class),mock(AgentRuntimeExecutionSteering.class),
+                    mock(AgentRuntimeExecutionProjection.class),mock(SessionMediaService.class),new PublicOutputGuard("./private-goal-artifacts"),catalog,mock(AgentRuntimeExecutionSteering.class),
                     mock(WorkflowInteractionView.class),mock(AgentRuntimeWorkflowRecoveryWorker.class),product,goalProvider,sessions,java.time.Clock.systemUTC(), org.mockito.Mockito.mock(com.skillforge.institution.runtime.WorkflowTestRuntimePolicy.class),mock(OpenPlatformRequestMetering.class));
         }
     }

@@ -178,6 +178,7 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
         var binding = bindings.freezePrimary(identity, frozen, entryService);
         var frozenCatalog = invocation == null ? catalog.freeze(identity, binding, java.time.Instant.now(), frozen)
                 : catalog.freezeWorkflow(identity, binding, invocation);
+        if (source == SubmissionSource.GOAL_ROUND) AgentRuntimeGoalSupport.require(catalog.read(frozenCatalog, identity).tools());
         var preparation = provisioner.prepareExecutionRun(tenant.value(), actor.value(), runRef.runId(), binding, catalog.read(frozenCatalog, identity));
         var messages = new ArrayList<ModelMessage>();
         for (var message : history(session, inputId)) {

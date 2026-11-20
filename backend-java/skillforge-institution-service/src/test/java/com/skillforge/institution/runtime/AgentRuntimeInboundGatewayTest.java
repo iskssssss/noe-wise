@@ -18,6 +18,30 @@ import org.junit.jupiter.api.Test;
 
 /** 产品领域入口仅委托唯一typed执行链，领域拒绝不能启动另一条Runtime路径。 */
 class AgentRuntimeInboundGatewayTest {
+    @Test void freshResumeRejectsMissingCapabilitiesBeforeDriverAndHistoricalReplayKeepsItsReceiptPath() {
+        var f = new Fixture(); var owner = TeamWorkService.owner(f.session);
+        var actor = new VerifiedIdentity(new PrincipalRef.EndUserPrincipal(new TenantId("1"), owner.requireUser()),
+                owner, java.util.Set.of(), 1, new ResultRef("verified"));
+        when(f.executions.authorizeSession(eq(f.session), any(), anyString())).thenReturn(actor);
+        when(f.bindings.currentPrimaryAgent(owner)).thenReturn(new AgentId("7"));
+        var snapshot = new com.skillforge.runtime.session.SessionGoal.Snapshot("g", 22, "计算",
+                com.skillforge.runtime.session.SessionGoal.State.PAUSED, 1, 0, Optional.empty(),
+                Optional.of(new RunRef(new TenantId("1"), "run:prior")), Optional.of("user_paused"));
+        when(f.goals.read(owner)).thenReturn(Optional.of(new AgentRuntimeGoalDriver.Status(snapshot, false, false, null)));
+        when(f.deliverables.completionView(owner, snapshot)).thenReturn(new com.skillforge.institution.artifact.DeliverableContract.CompletionView(false, null));
+        var denied = new com.skillforge.core.shared.exception.ApiException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                "goal_tools_unavailable", "缺少目标工具", false);
+        doThrow(denied).when(f.support).require(1L, 7L);
+        assertSame(denied, assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                () -> f.gateway.controlGoal(f.session, "fresh", 22, true)));
+        verify(f.goals, never()).resume(any(), any(), anyLong(), anyString(), any(), any(), any());
+        clearInvocations(f.support);
+        var reachedReceipt = new IllegalStateException("original_receipt_probe");
+        when(f.goals.resume(eq(owner), any(), eq(20L), eq("original"), any(), any(), any())).thenThrow(reachedReceipt);
+        assertSame(reachedReceipt, assertThrows(IllegalStateException.class,
+                () -> f.gateway.controlGoal(f.session, "original", 20, true)));
+        verifyNoInteractions(f.support, f.store);
+    }
     @Test void submittedMessageAndCancellationUseOnlyTypedGateway() {
         var fixture=new Fixture();var request=new ChatRequest("核查订单","session","7",null,null,null,null,null,"input",null,java.util.Map.of());
         var submitted=new ChatRuntimeGateway.Submission(request,fixture.session,"7",9L,null);
@@ -113,9 +137,11 @@ class AgentRuntimeInboundGatewayTest {
         final SessionLogPort log=mock(SessionLogPort.class);
         final AgentRunBindings bindings=mock(AgentRunBindings.class);
         final AgentRuntimeGoalDriver goals=mock(AgentRuntimeGoalDriver.class);
+        final AgentRuntimeGoalSupport support=mock(AgentRuntimeGoalSupport.class);
+        final DeliverableService deliverables=mock(DeliverableService.class);
         final WorkflowPortal workflows=mock(WorkflowPortal.class);
         final SessionView session=SessionView.builder().tenantId(1L).sessionId("session").agentId(7L).endUserId(9L).build();
         final AgentRuntimeInboundGateway gateway=new AgentRuntimeInboundGateway(executions,store,bindings,log,
-                Clock.systemUTC(),goals,mock(DeliverableService.class),workflows,mock(AgentRuntimeExecutionProjection.class));
+                Clock.systemUTC(),goals,deliverables,workflows,mock(AgentRuntimeExecutionProjection.class),support);
     }
 }

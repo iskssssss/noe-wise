@@ -258,7 +258,12 @@ export interface Limits {
   }
   references: { max_items: number; max_file_selectors: number }
 }
+export interface GoalSupport {
+  available: boolean
+  reason: string | null
+}
 export interface GoalStatus {
+  support?: GoalSupport | null
   goal: null | {
     goal_id: string
     revision: number

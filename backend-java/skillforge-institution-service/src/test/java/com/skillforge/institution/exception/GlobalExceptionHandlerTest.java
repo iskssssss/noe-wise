@@ -17,6 +17,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>SSE 握手未提交时使用 JSON 错误信封；提交后的流不混写普通 JSON。
  */
 class GlobalExceptionHandlerTest {
+    @Test void goalConflictsAreExplicitButInternalInvariantsRemainServerErrors() {
+        for (var reason : com.skillforge.runtime.session.SessionGoal.Reason.values()) {
+            var result = handler.handle(new com.skillforge.runtime.session.SessionGoal.Rejected(reason), new MockHttpServletResponse());
+            var expected = switch (reason) {
+                case REVISION_CONFLICT, STATE_CONFLICT, ALREADY_ACTIVE, OPERATION_CONFLICT -> HttpStatus.CONFLICT;
+                case NOT_FOUND -> HttpStatus.NOT_FOUND;
+                default -> HttpStatus.INTERNAL_SERVER_ERROR;
+            };
+            assertEquals(expected, result.getStatusCode(), reason.name());
+            assertEquals(expected == HttpStatus.INTERNAL_SERVER_ERROR ? "INTERNAL_ERROR" : reason.code(), result.getBody().code());
+        }
+    }
 
     /** 被测异常处理器。 */
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler(new ObjectMapper());

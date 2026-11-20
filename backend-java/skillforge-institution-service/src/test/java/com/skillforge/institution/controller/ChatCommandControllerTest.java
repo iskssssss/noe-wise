@@ -29,8 +29,13 @@ class ChatCommandControllerTest {
     private final SessionService sessions = mock(SessionService.class);
     private final ChatTeamService userTeams = mock(ChatTeamService.class);
     private final TeamService teams = mock(TeamService.class);
+    private final com.skillforge.institution.runtime.AgentRuntimeGoalSupport goals = mock(com.skillforge.institution.runtime.AgentRuntimeGoalSupport.class);
     private final ChatCommandController controller = new ChatCommandController(
-            new ChatChannelAccess(agents, bindings, sessions, userTeams, teams, mock(com.skillforge.institution.team.TeamMemberProfiles.class), mock(com.skillforge.core.agent.AgentPublicationService.class)));
+            new ChatChannelAccess(agents, bindings, sessions, userTeams, teams, mock(com.skillforge.institution.team.TeamMemberProfiles.class), mock(com.skillforge.core.agent.AgentPublicationService.class)), goals);
+
+    @org.junit.jupiter.api.BeforeEach void support() {
+        when(goals.read(1L, 3L)).thenReturn(new com.skillforge.institution.runtime.AgentRuntimeGoalSupport.Availability(true, null));
+    }
 
     @AfterEach void clear() { TenantContext.clear(); ChannelContext.clear(); }
 
@@ -51,10 +56,24 @@ class ChatCommandControllerTest {
                 .andExpect(jsonPath("$.data.items[0].title").value("开启计划模式"))
                 .andExpect(jsonPath("$.data.items[1].command").value("/plan off"))
                 .andExpect(jsonPath("$.data.items[2].command").value("/goal"))
+                .andExpect(jsonPath("$.data.items[2].description").value(org.hamcrest.Matchers.containsString("256")))
+                .andExpect(jsonPath("$.data.items[2].description").value(org.hamcrest.Matchers.containsString("1024")))
+                .andExpect(jsonPath("$.data.goal.available").value(true))
                 .andExpect(jsonPath("$.data.items[3].command").value("/goal status"))
                 .andExpect(jsonPath("$.data.items[4].command").value("/goal pause"))
                 .andExpect(jsonPath("$.data.items[5].command").value("/goal resume"))
                 .andExpect(jsonPath("$.data.items[6].command").value("/delivery"));
+        verifyNoInteractions(sessions);
+    }
+
+    @Test void missingToolsRetainsQueryAndPauseButOmitsCreateAndResume() {
+        authenticate();
+        when(goals.read(1L, 3L)).thenReturn(new com.skillforge.institution.runtime.AgentRuntimeGoalSupport.Availability(false, "请配置目标工具"));
+        var value = controller.commands("3", null, null).data();
+        assertEquals(List.of("/plan", "/plan off", "/goal status", "/goal pause", "/delivery"),
+                value.items().stream().map(ChatCommandController.ChatCommand::command).toList());
+        assertFalse(value.goal().available());
+        assertEquals("请配置目标工具", value.goal().reason());
         verifyNoInteractions(sessions);
     }
 

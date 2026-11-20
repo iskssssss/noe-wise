@@ -28,7 +28,10 @@ public final class ChatGoalController {
     @GetMapping
 @RequirePermission("foundation.sessions.read")
     public ApiResponse<GoalStatus> read(@RequestParam("session_id") String sessionId) {
-        return ApiResponses.wrap(response(runtime.goal(sessions.require(TenantIds.requireTenantId(), sessionId))));
+        var session = sessions.require(TenantIds.requireTenantId(), sessionId);
+        var status = response(runtime.goal(session));
+        return ApiResponses.wrap(new GoalStatus(status.goal(), status.continuationEnabled(),
+                status.completionPending(), status.publication(), runtime.goalSupport(session)));
     }
     @PostMapping("/create")
 @RequirePermission("foundation.sessions.run")
@@ -58,7 +61,12 @@ public final class ChatGoalController {
     /** 固定公开查询协议；关联标识只供程序控制，界面只使用业务正文与可读状态。 */
     public record GoalStatus(Goal goal,
             @JsonProperty("continuation_enabled") boolean continuationEnabled,
-            @JsonProperty("completion_pending") boolean completionPending, Publication publication) { }
+            @JsonProperty("completion_pending") boolean completionPending, Publication publication,
+            com.skillforge.institution.runtime.AgentRuntimeGoalSupport.Availability support) {
+        public GoalStatus(Goal goal, boolean continuationEnabled, boolean completionPending, Publication publication) {
+            this(goal, continuationEnabled, completionPending, publication, null);
+        }
+    }
     public record Goal(@JsonProperty("goal_id") String goalId, long revision, String objective, SessionGoal.State state,
             @JsonProperty("max_rounds") int maxRounds, @JsonProperty("rounds_started") int roundsStarted,
             @JsonProperty("pending_round_input_id") String pendingRoundInputId,
