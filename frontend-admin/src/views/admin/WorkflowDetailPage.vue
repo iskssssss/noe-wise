@@ -1053,8 +1053,8 @@ const unavailableDraft = computed(() => !!route.params.workflowId && !draft.valu
 const readonly = computed(
     () => unavailableDraft.value || publicationBlocked.value || draft.value?.status === 'archived'
   ),
-  snapshot = () =>
-    JSON.stringify([nodes.value, edges.value, meta, workflowId.value, viewport.value]),
+  // 缩放、平移和定位只改变浏览视角；节点坐标仍属于需要保存的编辑内容。
+  snapshot = () => JSON.stringify([nodes.value, edges.value, meta, workflowId.value]),
   dirty = computed(
     () =>
       !unavailableDraft.value &&
@@ -1103,7 +1103,7 @@ function rememberEdit() {
   if (history.value.length > 60) history.value.shift()
   historyIndex.value = history.value.length - 1
 }
-watch([nodes, edges, meta, workflowId, viewport], rememberEdit, { deep: true, flush: 'sync' })
+watch([nodes, edges, meta, workflowId], rememberEdit, { deep: true, flush: 'sync' })
 const canUndo = computed(
     () =>
       !readonly.value &&
@@ -1124,12 +1124,11 @@ function restore(index: number) {
   const value = history.value[index]
   if (!value) return
   replaying = true
-  const [n, e, m, id, view] = JSON.parse(value)
+  const [n, e, m, id] = JSON.parse(value)
   nodes.value = n
   edges.value = e
   Object.assign(meta, m)
   workflowId.value = id
-  viewport.value = view
   selectedIds.value = selectedIds.value.filter((id) =>
     n.some((node: BuilderNode) => node.id === id)
   )

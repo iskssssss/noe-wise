@@ -253,6 +253,75 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 describe('工作流布局保存与恢复', () => {
+  it('查看并收起节点配置及调整视角不产生编辑，也不启用再次发布', async () => {
+    mocks.get.mockResolvedValue({ ...value, status: 'published' })
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    const canvas = wrapper.findComponent(WorkflowCanvas)
+    const originalView = { ...canvas.props('viewport') }
+    await canvas.get('[data-node-id="start"]').trigger('click')
+    await flushPromises()
+    await button('收起配置').trigger('click')
+    await flushPromises()
+    expect(canvas.props('viewport')).not.toEqual(originalView)
+    expect(document.activeElement).toBe(canvas.get('[data-node-id="start"]').element)
+    await button('+').trigger('click')
+    await button('适应画布').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('草稿已保存')
+    expect(button('撤销').props('disabled')).toBe(true)
+    expect(button('发布').props('disabled')).toBe(true)
+    expect(wrapper.findComponent({ name: 'WorkflowTestPanel' }).props('dirty')).toBe(false)
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.snapshotSave).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+  it('平移不占用编辑历史，撤销与重做节点移动保留当前视角', async () => {
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    const canvas = wrapper.findComponent(WorkflowCanvas)
+    const original = JSON.parse(JSON.stringify(canvas.props('nodes')))
+    const moved = original.map((node: { x: number }) => ({ ...node, x: node.x + 40 }))
+    canvas.vm.$emit('update:nodes', moved)
+    const view = { zoom: 0.8, panX: -40, panY: 70 }
+    canvas.vm.$emit('update:viewport', view)
+    await flushPromises()
+    expect(wrapper.text()).toContain('有未保存修改')
+    await button('撤销').trigger('click')
+    await flushPromises()
+    expect(canvas.props('nodes')).toEqual(original)
+    expect(canvas.props('viewport')).toEqual(view)
+    expect(wrapper.text()).toContain('草稿已保存')
+    expect(button('撤销').props('disabled')).toBe(true)
+    await button('重做').trigger('click')
+    await flushPromises()
+    expect(canvas.props('nodes')).toEqual(moved)
+    expect(canvas.props('viewport')).toEqual(view)
+    expect(wrapper.text()).toContain('有未保存修改')
+  })
+  it('校验期间仅改变视角仍接收原内容的校验结果', async () => {
+    let finish!: (result: unknown) => void
+    mocks.validate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    await button('校验').trigger('click')
+    await flushPromises()
+    wrapper
+      .findComponent(WorkflowCanvas)
+      .vm.$emit('update:viewport', { zoom: 0.8, panX: 40, panY: 70 })
+    finish({ revision: 1, problems: [] })
+    await flushPromises()
+    expect(wrapper.text()).toContain('草稿校验通过')
+    expect(wrapper.text()).toContain('草稿已保存')
+    expect(mocks.validate).toHaveBeenCalledExactlyOnceWith('flow')
+    expect(mocks.validateContent).not.toHaveBeenCalled()
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
   function pendingTestRecovery(overrides: Record<string, unknown> = {}) {
     return {
       requestId: 'original-request',
@@ -1326,7 +1395,6 @@ describe('工作流布局保存与恢复', () => {
     const canvas = wrapper.findComponent(WorkflowCanvas)
     const originalNodes = JSON.parse(JSON.stringify(canvas.props('nodes')))
     const originalEdges = JSON.parse(JSON.stringify(canvas.props('edges')))
-    const originalViewport = { ...canvas.props('viewport') }
     canvas.vm.$emit('update:selectedIds', ['reply', 'end'])
     canvas.vm.$emit('update:selectedId', 'reply')
     await flushPromises()
@@ -1350,11 +1418,12 @@ describe('工作流布局保存与恢复', () => {
       priority: 3
     })
     expect(canvas.props('nodes').slice(0, 3)).toEqual(originalNodes)
+    const currentViewport = { ...canvas.props('viewport') }
     await button('撤销').trigger('click')
     await flushPromises()
     expect(canvas.props('nodes')).toEqual(originalNodes)
     expect(canvas.props('edges')).toEqual(originalEdges)
-    expect(canvas.props('viewport')).toEqual(originalViewport)
+    expect(canvas.props('viewport')).toEqual(currentViewport)
     expect(canvas.props('selectedIds')).toEqual([])
     await button('重做').trigger('click')
     await flushPromises()
@@ -1937,6 +2006,10 @@ describe('工作流布局保存与恢复', () => {
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
     await flushPromises()
     expect(wrapper.find('.workflow-canvas-node').attributes('style')).toContain('left: 555px')
+    const view = { zoom: 0.8, panX: 40, panY: 70 }
+    wrapper.findComponent(WorkflowCanvas).vm.$emit('update:viewport', view)
+    await flushPromises()
+    expect(wrapper.text()).toContain('草稿已保存')
     await wrapper
       .findAllComponents(ElButton)
       .find((button) => button.text() === '保存草稿')!
@@ -1946,9 +2019,10 @@ describe('工作流布局保存与恢复', () => {
       'flow',
       2,
       { start: { x: 555, y: 222 }, end: { x: 888, y: 333 } },
-      { zoom: 1, panX: 24, panY: 24 }
+      view
     )
     expect(wrapper.find('.workflow-canvas-node').attributes('style')).toContain('left: 555px')
+    expect(wrapper.findComponent(WorkflowCanvas).props('viewport')).toEqual(view)
   })
   it('读取已有工具节点不把原来空的参数和失败策略改成新节点默认值', async () => {
     mocks.get.mockResolvedValue({
