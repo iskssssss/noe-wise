@@ -127,7 +127,6 @@
       }}</span>
     </div>
     <ElTable
-      table-layout="auto"
       :data="data?.items ?? []"
       v-loading="loading"
       :empty-text="
@@ -147,28 +146,28 @@
       "
       ><ElTableColumn min-width="140" show-overflow-tooltip label="范围"
         ><template #default="{ row }">{{ statusLabel(row.scope) }}</template></ElTableColumn
+      ><ElTableColumn min-width="180" show-overflow-tooltip label="主体"
+        ><template #default="{ row }">{{ subjectLabel(row.subject) }}</template></ElTableColumn
       ><ElTableColumn
-        min-width="200"
-        show-overflow-tooltip
-        prop="subject"
-        label="主体"
-      /><ElTableColumn
         min-width="200"
         show-overflow-tooltip
         prop="predicate"
         label="关系"
       /><ElTableColumn min-width="280" show-overflow-tooltip label="内容"
         ><template #default="{ row }">{{
-          displayContent(row as MemoryFact)
+          contentSummary(row as MemoryFact)
         }}</template></ElTableColumn
       ><ElTableColumn width="128" show-overflow-tooltip label="状态"
         ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
       ><ElTableColumn width="96" prop="confidence" label="置信度" /><ElTableColumn
-        width="220"
+        width="240"
+        fixed="right"
         class-name="admin-table-actions"
         label="操作"
         ><template #default="{ row }"
+          ><ElButton link @click="showDetail(row as MemoryFact)">详情</ElButton
           ><ElButton
+            v-permission="['foundation.memory.update']"
             link
             @click="edit(row as MemoryFact)"
             :disabled="
@@ -236,6 +235,101 @@
         >加载更多</ElButton
       >
     </div>
+    <ElDrawer
+      v-model="detailOpen"
+      title="记忆详情"
+      append-to-body
+      class="admin-drawer"
+      size="680px"
+    >
+      <div class="admin-toolbar">
+        <ElButton :loading="detailMemory.loading.value" @click="detailMemory.reload">
+          {{ detailMemory.error.value ? '重新读取详情' : '刷新详情' }}
+        </ElButton>
+        <span v-if="detailMemory.loading.value" role="status">正在读取最新记忆…</span>
+        <span v-else-if="detailMemory.error.value" role="status">{{
+          detailMemory.data.value
+            ? '刷新未成功，当前显示上次读取的详情。'
+            : '详情尚未读取，请重试。'
+        }}</span>
+      </div>
+      <template v-if="detailMemory.data.value">
+        <ElDescriptions :column="1" border class="memory-detail-meta">
+          <ElDescriptionsItem label="主体">{{
+            subjectLabel(detailMemory.data.value.subject)
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="关系">{{
+            detailMemory.data.value.predicate
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="范围">{{
+            statusLabel(detailMemory.data.value.scope)
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="状态">{{
+            statusLabel(detailMemory.data.value.status)
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="修订">{{
+            detailMemory.data.value.revision
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="置信度">{{
+            detailMemory.data.value.confidence
+          }}</ElDescriptionsItem>
+        </ElDescriptions>
+        <template v-if="detailContent">
+          <h3>记忆内容</h3>
+          <p v-if="typeof detailContent.value === 'string'" class="memory-detail-text">
+            {{ detailContent.value }}
+          </p>
+          <JsonViewer v-else :value="detailValueJson" label="记忆内容" height="260px" />
+          <h3>适用条件</h3>
+          <ul v-if="detailContent.conditions.length" class="memory-detail-text">
+            <li v-for="(condition, index) in detailContent.conditions" :key="index">
+              {{ condition }}
+            </li>
+          </ul>
+          <p v-else class="admin-field-help">未限定适用条件</p>
+          <h3>适用时间</h3>
+          <p class="memory-detail-text">
+            {{
+              { stable: '长期有效', task: '当前任务', interval: '指定时段', unknown: '尚未确定' }[
+                detailContent.temporal.kind
+              ]
+            }}；开始：{{ detailContent.temporal.from ?? '未指定' }}；结束：{{
+              detailContent.temporal.to ?? '未指定'
+            }}
+          </p>
+          <p v-if="replacementNotice(detailMemory.data.value)" role="status">
+            {{ replacementNotice(detailMemory.data.value) }}
+          </p>
+        </template>
+        <p v-else class="admin-field-help">此记录的内容无法按当前结构展示，请查看完整记录。</p>
+        <ElCollapse>
+          <ElCollapseItem title="完整记录与来源" name="record">
+            <ElDescriptions :column="1" border class="memory-detail-meta">
+              <ElDescriptionsItem label="主体标识">{{
+                detailMemory.data.value.subject
+              }}</ElDescriptionsItem>
+              <ElDescriptionsItem label="记忆标识">{{
+                detailMemory.data.value.ref.fact_id
+              }}</ElDescriptionsItem>
+              <ElDescriptionsItem label="来源事件"
+                ><div
+                  v-for="source in detailMemory.data.value.source_event_ids"
+                  :key="source.value"
+                >
+                  {{ source.value }}
+                </div></ElDescriptionsItem
+              >
+            </ElDescriptions>
+            <JsonViewer
+              :value="detailMemory.data.value.object.canonical_json"
+              label="完整事实内容"
+              height="320px"
+            />
+          </ElCollapseItem>
+        </ElCollapse>
+      </template>
+      <template #footer><ElButton @click="detailOpen = false">关闭</ElButton></template>
+    </ElDrawer>
     <ElDrawer
       v-model="open"
       title="纠正记忆"
@@ -409,6 +503,7 @@ import {
   useDrawerClose
 } from '@skillforge/shared/admin'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
+import JsonViewer from '@skillforge/shared/components/JsonViewer.vue'
 import {
   api,
   getSessionId,
@@ -685,6 +780,20 @@ function displayContent(row: MemoryFact) {
   const parsed = parseMemoryContent(row.object.canonical_json)
   return parsed ? memoryContentText(parsed) : row.object.canonical_json
 }
+function contentSummary(row: MemoryFact) {
+  const parsed = parseMemoryContent(row.object.canonical_json)
+  if (!parsed) return row.object.canonical_json
+  const value = parsed.value
+  const summary =
+    typeof value === 'string'
+      ? value
+      : value && typeof value === 'object' && 'text' in value && typeof value.text === 'string'
+        ? value.text
+        : '结构化内容，点击详情查看'
+  return parsed.conditions.length
+    ? `${summary}；适用条件：${parsed.conditions.join('；')}`
+    : summary
+}
 const agentDirectory = useResource(async () => (await api.agents.list()).items)
 const userDirectory = useResource(() => api.chat.endUsers())
 const scopeDirectory = useResource((signal) => api.memories.scopeOptions(signal))
@@ -701,6 +810,51 @@ onMounted(async () => {
 })
 const userOptions = computed(() =>
   (userDirectory.data.value ?? []).map((u) => ({ id: u.id, label: u.display_name || '未命名用户' }))
+)
+function subjectLabel(subject: string) {
+  if (!subject.startsWith('user:')) return subject
+  return userOptions.value.find((user) => user.id === subject.slice(5))?.label ?? subject
+}
+const detailOpen = ref(false)
+const detailFactId = ref('')
+const detailMemory = useResource((signal) => api.memories.detail(detailFactId.value, signal))
+const detailContent = computed(() =>
+  detailMemory.data.value
+    ? parseMemoryContent(detailMemory.data.value.object.canonical_json)
+    : undefined
+)
+// 原始字符切片保留开放内容中的精确数值，展示不往返序列化业务值。
+const detailValueJson = computed(() => {
+  const original = detailMemory.data.value?.object.canonical_json
+  if (!original) return undefined
+  const node = findNodeAtLocation(parseTree(original)!, ['value'])
+  return node ? original.slice(node.offset, node.offset + node.length) : undefined
+})
+function showDetail(row: MemoryFact) {
+  detailMemory.invalidate()
+  detailMemory.data.value = undefined
+  detailMemory.error.value = ''
+  detailFactId.value = row.ref.fact_id
+  detailOpen.value = true
+  void detailMemory.reload()
+}
+watch(
+  detailOpen,
+  (opened) => {
+    if (opened) return
+    detailMemory.invalidate()
+    detailMemory.data.value = undefined
+    detailMemory.error.value = ''
+    detailFactId.value = ''
+  },
+  { flush: 'sync' }
+)
+watch(
+  [() => auth.identityVersion, () => auth.sessionIdentity],
+  () => {
+    detailOpen.value = false
+  },
+  { flush: 'sync' }
 )
 const resultAgentLabel = computed(() =>
   data.value?.agentId
@@ -721,6 +875,7 @@ const resultUserLabel = computed(() =>
 const pageError = computed(() =>
   [
     error.value || loadError.value || moreError.value,
+    detailMemory.error.value && `记忆详情读取失败：${detailMemory.error.value}`,
     scopeDirectory.error.value && `记忆范围选项读取失败：${scopeDirectory.error.value}`,
     agentDirectory.error.value && `智能体选项读取失败：${agentDirectory.error.value}`,
     userDirectory.error.value && `终端用户选项读取失败：${userDirectory.error.value}`
@@ -1089,6 +1244,14 @@ const formTipId = useId()
 .memory-review-notice {
   display: block;
   white-space: normal;
+  overflow-wrap: anywhere;
+}
+.memory-detail-meta {
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.memory-detail-text {
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 </style>

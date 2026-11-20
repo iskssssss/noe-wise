@@ -7,6 +7,7 @@ import { clearFeedback } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { MemoryFact } from '../../api'
 import MemoryPage from './MemoryPage.vue'
+import JsonViewer from '@skillforge/shared/components/JsonViewer.vue'
 import { useAuthStore } from '../../stores/auth'
 
 const mocks = vi.hoisted(() => ({
@@ -172,6 +173,114 @@ it('范围下拉及已应用条件使用服务端返回的选项和名称', asyn
   await flushPromises()
   expect(mocks.page).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'USER_AGENT' }))
   expect(wrapper.text()).toContain('当前结果：范围 仅当前助手')
+})
+
+it('归档记忆可独立读取详情，显示名称、条件和精确原文且不触发写入', async () => {
+  fact = {
+    ...fact,
+    status: 'ARCHIVED',
+    subject: 'user:user-a',
+    object: {
+      schema_id: 'memory.preference',
+      canonical_json:
+        '{"value":{"amount":9007199254740993},"conditions":["仅当前助手"],"temporal":{"kind":"stable","from":null,"to":null}}'
+    }
+  }
+  mocks.detail.mockResolvedValue(fact)
+  const wrapper = await render()
+  expect(wrapper.text()).toContain('客户甲')
+  expect(wrapper.text()).toContain('结构化内容，点击详情查看；适用条件：仅当前助手')
+  expect(button(wrapper, '纠正').props('disabled')).toBe(true)
+  await button(wrapper, '详情').trigger('click')
+  await flushPromises()
+  const drawer = wrapper
+    .findAllComponents(ElDrawer)
+    .find((item) => item.props('title') === '记忆详情')!
+  const detailText = document.querySelector('.el-drawer__body')?.textContent
+  expect(detailText).toContain('已归档')
+  expect(detailText).toContain('仅当前助手')
+  expect(detailText).toContain('长期有效')
+  expect(drawer.findAllComponents(JsonViewer).map((item) => item.props('value'))).toContain(
+    '{"amount":9007199254740993}'
+  )
+  expect(mocks.detail).toHaveBeenCalledWith('fact/user', expect.any(AbortSignal))
+  expect(mocks.correct).not.toHaveBeenCalled()
+  expect(mocks.forget).not.toHaveBeenCalled()
+  expect(mocks.restore).not.toHaveBeenCalled()
+  expect(mocks.review).not.toHaveBeenCalled()
+})
+
+it('详情读取失败保留列表并独立重试', async () => {
+  mocks.detail.mockRejectedValueOnce(new Error('暂时无法读取')).mockResolvedValue(fact)
+  const wrapper = await render()
+  await button(wrapper, '详情').trigger('click')
+  await flushPromises()
+  expect(document.querySelector('.el-message')?.textContent).toContain(
+    '记忆详情读取失败：暂时无法读取'
+  )
+  expect(document.body.textContent).toContain('详情尚未读取，请重试')
+  expect(wrapper.text()).toContain('当前显示 1 条记忆')
+  await button(wrapper, '重新读取详情').trigger('click')
+  await flushPromises()
+  expect(mocks.page).toHaveBeenCalledOnce()
+  expect(mocks.detail).toHaveBeenCalledTimes(2)
+  expect(document.body.textContent).not.toContain('详情尚未读取，请重试')
+})
+
+it('关闭旧详情并打开另一条时，旧响应不会覆盖新事实', async () => {
+  let finishOld!: (value: MemoryFact) => void
+  mocks.detail.mockImplementationOnce(
+    () =>
+      new Promise<MemoryFact>((resolve) => {
+        finishOld = resolve
+      })
+  )
+  const second = { ...fact, ref: { ...fact.ref, fact_id: 'fact/second' }, predicate: '新详情' }
+  mocks.list.mockResolvedValue([fact, second])
+  mocks.detail.mockResolvedValueOnce(second)
+  const wrapper = await render()
+  await button(wrapper, '详情').trigger('click')
+  await flushPromises()
+  const oldSignal = mocks.detail.mock.calls[0]![1] as AbortSignal
+  await button(wrapper, '关闭').trigger('click')
+  await flushPromises()
+  expect(oldSignal.aborted).toBe(true)
+  await wrapper
+    .findAllComponents(ElButton)
+    .filter((item) => item.text() === '详情')[1]!
+    .trigger('click')
+  await flushPromises()
+  finishOld({ ...fact, predicate: '迟到旧详情' })
+  await flushPromises()
+  const detailText = document.querySelector('.el-drawer__body')?.textContent
+  expect(detailText).toContain('新详情')
+  expect(detailText).not.toContain('迟到旧详情')
+})
+
+it('身份切换关闭详情并丢弃在途读取', async () => {
+  let finish!: (value: MemoryFact) => void
+  mocks.detail.mockImplementation(
+    () =>
+      new Promise<MemoryFact>((resolve) => {
+        finish = resolve
+      })
+  )
+  const wrapper = await render()
+  await button(wrapper, '详情').trigger('click')
+  await flushPromises()
+  const signal = mocks.detail.mock.calls[0]![1] as AbortSignal
+  useAuthStore().identityVersion++
+  await flushPromises()
+  finish({ ...fact, predicate: '旧身份正文' })
+  await flushPromises()
+  expect(signal.aborted).toBe(true)
+  expect(
+    wrapper
+      .findAllComponents(ElDrawer)
+      .find((item) => item.props('title') === '记忆详情')!
+      .props('modelValue')
+  ).toBe(false)
+  expect(document.body.textContent).not.toContain('旧身份正文')
 })
 
 it('范围读取失败保留已读取列表，独立重试只恢复范围选项', async () => {
@@ -1135,7 +1244,12 @@ describe('记忆共享范围审核', () => {
     button(wrapper, '纠正').vm.$emit('click')
     await flushPromises()
 
-    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+    expect(
+      wrapper
+        .findAllComponents(ElDrawer)
+        .find((item) => item.props('title') === '纠正记忆')!
+        .props('modelValue')
+    ).toBe(false)
     expect(mocks.correct).not.toHaveBeenCalled()
     expect(mocks.restore).not.toHaveBeenCalled()
   })
@@ -1156,7 +1270,12 @@ describe('记忆共享范围审核', () => {
     button(wrapper, '保存纠正').vm.$emit('click')
     await flushPromises()
     expect(subject.props('modelValue')).toBe('保留的纠正草稿')
-    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(true)
+    expect(
+      wrapper
+        .findAllComponents(ElDrawer)
+        .find((item) => item.props('title') === '纠正记忆')!
+        .props('modelValue')
+    ).toBe(true)
     expect(mocks.correct).not.toHaveBeenCalled()
     expect(mocks.restore).not.toHaveBeenCalled()
   })
