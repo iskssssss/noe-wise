@@ -162,6 +162,7 @@ function createState() {
     cancelRetrying: false,
     loading: false,
     loadEarlier: vi.fn(async () => {}),
+    refreshSessions: vi.fn(async () => {}),
     openSession: vi.fn(),
     pendingInput: undefined as ChatInput | undefined,
     reconnect: vi.fn(),
@@ -735,6 +736,7 @@ describe('长文本粘贴附件接入', () => {
         expect(holder.state.submit).not.toHaveBeenCalled()
         expect(holder.state.upload).not.toHaveBeenCalled()
         expect(holder.state.draft).toBe('')
+        expect(holder.state.refreshSessions).toHaveBeenCalledOnce()
         expect(holder.state.notice).toBe(
           '持续目标：进行中 · 已自动继续 0/256 轮。完整目标可在“会话工具”中查看。'
         )

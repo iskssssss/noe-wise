@@ -211,13 +211,7 @@ public class ChatSessionService {
 
     public List<SessionItemResponse> sessions(String tenantId, Long agentId, Long endUserId, String teamId) {
         Long filteredEndUserId = endUserId == null ? null : requireEndUserId(endUserId, "会话列表筛选");
-        List<SessionItemResponse> result = sessionService.list(
-                        tenantId, filteredEndUserId, agentId, teamId).stream()
-                .map(session -> new SessionItemResponse(
-                        session.sessionId(), session.summaryText(), session.messageCount(),
-                        session.updatedAt(), session.agentId(), session.teamId(), session.title()))
-                .toList();
-        return result;
+        return runtimeHistory.directory(tenantId, sessionService.list(tenantId, filteredEndUserId, agentId, teamId));
     }
 
     /** 将数字 Agent ID 或租户内 Agent key 解析为持久化数字 ID，发布授权由执行入口判定。 */

@@ -42,6 +42,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   task: [id: string]
   plan: []
+  'goal-changed': []
 }>()
 const section = ref('goal'),
   busy = ref(false),
@@ -236,6 +237,7 @@ async function goalCommand(action: 'create' | 'pause' | 'resume') {
       action === 'create'
         ? '持续目标已创建，可关闭面板查看执行进度。'
         : `持续目标：${goalStateLabels[value.goal?.state ?? ''] ?? '状态待核实'}。`
+    emit('goal-changed')
   })
 }
 async function readDelivery() {

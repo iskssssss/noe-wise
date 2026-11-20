@@ -22,6 +22,19 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class SessionGoalTest {
+    @Test void directoryActivityCountsCreationsAndKeepsFirstObjectiveAfterControlAndReplay() {
+        var log = new Log();
+        var goals = new SessionGoal(log);
+        assertTrue(goals.activity(OWNER).isEmpty());
+        goals.create(IDENTITY, "first", "首个目标", 2, NOW);
+        goals.pause(OWNER, IDENTITY.agentId(), 1, "pause", new InputId("pause"), IDENTITY.trace(), "user_paused", NOW.plusSeconds(1));
+        goals.resume(OWNER, IDENTITY.agentId(), 2, "resume", new InputId("resume"), IDENTITY.trace(), "user_resumed", NOW.plusSeconds(2));
+        goals.update(IDENTITY, "complete", 3, SessionGoal.State.COMPLETE, null, NOW.plusSeconds(3));
+        goals.create(IDENTITY, "second", "后续目标", 2, NOW.plusSeconds(4));
+        goals.create(IDENTITY, "first", "首个目标", 2, NOW.plusSeconds(100));
+        assertEquals(new SessionGoal.Activity("首个目标", 2, NOW.plusSeconds(4)), new SessionGoal(log).activity(OWNER).orElseThrow());
+    }
+
     @Test
     void goalHistoryBeyondTenThousandEventsRetainsOldReceiptsAndCurrentCas() {
         var log = new Log();

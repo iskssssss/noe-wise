@@ -66,6 +66,7 @@ describe('持续目标能力与冲突恢复', () => {
     })
     const { wrapper, click } = await open(json)
     await click('暂停目标')
+    expect(wrapper.emitted('goal-changed')).toBeUndefined()
     expect(writes).toBe(1)
     expect(readCount).toBe(2)
     await click('暂停目标')
@@ -77,6 +78,7 @@ describe('持续目标能力与冲突恢复', () => {
     expect(posts.map(([, , body]) => body.expected_revision)).toEqual([7, 9])
     expect(posts[0][2].command_id).not.toBe(posts[1][2].command_id)
     expect(wrapper.text()).toContain('已暂停')
+    expect(wrapper.emitted('goal-changed')).toHaveLength(1)
   })
   it('未知结果后刷新不会更换原暂停身份或预期版本', async () => {
     let reads = 0

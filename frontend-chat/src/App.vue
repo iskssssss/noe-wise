@@ -857,6 +857,7 @@ async function executeCommand(source: string, parsed: NonNullable<ReturnType<typ
       c.notice = value.goal
         ? `持续目标：${stateLabels[value.goal.state] ?? '状态待核实'} · 已自动继续 ${value.goal.rounds_started}/${value.goal.max_rounds} 轮。完整目标可在“会话工具”中查看。`
         : '当前没有持续目标。'
+      if (parsed.kind !== 'goal-status') void c.refreshSessions()
     }
     commandKeys.delete(source)
     if (c.draft === source) c.draft = ''
@@ -1685,6 +1686,7 @@ const formTipId = useId()
         Boolean(c.history.pending_interactions.length)
       "
       @plan="startPlanning"
+      @goal-changed="c.refreshSessions"
       @selected="selectedWork = $event"
       @updated="c.updateWork"
       @update:model-value="panelChanged('tasks', $event)"

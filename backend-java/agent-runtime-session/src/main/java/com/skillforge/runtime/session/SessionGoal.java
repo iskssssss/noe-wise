@@ -52,6 +52,13 @@ public final class SessionGoal {
         return Optional.ofNullable(history(owner).current());
     }
 
+    /** 目录使用的已提交目标事实；创建计一次，控制与自动续轮不增加请求数。 */
+    public Optional<Activity> activity(SessionOwner owner) {
+        return Optional.ofNullable(history(owner).activity());
+    }
+
+    public record Activity(String firstObjective, int createdCount, Instant updatedAt) { }
+
     /**
      * 按原始可信 Run、revision 与幂等键读取已提交的终结回执。恢复调用必须先查回执，
      * 再判断当前 Goal；否则已成功的旧操作会被后续 Goal 错当为 CAS 失败。
@@ -351,6 +358,7 @@ public final class SessionGoal {
         Objects.requireNonNull(owner);
         var receipts = new HashMap<String, Change>();
         Snapshot current = null;
+        Activity activity = null;
         long cursor = 0;
         while (true) {
             var page = log.readAfter(new SessionLogPort.ReadSessionLog(owner, cursor, PAGE_SIZE), EVENTS);
@@ -363,8 +371,12 @@ public final class SessionGoal {
                 if (receipts.putIfAbsent(change.operationId(), change) != null)
                     throw invalid(Reason.EVENT_REJECTED);
                 current = apply(owner, current, event, change);
+                activity = new Activity(activity == null ? current.objective() : activity.firstObjective(),
+                        (activity == null ? 0 : activity.createdCount()) + ("create".equals(change.command()) ? 1 : 0),
+                        activity == null || event.occurredAt().isAfter(activity.updatedAt())
+                                ? event.occurredAt() : activity.updatedAt());
             }
-            if (page.size() < PAGE_SIZE) return new History(current, Map.copyOf(receipts));
+            if (page.size() < PAGE_SIZE) return new History(current, Map.copyOf(receipts), activity);
         }
     }
 
@@ -641,5 +653,5 @@ public final class SessionGoal {
     private record Change(String command, String operationId, String operationFingerprint,
                           long expectedRevision, Snapshot snapshot) { }
 
-    private record History(Snapshot current, Map<String, Change> receipts) { }
+    private record History(Snapshot current, Map<String, Change> receipts, Activity activity) { }
 }

@@ -508,8 +508,9 @@ class ChatServiceCoverageTest {
     @Test
     void sessionsProjectsDefaultUserAndAgentFilter() {
         var directory = new com.skillforge.core.chat.session.SessionDirectoryItem(
-                "sess-1", "最近一次对话", 3, java.time.Instant.parse("2026-10-30T01:00:00Z"), 7100L, null, "第一条消息");
+                "sess-1", "最近一次对话", 3, java.time.Instant.parse("2026-10-30T01:00:00Z"), 7100L, null, "第一条消息", endUserId, java.time.Instant.parse("2026-10-30T01:00:00Z"));
         when(sessions.list(tenantId, endUserId, 7100L, null)).thenReturn(List.of(directory));
+        when(runtimeHistory.directory(tenantId, List.of(directory))).thenCallRealMethod();
 
         var result = service.sessions(tenantId, 7100L, endUserId);
 

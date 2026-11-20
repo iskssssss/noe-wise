@@ -305,13 +305,13 @@ public class ChatController {
     }
 
     /**
-     * 历史会话列表（按最新消息时间倒序）。
+     * 历史会话列表（按最新消息或持续目标活动时间倒序）。
      *
      * @param agentId Agent 归属过滤（管理端对话记录），可空
      * @return 当前租户内符合筛选条件的会话列表
      */
     @Operation(summary = "历史会话列表",
-            description = "end_user_id 和 agentId 可选；未选择用户时返回当前租户全部会话，按最新消息时间倒序")
+            description = "end_user_id 和 agentId 可选；未选择用户时返回当前租户可见会话，按最新消息或持续目标活动时间倒序")
     @RequirePermission("foundation.sessions.read")
     @GetMapping("/chat/sessions")
     public ApiResponse<List<SessionItemResponse>> sessions(

@@ -70,7 +70,7 @@ class SessionChannelOwnershipTest {
         var settings=mock(OperationalSettingsService.class);
         var service=new SessionService(mapper,settings,access);
         var visible=java.util.List.of("session-1");
-        var item=new SessionDirectoryItem("session-1","目录摘要",3,java.time.Instant.parse("2026-10-30T01:00:00Z"),null,"team-1","第一条消息");
+        var item=new SessionDirectoryItem("session-1","目录摘要",3,java.time.Instant.parse("2026-10-30T01:00:00Z"),null,"team-1","第一条消息",9L,java.time.Instant.parse("2026-10-30T01:00:00Z"));
         when(access.visibleSessionIds("7")).thenReturn(visible);
         when(mapper.listByLatestMessage(7L,9L,null,"team-1",8L,visible)).thenReturn(java.util.List.of(item));
         ChannelContext.setChannelId("8");

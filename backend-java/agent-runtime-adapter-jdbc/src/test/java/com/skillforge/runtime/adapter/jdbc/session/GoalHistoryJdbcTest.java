@@ -56,6 +56,7 @@ class GoalHistoryJdbcTest {
             var next=goals.create(run,"create-5000","后续目标",1,at);
             var recovered=new SessionGoal(new JdbcSessionLogPort(source));
             assertEquals(next,recovered.read(owner).orElseThrow());
+            assertEquals(new SessionGoal.Activity("目标", 5001, at), recovered.activity(owner).orElseThrow());
             assertEquals(original,recovered.create(run,"create-0","目标",1,at.plusSeconds(1)));
             assertEquals(Optional.of(complete),recovered.updateReceipt(run,"complete-0",1));
             assertEquals(SessionGoal.Reason.OPERATION_CONFLICT,assertThrows(SessionGoal.Rejected.class,
@@ -66,6 +67,8 @@ class GoalHistoryJdbcTest {
                     ()->recovered.reserveRound(owner,agent,next.revision(),"stale",new InputId("round"),trace,at)).reason());
             var other=SessionOwner.user(new SessionRef(tenant,"other-session"),agent,owner.requireUser());
             assertTrue(recovered.read(other).isEmpty());
+            assertTrue(recovered.activity(other).isEmpty());
+            assertTrue(recovered.activity(SessionOwner.user(owner.sessionRef(), agent, new EndUserId(708))).isEmpty());
         }
     }
     private static void append(SessionLogPort log,List<SessionLogPort.AppendSessionEvent> events) {

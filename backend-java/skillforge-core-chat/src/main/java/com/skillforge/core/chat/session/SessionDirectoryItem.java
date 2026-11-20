@@ -10,4 +10,6 @@ public record SessionDirectoryItem(
         Instant updatedAt,
         Long agentId,
         String teamId,
-        String title) {}
+        String title,
+        Long endUserId,
+        Instant latestMessageAt) {}

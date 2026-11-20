@@ -8,6 +8,13 @@ public interface ChatRuntimeHistory {
     ChatHistoryResponse read(SessionView session);
     /** 读取本会话指定消息的当前公开快照，缺失或不可见返回空。 */
     java.util.Optional<com.skillforge.core.chat.message.ChatMessageRecord> message(SessionView session, String messageId);
+    /** 已经过产品可见范围筛选的目录；宿主补充运行时持久事实，不扩大返回范围。 */
+    default java.util.List<com.skillforge.core.chat.dto.response.SessionItemResponse> directory(
+            String tenantId, java.util.List<com.skillforge.core.chat.session.SessionDirectoryItem> sessions) {
+        return sessions.stream().map(session -> new com.skillforge.core.chat.dto.response.SessionItemResponse(
+                session.sessionId(), session.summaryText(), session.messageCount(), session.updatedAt(),
+                session.agentId(), session.teamId(), session.title())).toList();
+    }
     /** 仅恢复当前消息页对应的计划，避免全会话历史上限截断旧轮次。 */
     default java.util.List<java.util.Map<String,Object>> workPlans(SessionView session,java.util.Set<String> inputIds) {
         return java.util.List.of();

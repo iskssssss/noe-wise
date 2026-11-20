@@ -94,7 +94,7 @@ class SessionDirectoryProjectionPersistenceIntegrationTest {
     @BeforeEach void tenant() { TenantContext.setTenantId("7"); EVIDENCE.clear(); }
     @AfterEach void clearTenant() { TenantContext.clear(); }
 
-    @Test void sixColumnDirectoryMatchesOldTwentyTwoColumnValuesAndOrderAcrossFiftyThreeRows() {
+    @Test void directoryKeepsExactValuesOrderAndOwnerWithOnlyRequiredColumns() {
         var oldEvidence = new Material(); var expected = oldRead(7L, null, null, null, null, null, oldEvidence);
         var actual = current(7L, null, null, null, null, null);
         assertThat(actual).containsExactlyElementsOf(expected); assertThat(actual).hasSize(53);
@@ -104,10 +104,10 @@ class SessionDirectoryProjectionPersistenceIntegrationTest {
         var sample = actual.stream().filter(row -> row.sessionId().equals("session-42")).findFirst().orElseThrow();
         assertThat(sample.summaryText()).isNull(); assertThat(sample.updatedAt()).isNull(); assertThat(sample.agentId()).isNull();
         assertThat(actual.stream().filter(row -> row.sessionId().equals("session-44")).findFirst().orElseThrow().messageCount()).isNull();
-        assertThat(oldEvidence.columns).isEqualTo(22); assertThat(EVIDENCE.material.columns).isEqualTo(7);
+        assertThat(oldEvidence.columns).isEqualTo(22); assertThat(EVIDENCE.material.columns).isEqualTo(9);
         assertThat(oldEvidence.rows).isEqualTo(53); assertThat(EVIDENCE.material.rows).isEqualTo(53);
         assertThat(EVIDENCE.material.bytes).isLessThan(oldEvidence.bytes);
-        assertThat(EVIDENCE.material.names).containsExactly("session_id", "summary_text", "message_count", "updated_at", "agent_id", "team_id", "title");
+        assertThat(EVIDENCE.material.names).containsExactly("session_id", "summary_text", "message_count", "updated_at", "agent_id", "team_id", "title", "end_user_id", "latest_message_at");
         System.out.printf("session-directory same-input result-row-json: rows=%d fullColumns=%d directoryColumns=%d fullUtf8Bytes=%d directoryUtf8Bytes=%d%n",
                 actual.size(), oldEvidence.columns, EVIDENCE.material.columns, oldEvidence.bytes, EVIDENCE.material.bytes);
     }
@@ -186,9 +186,12 @@ class SessionDirectoryProjectionPersistenceIntegrationTest {
                 while (rows.next()) {
                     evidence.capture(rows);
                     var updated = rows.getTimestamp("updated_at");
+                    var latest = reader.queryForObject("SELECT MAX(created_at) FROM nw_chat_messages WHERE tenant_id=? AND session_id=?",
+                            Timestamp.class, tenant, rows.getString("session_id"));
                     result.add(new SessionDirectoryItem(rows.getString("session_id"), rows.getString("summary_text"),
                             (Integer) rows.getObject("message_count"), updated == null ? null : updated.toInstant(),
-                            (Long) rows.getObject("agent_id"), rows.getString("team_id"), null));
+                            (Long) rows.getObject("agent_id"), rows.getString("team_id"), null, (Long) rows.getObject("end_user_id"),
+                            latest == null ? null : latest.toInstant()));
                 }
                 return result;
             }, args.toArray());

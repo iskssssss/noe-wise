@@ -16,6 +16,8 @@
             <arg column="agent_id" javaType="java.lang.Long"/>
             <arg column="team_id" javaType="java.lang.String"/>
             <arg column="title" javaType="java.lang.String"/>
+            <arg column="end_user_id" javaType="java.lang.Long"/>
+            <arg column="latest_message_at" javaType="java.time.Instant"/>
         </constructor>
     </resultMap>
     <select id="listByLatestMessage" resultMap="directory">
@@ -24,7 +26,10 @@
                 FROM nw_chat_messages m
                 WHERE m.tenant_id = s.tenant_id AND m.session_id = s.session_id AND m.role = 'user'
                   AND m.metadata -&gt; 'context_only' IS DISTINCT FROM 'true'::jsonb
-                ORDER BY m.created_at, m.id LIMIT 1) AS title
+                ORDER BY m.created_at, m.id LIMIT 1) AS title,
+               s.end_user_id,
+               (SELECT MAX(m.created_at) FROM nw_chat_messages m
+                WHERE m.tenant_id = s.tenant_id AND m.session_id = s.session_id) AS latest_message_at
         FROM nw_chat_sessions s
         WHERE s.tenant_id = #{tenantId}
           AND s.group_binding_id IS NULL
@@ -42,8 +47,7 @@
                 <otherwise>AND FALSE</otherwise>
             </choose>
         </if>
-        ORDER BY (SELECT MAX(m.created_at) FROM nw_chat_messages m
-                  WHERE m.tenant_id = s.tenant_id AND m.session_id = s.session_id) DESC NULLS LAST,
+        ORDER BY latest_message_at DESC NULLS LAST,
                  s.created_at DESC, s.id DESC
     </select>
 </mapper>

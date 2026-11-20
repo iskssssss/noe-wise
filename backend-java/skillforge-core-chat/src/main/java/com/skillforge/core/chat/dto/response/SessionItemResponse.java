@@ -8,20 +8,20 @@ import java.time.Instant;
  *
  * @param sessionId    会话 ID（续聊时回传）
  * @param summary      会话画像摘要，可为空
- * @param messageCount 已受理的会话请求次数，不包含助手回复
+ * @param messageCount 已受理的消息与目标创建次数，不包含助手回复或自动续轮
  * @param updatedAt    最近更新时间
  * @param agentId      单 Agent 目标，可空
  * @param teamId       Team 目标，可空
- * @param title        首条用户消息文本标题，可为空
+ * @param title        首条用户消息或持续目标的标题，可为空
  */
 public record SessionItemResponse(
         @Schema(description = "会话 ID（续聊时回传）") String sessionId,
         @Schema(description = "会话画像摘要，可为空", nullable = true) String summary,
-        @Schema(description = "已受理的会话请求次数，不包含助手回复") Integer messageCount,
+        @Schema(description = "已受理的消息与目标创建次数，不包含助手回复或自动续轮") Integer messageCount,
         @Schema(description = "最近更新时间") Instant updatedAt,
         @Schema(description = "单 Agent 目标，可空", nullable = true) Long agentId,
         @Schema(description = "Team 目标，可空", nullable = true) String teamId,
-        @Schema(description = "首条用户消息文本标题，可为空", nullable = true) String title) {
+        @Schema(description = "首条用户消息或持续目标的标题，可为空", nullable = true) String title) {
 
     /** 保持既有五参数 Java 调用的构造方式。 */
     public SessionItemResponse(
