@@ -58,6 +58,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class MemoryGovernanceService {
     private static final Logger log = LoggerFactory.getLogger(MemoryGovernanceService.class);
+    private static final List<ScopeOption> PERSONAL_SCOPES = List.of(
+            new ScopeOption(MemoryScope.SESSION, "会话"),
+            new ScopeOption(MemoryScope.USER_AGENT, "用户与智能体"),
+            new ScopeOption(MemoryScope.USER, "用户"));
     private final MemoryGovernanceMapper mapper;
     private final JdbcMemoryPort memories;
     private final MemoryRuntime runtime;
@@ -111,6 +115,11 @@ public class MemoryGovernanceService {
     /** 治理列表过滤；空白字段表示不限制。 */
     public record ListQuery(String status, String scope, String type, String agentId,
             Long endUserId, int limit) { }
+
+    /** 此治理入口只查询个人记忆，选项和查询校验使用同一范围定义。 */
+    public List<ScopeOption> scopeOptions() { return PERSONAL_SCOPES; }
+
+    public record ScopeOption(MemoryScope value, String label) { }
 
     /** 治理搜索使用权威事实正文；每次至多扫描 1000 条，可通过游标继续。 */
     @Transactional(readOnly = true)
@@ -357,7 +366,7 @@ public class MemoryGovernanceService {
 
     private static void validate(ListQuery query) {
         String scope = text(query.scope());
-        if (scope != null && !Set.of("SESSION", "USER_AGENT", "USER").contains(scope)) {
+        if (scope != null && PERSONAL_SCOPES.stream().noneMatch(option -> option.value().name().equals(scope))) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "memory_scope_invalid");
         }
         String type = text(query.type());

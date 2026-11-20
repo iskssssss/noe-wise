@@ -22,7 +22,18 @@
       </p>
       <ElButton :disabled="busy" @click="checkStateChange(operation)">核对最新状态</ElButton>
     </section>
-    <div v-if="agentDirectory.error.value || userDirectory.error.value" class="admin-toolbar">
+    <div
+      v-if="scopeDirectory.error.value || agentDirectory.error.value || userDirectory.error.value"
+      class="admin-toolbar"
+    >
+      <ElButton
+        v-if="scopeDirectory.error.value"
+        :loading="scopeDirectory.loading.value"
+        :disabled="busy || scopeDirectory.loading.value"
+        @click="scopeDirectory.reload"
+      >
+        重新读取范围选项
+      </ElButton>
       <ElButton
         v-if="agentDirectory.error.value"
         :loading="agentDirectory.loading.value"
@@ -45,13 +56,16 @@
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
         v-model="scope"
-        :disabled="reviews"
+        :disabled="reviews || !scopeDirectory.data.value || scopeDirectory.loading.value"
+        :loading="scopeDirectory.loading.value"
         clearable
         placeholder="全部范围"
         aria-label="记忆范围"
-        ><ElOption label="会话" value="SESSION" /><ElOption
-          label="用户与智能体"
-          value="USER_AGENT" /><ElOption label="用户" value="USER" /></ElSelect
+        ><ElOption
+          v-for="option in scopeDirectory.data.value ?? []"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value" /></ElSelect
       ><EntitySelect
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
@@ -100,7 +114,7 @@
       当前结果：{{
         data.reviews
           ? '机构待审核队列'
-          : `范围 ${data.scope ? statusLabel(data.scope) : '全部'} · 智能体 ${resultAgentLabel} · 终端用户 ${resultUserLabel}`
+          : `范围 ${resultScopeLabel} · 智能体 ${resultAgentLabel} · 终端用户 ${resultUserLabel}`
       }}。
       <span v-if="pendingFilters">筛选条件已更改，请点击“查询”应用。</span>
     </p>
@@ -673,11 +687,17 @@ function displayContent(row: MemoryFact) {
 }
 const agentDirectory = useResource(async () => (await api.agents.list()).items)
 const userDirectory = useResource(() => api.chat.endUsers())
+const scopeDirectory = useResource((signal) => api.memories.scopeOptions(signal))
 const agentOptions = computed(() =>
   (agentDirectory.data.value ?? []).map((a) => ({ id: a.id, label: a.name }))
 )
 onMounted(async () => {
-  await Promise.all([refresh(), agentDirectory.reload(), userDirectory.reload()])
+  await Promise.all([
+    refresh(),
+    scopeDirectory.reload(),
+    agentDirectory.reload(),
+    userDirectory.reload()
+  ])
 })
 const userOptions = computed(() =>
   (userDirectory.data.value ?? []).map((u) => ({ id: u.id, label: u.display_name || '未命名用户' }))
@@ -685,6 +705,12 @@ const userOptions = computed(() =>
 const resultAgentLabel = computed(() =>
   data.value?.agentId
     ? (agentOptions.value.find((item) => item.id === data.value?.agentId)?.label ?? '名称暂不可用')
+    : '全部'
+)
+const resultScopeLabel = computed(() =>
+  data.value?.scope
+    ? (scopeDirectory.data.value?.find((item) => item.value === data.value?.scope)?.label ??
+      statusLabel(data.value.scope))
     : '全部'
 )
 const resultUserLabel = computed(() =>
@@ -695,6 +721,7 @@ const resultUserLabel = computed(() =>
 const pageError = computed(() =>
   [
     error.value || loadError.value || moreError.value,
+    scopeDirectory.error.value && `记忆范围选项读取失败：${scopeDirectory.error.value}`,
     agentDirectory.error.value && `智能体选项读取失败：${agentDirectory.error.value}`,
     userDirectory.error.value && `终端用户选项读取失败：${userDirectory.error.value}`
   ]

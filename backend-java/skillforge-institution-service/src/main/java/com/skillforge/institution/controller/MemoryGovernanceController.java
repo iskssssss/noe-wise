@@ -37,6 +37,13 @@ public final class MemoryGovernanceController {
     }
 
     @RequirePermission("foundation.memory.read")
+    @GetMapping("/scope-options")
+    @Operation(summary = "查询个人记忆治理可用范围")
+    public ApiResponse<List<MemoryGovernanceService.ScopeOption>> scopeOptions() {
+        return ApiResponses.wrap(service.scopeOptions());
+    }
+
+    @RequirePermission("foundation.memory.read")
     @GetMapping
     @Operation(summary = "查询当前 Memory 事实")
     public ApiResponse<List<MemoryFact>> list(

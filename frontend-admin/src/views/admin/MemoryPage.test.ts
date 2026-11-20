@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
-import { ElButton, ElDrawer, ElInput, ElSelect, ElSwitch } from 'element-plus'
+import { ElButton, ElDrawer, ElInput, ElOption, ElSelect, ElSwitch } from 'element-plus'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
@@ -10,6 +10,7 @@ import MemoryPage from './MemoryPage.vue'
 import { useAuthStore } from '../../stores/auth'
 
 const mocks = vi.hoisted(() => ({
+  scopeOptions: vi.fn(),
   page: vi.fn(),
   detail: vi.fn(),
   list: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('../../api', () => ({
   getSessionId: () => 'session-a',
   api: {
     memories: {
+      scopeOptions: mocks.scopeOptions,
       page: (query: {
         status?: string
         scope?: string
@@ -98,6 +100,11 @@ async function forgetFrom(wrapper: VueWrapper, index = 0) {
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  mocks.scopeOptions.mockResolvedValue([
+    { value: 'SESSION', label: '会话' },
+    { value: 'USER_AGENT', label: '用户与智能体' },
+    { value: 'USER', label: '用户' }
+  ])
   fact = {
     ref: { tenant_id: { value: 'tenant-a' }, fact_id: 'fact/user' },
     scope: 'USER',
@@ -151,6 +158,36 @@ afterEach(async () => {
   await flushPromises()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+})
+
+it('范围下拉及已应用条件使用服务端返回的选项和名称', async () => {
+  mocks.scopeOptions.mockResolvedValue([{ value: 'USER_AGENT', label: '仅当前助手' }])
+  const wrapper = await render()
+  const scopeSelect = wrapper.findComponent(ElSelect)
+  expect(scopeSelect.findAllComponents(ElOption).map((option) => option.props('label'))).toEqual([
+    '仅当前助手'
+  ])
+  scopeSelect.vm.$emit('update:modelValue', 'USER_AGENT')
+  await button(wrapper, '查询').trigger('click')
+  await flushPromises()
+  expect(mocks.page).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'USER_AGENT' }))
+  expect(wrapper.text()).toContain('当前结果：范围 仅当前助手')
+})
+
+it('范围读取失败保留已读取列表，独立重试只恢复范围选项', async () => {
+  mocks.scopeOptions.mockRejectedValueOnce(new Error('范围目录暂不可用'))
+  const wrapper = await render()
+  expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(true)
+  expect(wrapper.text()).toContain('先列三点结论')
+  expect(document.querySelector('.el-message')?.textContent).toContain('记忆范围选项读取失败')
+  const reads = mocks.page.mock.calls.length
+  await button(wrapper, '重新读取范围选项').trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(false)
+  expect(wrapper.findComponent(ElSelect).findAllComponents(ElOption)).toHaveLength(3)
+  expect(mocks.page).toHaveBeenCalledTimes(reads)
+  expect(mocks.agents).toHaveBeenCalledOnce()
+  expect(mocks.users).toHaveBeenCalledOnce()
 })
 
 it('旧页面遗忘回执迟到不能清除新页面另一事实的未知记录', async () => {

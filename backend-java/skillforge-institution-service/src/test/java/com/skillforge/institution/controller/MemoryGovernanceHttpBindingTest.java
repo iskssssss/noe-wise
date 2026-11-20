@@ -4,6 +4,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +13,10 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.skillforge.common.context.TenantContext;
 import com.skillforge.institution.exception.GlobalExceptionHandler;
 import com.skillforge.institution.memory.MemoryGovernanceService;
+import com.skillforge.institution.memory.MemoryGovernanceMapper;
+import com.skillforge.institution.memory.MemoryGovernanceRequests;
+import com.skillforge.runtime.adapter.jdbc.memory.JdbcMemoryPort;
+import com.skillforge.runtime.memory.MemoryRuntime;
 import com.skillforge.runtime.api.MemoryScope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,5 +91,36 @@ class MemoryGovernanceHttpBindingTest {
                 .andExpect(status().isBadRequest());
 
         verifyNoInteractions(service);
+    }
+
+    /** 真实服务的公开选项均能查询；群范围或未登记范围在访问持久化前拒绝。 */
+    @Test
+    void scopeOptionsAndQueryValidationUseTheSamePersonalScopes() throws Exception {
+        var mapper = mock(MemoryGovernanceMapper.class);
+        var json = new ObjectMapper().findAndRegisterModules()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var actual = new MemoryGovernanceService(mapper, mock(JdbcMemoryPort.class),
+                mock(MemoryRuntime.class), mock(MemoryGovernanceRequests.class), json);
+        var endpoint = MockMvcBuilders.standaloneSetup(new MemoryGovernanceController(actual))
+                .setControllerAdvice(new GlobalExceptionHandler(json))
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
+        endpoint.perform(get("/api/v1/memories/scope-options"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andExpect(jsonPath("$.data[0].value").value("SESSION"))
+                .andExpect(jsonPath("$.data[1].value").value("USER_AGENT"))
+                .andExpect(jsonPath("$.data[1].label").value("用户与智能体"))
+                .andExpect(jsonPath("$.data[2].value").value("USER"));
+        for (String invalid : java.util.List.of("GROUP", "GROUP_MEMBER", "UNKNOWN")) {
+            endpoint.perform(get("/api/v1/memories/page").param("scope", invalid))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                    .andExpect(jsonPath("$.message").value("memory_scope_invalid"));
+        }
+        verifyNoInteractions(mapper);
+        for (var option : actual.scopeOptions()) {
+            endpoint.perform(get("/api/v1/memories/page").param("scope", option.value().name()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(0));
+        }
     }
 }

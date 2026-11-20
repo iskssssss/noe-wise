@@ -1324,6 +1324,8 @@ export const api = {
   },
 
   memories: {
+    scopeOptions: (signal?: AbortSignal) =>
+      get<{ value: MemoryScope; label: string }[]>('/memories/scope-options', { signal }),
     list: (query: MemoryListQuery = {}) => get<MemoryFact[]>(`/memories${memoryListQuery(query)}`),
     detail: (factId: string) =>
       get<MemoryFact>(`/memories/detail?fact_id=${encodeURIComponent(factId)}`),
