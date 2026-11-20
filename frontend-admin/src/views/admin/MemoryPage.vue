@@ -17,8 +17,13 @@
               : operation.operation === 'APPROVE'
                 ? '批准'
                 : '拒绝'
-        }}结果尚未确认（原修订
-        {{ operation.expectedRevision }}）。状态未变化也不能证明原请求未受理，请勿重复操作。
+        }}<template v-if="stateSubmitting === operation.factId">正在提交，请稍候。</template
+        ><template v-else
+          >结果尚未确认（原修订
+          {{
+            operation.expectedRevision
+          }}）。状态未变化也不能证明原请求未受理，请勿重复操作。</template
+        >
       </p>
       <ElButton :disabled="busy" @click="checkStateChange(operation)">核对最新状态</ElButton>
     </section>
@@ -342,7 +347,10 @@
       class="admin-drawer"
       size="680px"
       ><div class="admin-field-help">
-        <p v-if="correctionUnknown" role="status">
+        <p v-if="correctionSubmitting && correctionSubmitting === correctionKey" role="status">
+          正在保存纠正，请稍候。
+        </p>
+        <p v-else-if="correctionUnknown" role="status">
           纠正结果尚未确认，请核对最新状态；状态未变化也不能证明原请求未受理。
         </p>
         <ElButton :loading="latestMemory.loading.value" :disabled="busy" @click="checkLatest"
@@ -529,6 +537,7 @@ type StateChange = {
   expectedRevision: number
 }
 const unknownStateChanges = ref<StateChange[]>([])
+const stateSubmitting = ref('')
 const stateStorageError = ref('')
 let stateChangesDisposed = false
 onScopeDispose(() => {
@@ -887,6 +896,7 @@ const { busy, error, run } = useTask(),
   open = ref(false),
   selected = ref<MemoryFact>(),
   unknownCorrections = ref(new Set<string>()),
+  correctionSubmitting = ref(''),
   saved = ref(''),
   form = reactive({ subject: '', predicate: '', object_json: '', confidence: 1, importance: 0.5 })
 const correctionKey = computed(() =>
@@ -1010,6 +1020,7 @@ async function save() {
       throw Error('无法保存纠正核对状态，尚未发送纠正请求')
     }
     unknownCorrections.value.add(requestKey)
+    correctionSubmitting.value = requestKey
     try {
       await api.memories.correct(row.ref.fact_id, { expected_revision: row.revision, ...form })
     } catch (reason) {
@@ -1026,6 +1037,8 @@ async function save() {
       }
       if (reason instanceof HttpClientError) reason.claimFeedback()
       return
+    } finally {
+      correctionSubmitting.value = ''
     }
     sessionStorage.removeItem(requestKey)
     unknownCorrections.value.delete(requestKey)
@@ -1094,6 +1107,7 @@ async function review(row: MemoryFact, approved: boolean) {
     } catch {
       throw Error('无法保存记忆状态核对记录，尚未发送请求')
     }
+    stateSubmitting.value = factId
     try {
       const result =
         confirmSharing || replacement
@@ -1132,6 +1146,8 @@ async function review(row: MemoryFact, approved: boolean) {
         throw reason
       }
       return
+    } finally {
+      stateSubmitting.value = ''
     }
     if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
       return
@@ -1179,6 +1195,7 @@ async function changeState(row: MemoryFact) {
       throw Error('无法保存记忆状态核对记录，尚未发送请求')
     }
     let result
+    stateSubmitting.value = operation.factId
     try {
       result = await (restoring ? api.memories.restore : api.memories.forget)(
         operation.factId,
@@ -1206,6 +1223,8 @@ async function changeState(row: MemoryFact) {
         throw reason
       }
       return
+    } finally {
+      stateSubmitting.value = ''
     }
     if (stateChangesDisposed || key !== stateStorageKey.value || identity !== auth.identityVersion)
       return

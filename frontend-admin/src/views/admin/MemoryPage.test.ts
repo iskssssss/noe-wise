@@ -492,6 +492,46 @@ it('未知纠正核对仍为原修订时保持锁定，页面重载后仍保留'
   expect(mocks.correct).toHaveBeenCalledTimes(1)
 })
 
+it('纠正等待响应时显示保存中，响应丢失后保留草稿和核对状态', async () => {
+  fact.status = 'ACTIVE'
+  let fail!: (reason: Error) => void
+  mocks.correct.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+  const wrapper = await render()
+  await button(wrapper, '纠正').trigger('click')
+  await flushPromises()
+  await button(wrapper, '保存纠正').trigger('click')
+  await flushPromises()
+  expect(document.body.textContent).toContain('正在保存纠正，请稍候')
+  expect(document.body.textContent).not.toContain('纠正结果尚未确认')
+  fail(new Error('响应丢失'))
+  await flushPromises()
+  expect(document.body.textContent).toContain('纠正结果尚未确认')
+  expect(document.body.textContent).not.toContain('正在保存纠正')
+  expect(button(wrapper, '保存纠正').props('disabled')).toBe(true)
+  expect(mocks.correct).toHaveBeenCalledOnce()
+})
+
+it.each([
+  { status: 'ACTIVE' as const, label: '遗忘', action: 'forget' as const },
+  { status: 'FORGOTTEN' as const, label: '恢复', action: 'restore' as const }
+])('$label 等待响应与结果未知反馈分开', async ({ status, label, action }) => {
+  fact.status = status
+  let fail!: (reason: Error) => void
+  mocks[action].mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+  const wrapper = await render()
+  await button(wrapper, label).trigger('click')
+  await flushPromises()
+  confirmationButton(`${label}记忆`).click()
+  await flushPromises()
+  expect(wrapper.text()).toContain(`${label}正在提交，请稍候`)
+  expect(wrapper.text()).not.toContain(`${label}结果尚未确认`)
+  fail(new Error('响应丢失'))
+  await flushPromises()
+  expect(wrapper.text()).toContain(`${label}结果尚未确认`)
+  expect(wrapper.text()).not.toContain('正在提交')
+  expect(mocks[action]).toHaveBeenCalledExactlyOnceWith('fact/user', 3)
+})
+
 it('纠正核对标记写入失败时不发送业务请求', async () => {
   fact.status = 'ACTIVE'
   const wrapper = await render()
@@ -869,6 +909,46 @@ describe('记忆筛选辅助目录独立恢复', () => {
 })
 
 describe('记忆审核结果未知', () => {
+  it.each([
+    { label: '批准', approved: true },
+    { label: '拒绝', approved: false }
+  ])('$label 等待响应时显示提交中，断连后保留原操作并允许只读核对', async ({ label, approved }) => {
+    fact.scope = 'USER_AGENT'
+    let fail!: (reason: Error) => void
+    mocks.review.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+    const wrapper = await render()
+    expect(wrapper.text()).toContain('待审核')
+    expect(wrapper.text()).not.toContain('PENDING_CONFIRM')
+    await button(wrapper, label).trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain(`${label}正在提交，请稍候`)
+    expect(wrapper.text()).not.toContain(`${label}结果尚未确认`)
+    expect(button(wrapper, '核对最新状态').props('disabled')).toBe(true)
+    fail(new Error('响应丢失'))
+    await flushPromises()
+    expect(wrapper.text()).toContain(`${label}结果尚未确认`)
+    expect(wrapper.text()).not.toContain('正在提交')
+    expect(button(wrapper, '核对最新状态').props('disabled')).toBe(false)
+    expect(mocks.review).toHaveBeenCalledExactlyOnceWith('fact/user', 3, approved)
+  })
+  it('提交另一事实时不把历史未知操作显示为正在提交', async () => {
+    fact.scope = 'USER_AGENT'
+    sessionStorage.setItem(
+      `memory-state-unknown:${JSON.stringify(['tenant-a', 'operator-a'])}`,
+      JSON.stringify([{ factId: 'fact/old', expectedRevision: 2, operation: 'APPROVE' }])
+    )
+    let finish!: (value: MemoryFact) => void
+    mocks.review.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+    const wrapper = await render()
+    await button(wrapper, '拒绝').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    expect(wrapper.text()).toContain('拒绝正在提交')
+    finish({ ...fact, revision: 4, status: 'REJECTED' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('批准结果尚未确认')
+    expect(wrapper.text()).not.toContain('拒绝正在提交')
+  })
   it.each([
     { label: '批准', operation: '批准', approved: true },
     { label: '拒绝', operation: '拒绝', approved: false }

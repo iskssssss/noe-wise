@@ -67,6 +67,7 @@ const labels: Record<string, string> = {
   APPROVED: '已批准',
   REJECTED: '已拒绝',
   PENDING: '待处理',
+  PENDING_CONFIRM: '待审核',
   FORGOTTEN: '已遗忘',
   TEST: '测试',
   PRODUCTION: '生产',
