@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { computed, type Component } from 'vue'
+import { computed, defineComponent, type Component } from 'vue'
 import { createPermissionDirective } from '@skillforge/shared/directives/permission'
 import { EntitySelect } from '@skillforge/shared/admin'
 import { ElDatePicker, ElInput, ElOption, ElPagination, ElSelect } from 'element-plus'
@@ -28,6 +28,7 @@ vi.mock('../../stores/auth', () => ({ useAuthStore: () => currentAuth }))
 const mocks = vi.hoisted(() => ({
   tenants: vi.fn(),
   templates: vi.fn(),
+  definitionOptions: vi.fn(),
   reviews: vi.fn(),
   audit: vi.fn(),
   sessions: vi.fn()
@@ -35,7 +36,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../api', () => ({
   api: {
     admin: { listTenants: mocks.tenants },
-    agentTemplates: { list: mocks.templates },
+    agentTemplates: { list: mocks.templates, options: mocks.definitionOptions },
     marketplace: { reviews: mocks.reviews },
     operations: {
       auditLogs: mocks.audit,
@@ -59,21 +60,34 @@ async function open(component: Component, path = '/') {
   })
   await router.push(path)
   await router.isReady()
-  const wrapper = mount(component, {
-    attachTo: document.body,
-    global: {
-      plugins: [router],
-      directives: {
-        permission: createPermissionDirective(() => computed(() => currentAuth.user.permissions))
+  const wrapper = mount(
+    component === AgentTemplatesPage
+      ? defineComponent({ template: '<RouterView :key="$route.path" />' })
+      : component,
+    {
+      attachTo: document.body,
+      global: {
+        plugins: [router],
+        directives: {
+          permission: createPermissionDirective(() => computed(() => currentAuth.user.permissions))
+        }
       }
     }
-  })
+  )
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.definitionOptions.mockResolvedValue({
+    statuses: [
+      { value: 'draft', label: '服务端草稿' },
+      { value: 'published', label: '已发布' }
+    ],
+    distribution_policies: [],
+    price_types: []
+  })
   for (const loader of [mocks.tenants, mocks.templates, mocks.reviews, mocks.audit, mocks.sessions])
     loader.mockResolvedValue({ items: [], total: 100 })
 })
@@ -124,9 +138,92 @@ describe('平台读取请求快照', () => {
     ).toBe('客户')
   })
 
-  it('模板筛选恢复时忽略无效状态和页码', async () => {
+  it('定义状态交给服务端校验，非法页码仍归一为第一页', async () => {
     await open(AgentTemplatesPage, '/?list_status=invalid&list_page=-2')
-    expect(mocks.templates.mock.lastCall?.[0]).toMatchObject({ status: '', page: 1 })
+    expect(mocks.templates.mock.lastCall?.[0]).toMatchObject({ status: 'invalid', page: 1 })
+  })
+
+  it('读取服务端状态选项，失败后独立重试而不重查列表', async () => {
+    mocks.definitionOptions.mockRejectedValueOnce(new Error('选项读取失败'))
+    const wrapper = await open(AgentTemplatesPage)
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(true)
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重新读取筛选选项')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.definitionOptions).toHaveBeenCalledTimes(2)
+    expect(mocks.templates).toHaveBeenCalledTimes(1)
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(false)
+    expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain(
+      '服务端草稿'
+    )
+  })
+
+  it('仅显示真实发布修订，未发布草稿不显示预设版本', async () => {
+    mocks.templates.mockResolvedValue({
+      total: 2,
+      items: [
+        {
+          definition_id: '1',
+          name: '未发布样本',
+          version: '1.0.0',
+          current_published_revision: null
+        },
+        {
+          definition_id: '2',
+          name: '已发布样本',
+          version: '2.0.0',
+          current_published_revision: '1.5.0'
+        }
+      ]
+    })
+    const wrapper = await open(AgentTemplatesPage)
+    expect(wrapper.text()).toContain('尚未发布')
+    expect(wrapper.text()).toContain('1.5.0')
+    expect(wrapper.text()).not.toContain('1.0.0')
+    expect(wrapper.text()).not.toContain('2.0.0')
+  })
+
+  it('查询和重置同步地址，真实路由同步后只读取已提交条件', async () => {
+    const wrapper = await open(
+      AgentTemplatesPage,
+      '/?list_name=旧条件&list_status=draft&list_page=3'
+    )
+    await wrapper.get('input[aria-label="公共定义名称"]').setValue('新条件')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.query).toEqual({
+      list_name: '新条件',
+      list_status: 'draft',
+      list_page: '1'
+    })
+    expect(mocks.templates.mock.lastCall?.[0]).toMatchObject({
+      name: '新条件',
+      status: 'draft',
+      page: 1
+    })
+    expect(mocks.templates).toHaveBeenCalledTimes(2)
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重置')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.query).toEqual({ list_page: '1' })
+    expect(mocks.templates.mock.lastCall?.[0]).toMatchObject({ name: '', status: '', page: 1 })
+    expect(mocks.templates).toHaveBeenCalledTimes(3)
+    const refreshed = await open(AgentTemplatesPage, wrapper.vm.$router.currentRoute.value.fullPath)
+    expect(
+      (refreshed.get('input[aria-label="公共定义名称"]').element as HTMLInputElement).value
+    ).toBe('')
+  })
+
+  it('无结果时不提示点击不存在的名称，仍提供查询重置入口', async () => {
+    mocks.templates.mockResolvedValue({ total: 0, items: [] })
+    const wrapper = await open(AgentTemplatesPage, '/?list_name=无匹配')
+    expect(wrapper.text()).not.toContain('点击名称维护')
+    expect(wrapper.text()).toContain('可调整名称或状态后查询')
+    expect(wrapper.findAll('button').some((button) => button.text() === '重置')).toBe(true)
   })
 
   it('会话翻页失败标明保留的页码，重试原页后展示新结果', async () => {

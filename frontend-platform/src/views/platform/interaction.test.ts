@@ -65,6 +65,17 @@ vi.mock('../../api', () => ({
       getVersion: mocks.capabilityVersion
     },
     agentTemplates: {
+      options: async () => ({
+        statuses: [{ value: 'draft', label: '草稿' }],
+        distribution_policies: [
+          { value: 'OPEN_INSTALL', label: '独立安装' },
+          { value: 'AUTHORIZED_DEPLOY', label: '授权部署' }
+        ],
+        price_types: [
+          { value: 'free', label: '免费' },
+          { value: 'paid', label: '付费' }
+        ]
+      }),
       list: mocks.listTemplates,
       create: mocks.createTemplate,
       update: mocks.updateTemplate,

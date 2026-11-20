@@ -71,6 +71,65 @@ class AgentTemplateAdminServiceTest {
     }
     /** 线程主体不泄漏至其他测试。 */ @AfterEach void cleanup(){ManagementContext.clear();com.skillforge.common.context.ServicePrincipalContext.clear();com.skillforge.common.context.TenantContext.clear();}
 
+    /** MVC绑定与真实领域校验贯通；预置主体不能替代HTTP认证链验收。 */
+    @Test void optionsAndHttpValidationShareActualDefinitionValues() throws Exception {
+        when(access.currentSnapshot()).thenReturn(new FoundationAccess.Snapshot(List.of(),List.of("platform.agent_definitions.create"),1));
+        var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
+                new com.skillforge.platform.controller.PlatformAgentTemplateController(service,mock(AgentDefinitionImpactService.class)))
+                .setControllerAdvice(new com.skillforge.platform.exception.GlobalExceptionHandler(json))
+                .setMessageConverters(new org.springframework.http.converter.json.MappingJackson2HttpMessageConverter(json)).build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/platform/agent-definitions/options"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.statuses[0].value").value("draft"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.distribution_policies[0].value").value("OPEN_INSTALL"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.price_types[1].value").value("paid"));
+        for(var option:service.options().statuses()) {
+            when(templates.page(any(Page.class),any())).thenReturn(new Page<AgentTemplateDO>(1,20));
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/platform/agent-definitions").param("status",option.value()))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        }
+        clearInvocations(templates);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/platform/agent-definitions").param("status","unknown"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnprocessableEntity())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("请选择有效的公共定义状态"));
+        verifyNoInteractions(templates);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/platform/agent-definitions")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).header("Idempotency-Key","invalid-price")
+                .content("""
+                        {"name":"选项校验","distribution_policy":"OPEN_INSTALL","price_type":"unknown"}
+                        """))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnprocessableEntity());
+        verify(templates,never()).save(any());verify(templates,never()).appendDefinitionOperation(any());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/platform/agent-definitions")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).header("Idempotency-Key","invalid-policy")
+                .content("""
+                        {"name":"选项校验","distribution_policy":"UNKNOWN","price_type":"free"}
+                        """))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+    }
+
+    /** 选项不要求同时具有读取和创建权限；无相关动作仍拒绝。 */
+    @ParameterizedTest @ValueSource(strings={"read","create","edit"})
+    void optionPermissionMatchesAnyActualConsumer(String action) {
+        when(access.currentSnapshot()).thenReturn(new FoundationAccess.Snapshot(List.of(),List.of("platform.agent_definitions."+action),1));
+        assertThat(service.options().statuses()).hasSize(4);
+        when(access.currentSnapshot()).thenReturn(new FoundationAccess.Snapshot(List.of(),List.of(),2));
+        assertThatThrownBy(service::options).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(403));
+        verifyNoInteractions(templates);
+    }
+
+    /** 编辑非法定价不能更新草稿或生成回执；两种正式选项可创建草稿。 */
+    @Test void pricingOptionsValidateCreateAndUpdateWithoutChangingPublication() {
+        when(access.currentSnapshot()).thenReturn(new FoundationAccess.Snapshot(List.of(),List.of("platform.agent_definitions.create"),1));
+        for(var option:service.options().priceTypes()) {
+            var created=service.create(create(option.value(),0),"price-"+option.value());
+            clearInvocations(templates);
+            assertThatThrownBy(()->service.update(created.id(),1,new UpdateAgentTemplateRequest(null,null,null,null,null,"invalid",null,null,null),"bad-update"))
+                    .isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus().value()).isEqualTo(422));
+            verify(templates,never()).updateById(any());verify(templates,never()).appendDefinitionOperation(any());
+        }
+    }
+
     /** 列表继续消费当前对象范围并映射已持久化行。 */
     @Test void listRetainsCurrentTargetFilterAndPersistedProjection() {
         var c=service.create(create(null,null),"create");when(management.allowedDefinitionIds("platform.agent_definitions.read")).thenReturn(Set.of(c.id()));

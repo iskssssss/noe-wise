@@ -14,6 +14,8 @@ public class AgentTemplateAdminService {
     private final AgentDefinitionLifecycleService definitions;
     /** 注入唯一领域服务，不在宿主复制状态机。 */
     public AgentTemplateAdminService(AgentDefinitionLifecycleService definitions){this.definitions=definitions;}
+    /** 列表和编辑器使用的服务端选项。 */
+    public AgentDefinitionLifecycleService.DefinitionOptions options(){return definitions.platformOptions();}
     /** 平台当前对象范围内的源列表。 */
     public AdminAgentTemplateListResponse list(AgentTemplateQuery query){scope();return definitions.list(query);}
     /** 平台所有者草稿详情。 */

@@ -140,7 +140,7 @@ const router = createRouter({
         {
           path: 'agent-templates',
           component: () => import('../views/platform/AgentTemplatesPage.vue'),
-          meta: { title: '公共定义' }
+          meta: { title: '公共定义', preserveOnQueryChange: true }
         },
         {
           path: 'agent-templates/new',

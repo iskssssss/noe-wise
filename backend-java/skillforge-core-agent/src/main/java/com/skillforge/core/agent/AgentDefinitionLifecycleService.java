@@ -45,6 +45,25 @@ public class AgentDefinitionLifecycleService {
     private static final Logger log = LoggerFactory.getLogger(AgentDefinitionLifecycleService.class);
     private static final String TEMPLATE_KEY_PREFIX = "tpl-";
     private static final String DEFAULT_VERSION = "1.0.0";
+    /** 平台列表及编辑器实际消费的选项，查询和写入校验使用同一取值集合。 */
+    public record Option(String value, String label) { }
+    /** 分别供状态筛选、分发选择及定价选择消费，固定结构不返回泛型Map。 */
+    public record DefinitionOptions(List<Option> statuses, List<Option> distributionPolicies, List<Option> priceTypes) { }
+    private static final DefinitionOptions OPTIONS = new DefinitionOptions(
+            List.of(new Option(AgentConstants.STATUS_DRAFT,"草稿"),new Option(AgentConstants.STATUS_PUBLISHED,"已发布"),
+                    new Option(AgentConstants.STATUS_DEPRECATED,"已弃用"),new Option(AgentConstants.STATUS_ARCHIVED,"已归档")),
+            java.util.Arrays.stream(com.skillforge.core.agent.model.AgentDistributionPolicy.values()).map(value ->
+                    new Option(value.name(),switch(value){case OPEN_INSTALL -> "独立安装";case AUTHORIZED_DEPLOY -> "授权部署";})).toList(),
+            List.of(new Option("free","免费"),new Option("paid","付费")));
+
+    /** 静态表单选项对平台读取、创建或编辑人员开放，不返回定义或机构数据。 */
+    public DefinitionOptions platformOptions() {
+        requirePlatformOwner();
+        var permissions=access.currentSnapshot().permissions();
+        if(java.util.stream.Stream.of("read","create","edit").noneMatch(action -> permissions.contains("platform.agent_definitions."+action)))
+            throw new ApiException(HttpStatus.FORBIDDEN,"没有读取公共定义选项的权限");
+        return OPTIONS;
+    }
 
     private final AgentTemplateService templateService;
     private final PlatformManagementService management;
@@ -66,6 +85,8 @@ public class AgentDefinitionLifecycleService {
                 ? ApiConstants.DEFAULT_PAGE_SIZE
                 : Math.max(1, Math.min(ApiConstants.MAX_PAGE_SIZE, query.limit()));
         var owner=authorize("read",null);
+        if(query.status()!=null&&!query.status().isBlank()&&OPTIONS.statuses().stream().noneMatch(option -> option.value().equals(query.status())))
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"VALIDATION_ERROR","请选择有效的公共定义状态",false);
         var allowed=owner.tenantId()==null?management.allowedDefinitionIds("platform.agent_definitions.read"):null;
         LambdaQueryWrapper<AgentTemplateDO> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AgentTemplateDO::getOwnerKind,owner.kind());
@@ -180,6 +201,8 @@ public class AgentDefinitionLifecycleService {
 
     /** 首次创建的内容写入；授权、创建请求锁和原回执由唯一公开create入口持有。 */
     private AdminAgentTemplateItemResponse createChecked(CreateAgentTemplateRequest request) {
+        if(OPTIONS.priceTypes().stream().noneMatch(option -> option.value().equals(request.priceType())))
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"VALIDATION_ERROR","请选择有效的定价方式",false);
         AgentTemplateDO template = new AgentTemplateDO();
         template.setId(SnowflakeIds.nextId());
         template.setTemplateKey(TEMPLATE_KEY_PREFIX + SnowflakeIds.nextId());
@@ -226,6 +249,8 @@ public class AgentDefinitionLifecycleService {
 
     private AdminAgentTemplateItemResponse updateChecked(AgentTemplateDO existing, UpdateAgentTemplateRequest request) {
         if(request==null)throw new ApiException(HttpStatus.BAD_REQUEST,"缺少定义编辑内容");
+        if(request.priceType()!=null&&OPTIONS.priceTypes().stream().noneMatch(option -> option.value().equals(request.priceType())))
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"VALIDATION_ERROR","请选择有效的定价方式",false);
         if (AgentConstants.STATUS_ARCHIVED.equals(existing.getStatus()))
             throw new ApiException(HttpStatus.CONFLICT, "归档模板不可修改");
         applyContent(existing, request);

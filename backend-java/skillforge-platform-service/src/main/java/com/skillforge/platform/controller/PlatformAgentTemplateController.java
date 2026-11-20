@@ -27,6 +27,7 @@ public class PlatformAgentTemplateController {
         this.definitions=definitions;this.impacts=impacts;
     }
     @GetMapping public ApiResponse<AdminAgentTemplateListResponse> listTemplates(@ModelAttribute AgentTemplateQuery query) {return ApiResponses.wrap(definitions.list(query));}
+    @GetMapping("/options") public ApiResponse<com.skillforge.core.agent.AgentDefinitionLifecycleService.DefinitionOptions> options() {return ApiResponses.wrap(definitions.options());}
     @GetMapping("/detail") public ApiResponse<AdminAgentTemplateDetailResponse> getTemplate(@RequestParam("definition_id")Long id) {return ApiResponses.wrap(definitions.detail(id));}
     @GetMapping("/history") public ApiResponse<List<AdminAgentTemplateDetailResponse>> history(@RequestParam("definition_id")Long id) {return ApiResponses.wrap(definitions.history(id));}
     @GetMapping("/impact") public ApiResponse<AgentDefinitionImpactResponse> impact(@RequestParam("definition_id")Long id,@RequestParam("draft_revision")long revision) {

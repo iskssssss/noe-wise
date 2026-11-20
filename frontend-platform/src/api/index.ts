@@ -856,6 +856,12 @@ export const api = {
   // 智能体模板管理（平台运营，/api/v1/platform/agent-definitions）
   agentTemplates: {
     ...createAgentDefinitionsApi({ get, post, put }),
+    options: (options?: RequestOptions) =>
+      get<{
+        statuses: Array<{ value: string; label: string }>
+        distribution_policies: Array<{ value: 'OPEN_INSTALL' | 'AUTHORIZED_DEPLOY'; label: string }>
+        price_types: Array<{ value: string; label: string }>
+      }>('/platform/agent-definitions/options', options),
     previewContent: (
       id: string,
       revision: number,

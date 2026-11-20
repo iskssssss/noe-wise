@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { guardFormEnter } from '@skillforge/shared/admin'
-import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { AdminPage, statusLabel, useResource } from '@skillforge/shared/admin'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { AdminPage, statusLabel, useResource, useTask } from '@skillforge/shared/admin'
 import { api } from '../../api'
 const route = useRoute()
+const router = useRouter()
+const navigation = useTask()
+const options = useResource((signal) => api.agentTemplates.options({ signal, silent: true }))
 const initialPage = Number(route.query.list_page)
-const initialStatus =
-  typeof route.query.list_status === 'string' &&
-  ['draft', 'published', 'deprecated', 'archived'].includes(route.query.list_status)
-    ? route.query.list_status
-    : ''
+const initialStatus = typeof route.query.list_status === 'string' ? route.query.list_status : ''
 const page = ref(Number.isSafeInteger(initialPage) && initialPage > 0 ? initialPage : 1),
   name = ref(typeof route.query.list_name === 'string' ? route.query.list_name : ''),
   status = ref(initialStatus)
@@ -33,8 +32,43 @@ const load = useResource(async (signal) => {
 
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
-function reload() {
-  void load.reload()
+// 页面自身同步地址时保留未提交输入；同页导航带来的新查询则重新恢复。
+watch(
+  () => route.query,
+  (query) => {
+    const nextPage = Number(query.list_page)
+    const next = {
+      name: typeof query.list_name === 'string' ? query.list_name : '',
+      status: typeof query.list_status === 'string' ? query.list_status : ''
+    }
+    const normalizedPage = Number.isSafeInteger(nextPage) && nextPage > 0 ? nextPage : 1
+    if (
+      next.name === applied.value.name &&
+      next.status === applied.value.status &&
+      normalizedPage === page.value
+    )
+      return
+    name.value = next.name
+    status.value = next.status
+    applied.value = next
+    page.value = normalizedPage
+    load.data.value = undefined
+    void load.reload()
+  }
+)
+async function reload() {
+  const changed = await navigation.run(async () => {
+    const target = {
+      path: route.path,
+      query: { ...route.query, ...listContext.value, list_page: String(page.value) }
+    }
+    if (router.resolve(target).fullPath !== route.fullPath) {
+      const failure = await router.replace(target)
+      if (failure) throw Error('查询条件未能更新到地址栏，请重试查询')
+    }
+    return true
+  })
+  if (changed) void load.reload()
 }
 function submitFilters() {
   page.value = 1
@@ -48,7 +82,10 @@ function resetFilters() {
   page.value = 1
   submitFilters()
 }
-onMounted(reload)
+onMounted(() => {
+  void options.reload()
+  void load.reload()
+})
 </script>
 
 <template>
@@ -67,24 +104,43 @@ onMounted(reload)
       @submit.prevent="submitFilters"
     >
       <ElInput v-model="name" aria-label="公共定义名称" placeholder="搜索名称" clearable />
-      <ElSelect v-model="status" aria-label="公共定义状态" clearable placeholder="全部状态">
+      <ElSelect
+        v-model="status"
+        aria-label="公共定义状态"
+        clearable
+        placeholder="全部状态"
+        :loading="options.loading.value"
+        :disabled="!options.data.value"
+      >
         <ElOption
-          v-for="s in ['draft', 'published', 'deprecated', 'archived']"
-          :key="s"
-          :value="s"
-          :label="statusLabel(s)"
+          v-for="option in options.data.value?.statuses ?? []"
+          :key="option.value"
+          :value="option.value"
+          :label="option.label"
         />
       </ElSelect>
       <ElButton native-type="submit" :loading="load.loading.value">查询</ElButton
       ><ElButton @click="resetFilters">重置</ElButton>
     </ElForm>
     <FeedbackNotice
-      v-if="load.error.value"
-      :title="load.error.value"
+      v-if="options.error.value"
+      :title="options.error.value"
+      type="error"
+      :closable="false"
+    />
+    <ElButton v-if="options.error.value" :loading="options.loading.value" @click="options.reload()"
+      >重新读取筛选选项</ElButton
+    >
+    <FeedbackNotice
+      v-if="load.error.value || navigation.error.value"
+      :title="load.error.value || navigation.error.value"
       :closable="false"
       type="error"
     />
-    <p class="admin-muted" role="status">共 {{ total }} 个公共定义 · 点击名称维护定义与发布</p>
+    <p class="admin-muted" role="status">
+      {{ load.loading.value ? '正在读取公共定义…' : `共 ${total} 个公共定义` }}
+      <template v-if="rows.length"> · 点击名称维护定义与发布</template>
+    </p>
     <ElTable
       table-layout="auto"
       :empty-text="
@@ -108,7 +164,10 @@ onMounted(reload)
       </ElTableColumn>
       <ElTableColumn prop="category" label="分类" min-width="140" show-overflow-tooltip>
       </ElTableColumn>
-      <ElTableColumn prop="version" label="发布修订" width="110"> </ElTableColumn
+      <ElTableColumn label="发布修订" width="110"
+        ><template #default="{ row }">{{
+          row.current_published_revision ?? '尚未发布'
+        }}</template></ElTableColumn
       ><ElTableColumn label="工作草稿" width="120"
         ><template #default="{ row }">{{
           row.has_unpublished_changes ? '待发布' : '与发布一致'

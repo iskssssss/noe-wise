@@ -155,7 +155,9 @@ class PlatformControllerCoverageTest {
     void auditControllerMapsLogsAndValidatesTenantFilter() {
         var mapper = mock(com.skillforge.core.foundation.persistence.AuditLogMapper.class);
         AuditLogService service = new AuditLogService(mapper);
-        PlatformAuditController controller = new PlatformAuditController(service);
+        PlatformAuditController controller = new PlatformAuditController(service,
+                mock(com.skillforge.core.foundation.persistence.PlatformMemberMapper.class),
+                mock(com.skillforge.core.foundation.persistence.TenantMemberMapper.class));
         AuditLogDO log = new AuditLogDO();
         log.setId(1L); log.setAction("tenant.create"); log.setMessage("created");
         Page<AuditLogDO> result = new Page<>(2, 20);

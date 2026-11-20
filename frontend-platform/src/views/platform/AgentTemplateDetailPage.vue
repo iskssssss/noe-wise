@@ -141,6 +141,9 @@ const candidatePreview = ref<AgentDefinitionImpact>()
 const candidateSnapshot = ref('')
 const validatedRevision = ref<number>()
 const catalogError = ref('')
+const definitionOptions = useResource((signal) =>
+  api.agentTemplates.options({ signal, silent: true })
+)
 const pending = ref<{
   permission: string
   label: string
@@ -188,7 +191,8 @@ const load = useResource(async (signal) => {
     editable ? catalogs.reload() : Promise.resolve(undefined),
     isNew
       ? Promise.resolve(undefined)
-      : api.agentTemplates.detail(String(route.params.id), { signal, silent: true })
+      : api.agentTemplates.detail(String(route.params.id), { signal, silent: true }),
+    definitionOptions.reload()
   ])
   return { catalog, detail }
 })
@@ -773,6 +777,8 @@ watch(
     catalogs.invalidate()
     catalogs.data.value = undefined
     models.value = []
+    definitionOptions.invalidate()
+    definitionOptions.data.value = undefined
     definitions.value = []
     catalogError.value = ''
     history.invalidate()
@@ -993,6 +999,18 @@ const formTipId = useId()
       type="error"
     />
     <FeedbackNotice
+      v-if="definitionOptions.error.value"
+      :title="definitionOptions.error.value"
+      type="error"
+      :closable="false"
+    />
+    <ElButton
+      v-if="definitionOptions.error.value"
+      :loading="definitionOptions.loading.value"
+      @click="definitionOptions.reload()"
+      >重新读取分发与定价选项</ElButton
+    >
+    <FeedbackNotice
       v-if="catalogError"
       :title="'编辑目录读取失败，当前草稿已保留，可刷新编辑选项重试：' + catalogError"
       type="warning"
@@ -1126,13 +1144,22 @@ const formTipId = useId()
           >
             <ElSelect
               v-model="meta.distribution_policy"
-              :disabled="Boolean(item?.published_at)"
+              :disabled="
+                Boolean(item?.published_at) ||
+                !definitionOptions.data.value ||
+                !!pending ||
+                action.busy.value
+              "
               placeholder="请选择分发方式"
               v-described-by="formTipId + '-distribution'"
               :aria-describedby="formTipId + '-distribution'"
             >
-              <ElOption label="独立安装" value="OPEN_INSTALL" />
-              <ElOption label="授权部署" value="AUTHORIZED_DEPLOY" />
+              <ElOption
+                v-for="option in definitionOptions.data.value?.distribution_policies ?? []"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
             </ElSelect>
             <FieldTip :id="formTipId + '-distribution'"
               >独立安装后由机构自行维护；授权部署持续使用获准源定义。首次发布后不能切换。</FieldTip
@@ -1143,9 +1170,14 @@ const formTipId = useId()
               v-described-by="formTipId + '-field-3'"
               :aria-describedby="formTipId + '-field-3'"
               v-model="meta.price_type"
+              :disabled="!definitionOptions.data.value || !!pending || action.busy.value"
             >
-              <ElOption label="免费" value="free" />
-              <ElOption label="付费" value="paid" />
+              <ElOption
+                v-for="option in definitionOptions.data.value?.price_types ?? []"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
             </ElSelect>
 
             <FieldTip :id="formTipId + '-field-3'"
