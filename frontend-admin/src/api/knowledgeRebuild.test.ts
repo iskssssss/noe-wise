@@ -7,6 +7,7 @@ const job: KnowledgeRebuild = {
   revision: 9,
   base_revision: 18,
   target_model_id: '81',
+  target_model_name: '任务模型',
   target_model_revision: 3,
   target_dimensions: 768,
   document_count: 2,

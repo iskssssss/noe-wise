@@ -14,6 +14,7 @@ export interface KnowledgeRebuild {
     | 'PUBLISHED'
   revision: number | null
   target_model_id: string | null
+  target_model_name: string | null
   target_model_revision: number | null
   target_dimensions: number | null
   document_count: number

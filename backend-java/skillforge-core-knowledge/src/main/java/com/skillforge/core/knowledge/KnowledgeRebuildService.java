@@ -105,7 +105,7 @@ public class KnowledgeRebuildService {
                 .orderByDesc(KnowledgeRebuildJobDO::getCreatedAt).last("LIMIT 1"));
         if(job!=null)return snapshot(job);
         KnowledgeBaseDO base=requireBase(Long.parseLong(tenantId),kbId);
-        return new Snapshot(null,kbId,"IDLE",null,null,null,null,0,0,0,null,null,false,base.getControlRevision());
+        return new Snapshot(null,kbId,"IDLE",null,null,null,null,null,0,0,0,null,null,false,base.getControlRevision());
     }
     public List<Long> due(String tenantId){return jobs.due(Long.parseLong(tenantId)).stream().map(KnowledgeRebuildJobDO::getId).toList();}
 
@@ -345,13 +345,14 @@ public class KnowledgeRebuildService {
     private List<KnowledgeRebuildBatchDO> jobBatches(KnowledgeRebuildJobDO job){return batches.selectList(new LambdaQueryWrapper<KnowledgeRebuildBatchDO>().eq(KnowledgeRebuildBatchDO::getTenantId,job.getTenantId()).eq(KnowledgeRebuildBatchDO::getJobId,job.getId()));}
     private List<KnowledgeRebuildBatchDO> itemBatches(KnowledgeRebuildItemDO item){return batches.selectList(new LambdaQueryWrapper<KnowledgeRebuildBatchDO>().eq(KnowledgeRebuildBatchDO::getTenantId,item.getTenantId()).eq(KnowledgeRebuildBatchDO::getItemId,item.getId()).orderByAsc(KnowledgeRebuildBatchDO::getBatchIndex));}
     private Snapshot snapshot(KnowledgeRebuildJobDO job){var progress=jobs.progress(job.getTenantId(),job.getId());
-        return new Snapshot(job.getId(),job.getKbId(),job.getStatus(),job.getRevision(),job.getTargetModelId(),job.getTargetModelRevision(),job.getTargetDimensions(),progress.documentCount(),progress.readyDocuments(),progress.unknownBatches(),job.getErrorCode(),job.getPublishedRevision(),!TERMINAL.contains(job.getStatus()),requireBase(job.getTenantId(),job.getKbId()).getControlRevision());}
+        String modelName=models.readRevision(job.getTargetModelId().toString(),job.getTargetModelRevision()).name();
+        return new Snapshot(job.getId(),job.getKbId(),job.getStatus(),job.getRevision(),job.getTargetModelId(),modelName,job.getTargetModelRevision(),job.getTargetDimensions(),progress.documentCount(),progress.readyDocuments(),progress.unknownBatches(),job.getErrorCode(),job.getPublishedRevision(),!TERMINAL.contains(job.getStatus()),requireBase(job.getTenantId(),job.getKbId()).getControlRevision());}
     public record Snapshot(
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long jobId,
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long kbId,
             String status,Long revision,
             @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class) Long targetModelId,
-            Long targetModelRevision,Integer targetDimensions,int documentCount,long readyDocuments,long unknownBatches,String errorCode,Long publishedRevision,boolean writeLocked,Long baseRevision){}
+            String targetModelName,Long targetModelRevision,Integer targetDimensions,int documentCount,long readyDocuments,long unknownBatches,String errorCode,Long publishedRevision,boolean writeLocked,Long baseRevision){}
     private static ApiException conflict(String code){return new ApiException(HttpStatus.CONFLICT,code);}
     private static ApiException invalid(String code){return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,code);}
     private static ApiException missing(){return new ApiException(HttpStatus.NOT_FOUND,"knowledge_rebuild_not_found");}

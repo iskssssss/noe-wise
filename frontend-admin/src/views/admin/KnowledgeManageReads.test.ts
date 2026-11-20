@@ -150,6 +150,67 @@ async function rebuildTab() {
 }
 
 describe('知识详情按需读取与已发布状态恢复', () => {
+  it('任务展示冻结模型名称和版本，不随当前可选模型目录变化', async () => {
+    mocks.rebuild.mockResolvedValue({
+      ...job('READY'),
+      target_model_id: 'model-1',
+      target_model_name: '原向量模型',
+      target_model_revision: 2,
+      target_dimensions: 768
+    })
+    mocks.models.mockResolvedValue([
+      { id: 'model-1', name: '后来改名的模型', kind: 'EMBEDDING', revision: 3 }
+    ])
+    await open()
+    await rebuildTab()
+    const description = wrapper
+      .findAll('.el-descriptions__cell')
+      .find((item) => item.text().includes('原向量模型'))!
+    expect(description.text()).toMatch(/原向量模型.*版本\s*2.*768 维/)
+    expect(description.text()).not.toContain('后来改名的模型')
+    expect(
+      wrapper.findAllComponents(ElSelect).some((item) => item.props('modelValue') === 'model-1')
+    ).toBe(false)
+    mocks.models.mockResolvedValue([])
+    await click('刷新模型目录')
+    expect(wrapper.text()).toContain('原向量模型')
+  })
+  it('发布在途显示等待，断连后才显示原请求核对，核对期间不重复发布', async () => {
+    mocks.rebuild.mockResolvedValue(job('READY'))
+    let fail!: (reason: unknown) => void
+    mocks.post.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        fail = reject
+      })
+    )
+    await open()
+    await rebuildTab()
+    await click('发布重建结果')
+    expect(wrapper.text()).toContain('正在等待操作结果，请稍候')
+    expect(wrapper.text()).not.toContain('重建发布结果尚未确认')
+    expect(wrapper.text()).not.toContain('结束未确认的重建发布')
+    fail(Error('断连'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('重建发布结果尚未确认')
+    const original = mocks.post.mock.calls[0]![1]
+    let finish!: (value: unknown) => void
+    mocks.rebuild.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    await click('核对原重建发布')
+    expect(wrapper.text()).toContain('正在等待操作结果，请稍候')
+    expect(String(mocks.rebuild.mock.calls.at(-1)![0])).toContain(original.request_id)
+    finish({
+      status: 'SUCCEEDED',
+      snapshot: { ...job('PUBLISHED'), revision: 3, published_revision: 1 }
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('重建发布结果尚未确认')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.length).toBe(0)
+  })
   it.each([
     { permission: true, mode: 'high_quality', status: 'ready', source: 'v1', visible: true },
     { permission: false, mode: 'high_quality', status: 'ready', source: 'v1', visible: false },
@@ -653,7 +714,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     await rebuildTab()
     const modelSelect = wrapper
       .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === '目标向量模型')!
+      .find((item) => item.props('label') === '新重建任务的向量模型')!
       .getComponent(ElSelect)
     expect(modelSelect.props('disabled')).toBe(true)
     expect(
@@ -739,7 +800,7 @@ describe('知识详情按需读取与已发布状态恢复', () => {
     await rebuildTab()
     const modelSelect = wrapper
       .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === '目标向量模型')!
+      .find((item) => item.props('label') === '新重建任务的向量模型')!
       .getComponent(ElSelect)
     expect(modelSelect.props('disabled')).toBe(false)
     modelSelect.vm.$emit('update:modelValue', 'model-1')

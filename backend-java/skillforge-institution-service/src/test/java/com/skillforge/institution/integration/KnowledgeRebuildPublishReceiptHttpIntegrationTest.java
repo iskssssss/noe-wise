@@ -45,10 +45,12 @@ class KnowledgeRebuildPublishReceiptHttpIntegrationTest extends AbstractIntegrat
   String slug="rebuild-receipt-"+SnowflakeIds.nextId();String tenant=createTenant(tenants,plans,slug);
   TenantContext.setTenantId(tenant);long member=createTestTenantAdministrator(tenant,"receipt-admin","ReceiptTestPassword123");
   long kb=withAuthenticatedMember(member,()->management.create(tenant,"回执测试",null,"economical","full_text",false).id());
+  var model=models.create(new com.skillforge.core.model.ModelWrite(null,"回执隔离模型","EMBEDDING",true,"custom","knowledge-embedding-fixture","knowledge-fixture-v1","openai-embeddings","bearer-api-key","https://embedding.example/v1","fixture","test-secret",null,null,null,null,null,30,768,null,null,null,null,"CNY"),"receipt-test");
+  var published=models.publish(model.id(),model.revision(),"receipt-test");
   long job=SnowflakeIds.nextId();
   new TransactionTemplate(manager).executeWithoutResult(s->{
    jdbc.queryForObject("select set_config('app.tenant_id',?,true)",String.class,tenant);
-   jdbc.update("insert into nw_knowledge_rebuild_jobs (id,tenant_id,kb_id,idempotency_key,fingerprint,status,revision,fence,target_model_id,target_model_revision,target_dimensions,original_model_id,original_model_revision) values (?,?,?,? ,?,'READY',1,0,1,1,768,1,1)",job,Long.parseLong(tenant),kb,"test-"+job,"x".repeat(64));
+   jdbc.update("insert into nw_knowledge_rebuild_jobs (id,tenant_id,kb_id,idempotency_key,fingerprint,status,revision,fence,target_model_id,target_model_revision,target_dimensions,original_model_id,original_model_revision) values (?,?,?,? ,?,'READY',1,0,?,?,768,1,1)",job,Long.parseLong(tenant),kb,"test-"+job,"x".repeat(64),Long.parseLong(published.id()),published.revision());
   });TenantContext.clear();
   String admin=login(slug,"receipt-admin"), access="/api/v1/tenant/foundation/access";
   var read=List.of("foundation.knowledge.read","foundation.resource.knowledge.read");
@@ -87,7 +89,7 @@ class KnowledgeRebuildPublishReceiptHttpIntegrationTest extends AbstractIntegrat
   new TransactionTemplate(manager).executeWithoutResult(s->{
    jdbc.queryForObject("select set_config('app.tenant_id',?,true)",String.class,tenant);
    jdbc.update("update nw_knowledge_rebuild_jobs set status='CANCELLED' where tenant_id=? and id=?",Long.parseLong(tenant),job);
-   jdbc.update("insert into nw_knowledge_rebuild_jobs (id,tenant_id,kb_id,idempotency_key,fingerprint,status,revision,fence,target_model_id,target_model_revision,target_dimensions,original_model_id,original_model_revision,created_at) values (?,?,?,? ,?,'QUEUED',1,0,1,1,768,1,1,now()+interval '1 second')",newerJob,Long.parseLong(tenant),kb,"new-"+newerJob,"y".repeat(64));
+   jdbc.update("insert into nw_knowledge_rebuild_jobs (id,tenant_id,kb_id,idempotency_key,fingerprint,status,revision,fence,target_model_id,target_model_revision,target_dimensions,original_model_id,original_model_revision,created_at) values (?,?,?,? ,?,'QUEUED',1,0,?,?,768,1,1,now()+interval '1 second')",newerJob,Long.parseLong(tenant),kb,"new-"+newerJob,"y".repeat(64),Long.parseLong(published.id()),published.revision());
   });
   TenantContext.setTenantId(tenant); try {assertEquals(newerJob,rebuilds.latest(tenant,kb).jobId());} finally {TenantContext.clear();}
   assertEquals("FENCED",call("GET",resolution,original,null,200).path("status").asText());

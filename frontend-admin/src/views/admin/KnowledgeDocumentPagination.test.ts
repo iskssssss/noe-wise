@@ -26,6 +26,7 @@ vi.mock('../../api', () => ({
       status: 'IDLE',
       revision: null,
       target_model_id: null,
+      target_model_name: null,
       target_model_revision: null,
       target_dimensions: null,
       document_count: 0,

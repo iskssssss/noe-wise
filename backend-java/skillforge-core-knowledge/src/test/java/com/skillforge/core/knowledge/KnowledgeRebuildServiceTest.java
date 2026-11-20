@@ -21,22 +21,28 @@ class KnowledgeRebuildServiceTest {
   var items=mock(KnowledgeRebuildItemMapper.class);var batches=mock(KnowledgeRebuildBatchMapper.class);
   var base=new KnowledgeBaseDO();base.setId(10L);base.setTenantId(7L);base.setControlRevision(9L);
   var job=new KnowledgeRebuildJobDO();job.setId(20L);job.setTenantId(7L);job.setKbId(10L);job.setStatus("RUNNING");job.setRevision(3L);
+  job.setTargetModelId(30L);job.setTargetModelRevision(2L);job.setTargetDimensions(768);
+  var models=mock(com.skillforge.core.model.PlatformModelCatalogService.class);
+  var frozen=mock(com.skillforge.core.model.PlatformModelConfig.class);when(frozen.name()).thenReturn("任务冻结模型名称");
+  when(models.readRevision("30",2)).thenReturn(frozen);
   when(bases.selectOne(any(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class))).thenReturn(base);
   when(jobs.selectOne(any(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class))).thenReturn(job);
   var service=new KnowledgeRebuildService(bases,mock(KnowledgeBaseRevisionMapper.class),mock(KnowledgeDocumentMapper.class),
     mock(KnowledgeDocumentVersionMapper.class),mock(KnowledgeChunkMapper.class),jobs,items,batches,
-    mock(com.skillforge.core.model.PlatformModelCatalogService.class),mock(EmbeddingProvider.class),mock(KnowledgeBaseRevisionService.class),mock(KnowledgeStorageService.class),mock(KnowledgeOperationalSettings.class),new TestTransactionManager());
+    models,mock(EmbeddingProvider.class),mock(KnowledgeBaseRevisionService.class),mock(KnowledgeStorageService.class),mock(KnowledgeOperationalSettings.class),new TestTransactionManager());
   for(var expected:List.of(new KnowledgeRebuildJobMapper.Progress(0,0,0),new KnowledgeRebuildJobMapper.Progress(200,171,12))){
    when(jobs.progress(7,20)).thenReturn(expected);var result=service.latest("7",10);
    assertEquals(expected.documentCount(),result.documentCount());assertEquals(expected.readyDocuments(),result.readyDocuments());assertEquals(expected.unknownBatches(),result.unknownBatches());
    assertEquals("RUNNING",result.status());assertEquals(9L,result.baseRevision());assertTrue(result.writeLocked());
+   assertEquals("任务冻结模型名称",result.targetModelName());assertEquals(2L,result.targetModelRevision());
   }
   verify(jobs,times(2)).progress(7,20);verifyNoInteractions(items,batches);
+  verify(models,times(2)).readRevision("30",2);verifyNoMoreInteractions(models);
  }
  @Test void snapshotSerializesAllIdsAsExactStringsAndReadsPreviouslyStoredNumericReceipts() throws Exception {
   var mapper=new com.fasterxml.jackson.databind.ObjectMapper().setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
   long kb=9007199254740993L, job=9007199254740995L, model=9007199254740997L;
-  var snapshot=new KnowledgeRebuildService.Snapshot(job,kb,"PUBLISHED",4L,model,2L,768,1,1,0,null,3L,false,6L);
+  var snapshot=new KnowledgeRebuildService.Snapshot(job,kb,"PUBLISHED",4L,model,"任务模型",2L,768,1,1,0,null,3L,false,6L);
   var data=mapper.valueToTree(snapshot);
   assertTrue(data.get("job_id").isTextual());assertEquals(Long.toString(job),data.get("job_id").textValue());
   assertTrue(data.get("kb_id").isTextual());assertEquals(Long.toString(kb),data.get("kb_id").textValue());

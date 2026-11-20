@@ -134,19 +134,20 @@
       <ElButton @click="preparationOpen = true">核对原操作</ElButton>
     </section>
     <section v-if="rebuildPublicationLocked" class="admin-card" role="status">
-      <template v-if="rebuildPublicationPending"
+      <template v-if="rebuildPublicationPending && busy">正在等待操作结果，请稍候。</template>
+      <template v-else-if="rebuildPublicationPending"
         >重建发布结果尚未确认，原请求 ID：<code>{{ rebuildPublicationPending.requestId }}</code
         >。</template
       >
       {{ rebuildPublicationStorageError }}
       <ElButton
-        v-if="rebuildPublicationPending && can('foundation.knowledge.read')"
+        v-if="rebuildPublicationPending && !busy && can('foundation.knowledge.read')"
         :disabled="busy"
         @click="checkRebuildPublication"
         >核对原重建发布</ElButton
       >
       <ElButton
-        v-if="rebuildPublicationPending && can('foundation.knowledge.read')"
+        v-if="rebuildPublicationPending && !busy && can('foundation.knowledge.read')"
         :disabled="busy"
         @click="fenceRebuildPublication"
         >结束未确认的重建发布</ElButton
@@ -643,6 +644,10 @@
           :closable="false"
         /><ElDescriptions v-if="rebuild" :column="1" border
           ><ElDescriptionsItem label="状态">{{ rebuildStatusLabel }}</ElDescriptionsItem
+          ><ElDescriptionsItem v-if="rebuild.job_id" label="任务使用的向量模型">
+            {{ rebuild.target_model_name || '名称暂不可用' }} · 版本
+            {{ rebuild.target_model_revision }} ·
+            {{ rebuild.target_dimensions }} 维 </ElDescriptionsItem
           ><ElDescriptionsItem label="文档进度"
             >{{ rebuild.ready_documents }} / {{ rebuild.document_count
             }}<ElProgress
@@ -666,8 +671,9 @@
           :disabled="busy"
           scroll-to-error
           @keydown.capture="guardFormEnter"
-          ><ElFormItem label="目标向量模型"
+          ><ElFormItem label="新重建任务的向量模型"
             ><ElSelect
+              placeholder="选择新任务使用的模型"
               v-described-by="formTipId + '-field-2'"
               :aria-describedby="formTipId + '-field-2'"
               v-model="modelId"
@@ -687,7 +693,7 @@
               刷新模型目录
             </ElButton>
             <FieldTip :id="formTipId + '-field-2'"
-              >选择重建索引使用的向量模型，模型变化需要重新生成文档向量。</FieldTip
+              >仅用于新建重建任务，不影响已有任务。更换模型需要重新生成文档向量。</FieldTip
             >
           </ElFormItem></ElForm
         >
