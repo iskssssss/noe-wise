@@ -12,13 +12,14 @@ public class FoundationJobScheduler {
     private final FoundationJobService jobs;
     private final FoundationFileService files;
     private final boolean platform;
+    private final boolean cleanupEnabled;
     private final AtomicBoolean executing=new AtomicBoolean();
     /** 宿主身份只由应用部署名决定，不能来自 HTTP 参数。 */
-    public FoundationJobScheduler(FoundationJobService jobs,FoundationFileService files,boolean platform){this.jobs=jobs;this.files=files;this.platform=platform;}
+    public FoundationJobScheduler(FoundationJobService jobs,FoundationFileService files,boolean platform,boolean cleanupEnabled){this.jobs=jobs;this.files=files;this.platform=platform;this.cleanupEnabled=cleanupEnabled;if(!cleanupEnabled)log.info("管理任务材料与公共文件自动清理已停用，保留现有数据；任务执行仍启用");}
     /** 一次最多领取四项，避免无限占用宿主调度线程；新请求不代表立即完成。 */
     @Scheduled(fixedDelayString="${skillforge.foundation.jobs.poll-ms:3000}")
     public void poll(){if(!executing.compareAndSet(false,true))return;try{for(int i=0;i<4;i++)if(!jobs.runNext(platform))break;}catch(RuntimeException e){log.error("管理任务调度失败，等待下一次领取",e);}finally{executing.set(false);}}
-    /** 七日终态释放后由文件引用保护清理；活跃、等待和结果未知任务不在此范围。 */
+    /** 证据保留环境可停用自动回收；开启时七日终态释放后由文件引用保护清理。 */
     @Scheduled(fixedDelayString="${skillforge.foundation.jobs.cleanup-ms:3600000}")
-    public void cleanup(){try{jobs.cleanup(platform);files.cleanup();}catch(RuntimeException e){log.error("管理任务/公共文件清理失败，保留待重试",e);}}
+    public void cleanup(){if(!cleanupEnabled)return;try{jobs.cleanup(platform);files.cleanup();}catch(RuntimeException e){log.error("管理任务/公共文件清理失败，保留待重试",e);}}
 }

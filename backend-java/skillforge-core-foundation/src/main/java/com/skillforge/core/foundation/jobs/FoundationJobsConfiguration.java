@@ -19,5 +19,5 @@ public class FoundationJobsConfiguration {
     /** Spring 收集实际消费者，未注册的代码不会成为可执行任务。 */
     @Bean public FoundationJobService foundationJobService(FoundationJobMapper mapper,FoundationAccess access,FoundationFileService files,FeatureGate gate,ResourceQuota quota,ObjectMapper json,PlatformTransactionManager manager,List<CsvTransferHandler> handlers){return new FoundationJobService(mapper,access,files,gate,quota,json,manager,handlers);}
     /** 明确宿主队列边界，平台与机构不能互相代跑任务。 */
-    @Bean public FoundationJobScheduler foundationJobScheduler(FoundationJobService jobs,FoundationFileService files,@Value("${spring.application.name}") String applicationName){if(!applicationName.contains("platform")&&!applicationName.contains("institution"))throw new IllegalStateException("管理任务宿主身份无效");return new FoundationJobScheduler(jobs,files,applicationName.contains("platform"));}
+    @Bean public FoundationJobScheduler foundationJobScheduler(FoundationJobService jobs,FoundationFileService files,@Value("${spring.application.name}") String applicationName,@Value("${skillforge.foundation.jobs.cleanup-enabled:true}") boolean cleanupEnabled){if(!applicationName.contains("platform")&&!applicationName.contains("institution"))throw new IllegalStateException("管理任务宿主身份无效");return new FoundationJobScheduler(jobs,files,applicationName.contains("platform"),cleanupEnabled);}
 }
