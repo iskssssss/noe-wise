@@ -102,7 +102,8 @@ describe('平台直管公开传输边界', () => {
     }
     await grants.create(grantRequest, 'grant-create')
     expect(http.post).toHaveBeenLastCalledWith('/platform/agent-grants', grantRequest, {
-      headers: { 'Idempotency-Key': 'grant-create' }
+      headers: { 'Idempotency-Key': 'grant-create' },
+      retryOnUnauthorized: false
     })
     await grants.revoke({ grant_id: '9223372036854775807', expected_revision: 5 }, 'grant-revoke')
     expect(http.post).toHaveBeenLastCalledWith(

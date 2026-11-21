@@ -142,6 +142,21 @@ function field(wrapper: VueWrapper, label: string) {
   return value
 }
 describe('平台直管身份与秘密交付', () => {
+  it('空表单只提示必填字段，不签发身份或误报结果未知', async () => {
+    const wrapper = await open(ManagementPrincipalsPage, '/platform/management-principals')
+    await button(wrapper, '创建管理身份').trigger('click')
+    await flushPromises()
+    await button(wrapper, '签发管理身份').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('请填写管理身份名称')
+      expect(document.body.textContent).toContain('请至少选择一项管理动作')
+    })
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('暂时无法确认操作结果')
+    expect(document.body.textContent).not.toContain('写入结果待核对')
+    expect(button(wrapper, '签发管理身份').props('loading')).toBe(false)
+  })
   it('只读角色直接触发表单也不能创建，撤销权限后确认回调不能轮换', async () => {
     mocks.auth.user.permissions = ['platform.management_principals.read']
     const wrapper = await open(ManagementPrincipalsPage, '/platform/management-principals')

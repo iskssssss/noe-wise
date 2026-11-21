@@ -181,7 +181,7 @@ async function verify() {
 function save() {
   if (!canWrite.value || uncertain.value) return
   void action.run(async () => {
-    await formRef.value?.validate()
+    if (!(await formRef.value?.validate().catch(() => false))) return
     const input = {
       name: form.name.trim(),
       scopes: [...form.scopes],
