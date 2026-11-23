@@ -25,6 +25,7 @@ import type {
   TenantEntitlements
 } from './types'
 import { useFoundationAppearanceState } from '../appearance'
+import { useFoundationNavigationReload } from '../navigation'
 
 /** 同一共享页面由双宿主注入客户端及实时 me 权限，不读取令牌或复制认证。 */
 const props = defineProps<{
@@ -33,6 +34,7 @@ const props = defineProps<{
   permissions: readonly string[]
 }>()
 const appearance = useFoundationAppearanceState()
+const refreshShellNavigation = useFoundationNavigationReload()
 const route = useRoute()
 const router = useRouter()
 const pagePath = route.path
@@ -530,7 +532,7 @@ async function inspectTenant(preserveQuotaDraft = false) {
 /** 写入与读回分别反馈，失败保留编辑输入；成功只刷新对应对象。 */
 async function mutate(
   action: () => Promise<unknown>,
-  after: () => Promise<void> = load,
+  after: () => Promise<void | boolean> = load,
   successText = '已保存'
 ) {
   if (saving.value) return
@@ -539,15 +541,16 @@ async function mutate(
   try {
     await action()
     discardEditor()
+    let refreshed = false
     try {
-      await after()
+      refreshed = (await after()) !== false
       if (error.value)
         error.value = `${successText}，但最新数据读取失败：${error.value}。可重新读取，无需再次提交。`
     } catch (cause) {
       if (cause instanceof HttpClientError) cause.claimFeedback()
       error.value = `${successText}，但最新数据读取失败：${message(cause)}。可重新读取，无需再次提交。`
     }
-    ElMessage.success(successText)
+    if (refreshed && !error.value) ElMessage.success(successText)
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
     error.value = message(cause)
@@ -638,8 +641,14 @@ async function saveEditor() {
   if (editor.value === 'dictionary') await mutate(() => api('PUT', 'dictionaries', dictionaryForm))
   else if (editor.value === 'value')
     await mutate(() => api('PUT', 'dictionary-values', { ...valueForm }), loadValues)
-  else if (editor.value === 'navigation') await mutate(() => api('PUT', 'navigation', nodeForm))
+  else if (editor.value === 'navigation')
+    await mutate(() => api('PUT', 'navigation', nodeForm), reloadNavigation)
   else if (editor.value === 'feature') await mutate(() => api('PUT', 'features', featureForm))
+}
+/** 列表与实际侧栏分别重读；侧栏失败沿用宿主的错误和重试入口，不重复提交写入。 */
+async function reloadNavigation() {
+  const [, refreshed] = await Promise.all([load(), refreshShellNavigation?.()])
+  return refreshed !== false
 }
 /** 引用保护删除由服务端裁定；取消确认不显示为错误。 */
 async function remove(
@@ -674,7 +683,7 @@ async function remove(
   }
   await mutate(
     () => api('DELETE', kind === 'navigation' ? 'navigation' : 'dictionaries', command),
-    kind === 'value' ? loadValues : load,
+    kind === 'value' ? loadValues : kind === 'navigation' ? reloadNavigation : load,
     '已删除'
   )
 }

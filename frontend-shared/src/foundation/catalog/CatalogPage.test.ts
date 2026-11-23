@@ -6,6 +6,8 @@ import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import CatalogPage from './CatalogPage.vue'
 import type { CatalogRequest, FeatureGrant, Limits, TenantEntitlements } from './types'
 import { confirm } from '../../feedback'
+import { useFoundationNavigation } from '../navigation'
+import type { HttpClient } from '../../utils/http'
 
 vi.mock('../../feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../feedback')>()),
@@ -36,7 +38,8 @@ async function render(
   request: CatalogRequest,
   allowed = ['foundation.dictionary.read', 'foundation.dictionary.manage'],
   platform = false,
-  entry = '/'
+  entry = '/',
+  navigationRequest?: HttpClient['request']
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -55,7 +58,32 @@ async function render(
   })
   const container = document.createElement('div')
   document.body.append(container)
-  app = createApp(defineComponent({ render: () => h(RouterView) }))
+  app = createApp(
+    defineComponent({
+      setup() {
+        const navigation = navigationRequest
+          ? useFoundationNavigation(
+              navigationRequest,
+              platform ? '/admin' : '/tenant',
+              () => 'audit'
+            )
+          : undefined
+        return () =>
+          h('div', [
+            navigation
+              ? h('nav', { 'aria-label': '宿主菜单' }, [
+                  ...navigation.menus.value.map((menu) => h('span', menu.title)),
+                  navigation.error.value
+                    ? h('button', { onClick: navigation.reload }, '重新加载菜单')
+                    : null,
+                  navigation.error.value
+                ])
+              : null,
+            h(RouterView)
+          ])
+      }
+    })
+  )
     .use(router)
     .use(ElementPlus)
   app.mount(container)
@@ -189,7 +217,7 @@ describe('目录编辑实际交互保护', () => {
       '删除确认',
       expect.any(Object)
     )
-    expect(success).toHaveBeenCalledWith('已删除')
+    expect(success).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('已删除，但最新数据读取失败')
     expect(document.body.textContent).toContain('无需再次提交')
     expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'DELETE')).toHaveLength(1)
@@ -333,6 +361,90 @@ describe('目录编辑实际交互保护', () => {
     ])
   })
 })
+
+it.each([true, false])(
+  '菜单写入后刷新所属宿主，读回失败只重试读取（平台=%s）',
+  async (platform) => {
+    let node = {
+      code: 'audit_menu',
+      title: '原菜单',
+      parent_code: null,
+      route_key: 'home',
+      sort_order: 0,
+      enabled: true,
+      revision: 1
+    }
+    let writeFails = true
+    let readFails = false
+    let deleted = false
+    const request = vi.fn(
+      async (method: string, path: string, command?: Record<string, unknown>) => {
+        if (method === 'PUT') {
+          if (writeFails) throw new Error('菜单保存失败')
+          node = { ...node, title: String(command!.title), revision: node.revision + 1 }
+          return node
+        }
+        if (method === 'DELETE') {
+          deleted = true
+          return
+        }
+        if (path.endsWith('/routes'))
+          return [{ key: 'home', title: '工作台', path: '/home', permission: '', platform }]
+        return deleted ? [] : [node]
+      }
+    ) as unknown as CatalogRequest
+    const navigationRequest = vi.fn(async () => {
+      if (readFails) throw new Error('当前菜单读取失败')
+      return deleted
+        ? []
+        : [{ title: node.title, path: platform ? '/platform/home' : '/admin/home', children: [] }]
+    }) as unknown as HttpClient['request']
+    await render(
+      request,
+      ['foundation.navigation.read', 'foundation.navigation.manage'],
+      platform,
+      '/',
+      navigationRequest
+    )
+    const shell = document.querySelector('nav')!
+    expect(shell.textContent).toContain('原菜单')
+    await editName('已保存的新菜单')
+    button('保存').click()
+    await flushPromises()
+    expect(navigationRequest).toHaveBeenCalledTimes(1)
+    expect(shell.textContent).toContain('原菜单')
+    expect(document.body.textContent).toContain('菜单保存失败')
+    writeFails = false
+    readFails = true
+    button('保存').click()
+    await flushPromises()
+    expect(navigationRequest).toHaveBeenCalledTimes(2)
+    expect(shell.textContent).toContain('当前菜单读取失败')
+    expect(shell.textContent).toContain('菜单变更已保存，但侧栏更新失败')
+    expect(shell.textContent).toContain('无需再次保存')
+    expect(document.querySelector('.el-message--success')).toBeNull()
+    expect(document.querySelector('.el-table__body')?.textContent).toContain('已保存的新菜单')
+    readFails = false
+    button('重新加载菜单').click()
+    await flushPromises()
+    expect(shell.textContent).toBe('已保存的新菜单')
+    expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')).toHaveLength(2)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm')
+    button('删除').click()
+    await flushPromises()
+    expect(shell.textContent).toBe('')
+    expect(navigationRequest).toHaveBeenCalledTimes(4)
+    expect(
+      vi
+        .mocked(navigationRequest)
+        .mock.calls.every(
+          ([method, path]) =>
+            method === 'GET' &&
+            path === `${platform ? '/admin' : '/tenant'}/foundation/catalog/navigation/current`
+        )
+    ).toBe(true)
+  }
+)
 
 describe('目录浏览位置与字典值恢复', () => {
   const value = {

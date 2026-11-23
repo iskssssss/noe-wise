@@ -1,4 +1,5 @@
-import { onScopeDispose, ref, watch } from 'vue'
+import { getCurrentInstance, inject, onScopeDispose, provide, ref, watch } from 'vue'
+import type { InjectionKey } from 'vue'
 import type { HttpClient } from '../utils/http'
 import type { AdminMenu } from '../admin/types'
 import { institutionWorkspaceActions } from './institutionNavigation'
@@ -9,6 +10,10 @@ export interface NavigationItem {
   permission: string | null
   children: NavigationItem[]
 }
+
+const navigationReloadKey: InjectionKey<() => Promise<boolean>> = Symbol(
+  'foundation-navigation-reload'
+)
 
 /** 导航只消费服务端受控路由与当前身份，账号切换后的旧响应不能更新菜单。 */
 export function useFoundationNavigation(
@@ -29,13 +34,13 @@ export function useFoundationNavigation(
         : []
     })
   }
-  async function reload() {
+  async function reload(afterSave: boolean) {
     const version = ++generation
     controller?.abort()
     controller = new AbortController()
     menus.value = []
     error.value = ''
-    if (!identity()) return
+    if (!identity()) return false
     try {
       const current = await request<NavigationItem[]>(
         'GET',
@@ -44,18 +49,31 @@ export function useFoundationNavigation(
         false,
         { signal: controller.signal, silent: true }
       )
-      if (version === generation) menus.value = project(current)
+      if (version !== generation) return false
+      menus.value = project(current)
+      return true
     } catch (failure) {
-      if (version === generation && !controller.signal.aborted)
-        error.value = failure instanceof Error ? failure.message : '菜单加载失败'
+      if (version === generation && !controller.signal.aborted) {
+        const reason = failure instanceof Error ? failure.message : '菜单加载失败'
+        error.value = afterSave
+          ? `菜单变更已保存，但侧栏更新失败：${reason}。请重新加载菜单，无需再次保存。`
+          : reason
+      }
+      return false
     }
   }
-  watch(identity, reload, { immediate: true })
+  watch(identity, () => reload(false), { immediate: true })
+  if (getCurrentInstance()) provide(navigationReloadKey, () => reload(true))
   onScopeDispose(() => {
     generation++
     controller?.abort()
   })
-  return { menus, error, reload }
+  return { menus, error, reload: () => reload(false) }
+}
+
+/** 目录写入成功后重读所属宿主菜单，仍由服务端裁定当前身份可见的入口。 */
+export function useFoundationNavigationReload() {
+  return inject(navigationReloadKey, undefined)
 }
 
 const messagingPagePermissions = ['inbox', 'read', 'publish', 'configure', 'operate'].map(
