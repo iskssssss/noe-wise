@@ -4,7 +4,7 @@ import { createApp, defineComponent, h, type App } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import CatalogPage from './CatalogPage.vue'
-import type { CatalogRequest } from './types'
+import type { CatalogRequest, FeatureGrant, Limits, TenantEntitlements } from './types'
 import { confirm } from '../../feedback'
 
 vi.mock('../../feedback', async (importOriginal) => ({
@@ -34,7 +34,8 @@ afterEach(() => {
 })
 async function render(
   request: CatalogRequest,
-  allowed = ['foundation.dictionary.read', 'foundation.dictionary.manage']
+  allowed = ['foundation.dictionary.read', 'foundation.dictionary.manage'],
+  platform = false
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -44,7 +45,7 @@ async function render(
         component: CatalogPage,
         props: {
           request,
-          platform: false,
+          platform,
           permissions: allowed
         }
       }
@@ -267,6 +268,166 @@ describe('目录编辑实际交互保护', () => {
     button('保存', dialog).click()
     await flushPromises()
     expect(document.querySelector('.el-message--error')?.textContent).toContain('请选择业务页面')
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+})
+
+const limits: Limits = {
+  agents: null,
+  workflows: null,
+  knowledge_bases: null,
+  members: null,
+  channels: null,
+  file_bytes: null,
+  admin_tasks: null,
+  sub_institutions: null
+}
+const features = [{ code: 'agents', name: '智能体', description: '', enabled: true, revision: 1 }]
+const grants = [{ feature_code: 'agents', enabled: true, revision: 2 }]
+const plans = [
+  { id: '1', code: 'first', name: '套餐甲', enabled: true, revision: 1 },
+  { id: '2', code: 'second', name: '套餐乙', enabled: true, revision: 1 }
+]
+async function selectPlan(label: string) {
+  ;(document.querySelector('[aria-label="选择授权套餐"]') as HTMLElement).click()
+  await flushPromises()
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => item.textContent?.trim() === label
+  )!
+  option.click()
+  await flushPromises()
+}
+
+describe('授权读取状态与资源用量', () => {
+  it('首次失败不显示关闭开关，重读成功后显示真实授权；刷新失败保留原结果', async () => {
+    let rejectRead!: (reason: Error) => void
+    let read: Promise<FeatureGrant[]> = new Promise((_resolve, reject) => {
+      rejectRead = reject
+    })
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/features')) return features
+      if (path.endsWith('/plans')) return plans
+      if (path.includes('/plan-quota?')) return { plan_id: '1', limits, revision: 4 }
+      if (path.includes('/plan-features?')) return read
+      throw new Error(`Unexpected request: ${path}`)
+    }) as unknown as CatalogRequest
+    await render(request, ['foundation.entitlements.read', 'foundation.entitlements.manage'], true)
+    await selectPlan('套餐甲 (first)')
+    expect(document.body.textContent).toContain('正在读取套餐授权与限额')
+    expect(document.querySelector('[aria-label="智能体的套餐授权"]')).toBeNull()
+    rejectRead(new Error('授权读取暂不可用'))
+    await flushPromises()
+    expect(document.body.textContent).toContain('授权读取暂不可用')
+    expect(document.querySelector('[aria-label="智能体的套餐授权"]')).toBeNull()
+    read = Promise.resolve(grants)
+    button('重新读取套餐授权').click()
+    await flushPromises()
+    expect(
+      document.querySelector('[aria-label="智能体的套餐授权"]')?.getAttribute('aria-checked')
+    ).toBe('true')
+    read = new Promise((_resolve, reject) => {
+      rejectRead = reject
+    })
+    button('刷新套餐授权').click()
+    await flushPromises()
+    const control = document.querySelector('[aria-label="智能体的套餐授权"]')!
+    expect(control.getAttribute('aria-checked')).toBe('true')
+    expect(control.getAttribute('aria-disabled')).toBe('true')
+    expect(document.body.textContent).toContain('正在刷新套餐授权')
+    rejectRead(new Error('刷新暂不可用'))
+    await flushPromises()
+    expect(control.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.textContent).not.toContain('正在刷新套餐授权')
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+
+  it('切换套餐后旧响应不能恢复旧开关或结束新套餐加载', async () => {
+    let first!: (value: FeatureGrant[]) => void
+    let second!: (value: FeatureGrant[]) => void
+    const firstRead = new Promise<FeatureGrant[]>((resolve) => {
+      first = resolve
+    })
+    const secondRead = new Promise<FeatureGrant[]>((resolve) => {
+      second = resolve
+    })
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/features')) return features
+      if (path.endsWith('/plans')) return plans
+      if (path.includes('/plan-quota?'))
+        return { plan_id: path.endsWith('=1') ? '1' : '2', limits, revision: 1 }
+      if (path.includes('/plan-features?')) return path.endsWith('=1') ? firstRead : secondRead
+      throw new Error(`Unexpected request: ${path}`)
+    }) as unknown as CatalogRequest
+    await render(request, ['foundation.entitlements.read', 'foundation.entitlements.manage'], true)
+    await selectPlan('套餐甲 (first)')
+    await selectPlan('套餐乙 (second)')
+    first(grants)
+    await flushPromises()
+    expect(document.body.textContent).toContain('正在读取套餐授权与限额')
+    expect(document.querySelector('[aria-label="智能体的套餐授权"]')).toBeNull()
+    second([{ ...grants[0], enabled: false }])
+    await flushPromises()
+    expect(
+      document.querySelector('[aria-label="智能体的套餐授权"]')?.getAttribute('aria-checked')
+    ).toBe('false')
+    expect(document.body.textContent).not.toContain('正在读取套餐授权与限额')
+  })
+
+  it('机构首次读取与刷新可辨识，失败保留资源名称和精确用量并可重读', async () => {
+    const tenant: TenantEntitlements = {
+      tenant_id: '100',
+      limits,
+      overrides: limits,
+      revision: 1,
+      features: ['agents'],
+      usage: [
+        { kind: 'AGENT', used: '0', limit: '0' },
+        { kind: 'FILE_BYTES', used: '9007199254740993', limit: null },
+        { kind: 'ADMIN_TASK', used: '2', limit: '4' },
+        { kind: 'SUB_INSTITUTION', used: '1', limit: '3' }
+      ]
+    }
+    let finish!: (value: TenantEntitlements) => void
+    let rejectRead!: (reason: Error) => void
+    let read = new Promise<TenantEntitlements>((resolve) => {
+      finish = resolve
+    })
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/features')) return features
+      if (path.endsWith('/tenant-features')) return []
+      if (path.endsWith('/tenant-entitlements')) return read
+      throw new Error(`Unexpected request: ${path}`)
+    }) as unknown as CatalogRequest
+    await render(request, ['foundation.entitlements.read'])
+    expect(document.body.textContent).toContain('正在读取机构授权与资源用量')
+    finish(tenant)
+    await flushPromises()
+    for (const label of [
+      '公共文件（字节）',
+      '并行管理任务',
+      '直属子机构',
+      '9007199254740993',
+      '不限'
+    ]) {
+      expect(document.body.textContent).toContain(label)
+    }
+    expect(document.body.textContent).not.toContain('FILE_BYTES')
+    expect(document.querySelectorAll('.el-table__body tr')[0]?.textContent).toBe('智能体00')
+    read = new Promise((_resolve, reject) => {
+      rejectRead = reject
+    })
+    button('刷新授权').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('正在刷新机构授权')
+    expect(document.body.textContent).toContain('9007199254740993')
+    rejectRead(new Error('机构授权读取暂不可用'))
+    await flushPromises()
+    expect(document.body.textContent).toContain('9007199254740993')
+    expect(document.body.textContent).toContain('机构授权读取暂不可用')
+    read = Promise.resolve(tenant)
+    button('刷新授权').click()
+    await flushPromises()
+    expect(document.body.textContent).not.toContain('正在刷新机构授权')
     expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
   })
 })

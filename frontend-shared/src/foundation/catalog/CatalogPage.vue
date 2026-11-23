@@ -46,10 +46,12 @@ const plans = ref<Plan[]>([])
 const planId = ref('')
 const planRevision = ref(0)
 const planGrants = ref<FeatureGrant[]>([])
+const planLoading = ref(false)
 const tenantId = ref('')
 const tenantName = ref('')
 const tenantGrants = ref<FeatureGrant[]>([])
 const tenant = ref<TenantEntitlements | null>(null)
+const tenantLoading = ref(false)
 const branding = reactive<Branding>({
   display_name: '',
   logo_url: null,
@@ -173,6 +175,16 @@ const countFields = [
   { key: 'channels', label: '渠道数' },
   { key: 'admin_tasks', label: '并行管理任务数' }
 ] as const
+const resourceLabels: Record<string, string> = {
+  AGENT: '智能体',
+  WORKFLOW: '工作流',
+  KNOWLEDGE_BASE: '知识库',
+  MEMBER: '机构成员',
+  CHANNEL: '渠道',
+  FILE_BYTES: '公共文件（字节）',
+  ADMIN_TASK: '并行管理任务',
+  SUB_INSTITUTION: '直属子机构'
+}
 let requestVersion = 0
 let dictionaryVersion = 0
 let planVersion = 0
@@ -355,13 +367,9 @@ async function loadPlan(preserveQuotaDraft = false) {
     preserveQuotaDraft && !!planBaseline.value && JSON.stringify(planLimits) !== planBaseline.value
   const version = ++planVersion
   const id = planId.value
-  planGrants.value = []
-  if (!keepDraft) {
-    planRevision.value = 0
-    planBaseline.value = ''
-    Object.assign(planLimits, emptyLimits())
-  }
   if (!id) return
+  planLoading.value = true
+  error.value = ''
   try {
     const [snapshot, grants] = await Promise.all([
       api<PlanQuota>('GET', `plan-quota?plan_id=${encodeURIComponent(id)}`),
@@ -379,12 +387,18 @@ async function loadPlan(preserveQuotaDraft = false) {
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
     if (version === planVersion) error.value = message(cause)
+  } finally {
+    if (version === planVersion) planLoading.value = false
   }
 }
 /** 对象选择在丢弃确认通过后才改变，取消时保留原对象和限额草稿。 */
 async function selectPlan(id: string) {
   if (id === planId.value || !(await confirmPageLeave())) return
   planId.value = id
+  planGrants.value = []
+  planRevision.value = 0
+  planBaseline.value = ''
+  Object.assign(planLimits, emptyLimits())
   await loadPlan()
 }
 async function changeTenantId(id: string) {
@@ -406,6 +420,8 @@ async function chooseTenant(option: FoundationOption | undefined) {
 function invalidateTenant() {
   tenantVersion++
   tenant.value = null
+  tenantGrants.value = []
+  tenantLoading.value = false
   tenantBaseline.value = ''
 }
 /** 平台显式机构或当前机构检查，结果与目标绑定，失败不冒充默认配额。 */
@@ -418,13 +434,13 @@ async function inspectTenant(preserveQuotaDraft = false) {
     JSON.stringify(tenantLimits) !== tenantBaseline.value
   const version = ++tenantVersion
   const id = tenantId.value
-  if (!keepDraft) tenant.value = null
-  tenantGrants.value = []
   if (props.platform && !/^[1-9][0-9]{0,18}$/.test(id)) {
     error.value = '请输入机构 ID'
     return
   }
   const query = props.platform ? `?tenant_id=${encodeURIComponent(id)}` : ''
+  tenantLoading.value = true
+  error.value = ''
   try {
     const [result, grants] = await Promise.all([
       api<TenantEntitlements>('GET', `tenant-entitlements${query}`),
@@ -444,6 +460,8 @@ async function inspectTenant(preserveQuotaDraft = false) {
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
     if (version === tenantVersion) error.value = message(cause)
+  } finally {
+    if (version === tenantVersion) tenantLoading.value = false
   }
 }
 /** 写入与读回分别反馈，失败保留编辑输入；成功只刷新对应对象。 */
@@ -943,6 +961,8 @@ onBeforeUnmount(() => {
           <h2>套餐授权</h2>
           <el-select
             :model-value="planId"
+            aria-label="选择授权套餐"
+            :disabled="saving"
             filterable
             placeholder="选择现有套餐"
             @change="selectPlan"
@@ -952,7 +972,17 @@ onBeforeUnmount(() => {
               :label="`${plan.name} (${plan.code})`"
               :value="plan.id"
           /></el-select>
-          <template v-if="planId"
+          <p v-if="planId && planLoading" role="status">
+            {{
+              planBaseline ? '正在刷新套餐授权，当前显示上次读取结果…' : '正在读取套餐授权与限额…'
+            }}
+          </p>
+          <div v-if="planId && !planLoading" class="toolbar">
+            <el-button :disabled="saving" @click="loadPlan(true)">{{
+              planBaseline ? '刷新套餐授权' : '重新读取套餐授权'
+            }}</el-button>
+          </div>
+          <template v-if="planBaseline"
             ><el-table :data="features" row-key="code"
               ><el-table-column prop="name" label="功能" /><el-table-column label="套餐授权"
                 ><template #default="s"
@@ -960,7 +990,8 @@ onBeforeUnmount(() => {
                     :model-value="
                       planGrants.find((g) => g.feature_code === s.row.code)?.enabled ?? false
                     "
-                    :disabled="saving || !can('foundation.entitlements.manage')"
+                    :disabled="saving || planLoading || !can('foundation.entitlements.manage')"
+                    :aria-label="`${s.row.name}的套餐授权`"
                     @change="
                       (value) => savePlanGrant(s.row.code, Boolean(value))
                     " /></template></el-table-column
@@ -970,7 +1001,7 @@ onBeforeUnmount(() => {
               <el-form
                 class="quota-grid"
                 label-position="top"
-                :disabled="saving || !can('foundation.entitlements.manage')"
+                :disabled="saving || planLoading || !can('foundation.entitlements.manage')"
                 ><el-form-item v-for="field in countFields" :key="field.key" :label="field.label"
                   ><el-input-number
                     :model-value="planLimits[field.key] ?? undefined"
@@ -987,7 +1018,9 @@ onBeforeUnmount(() => {
               ><el-button
                 v-if="can('foundation.entitlements.manage')"
                 :loading="saving"
-                :disabled="!planBaseline || JSON.stringify(planLimits) === planBaseline"
+                :disabled="
+                  planLoading || !planBaseline || JSON.stringify(planLimits) === planBaseline
+                "
                 @click="saveQuota(true)"
                 >保存套餐限额</el-button
               >
@@ -1000,21 +1033,34 @@ onBeforeUnmount(() => {
               :request="request"
               path="foundation/options/tenants"
               label="选择授权机构"
+              :disabled="saving"
               class="id-input"
               @selected="chooseTenant"
-            /><el-button :disabled="!tenantId || loading" @click="queryTenant">刷新授权</el-button>
+            /><el-button
+              :loading="tenantLoading"
+              :disabled="!tenantId || loading || saving"
+              @click="queryTenant"
+              >刷新授权</el-button
+            >
           </div>
         </template>
+        <p v-if="tenantLoading" role="status">
+          {{ tenant ? '正在刷新机构授权，当前显示上次读取结果…' : '正在读取机构授权与资源用量…' }}
+        </p>
+        <el-button v-if="!platform" :loading="tenantLoading" :disabled="saving" @click="queryTenant"
+          >刷新授权</el-button
+        >
         <template v-if="tenant"
           ><el-alert
             :title="`${tenantName || tenant.tenant_id} · 功能与资源用量`"
             type="info"
             :closable="false"
           /><el-table :data="tenant.usage" border
-            ><el-table-column prop="kind" label="资源" /><el-table-column
-              prop="used"
-              label="已用"
-            /><el-table-column label="有效上限"
+            ><el-table-column label="资源"
+              ><template #default="s">{{
+                resourceLabels[s.row.kind] || s.row.kind
+              }}</template></el-table-column
+            ><el-table-column prop="used" label="已用" /><el-table-column label="有效上限"
               ><template #default="s">{{ s.row.limit ?? '不限' }}</template></el-table-column
             ></el-table
           >
@@ -1033,7 +1079,8 @@ onBeforeUnmount(() => {
                     :model-value="
                       tenantGrants.find((g) => g.feature_code === s.row.code)?.enabled ?? 'inherit'
                     "
-                    :disabled="saving"
+                    :disabled="saving || tenantLoading"
+                    :aria-label="`${s.row.name}的机构覆盖`"
                     @change="
                       (value) =>
                         saveTenantGrant(s.row.code, value === 'inherit' ? null : Boolean(value))
@@ -1049,7 +1096,7 @@ onBeforeUnmount(() => {
               :open="JSON.stringify(tenantLimits) !== tenantBaseline"
             >
               <summary>机构配额覆盖（留空恢复继承）</summary>
-              <el-form class="quota-grid" label-position="top" :disabled="saving"
+              <el-form class="quota-grid" label-position="top" :disabled="saving || tenantLoading"
                 ><el-form-item v-for="field in countFields" :key="field.key" :label="field.label"
                   ><el-input-number
                     :model-value="tenantLimits[field.key] ?? undefined"
@@ -1065,7 +1112,11 @@ onBeforeUnmount(() => {
                     @clear="tenantLimits.file_bytes = null" /></el-form-item></el-form
               ><el-button
                 :loading="saving"
-                :disabled="!tenantBaseline || JSON.stringify(tenantLimits) === tenantBaseline"
+                :disabled="
+                  tenantLoading ||
+                  !tenantBaseline ||
+                  JSON.stringify(tenantLimits) === tenantBaseline
+                "
                 type="primary"
                 @click="saveQuota(false)"
                 >保存机构覆盖</el-button
