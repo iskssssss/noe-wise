@@ -267,8 +267,67 @@ describe('目录编辑实际交互保护', () => {
     await flushPromises()
     button('保存', dialog).click()
     await flushPromises()
-    expect(document.querySelector('.el-message--error')?.textContent).toContain('请选择业务页面')
+    await vi.waitFor(() =>
+      expect(dialog.querySelector('.el-form-item__error')?.textContent).toContain('请选择业务页面')
+    )
+    expect(document.querySelector('.el-message--error')).toBeNull()
     expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+  it('菜单新建校验编码、标题和排序，修正后以原始字段保存分组', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/routes')
+        ? [{ key: 'home', title: '工作台', path: '/home', permission: '', platform: false }]
+        : []
+    ) as unknown as CatalogRequest
+    await render(request, ['foundation.navigation.read', 'foundation.navigation.manage'])
+    button('新增节点').click()
+    await flushPromises()
+    const dialog = document.querySelector<HTMLElement>('.el-dialog')!
+    button('保存', dialog).click()
+    await vi.waitFor(() => expect(dialog.textContent).toContain('请输入稳定编码'))
+    expect(dialog.textContent).toContain('请输入标题')
+    expect(document.querySelector('.el-message--error')).toBeNull()
+    const inputs = dialog.querySelectorAll<HTMLInputElement>('input')
+    inputs[0].value = 'Invalid code'
+    inputs[1].value = '   '
+    for (const input of [inputs[0], inputs[1]])
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    button('保存', dialog).click()
+    await vi.waitFor(() => expect(dialog.textContent).toContain('以小写字母开头'))
+    expect(dialog.textContent).toContain('请输入标题')
+    inputs[0].value = 'audit_menu'
+    inputs[1].value = '菜单验收分组'
+    for (const input of [inputs[0], inputs[1]])
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    const sort = dialog.querySelector<HTMLInputElement>('[role="spinbutton"]')!
+    sort.value = ''
+    sort.dispatchEvent(new Event('input', { bubbles: true }))
+    sort.dispatchEvent(new Event('change', { bubbles: true }))
+    button('保存', dialog).click()
+    await vi.waitFor(() =>
+      expect(dialog.textContent).toContain('请输入 0 至 2147483647 的整数排序')
+    )
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    sort.value = '0'
+    sort.dispatchEvent(new Event('input', { bubbles: true }))
+    sort.dispatchEvent(new Event('change', { bubbles: true }))
+    button('保存', dialog).click()
+    await flushPromises()
+    expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')).toEqual([
+      [
+        'PUT',
+        'foundation/catalog/navigation',
+        {
+          code: 'audit_menu',
+          title: '菜单验收分组',
+          parent_code: null,
+          route_key: null,
+          sort_order: 0,
+          enabled: true,
+          expected_revision: 0
+        }
+      ]
+    ])
   })
 })
 

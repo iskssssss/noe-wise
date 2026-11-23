@@ -150,6 +150,21 @@ const dictionaryRules: FormRules = {
   name: [{ required: true, whitespace: true, message: '请输入名称', trigger: 'blur' }],
   label: [{ required: true, whitespace: true, message: '请输入显示文本', trigger: 'blur' }]
 }
+const navigationRules: FormRules = {
+  code: dictionaryRules.code,
+  title: [{ required: true, whitespace: true, message: '请输入标题', trigger: 'blur' }],
+  route_key: [{ required: true, message: '请选择业务页面', trigger: 'change' }],
+  sort_order: [
+    {
+      required: true,
+      type: 'integer',
+      min: 0,
+      max: 2147483647,
+      message: '请输入 0 至 2147483647 的整数排序',
+      trigger: 'blur'
+    }
+  ]
+}
 const editorBaseline = ref('')
 const personalBaseline = ref('')
 const brandingBaseline = ref('')
@@ -572,10 +587,6 @@ function editFeature(row?: Feature) {
 async function saveEditor() {
   if (!editorVisible.value || saving.value || !editorWritable.value) return
   if (!(await editorFormRef.value?.validate().catch(() => false))) return
-  if (editor.value === 'navigation' && nodeForm.route_key === '') {
-    error.value = '请选择业务页面'
-    return
-  }
   if (editor.value === 'dictionary') await mutate(() => api('PUT', 'dictionaries', dictionaryForm))
   else if (editor.value === 'value')
     await mutate(() => api('PUT', 'dictionary-values', { ...valueForm }), loadValues)
@@ -1156,7 +1167,13 @@ onBeforeUnmount(() => {
         :key="editor"
         ref="editorFormRef"
         :model="editorModel"
-        :rules="editor === 'dictionary' || editor === 'value' ? dictionaryRules : undefined"
+        :rules="
+          editor === 'dictionary' || editor === 'value'
+            ? dictionaryRules
+            : editor === 'navigation'
+              ? navigationRules
+              : undefined
+        "
         label-position="top"
         :disabled="saving || !editorWritable"
       >
@@ -1186,12 +1203,12 @@ onBeforeUnmount(() => {
           ><el-form-item label="启用"><el-switch v-model="valueForm.enabled" /></el-form-item
         ></template>
         <template v-if="editor === 'navigation'"
-          ><el-form-item label="节点编码"
+          ><el-form-item label="节点编码" prop="code"
             ><el-input
               v-model="nodeForm.code"
               :disabled="nodeForm.expected_revision > 0"
               maxlength="64" /></el-form-item
-          ><el-form-item label="标题"
+          ><el-form-item label="标题" prop="title"
             ><el-input v-model="nodeForm.title" maxlength="128" /></el-form-item
           ><el-form-item label="父节点"
             ><el-select
@@ -1208,15 +1225,19 @@ onBeforeUnmount(() => {
               ><el-radio-button value="group">菜单分组</el-radio-button
               ><el-radio-button value="page">业务页面</el-radio-button></el-radio-group
             ></el-form-item
-          ><el-form-item v-if="nodeKind === 'page'" label="业务页面" required
+          ><el-form-item v-if="nodeKind === 'page'" label="业务页面" prop="route_key"
             ><el-select v-model="nodeForm.route_key" filterable placeholder="选择受控业务页面"
               ><el-option
                 v-for="route in routes"
                 :key="route.key"
                 :label="`${route.title} · ${route.path}`"
                 :value="route.key" /></el-select></el-form-item
-          ><el-form-item label="排序"
-            ><el-input-number v-model="nodeForm.sort_order" :min="0" :precision="0" /></el-form-item
+          ><el-form-item label="排序" prop="sort_order"
+            ><el-input-number
+              v-model="nodeForm.sort_order"
+              :min="0"
+              :max="2147483647"
+              :precision="0" /></el-form-item
           ><el-form-item label="显示"><el-switch v-model="nodeForm.enabled" /></el-form-item
         ></template>
         <template v-if="editor === 'feature'"
