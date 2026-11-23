@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { HttpClientError } from '../../utils/http'
-import { computed, onScopeDispose, reactive, ref, shallowRef, useId, watch } from 'vue'
+import {
+  computed,
+  onScopeDispose,
+  reactive,
+  ref,
+  shallowRef,
+  useId,
+  useTemplateRef,
+  watch
+} from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useResource, useTask } from '../../admin/tasks'
 import { useUnsavedChanges } from '../../admin/leave'
@@ -29,6 +38,7 @@ const handlerCode = ref('')
 const operation = ref<'import' | 'export'>('import')
 const optionValues = reactive<Record<string, string>>({})
 const inputFile = ref<FoundationFile>()
+const filePicker = useTemplateRef<HTMLInputElement>('filePicker')
 const checked = ref<TransferPreflight>()
 const idempotencyKey = ref(crypto.randomUUID())
 const selected = ref<FoundationJob>()
@@ -104,6 +114,7 @@ watch(needsDictionary, (needed) => {
 const canCreate = computed(() => props.permissions.includes('foundation.jobs.create'))
 const canCancel = computed(() => props.permissions.includes('foundation.jobs.cancel'))
 const pendingSubmission = shallowRef<TransferSubmission>()
+const submissionInFlight = ref(false)
 const submittedJob = ref<FoundationJob>()
 const submitted = computed(() => Boolean(submittedJob.value))
 const stateLabels: Record<string, string> = {
@@ -212,6 +223,7 @@ async function submit() {
       ...(operation.value === 'import' ? { file_id: inputFile.value?.id } : {})
     }
     pendingSubmission.value = command
+    submissionInFlight.value = true
     let result: FoundationJob
     try {
       result = await request<FoundationJob>('POST', `${base}/jobs/submit`, command)
@@ -230,6 +242,8 @@ async function submit() {
         idempotencyKey.value = crypto.randomUUID()
       }
       throw reason
+    } finally {
+      if (active()) submissionInFlight.value = false
     }
     if (!active()) return
     pendingSubmission.value = undefined
@@ -341,6 +355,7 @@ watch(
     checked.value = undefined
     submittedJob.value = undefined
     pendingSubmission.value = undefined
+    submissionInFlight.value = false
     handlerCode.value = ''
     message.value = ''
     action.error.value = ''
@@ -398,7 +413,10 @@ onScopeDispose(() => {
       :closable="false"
     />
     <FeedbackNotice v-if="message" :title="message" type="success" :closable="false" />
-    <p v-if="pendingSubmission" class="muted" role="status">
+    <p v-if="pendingSubmission && submissionInFlight" class="muted" role="status">
+      正在提交并等待受理回执，当前材料和选项已锁定，请稍候。
+    </p>
+    <p v-else-if="pendingSubmission" class="muted" role="status">
       原提交结果尚未确认，当前材料和选项已锁定。重试会继续提交原内容；已受理时返回原任务，不会重复创建。
     </p>
     <ElForm v-if="canCreate" label-position="top" @submit.prevent="submit">
@@ -472,12 +490,23 @@ onScopeDispose(() => {
         v-if="currentHandler && operation === 'import' && !submitted"
         label="CSV 文件（UTF-8）"
         ><input
+          ref="filePicker"
           type="file"
           accept=".csv"
+          hidden
           :aria-describedby="formTipId + '-upload'"
           :disabled="action.busy.value || !!pendingSubmission"
           @change="upload"
-        /><span v-if="inputFile">{{ inputFile.name }}</span>
+        />
+        <ElButton
+          v-described-by="formTipId + '-upload'"
+          :disabled="action.busy.value || !!pendingSubmission"
+          @click="filePicker?.click()"
+          >{{ inputFile ? '更换 CSV 文件' : '选择 CSV 文件' }}</ElButton
+        >
+        <span role="status">{{
+          inputFile ? `已上传材料：${inputFile.name}` : '尚未上传材料'
+        }}</span>
         <FieldTip :id="formTipId + '-upload'">
           选中文件即上传材料；预检通过并提交后才写入业务数据。
         </FieldTip>
@@ -492,30 +521,34 @@ onScopeDispose(() => {
         ><ElButton
           native-type="submit"
           type="primary"
-          :loading="action.busy.value"
+          :loading="submissionInFlight"
           :disabled="
+            action.busy.value ||
             !currentHandler ||
             (operation === 'import'
               ? !currentHandler.can_import || !checked?.valid
               : !currentHandler.can_export)
           "
           >{{
-            submitted ? '查看已受理任务' : pendingSubmission ? '重试原提交' : '提交任务'
+            submitted
+              ? '查看已受理任务'
+              : pendingSubmission
+                ? submissionInFlight
+                  ? '正在提交…'
+                  : '重试原提交'
+                : '提交任务'
           }}</ElButton
         ><ElButton v-if="submitted" :disabled="action.busy.value" @click="newTask"
           >新建任务</ElButton
         >
       </div>
-      <FeedbackNotice
-        v-if="checked"
-        :title="
+      <p v-if="checked" role="status">
+        {{
           checked.valid
-            ? `预检通过，共 ${checked.row_count} 行；尚未导入，提交任务后开始处理`
+            ? `预检通过，共 ${checked.row_count} 行${submitted ? '；任务已受理，请查看处理结果' : pendingSubmission ? '；已提交，受理结果待确认' : '；尚未导入，提交任务后开始处理'}`
             : `预检发现 ${checked.errors.length} 项错误，业务数据未写入`
-        "
-        :type="checked.valid ? 'success' : 'error'"
-        :closable="false"
-      />
+        }}
+      </p>
       <ElTable v-if="checked && !checked.valid" :data="checked.errors" empty-text="暂无错误"
         ><ElTableColumn prop="row_number" label="数据行" width="100" /><ElTableColumn
           prop="field"

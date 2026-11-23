@@ -72,7 +72,15 @@ public class DictionaryService {
     /** 父锁保护同一目录生命周期。 */
     private DictionaryView dictionary(String code) { CatalogValidation.code(code); var row=mapper.lockDictionary(scope.owner(),code); if(row==null) throw CatalogValidation.missing(); return row; }
     /** 构造完整值命令，不能以缺失值变成默认有效值。 */
-    private SaveValue validated(SaveValue input) { if(input==null || input.sortOrder()<0 || input.expectedRevision()<0) throw CatalogValidation.invalid("排序和修订必须非负"); return new SaveValue(CatalogValidation.code(input.dictionaryCode()),CatalogValidation.code(input.code()),CatalogValidation.text(input.label(),128),input.sortOrder(),input.enabled(),input.expectedRevision()); }
+    private SaveValue validated(SaveValue input) {
+        if(input==null || input.expectedRevision()<0) throw CatalogValidation.invalid("修订必须非负");
+        if(input.sortOrder()<0) throw new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_sort_invalid","排序必须为非负整数",false);
+        if(input.code()==null || !input.code().matches("[a-z][a-z0-9_.-]{0,63}")) throw new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_code_invalid","稳定编码须以小写字母开头，只能包含小写字母、数字、下划线、点和连字符，最多 64 个字符",false);
+        if(input.label()==null || input.label().isBlank()) throw new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_label_invalid","显示文本不能为空",false);
+        String label=input.label().trim();
+        if(label.codePointCount(0,label.length())>128) throw new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_label_invalid","显示文本不能超过 128 个字符",false);
+        return new SaveValue(CatalogValidation.code(input.dictionaryCode()),input.code(),label,input.sortOrder(),input.enabled(),input.expectedRevision());
+    }
     /** 平台资源没有租户归属；机构资源从统一主体取得 ID。 */
     private String tenant() { return scope.platform()?null:scope.tenant(); }
     /** 当前停用功能拒绝新的字典维护；历史展示与引用释放继续遵循读取权限。 */

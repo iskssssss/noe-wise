@@ -7,6 +7,7 @@ import com.skillforge.core.foundation.jobs.FoundationJobContracts.RowError;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 /** 字典值的受控 CSV 导入导出；后台任务沿用当前主体授权和字典公开写入口。 */
@@ -30,7 +31,16 @@ public class DictionaryCsvTransferHandler implements CsvTransferHandler {
     /** 严格解析四列并调用领域预检；不提供任何写副作用。 */
     @Override public List<RowError> validateRow(Map<String,String> options,int rowNumber,List<String> cells) {
         try {dictionaries.inspectImport(List.of(entry(options,cells)));return List.of();}
-        catch(ApiException | IllegalArgumentException e) {return List.of(new RowError(rowNumber,"row",e instanceof ApiException?e.getMessage():"排序必须为非负整数"));}
+        catch(ApiException e) {
+            String field=switch(e.getCode()) {
+                case "dictionary_value_code_invalid" -> "code";
+                case "dictionary_value_label_invalid" -> "label";
+                case "dictionary_value_sort_invalid" -> "sort_order";
+                case "dictionary_value_enabled_invalid" -> "enabled";
+                default -> "row";
+            };
+            return List.of(new RowError(rowNumber,field,e.getMessage()));
+        }
     }
     /** 工作者提供的事务内执行幂等领域 upsert，回执由任务组件同事务保存。 */
     @Override public void importRow(Map<String,String> options,String jobId,int rowNumber,List<String> cells) {var e=entry(options,cells);dictionaries.importValue(e.dictionaryCode(),e.code(),e.label(),e.sortOrder(),e.enabled());}
@@ -38,7 +48,15 @@ public class DictionaryCsvTransferHandler implements CsvTransferHandler {
     @Override public List<List<String>> exportRows(Map<String,String> options) {validateOptions(options);return dictionaries.listValues(options.get("dictionary_code")).stream().map(v->List.of(v.code(),v.label(),Integer.toString(v.sortOrder()),Boolean.toString(v.enabled()))).toList();}
     /** 不把非法布尔文本默默转换成 false，字段数必须精确匹配表头。 */
     private DictionaryContracts.ImportEntry entry(Map<String,String> options,List<String> cells) {
-        if(cells==null || cells.size()!=4 || !("true".equals(cells.get(3)) || "false".equals(cells.get(3)))) throw CatalogValidation.invalid("CSV必须含四列，enabled只接受true/false");
-        return new DictionaryContracts.ImportEntry(CatalogValidation.code(options.get("dictionary_code")),cells.get(0),cells.get(1),Integer.parseInt(cells.get(2)),Boolean.parseBoolean(cells.get(3)));
+        if(cells==null || cells.size()!=4) throw CatalogValidation.invalid("CSV必须含四列：code、label、sort_order、enabled");
+        if(!("true".equals(cells.get(3)) || "false".equals(cells.get(3)))) throw new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_enabled_invalid","启用状态（enabled）只接受 true 或 false",false);
+        int sortOrder;
+        try {sortOrder=Integer.parseInt(cells.get(2));}
+        catch(NumberFormatException e) {
+            var failure=new ApiException(HttpStatus.BAD_REQUEST,"dictionary_value_sort_invalid","排序必须为非负整数",false);
+            failure.initCause(e);
+            throw failure;
+        }
+        return new DictionaryContracts.ImportEntry(options.get("dictionary_code"),cells.get(0),cells.get(1),sortOrder,Boolean.parseBoolean(cells.get(3)));
     }
 }

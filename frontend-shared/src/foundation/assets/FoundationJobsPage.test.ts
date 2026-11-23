@@ -127,7 +127,7 @@ describe('复杂导入导出任务状态和隔离', () => {
     const controls = [
       wrapper.get('.el-form .el-select [role="combobox"]'),
       ...wrapper.findAll('input[type="radio"]'),
-      wrapper.get('input[type="file"]'),
+      button(wrapper, '选择 CSV 文件'),
       wrapper.get('.el-pagination [role="combobox"]')
     ]
     expect(controls).toHaveLength(5)
@@ -186,15 +186,27 @@ describe('复杂导入导出任务状态和隔离', () => {
     })
     await input.trigger('change')
     await flushPromises()
-    expect(wrapper.text()).toContain('old-members.csv')
+    expect(wrapper.text()).toContain('已上传材料：old-members.csv')
+    expect(button(wrapper, '更换 CSV 文件')).toBeDefined()
     await button(wrapper, '导入预检').trigger('click')
     await flushPromises()
+    expect(
+      wrapper
+        .findAll('[role="status"]')
+        .some((status) => status.text() === '预检通过，共 1 行；尚未导入，提交任务后开始处理')
+    ).toBe(true)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('查看已受理任务')
+    expect(wrapper.text()).toContain('预检通过，共 1 行；任务已受理，请查看处理结果')
+    expect(wrapper.text()).not.toContain('尚未导入')
     await button(wrapper, '新建任务').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('old-members.csv')
+    expect(
+      wrapper.findAll('[role="status"]').some((status) => status.text().startsWith('预检通过'))
+    ).toBe(false)
+    expect(wrapper.text()).toContain('尚未上传材料')
     expect(wrapper.find('input[type="file"]').exists()).toBe(true)
   })
 
@@ -236,6 +248,10 @@ describe('复杂导入导出任务状态和隔离', () => {
       .setValue('{"departments":["D1","D2"],"roles":["reader","auditor"]}')
     await wrapper.get('form').trigger('submit')
     await wrapper.get('form').trigger('submit')
+    expect(button(wrapper, '正在提交…')).toBeDefined()
+    expect(wrapper.text()).toContain('正在提交并等待受理回执')
+    expect(wrapper.text()).not.toContain('原提交结果尚未确认')
+    expect(button(wrapper, '重试原提交')).toBeUndefined()
     expect(commands).toHaveLength(1)
     expect(commands[0]).toMatchObject({
       handler: 'members-1',
@@ -246,9 +262,13 @@ describe('复杂导入导出任务状态和隔离', () => {
     const key = commands[0]!.idempotency_key
     reject(new Error('网络回执未知'))
     await flushPromises()
+    expect(wrapper.text()).toContain('原提交结果尚未确认')
+    expect(wrapper.text()).not.toContain('正在提交并等待受理回执')
+    expect(button(wrapper, '重试原提交')).toBeDefined()
     expect(document.querySelector('.el-message--error')?.textContent).toContain('网络回执未知')
     await wrapper.get('form').trigger('submit')
     expect(commands[1]!.idempotency_key).toBe(key)
+    expect(button(wrapper, '正在提交…')).toBeDefined()
     reject(new Error('尚待核验'))
     await flushPromises()
   })
@@ -359,6 +379,30 @@ it('未知提交后冻结编辑，重试使用原完整命令而不生成新key'
   await flushPromises()
   expect(commands).toHaveLength(2)
   expect(commands[1]).toEqual(commands[0])
+})
+it('未知提交期间下载已有结果，不能将下载中误报成重新提交', async () => {
+  let failDownload!: (error: Error) => void
+  const request: FoundationRequest = async <T>(method: string, path: string) => {
+    if (path.includes('/files/download'))
+      return new Promise<T>((_resolve, reject) => {
+        failDownload = reject
+      })
+    if (method === 'POST') throw Error('原提交回执未知')
+    return terminalReads(path) as T
+  }
+  const wrapper = await render(request)
+  await prepareExport(wrapper)
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  await button(wrapper, '下载结果').trigger('click')
+  expect(wrapper.text()).toContain('原提交结果尚未确认')
+  expect(wrapper.text()).not.toContain('正在提交并等待受理回执')
+  expect(button(wrapper, '正在提交…')).toBeUndefined()
+  expect(button(wrapper, '重试原提交').classes()).not.toContain('is-loading')
+  expect(button(wrapper, '重试原提交').attributes('disabled')).toBeDefined()
+  failDownload(Error('下载失败'))
+  await flushPromises()
+  expect(button(wrapper, '重试原提交')).toBeDefined()
 })
 it('A错误成功后选择B而B错误读取失败，不能显示A的错误材料', async () => {
   const request: FoundationRequest = async <T>(_method: string, path: string) => {
