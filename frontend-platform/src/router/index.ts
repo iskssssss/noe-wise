@@ -24,7 +24,11 @@ const router = createRouter({
         {
           path: 'foundation/catalog',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '菜单、字典与配置', foundationArea: 'catalog' }
+          meta: {
+            title: '菜单、字典与配置',
+            foundationArea: 'catalog',
+            preserveOnQueryChange: true
+          }
         },
         {
           path: 'foundation/security',

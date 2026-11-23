@@ -102,7 +102,7 @@ watch(
     <p v-if="appearanceLoading" role="status">正在读取展示设置…</p>
     <RouterView
       v-if="appearanceReady"
-      :key="`${identity}:${$route.meta.institutionWorkspace ? 'institution-workspace' : $route.fullPath}`"
+      :key="`${identity}:${$route.meta.institutionWorkspace ? 'institution-workspace' : $route.meta.preserveOnQueryChange ? $route.path : $route.fullPath}`"
     />
   </AdminLayout>
 </template>

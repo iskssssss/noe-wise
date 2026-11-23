@@ -35,7 +35,8 @@ afterEach(() => {
 async function render(
   request: CatalogRequest,
   allowed = ['foundation.dictionary.read', 'foundation.dictionary.manage'],
-  platform = false
+  platform = false,
+  entry = '/'
 ) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -48,7 +49,8 @@ async function render(
           platform,
           permissions: allowed
         }
-      }
+      },
+      { path: '/away', component: defineComponent({ render: () => h('p', '其他页面') }) }
     ]
   })
   const container = document.createElement('div')
@@ -57,9 +59,10 @@ async function render(
     .use(router)
     .use(ElementPlus)
   app.mount(container)
-  await router.push('/')
+  await router.push(entry)
   await router.isReady()
   await flushPromises()
+  return router
 }
 function button(text: string, root: ParentNode = document) {
   const node = [...root.querySelectorAll<HTMLButtonElement>('button')].find(
@@ -331,6 +334,127 @@ describe('目录编辑实际交互保护', () => {
   })
 })
 
+describe('目录浏览位置与字典值恢复', () => {
+  const value = {
+    dictionary_code: dictionary.code,
+    code: 'item',
+    label: '保留的字典值',
+    sort_order: 0,
+    enabled: true,
+    revision: 1
+  }
+  it('选择字典后离开返回与页面重建均按地址恢复对象并重读数据', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.includes('/dictionary-values?') ? [value] : [dictionary]
+    ) as unknown as CatalogRequest
+    const router = await render(request)
+    button('查看值').click()
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({
+      tab: 'dictionaries',
+      dictionary_code: dictionary.code
+    })
+    const location = router.currentRoute.value.fullPath
+    await router.push('/away')
+    router.back()
+    await vi.waitFor(() => expect(document.body.textContent).toContain(value.label))
+    expect(router.currentRoute.value.fullPath).toBe(location)
+    app!.unmount()
+    document.body.innerHTML = ''
+    await render(request, undefined, false, location)
+    expect(document.body.textContent).toContain('验收字典 · 字典值')
+    expect(document.body.textContent).toContain(value.label)
+    expect(
+      vi.mocked(request).mock.calls.filter(([, path]) => path.includes('/dictionary-values?'))
+    ).toHaveLength(3)
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+  it('字典值首次加载和失败不显示空态，刷新失败保留原值并可重试', async () => {
+    let reject!: (error: Error) => void
+    let read = new Promise<unknown>((_resolve, fail) => {
+      reject = fail
+    })
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.includes('/dictionary-values?') ? read : [dictionary]
+    ) as unknown as CatalogRequest
+    await render(request, undefined, false, '/?tab=dictionaries&dictionary_code=test_catalog')
+    expect(document.body.textContent).toContain('正在读取字典值')
+    expect(document.body.textContent).not.toContain('此字典还没有值')
+    reject(new Error('字典值读取失败'))
+    await flushPromises()
+    expect(document.body.textContent).toContain('可点击“刷新字典值”重试')
+    read = Promise.resolve([value])
+    button('刷新字典值').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain(value.label)
+    read = Promise.reject(new Error('字典值刷新失败'))
+    button('刷新字典值').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain(value.label)
+    expect(document.body.textContent).toContain('字典值刷新失败')
+    read = Promise.resolve([])
+    button('刷新字典值').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('此字典还没有值，可点击“添加值”创建')
+  })
+  it('恢复位置不能打开无权页签，已失效字典提示重新选择且不请求旧值', async () => {
+    const request = vi.fn(async () => []) as unknown as CatalogRequest
+    const router = await render(
+      request,
+      ['foundation.dictionary.read'],
+      true,
+      '/?tab=entitlements&dictionary_code=missing&plan_id=1&tenant_id=100'
+    )
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('字典')
+    expect(document.body.textContent).toContain('之前选择的字典已不可用，请重新选择')
+    expect(vi.mocked(request).mock.calls).toEqual([
+      ['GET', 'foundation/catalog/dictionaries', undefined]
+    ])
+    await router.replace('/?tab=navigation&dictionary_code[]=test_catalog')
+    await flushPromises()
+    expect(vi.mocked(request).mock.calls.every(([, path]) => path.endsWith('/dictionaries'))).toBe(
+      true
+    )
+  })
+  it('页签切换取消离开时保持页签、地址与偏好草稿，确认后才切换', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/preferences')
+        ? {
+            theme: 'system',
+            locale: 'zh-CN',
+            page_size: 20,
+            compact_navigation: false,
+            revision: 1
+          }
+        : []
+    ) as unknown as CatalogRequest
+    const router = await render(
+      request,
+      ['foundation.preferences.manage', 'foundation.navigation.read'],
+      false,
+      '/?tab=preferences'
+    )
+    document.querySelector<HTMLInputElement>('input[role="switch"]')!.click()
+    await flushPromises()
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    ;(document.querySelector('#tab-navigation') as HTMLElement).click()
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('preferences')
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      '个人偏好'
+    )
+    expect(document.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(true)
+    vi.mocked(confirm).mockResolvedValueOnce(true)
+    ;(document.querySelector('#tab-navigation') as HTMLElement).click()
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('navigation')
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      '菜单结构'
+    )
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+})
+
 const limits: Limits = {
   agents: null,
   workflows: null,
@@ -358,6 +482,37 @@ async function selectPlan(label: string) {
 }
 
 describe('授权读取状态与资源用量', () => {
+  it('地址恢复套餐和机构时从现有接口重读授权及机构名称', async () => {
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.includes('/options/tenants'))
+        return { items: [{ id: '100', name: '恢复机构' }], has_more: false }
+      if (path.endsWith('/features')) return features
+      if (path.endsWith('/plans')) return plans
+      if (path.includes('/plan-quota?')) return { plan_id: '1', limits, revision: 4 }
+      if (path.includes('/plan-features?')) return grants
+      if (path.includes('/tenant-entitlements?'))
+        return { tenant_id: '100', limits, overrides: limits, revision: 1, features: [], usage: [] }
+      if (path.includes('/tenant-features?')) return []
+      throw new Error(`Unexpected request: ${path}`)
+    }) as unknown as CatalogRequest
+    await render(
+      request,
+      ['foundation.entitlements.read'],
+      true,
+      '/?tab=entitlements&plan_id=1&tenant_id=100'
+    )
+    expect(document.body.textContent).toContain('套餐甲 (first)')
+    expect(document.body.textContent).toContain('恢复机构')
+    expect(
+      document.querySelector('[aria-label="智能体的套餐授权"]')?.getAttribute('aria-checked')
+    ).toBe('true')
+    expect(
+      vi
+        .mocked(request)
+        .mock.calls.some(([, path]) => path.endsWith('/tenant-entitlements?tenant_id=100'))
+    ).toBe(true)
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
   it('首次失败不显示关闭开关，重读成功后显示真实授权；刷新失败保留原结果', async () => {
     let rejectRead!: (reason: Error) => void
     let read: Promise<FeatureGrant[]> = new Promise((_resolve, reject) => {

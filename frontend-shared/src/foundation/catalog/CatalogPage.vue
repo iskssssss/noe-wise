@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { HttpClientError } from '../../utils/http'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { FoundationOption } from '../optionTypes'
@@ -32,6 +33,9 @@ const props = defineProps<{
   permissions: readonly string[]
 }>()
 const appearance = useFoundationAppearanceState()
+const route = useRoute()
+const router = useRouter()
+const pagePath = route.path
 const active = ref('dictionaries')
 const loading = ref(false)
 const saving = ref(false)
@@ -39,6 +43,8 @@ const error = ref('')
 const dictionaries = ref<Dictionary[]>([])
 const dictionaryCode = ref('')
 const values = ref<DictionaryValue[]>([])
+const valuesLoading = ref(false)
+const valuesLoaded = ref(false)
 const nodes = ref<NavigationNode[]>([])
 const routes = ref<ControlledRoute[]>([])
 const features = ref<Feature[]>([])
@@ -215,6 +221,41 @@ const availableTabs = computed(() =>
     { key: 'entitlements', title: '功能与配额', permission: 'foundation.entitlements.read' }
   ].filter((tab) => can(tab.permission))
 )
+/** 地址只保存浏览位置；权限和业务数据每次都由当前宿主重新读取。 */
+const location = computed(() => {
+  const query = route.query
+  return {
+    tab:
+      availableTabs.value.find((tab) => tab.key === query.tab)?.key ||
+      availableTabs.value[0]?.key ||
+      '',
+    dictionary:
+      typeof query.dictionary_code === 'string' &&
+      /^[a-z][a-z0-9_.-]{0,63}$/.test(query.dictionary_code)
+        ? query.dictionary_code
+        : '',
+    plan:
+      props.platform &&
+      typeof query.plan_id === 'string' &&
+      /^[1-9][0-9]{0,18}$/.test(query.plan_id)
+        ? query.plan_id
+        : '',
+    tenant:
+      props.platform &&
+      typeof query.tenant_id === 'string' &&
+      /^[1-9][0-9]{0,18}$/.test(query.tenant_id)
+        ? query.tenant_id
+        : ''
+  }
+})
+async function changeLocation(query: Record<string, string | undefined>) {
+  if (!(await confirmPageLeave())) return false
+  return !(await router.replace({ query: { ...route.query, ...query } }))
+}
+async function changeTab(tab: string | number) {
+  if (String(tab) === active.value) return true
+  return changeLocation({ tab: String(tab) })
+}
 
 /** 客户端可见性只消费服务端当前权限；保存入口再次实时授权。 */
 function can(permission: string) {
@@ -313,8 +354,11 @@ async function load() {
         if (dictionaryCode.value && !result.some((row) => row.code === dictionaryCode.value)) {
           dictionaryCode.value = ''
           values.value = []
+          valuesLoaded.value = false
           ++dictionaryVersion
+          error.value = '之前选择的字典已不可用，请重新选择'
         }
+        if (dictionaryCode.value) await loadValues()
       }
     }
     if (tab === 'navigation') {
@@ -344,7 +388,16 @@ async function load() {
       features.value = result
       if (props.platform) {
         const result = await api<Plan[]>('GET', 'plans')
-        if (version === requestVersion) plans.value = result
+        if (version !== requestVersion) return
+        plans.value = result
+        if (planId.value && !result.some((plan) => plan.id === planId.value)) {
+          planId.value = ''
+          error.value = '之前选择的套餐已不可用，请重新选择'
+        }
+        await Promise.all([
+          ...(planId.value ? [loadPlan()] : []),
+          ...(tenantId.value ? [inspectTenant()] : [])
+        ])
       } else await inspectTenant()
     }
   } catch (cause) {
@@ -358,23 +411,29 @@ async function load() {
 async function loadValues() {
   const version = ++dictionaryVersion
   const code = dictionaryCode.value
-  values.value = []
   if (!code) return
+  valuesLoading.value = true
+  error.value = ''
   try {
     const result = await api<DictionaryValue[]>(
       'GET',
       `dictionary-values?dictionary_code=${encodeURIComponent(code)}`
     )
-    if (version === dictionaryVersion) values.value = result
+    if (version === dictionaryVersion) {
+      values.value = result
+      valuesLoaded.value = true
+    }
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
     if (version === dictionaryVersion) error.value = message(cause)
+  } finally {
+    if (version === dictionaryVersion) valuesLoading.value = false
   }
 }
 /** 先绑定当前目录中的字典，再读取其值，避免模板承载多条语句。 */
 function selectDictionary(row: Dictionary) {
-  dictionaryCode.value = row.code
-  void loadValues()
+  if (dictionaryCode.value === row.code) void loadValues()
+  else void changeLocation({ tab: 'dictionaries', dictionary_code: row.code })
 }
 /** 套餐切换时同时读取同一个计划的限额与功能，不保留另一对象的表单。 */
 async function loadPlan(preserveQuotaDraft = false) {
@@ -408,28 +467,17 @@ async function loadPlan(preserveQuotaDraft = false) {
 }
 /** 对象选择在丢弃确认通过后才改变，取消时保留原对象和限额草稿。 */
 async function selectPlan(id: string) {
-  if (id === planId.value || !(await confirmPageLeave())) return
-  planId.value = id
-  planGrants.value = []
-  planRevision.value = 0
-  planBaseline.value = ''
-  Object.assign(planLimits, emptyLimits())
-  await loadPlan()
-}
-async function changeTenantId(id: string) {
-  if (id === tenantId.value || !(await confirmPageLeave())) return
-  tenantId.value = id
-  invalidateTenant()
+  if (id !== planId.value) await changeLocation({ tab: 'entitlements', plan_id: id || undefined })
 }
 async function queryTenant() {
   if (await confirmPageLeave()) await inspectTenant()
 }
 async function chooseTenant(option: FoundationOption | undefined) {
   const id = option?.id || ''
-  await changeTenantId(id)
+  if (id !== tenantId.value)
+    await changeLocation({ tab: 'entitlements', tenant_id: id || undefined })
   if (tenantId.value !== id) return
   tenantName.value = option?.name || ''
-  if (id) await inspectTenant()
 }
 /** 机构目标变化使旧检查失效，不能继续显示另一机构的授权结果。 */
 function invalidateTenant() {
@@ -730,13 +778,38 @@ async function saveBranding() {
     async () => {}
   )
 }
-/** 第一项可用能力作为默认；缺少权限不发无意义请求。 */
-onMounted(async () => {
-  if (availableTabs.value.length) {
-    active.value = availableTabs.value[0]!.key
-    await load()
-  }
-})
+/** 同一路由的浏览位置变更也经过已有离开保护，确认成功后才替换对象。 */
+watch(
+  [
+    () => location.value.tab,
+    () => location.value.dictionary,
+    () => location.value.plan,
+    () => location.value.tenant
+  ],
+  async ([tab, dictionary, plan, tenant]) => {
+    if (route.path !== pagePath) return
+    ++dictionaryVersion
+    ++planVersion
+    invalidateTenant()
+    if (dictionaryCode.value !== dictionary) {
+      values.value = []
+      valuesLoaded.value = false
+    }
+    valuesLoading.value = false
+    planLoading.value = false
+    active.value = tab
+    dictionaryCode.value = dictionary
+    planId.value = plan
+    planGrants.value = []
+    planRevision.value = 0
+    planBaseline.value = ''
+    Object.assign(planLimits, emptyLimits())
+    tenantId.value = tenant
+    tenantName.value = ''
+    if (tab) await load()
+  },
+  { immediate: true }
+)
 onBeforeUnmount(() => {
   ++requestVersion
   ++dictionaryVersion
@@ -756,7 +829,7 @@ onBeforeUnmount(() => {
       @close="error = ''"
     />
     <el-empty v-if="!availableTabs.length" description="当前账号没有目录管理权限" />
-    <el-tabs v-else v-model="active" :before-leave="confirmPageLeave" @tab-change="load">
+    <el-tabs v-else :model-value="active" :before-leave="changeTab">
       <el-tab-pane v-for="tab in availableTabs" :key="tab.key" :label="tab.title" :name="tab.key" />
     </el-tabs>
     <div v-loading="loading" class="catalog-body">
@@ -814,8 +887,27 @@ onBeforeUnmount(() => {
             <el-button v-if="can('foundation.dictionary.manage')" @click="editValue()"
               >添加值</el-button
             >
+            <el-button :loading="valuesLoading" :disabled="saving" @click="loadValues"
+              >刷新字典值</el-button
+            >
           </div>
-          <el-table :data="values" row-key="code" border
+          <p v-if="valuesLoading" role="status">
+            {{ valuesLoaded ? '正在刷新字典值，当前显示上次读取结果…' : '正在读取字典值…' }}
+          </p>
+          <p v-else-if="!valuesLoaded" role="status">
+            字典值尚未读取成功，可点击“刷新字典值”重试。
+          </p>
+          <el-table
+            v-if="valuesLoaded"
+            v-loading="valuesLoading"
+            :data="values"
+            row-key="code"
+            border
+            :empty-text="
+              can('foundation.dictionary.manage')
+                ? '此字典还没有值，可点击“添加值”创建'
+                : '此字典还没有值'
+            "
             ><el-table-column
               prop="code"
               label="稳定编码"
@@ -1063,7 +1155,7 @@ onBeforeUnmount(() => {
         >
         <template v-if="tenant"
           ><el-alert
-            :title="`${tenantName || tenant.tenant_id} · 功能与资源用量`"
+            :title="`${tenantName || (platform ? '所选机构' : '当前机构')} · 功能与资源用量`"
             type="info"
             :closable="false"
           /><el-table :data="tenant.usage" border
