@@ -78,6 +78,51 @@ async function editName(value: string) {
   return dialog
 }
 describe('目录编辑实际交互保护', () => {
+  it.each(['dictionary', 'value'])('%s 必填和编码错误就地提示，修正后才提交', async (kind) => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/dictionary-values') ? [] : [dictionary]
+    ) as unknown as CatalogRequest
+    await render(request)
+    if (kind === 'value') {
+      button('查看值').click()
+      await flushPromises()
+    }
+    button(kind === 'dictionary' ? '新建字典' : '添加值').click()
+    await flushPromises()
+    const dialog = document.querySelector<HTMLElement>('.el-dialog')!
+    button('保存', dialog).click()
+    await flushPromises()
+    await vi.waitFor(() => expect(dialog.textContent).toContain('请输入稳定编码'))
+    expect(dialog.textContent).toContain(kind === 'dictionary' ? '请输入名称' : '请输入显示文本')
+    expect(document.querySelector('.el-message--error')).toBeNull()
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    const inputs = dialog.querySelectorAll<HTMLInputElement>('input')
+    inputs[0].value = 'Invalid code'
+    inputs[1].value = '   '
+    for (const input of [inputs[0], inputs[1]])
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    button('保存', dialog).click()
+    await flushPromises()
+    await vi.waitFor(() => expect(dialog.textContent).toContain('以小写字母开头'))
+    expect(dialog.textContent).toContain(kind === 'dictionary' ? '请输入名称' : '请输入显示文本')
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    inputs[0].value = 'valid_code'
+    inputs[1].value = '有效文本'
+    for (const input of [inputs[0], inputs[1]])
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    button('保存', dialog).click()
+    await flushPromises()
+    const writes = vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')
+    expect(writes).toHaveLength(1)
+    expect(writes[0][2]).toMatchObject({
+      code: 'valid_code',
+      [kind === 'dictionary' ? 'name' : 'label']: '有效文本'
+    })
+    expect(dialog.querySelector('.el-dialog__title')?.textContent).toBe(
+      kind === 'dictionary' ? '字典' : '字典值'
+    )
+    expect(dialog.querySelectorAll<HTMLInputElement>('input')[1].value).toBe('有效文本')
+  })
   it('真实写入拒绝后顶部提示一次且弹窗保留草稿', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'PUT') throw new Error('目录修订冲突')

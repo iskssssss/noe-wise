@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { FoundationOption } from '../optionTypes'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useDrawerClose } from '../../admin/drawer'
 import { confirmPageLeave, useUnsavedChanges } from '../../admin/leave'
 import type {
@@ -124,7 +124,30 @@ const featureForm = reactive({
   enabled: true,
   expected_revision: 0
 })
-const editor = ref<'dictionary' | 'value' | 'navigation' | 'feature' | ''>('')
+const editor = ref<'dictionary' | 'value' | 'navigation' | 'feature'>('dictionary')
+const editorVisible = ref(false)
+const editorFormRef = ref<FormInstance>()
+const editorModel = computed(() =>
+  editor.value === 'dictionary'
+    ? dictionaryForm
+    : editor.value === 'value'
+      ? valueForm
+      : editor.value === 'navigation'
+        ? nodeForm
+        : featureForm
+)
+const dictionaryRules: FormRules = {
+  code: [
+    { required: true, message: '请输入稳定编码', trigger: 'blur' },
+    {
+      pattern: /^[a-z][a-z0-9_.-]{0,63}$/,
+      message: '以小写字母开头，限小写字母、数字、下划线、点或连字符，最多 64 位',
+      trigger: 'blur'
+    }
+  ],
+  name: [{ required: true, whitespace: true, message: '请输入名称', trigger: 'blur' }],
+  label: [{ required: true, whitespace: true, message: '请输入显示文本', trigger: 'blur' }]
+}
 const editorBaseline = ref('')
 const personalBaseline = ref('')
 const brandingBaseline = ref('')
@@ -172,23 +195,18 @@ function can(permission: string) {
 }
 /** 表单基线只驻留内存，关闭和路由离开共用未保存检查。 */
 function editorSnapshot() {
-  return JSON.stringify(
-    editor.value === 'dictionary'
-      ? dictionaryForm
-      : editor.value === 'value'
-        ? valueForm
-        : editor.value === 'navigation'
-          ? nodeForm
-          : featureForm
-  )
+  return JSON.stringify(editorModel.value)
 }
 function beginEditor(kind: typeof editor.value) {
+  editorFormRef.value?.clearValidate()
   editor.value = kind
+  editorVisible.value = true
   editorBaseline.value = editorSnapshot()
   error.value = ''
 }
 function discardEditor() {
-  editor.value = ''
+  // 关闭动画仍渲染原表单，不能提前清空类型而切换标题和内容。
+  editorVisible.value = false
   editorBaseline.value = ''
 }
 const editorWritable = computed(() =>
@@ -201,7 +219,7 @@ const editorWritable = computed(() =>
   )
 )
 const editorClose = useDrawerClose({
-  open: () => Boolean(editor.value),
+  open: () => editorVisible.value,
   busy: () => saving.value,
   dirty: () => editorSnapshot() !== editorBaseline.value,
   close: discardEditor
@@ -534,7 +552,8 @@ function editFeature(row?: Feature) {
 }
 /** 当前完整表单的保存动作。 */
 async function saveEditor() {
-  if (!editor.value || saving.value || !editorWritable.value) return
+  if (!editorVisible.value || saving.value || !editorWritable.value) return
+  if (!(await editorFormRef.value?.validate().catch(() => false))) return
   if (editor.value === 'navigation' && nodeForm.route_key === '') {
     error.value = '请选择业务页面'
     return
@@ -700,7 +719,7 @@ onBeforeUnmount(() => {
 <template>
   <AdminPage class="catalog-page" title="基础目录与设置">
     <FeedbackNotice
-      v-if="error && !editor"
+      v-if="error && !editorVisible"
       :title="error"
       type="error"
       show-icon
@@ -1057,7 +1076,7 @@ onBeforeUnmount(() => {
       </template>
     </div>
     <el-dialog
-      :model-value="Boolean(editor)"
+      :model-value="editorVisible"
       :title="
         editor === 'dictionary'
           ? '字典'
@@ -1075,25 +1094,38 @@ onBeforeUnmount(() => {
       :show-close="!saving"
       :before-close="() => editorClose.requestClose()"
     >
-      <FeedbackNotice v-if="error" :title="error" type="error" :closable="false" show-icon />
-      <el-form label-position="top" :disabled="saving || !editorWritable">
+      <FeedbackNotice
+        v-if="error && editorVisible"
+        :title="error"
+        type="error"
+        :closable="false"
+        show-icon
+      />
+      <el-form
+        :key="editor"
+        ref="editorFormRef"
+        :model="editorModel"
+        :rules="editor === 'dictionary' || editor === 'value' ? dictionaryRules : undefined"
+        label-position="top"
+        :disabled="saving || !editorWritable"
+      >
         <template v-if="editor === 'dictionary'"
-          ><el-form-item label="稳定编码"
+          ><el-form-item label="稳定编码" prop="code"
             ><el-input
               v-model="dictionaryForm.code"
               :disabled="dictionaryForm.expected_revision > 0"
               maxlength="64" /></el-form-item
-          ><el-form-item label="名称"
+          ><el-form-item label="名称" prop="name"
             ><el-input v-model="dictionaryForm.name" maxlength="128" /></el-form-item
           ><el-form-item label="启用"><el-switch v-model="dictionaryForm.enabled" /></el-form-item
         ></template>
         <template v-if="editor === 'value'"
-          ><el-form-item label="稳定编码"
+          ><el-form-item label="稳定编码" prop="code"
             ><el-input
               v-model="valueForm.code"
               :disabled="valueForm.expected_revision > 0"
               maxlength="64" /></el-form-item
-          ><el-form-item label="显示文本"
+          ><el-form-item label="显示文本" prop="label"
             ><el-input v-model="valueForm.label" maxlength="128" /></el-form-item
           ><el-form-item label="排序"
             ><el-input-number
