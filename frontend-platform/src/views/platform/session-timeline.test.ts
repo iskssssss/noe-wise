@@ -457,11 +457,13 @@ describe('业务轮次的会话内固定编号', () => {
       .trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.scope).toBe('all')
+    expect(router.currentRoute.value.query.tab).toBe('messages')
     expect(router.currentRoute.value.query.root_input_id).toBeUndefined()
     const again = await open(
       new URLSearchParams(router.currentRoute.value.query as Record<string, string>).toString()
     )
-    expect(again.wrapper.text()).toContain('请选择业务轮次查看执行树')
+    expect(again.wrapper.get('[role=tab][aria-selected=true]').text()).toBe('消息')
+    expect(again.wrapper.text()).toContain('公开过程说明')
     expect(calls.messages.mock.calls.at(-1)?.[2]).toBeUndefined()
   })
 
@@ -512,6 +514,82 @@ describe('业务轮次的会话内固定编号', () => {
     })
     const { wrapper } = await open()
     expect(wrapper.get('.round-summary > span').text()).toBe(`第 ${huge} 轮`)
+  })
+})
+
+describe('无执行轮次的会话内容入口', () => {
+  it('空轮次说明原因并提供保留筛选的返回入口，全部内容直接打开消息', async () => {
+    calls.rounds.mockResolvedValue({ items: [], next_cursor: null })
+    calls.messages.mockResolvedValue({ items: [], next_cursor: null })
+    calls.usage.mockResolvedValue({
+      ...usage(),
+      coverage: { ...coverage, status: 'NO_CALLS', total_attempts: 0, reported_attempts: 0 },
+      attempts: []
+    })
+    const { wrapper, router } = await open('tenant_id=7&session_id=session&list_status=NONE')
+    expect(wrapper.get('#pane-timeline').text()).toContain('本会话尚无执行轮次')
+    expect(wrapper.get('#pane-timeline').text()).toContain('当前没有可选轮次')
+    expect(wrapper.get('#pane-timeline a').attributes('href')).toBe(
+      '/platform/sessions?list_status=NONE'
+    )
+    expect(calls.trajectoryDetail).not.toHaveBeenCalled()
+    await wrapper.get('#tab-trace').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#pane-trace').text()).toContain('本会话尚无执行轮次')
+    expect(wrapper.get('#pane-trace').text()).not.toContain('请选择')
+    await wrapper.get('#tab-usage').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#pane-usage').text()).not.toContain('选择问答')
+    expect(wrapper.get('#pane-usage .el-alert').classes()).toContain('el-alert--info')
+    await wrapper.get('#tab-timeline').trigger('click')
+    await wrapper
+      .findAll('.el-menu-item')
+      .find((item) => item.text() === '全部消息与用量')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role=tab][aria-selected=true]').text()).toBe('消息')
+    expect(wrapper.get('#pane-messages').text()).toContain('没有消息记录')
+    expect(router.currentRoute.value.query).toMatchObject({
+      scope: 'all',
+      tab: 'messages',
+      list_status: 'NONE'
+    })
+  })
+
+  it('轮次读取失败不冒充空会话，重试成功后才显示空态', async () => {
+    calls.rounds
+      .mockRejectedValueOnce(new Error('轮次服务暂不可用'))
+      .mockResolvedValue({ items: [], next_cursor: null })
+    const { wrapper } = await open()
+    expect(wrapper.get('#pane-timeline').text()).toContain('业务轮次尚未读取')
+    expect(wrapper.text()).not.toContain('本会话尚无执行轮次')
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '重新读取会话与轮次')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#pane-timeline').text()).toContain('本会话尚无执行轮次')
+    expect(wrapper.text()).not.toContain('业务轮次尚未读取')
+  })
+
+  it('刷新空轮次时显示读取中，返回已有轮次后移除空态', async () => {
+    calls.rounds.mockResolvedValueOnce({ items: [], next_cursor: null })
+    const { wrapper } = await open()
+    const pending = deferred<{ items: SessionRound[]; next_cursor: null }>()
+    calls.rounds.mockReturnValueOnce(pending.promise)
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '刷新')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#pane-timeline').text()).toContain('正在读取业务轮次')
+    expect(wrapper.get('.round-panel .el-tag').text()).toBe('读取中')
+    expect(wrapper.text()).not.toContain('本会话尚无执行轮次')
+    pending.resolve({ items: [round()], next_cursor: null })
+    await flushPromises()
+    expect(wrapper.find('[data-round-id="root-A"]').exists()).toBe(true)
+    expect(wrapper.findComponent(ObservationTree).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('本会话尚无执行轮次')
   })
 })
 

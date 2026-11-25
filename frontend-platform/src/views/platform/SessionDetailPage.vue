@@ -104,6 +104,20 @@ const initialRounds = useResource(async (signal) => {
   }
   return page
 })
+const noRounds = computed(
+  () =>
+    initialRounds.data.value?.items.length === 0 &&
+    !initialRounds.loading.value &&
+    !initialRounds.error.value &&
+    !rounds.value.length &&
+    !roundCursor.value
+)
+const roundSelectionHint = computed(() => {
+  if (!rounds.value.length && initialRounds.loading.value) return '正在读取业务轮次…'
+  if (!rounds.value.length && initialRounds.error.value)
+    return '业务轮次尚未读取，请使用上方“重新读取会话与轮次”重试。'
+  return noRounds.value ? '本会话尚无执行轮次' : '请选择业务轮次查看执行记录'
+})
 const messagesTask = useResource((signal) => {
   const target = resource()
   return api.sessions.messages(
@@ -302,8 +316,10 @@ function updateLocation(root: string, node: string, tab: string) {
 }
 function selectRoundFromMenu(value: string) {
   const id = value === 'all' ? '' : value.slice(6)
+  if (!id && (activeTab.value === 'timeline' || activeTab.value === 'trace'))
+    activeTab.value = 'messages'
   if (id === rootInput.value) {
-    if (!id && route.query.scope !== 'all') void updateLocation('', '', activeTab.value)
+    if (!id) void updateLocation('', '', activeTab.value)
     return
   }
   void selectRound(id)
@@ -554,12 +570,16 @@ watch(canReadDiagnostics, (allowed) => {
           <header class="panel-heading">
             <div>
               <h2>业务轮次</h2>
-              <p>最新轮次在前，选择轮次查看执行</p>
+              <p>
+                {{ noRounds ? '尚无执行轮次，可查看消息与用量' : '最新轮次在前，选择轮次查看执行' }}
+              </p>
             </div>
             <ElTag type="info" size="small">{{
-              initialRounds.error.value && !rounds.length
-                ? '尚未读取'
-                : `${rounds.length}${roundCursor ? '+' : ''} 轮`
+              initialRounds.loading.value && !rounds.length
+                ? '读取中'
+                : initialRounds.error.value && !rounds.length
+                  ? '尚未读取'
+                  : `${rounds.length}${roundCursor ? '+' : ''} 轮`
             }}</ElTag>
           </header>
           <ElMenu
@@ -604,11 +624,19 @@ watch(canReadDiagnostics, (allowed) => {
               <ElAlert
                 v-if="!rootInput"
                 type="info"
-                title="请选择业务轮次查看执行树"
+                :title="roundSelectionHint"
+                :description="
+                  noRounds
+                    ? '当前没有可选轮次。可切换消息或 Token 用量，或返回会话列表查看其他会话。'
+                    : undefined
+                "
                 :closable="false"
               />
+              <RouterLink v-if="!rootInput && noRounds" :to="sessionListTarget"
+                >返回会话列表</RouterLink
+              >
               <ObservationTree
-                v-else
+                v-if="rootInput"
                 :detail="trajectory"
                 :page="observationPage"
                 :applied-query="appliedSearchQuery"
@@ -667,10 +695,18 @@ watch(canReadDiagnostics, (allowed) => {
               <ElAlert
                 v-if="!rootInput"
                 type="info"
-                title="请选择具体轮次查看轨迹"
+                :title="roundSelectionHint"
+                :description="
+                  noRounds
+                    ? '当前没有可选轮次。可切换消息或 Token 用量，或返回会话列表查看其他会话。'
+                    : undefined
+                "
                 :closable="false"
               />
-              <template v-else>
+              <RouterLink v-if="!rootInput && noRounds" :to="sessionListTarget"
+                >返回会话列表</RouterLink
+              >
+              <template v-if="rootInput">
                 <div
                   v-if="appliedSearchQuery"
                   class="actions"
@@ -748,14 +784,23 @@ watch(canReadDiagnostics, (allowed) => {
             </ElTabPane>
             <ElTabPane name="usage" label="Token 用量">
               <template v-if="usage">
-                <p v-if="!rootInput" class="admin-field-help">
+                <p v-if="!rootInput && noRounds" class="admin-field-help">
+                  本会话尚无执行轮次；以下为当前会话已记录的模型调用用量。
+                </p>
+                <p v-else-if="!rootInput" class="admin-field-help">
                   主 Agent 模型调用（选择问答可查看含辅助和成员的完整用量）
                 </p>
                 <p v-else class="admin-field-help">
                   当前问答的轨迹用量，包含已关联的辅助和成员模型调用。
                 </p>
                 <ElAlert
-                  :type="usage.coverage.status === 'COMPLETE' ? 'success' : 'warning'"
+                  :type="
+                    usage.coverage.status === 'COMPLETE'
+                      ? 'success'
+                      : usage.coverage.status === 'NO_CALLS'
+                        ? 'info'
+                        : 'warning'
+                  "
                   :title="
                     '用量覆盖：' +
                     messageState(usage.coverage.status) +
