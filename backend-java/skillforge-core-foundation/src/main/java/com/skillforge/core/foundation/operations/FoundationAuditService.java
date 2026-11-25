@@ -68,13 +68,18 @@ public class FoundationAuditService {
             case "authentication" -> "认证"; case "authorization" -> "授权";
             case "sensitive" -> "敏感访问"; case "export" -> "导出"; case "operation" -> "业务操作";
             case "success" -> "成功"; case "failure" -> "失败"; case "denied" -> "拒绝";
-            case "auth.login" -> "登录"; case "auth.refresh" -> "刷新登录会话";
+            case "auth.login" -> "登录"; case "auth.logout" -> "退出登录"; case "auth.refresh" -> "刷新登录会话";
             case "auth.password_change" -> "修改密码"; case "sensitive.audit.read" -> "读取安全审计";
             case "platform.session.messages.read" -> "读取会话正文"; case "trajectory.content.read" -> "读取轨迹正文";
             case "admin.tenant.provision" -> "开通机构"; case "admin.tenant.update" -> "更新机构";
             case "admin.tenant.suspend" -> "停用机构"; case "admin.tenant.activate" -> "启用机构";
             case "admin.tenant_member.create" -> "新增成员"; case "admin.tenant_member.update" -> "更新成员";
             case "admin.tenant_member.reset_password" -> "重置成员密码";
+            case "permission.department.create" -> "创建部门"; case "permission.department.update" -> "更新部门";
+            case "permission.member.create" -> "创建成员"; case "permission.member.update" -> "更新成员";
+            case "permission.position.create" -> "创建岗位"; case "permission.role.create" -> "创建角色";
+            case "deliverable.ticket" -> "获取成果访问凭证"; case "deliverable.ticket.used" -> "使用成果访问凭证";
+            case "security.session.retention.change" -> "修改登录记录保留期限";
             case "export.audit" -> "导出安全审计";
             case "platform.agent_definitions.create" -> "创建公共定义";
             case "platform.agent_definitions.edit" -> "编辑公共定义";
@@ -86,6 +91,8 @@ public class FoundationAuditService {
             case "knowledge_base" -> "知识库"; case "knowledge_document" -> "知识文档";
             case "browser_authorization" -> "浏览器授权"; case "audit_query" -> "审计查询";
             case "account" -> "账号"; case "member" -> "成员"; case "audit" -> "安全审计";
+            case "department" -> "部门"; case "position" -> "岗位"; case "role" -> "角色";
+            case "artifact" -> "运行产物"; case "deliverable" -> "成果";
             default -> value;
         };
     }
