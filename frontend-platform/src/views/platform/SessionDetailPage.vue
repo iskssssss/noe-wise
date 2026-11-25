@@ -42,6 +42,11 @@ const cacheAvailabilityLabels: Record<string, string> = {
 }
 const tenant = computed(() => String(route.query.tenant_id ?? route.query.tenantId ?? '')),
   session = computed(() => String(route.query.session_id ?? route.query.sessionId ?? ''))
+const locationTab = computed(() =>
+  ['timeline', 'messages', 'trace', 'usage'].includes(String(route.query.tab))
+    ? String(route.query.tab)
+    : 'timeline'
+)
 const detail = ref<SessionDetail>(),
   rounds = ref<SessionRound[]>([]),
   roundCursor = ref<string | null>(null),
@@ -58,11 +63,7 @@ const detail = ref<SessionDetail>(),
   focusNode = ref(''),
   attemptOpen = ref(false),
   attemptTarget = ref<{ attempt_id: string; session_id: string; root_input_id?: string }>(),
-  activeTab = ref(
-    ['timeline', 'messages', 'trace', 'usage'].includes(String(route.query.tab))
-      ? String(route.query.tab)
-      : 'timeline'
-  )
+  activeTab = ref(locationTab.value)
 const resource = () => ({
   tenant_id: tenant.value,
   session_id: session.value,
@@ -430,15 +431,15 @@ watch(
     roundCursor.value = null
     rootInput.value = ''
     focusNode.value = ''
+    activeTab.value = locationTab.value
     void reload()
   },
   { immediate: true }
 )
 watch(
-  () => [route.query.root_input_id, route.query.node_id, route.query.tab, route.query.scope],
+  () => [route.query.root_input_id, route.query.node_id, locationTab.value, route.query.scope],
   () => {
-    const tab = String(route.query.tab)
-    if (['timeline', 'messages', 'trace', 'usage'].includes(tab)) activeTab.value = tab
+    activeTab.value = locationTab.value
     const root =
       typeof route.query.root_input_id === 'string'
         ? route.query.root_input_id

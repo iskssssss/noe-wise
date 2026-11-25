@@ -185,7 +185,11 @@ const router = createRouter({
         {
           path: 'sessions/detail',
           component: () => import('../views/platform/SessionDetailPage.vue'),
-          meta: { title: '会话详情', parentQueryKeys: sessionListQueryKeys }
+          meta: {
+            title: '会话详情',
+            parentQueryKeys: sessionListQueryKeys,
+            preserveOnQueryChange: true
+          }
         },
         {
           path: 'trajectories',
@@ -195,7 +199,7 @@ const router = createRouter({
         {
           path: 'trajectories/detail',
           component: () => import('../views/platform/TrajectoryDetailPage.vue'),
-          meta: { title: '轨迹详情' }
+          meta: { title: '轨迹详情', preserveOnQueryChange: true }
         },
         {
           path: 'billing',
