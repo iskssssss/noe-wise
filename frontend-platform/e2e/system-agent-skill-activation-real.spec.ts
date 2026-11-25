@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -16,8 +16,21 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
   const skillId = required('E2E_SKILL_ID')
   const network: { path: string; method: string; status: number }[] = []
   const errors: string[] = []
+  const screenshots: { step: string; file: string; time: string; url: string }[] = []
   let loggedIn = false
   let debugPosts = 0
+  async function capture(step: string, target: Locator) {
+    await target.scrollIntoViewIfNeeded()
+    await expect(target).toBeInViewport()
+    const file = `${step}.png`
+    await page.screenshot({ path: join(evidence, file), fullPage: false, animations: 'disabled' })
+    const captured = { step, file, time: new Date().toISOString(), url: page.url() }
+    screenshots.push(captured)
+    await writeFile(
+      join(evidence, `${step}.json`),
+      JSON.stringify({ ...captured, viewport: page.viewportSize() }, null, 2)
+    )
+  }
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
     if (
@@ -57,6 +70,7 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
       await expect(activation.getByRole('combobox')).toHaveCount(0)
       await expect(page.getByText('由技能当前发布配置决定', { exact: true })).toBeVisible()
     }
+    await capture('01-mounted', page.getByRole('button', { name: '保存草稿', exact: true }))
     const saved = page.waitForResponse(
       (response) =>
         response.request().method() === 'PUT' &&
@@ -82,8 +96,14 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
       expect(savedRequest.config.mounts[0].activation_mode).toBeNull()
       expect(savedBody.data.draft.mounts[0].activation_mode).toBe('ALWAYS')
     }
+    await expect(
+      page.getByText('系统智能体草稿已保存，发布后用于新的正式执行', { exact: true })
+    ).toBeVisible()
+    await capture('02-saved', page.getByRole('button', { name: '保存草稿', exact: true }))
     await page.getByRole('button', { name: '发布', exact: true }).click()
     const confirm = page.getByRole('dialog', { name: '系统智能体', exact: true })
+    await expect(confirm).toBeVisible()
+    await capture('03-publish-confirmation', confirm)
     const publication = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -111,9 +131,12 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
       expect(publishedBody.data.draft.mounts[0].activation_mode).toBe('ALWAYS')
     }
     await expect(confirm).not.toBeVisible()
+    await capture('04-published', page.getByText('当前发布修订 1', { exact: true }))
     await page.getByRole('tab', { name: '调试与运行', exact: true }).click()
     await page.getByText('已发布版本', { exact: true }).click()
+    await expect(page.getByRole('radio', { name: '已发布版本', exact: true })).toBeChecked()
     await page.getByLabel('调试输入', { exact: true }).fill('请依据已激活技能给出一次回复。')
+    await capture('05-debug-input', page.getByRole('button', { name: '运行调试', exact: true }))
     const debugResponse = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -160,6 +183,14 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
       expect(debug.output).toBe(required('E2E_EXPECTED_REPLY'))
       await expect(page.getByRole('status', { name: '原调试结果待核对' })).toHaveCount(0)
       await expect(page.getByText(required('E2E_EXPECTED_REPLY'), { exact: true })).toBeVisible()
+      await capture(
+        '06-debug-result',
+        page.getByText(required('E2E_EXPECTED_REPLY'), { exact: true })
+      )
+      await page.getByRole('button', { name: '查看结果', exact: true }).click()
+      const result = page.getByRole('dialog', { name: '调试运行结果', exact: true })
+      await expect(result.getByText(required('E2E_EXPECTED_REPLY'), { exact: true })).toBeVisible()
+      await capture('07-result-detail', result)
     } else {
       expect(debug.status).not.toBe('COMPLETED')
       if (debug.status === 'RUNNING' || debug.error_code === 'system_agent_outcome_unknown') {
@@ -176,13 +207,14 @@ test('系统智能体挂载技能后按发布配置激活并完成真实运行',
   } finally {
     await writeFile(
       join(evidence, 'browser-state.json'),
-      JSON.stringify({ mode, agentId, skillId, debugPosts, errors, network }, null, 2)
+      JSON.stringify({ mode, agentId, skillId, debugPosts, errors, network, screenshots }, null, 2)
     )
     if (loggedIn) {
       await writeFile(join(evidence, 'final.html'), await page.locator('body').innerHTML())
       await page.screenshot({
         path: join(evidence, `system-agent-skill-${mode}.png`),
-        fullPage: true
+        fullPage: true,
+        animations: 'disabled'
       })
     }
   }
