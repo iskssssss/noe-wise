@@ -9,6 +9,7 @@ import { message, confirm } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { computed, onMounted, reactive, ref, watch, useId } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { type FormInstance } from 'element-plus'
 import {
   AdminPage,
@@ -22,18 +23,37 @@ import {
   api,
   type SystemAgentToolDeploymentView,
   type SystemAgentToolDeploymentWrite,
+  type SystemAgentToolListOptions,
   type SystemAgentMountOptions
 } from '../../api'
 const props = defineProps<{ toolDefinitionId?: string }>()
 const emit = defineEmits<{ closed: []; published: [value: SystemAgentToolDeploymentView] }>()
 const { allowed, checked } = useActionPermissions()
 const auth = useAuthStore()
-const filters = reactive({ search: '', environment: '', active: '' })
+const route = useRoute()
+const router = useRouter()
+const navigation = useTask()
+function readFilters(query: LocationQuery) {
+  return {
+    search: typeof query.list_search === 'string' ? query.list_search : '',
+    environment: typeof query.list_environment === 'string' ? query.list_environment : '',
+    active: typeof query.list_active === 'string' ? query.list_active : ''
+  }
+}
+const applied = ref(readFilters(props.toolDefinitionId ? {} : route.query))
+const filters = reactive({ ...applied.value })
+const filterOptions = ref<SystemAgentToolListOptions>()
+const hasFilters = computed(() => Object.values(applied.value).some(Boolean))
+const unqueried = computed(
+  () =>
+    filters.search.trim() !== applied.value.search ||
+    filters.environment !== applied.value.environment ||
+    filters.active !== applied.value.active
+)
 const formRef = ref<FormInstance>()
 const toolError = ref('')
 const toolLoading = ref(false)
-const load = useTask(),
-  action = useTask(),
+const action = useTask(),
   rows = ref<SystemAgentToolDeploymentView[]>([]),
   tools = ref<SystemAgentMountOptions['tools']>([]),
   open = ref(false),
@@ -50,19 +70,17 @@ watch(
   { flush: 'sync' }
 )
 const filteredRows = computed(() => {
-  const search = filters.search.trim().toLocaleLowerCase()
+  const search = applied.value.search.trim().toLocaleLowerCase()
   return rows.value.filter(
     (row) =>
-      (!search ||
-        [
-          row.name,
-          row.id,
-          row.tool_definition_id,
-          row.provider_ref ?? '',
-          tools.value.find((tool) => tool.id === row.tool_definition_id)?.name ?? ''
-        ].some((value) => value.toLocaleLowerCase().includes(search))) &&
-      (!filters.environment || row.environment === filters.environment) &&
-      (!filters.active || String(row.active) === filters.active)
+      !search ||
+      [
+        row.name,
+        row.id,
+        row.tool_definition_id,
+        row.provider_ref ?? '',
+        tools.value.find((tool) => tool.id === row.tool_definition_id)?.name ?? ''
+      ].some((value) => value.toLocaleLowerCase().includes(search))
   )
 })
 const selectedToolName = ref('')
@@ -211,6 +229,11 @@ watch(
     editing.value = undefined
     rows.value = []
     tools.value = []
+    listResource.invalidate()
+    listResource.data.value = undefined
+    filterOptions.value = undefined
+    loaded.value = false
+    load.error.value = ''
     toolOptions.invalidate()
     toolOptions.error.value = ''
     selectedToolName.value = ''
@@ -330,27 +353,95 @@ async function resolveTool(id: string) {
   }
 }
 watch(() => form.tool_definition_id, resolveTool)
+const loaded = ref(false)
+const listResource = useResource(async (signal) => {
+  const results = await Promise.allSettled([
+    api.systemAgentTools.list(
+      { environment: applied.value.environment, active: applied.value.active },
+      { signal, silent: true }
+    ),
+    allowed('foundation.system_agents.read')
+      ? api.systemAgents.mountOptions({ signal, silent: true })
+      : Promise.resolve({ skills: [], tools: [], deployments: [] }),
+    props.toolDefinitionId
+      ? Promise.resolve(undefined)
+      : api.systemAgentTools.options({ signal, silent: true })
+  ])
+  const failures = results.flatMap((result) => {
+    if (result.status === 'fulfilled') return []
+    if (result.reason instanceof HttpClientError) result.reason.claimFeedback()
+    if (
+      result.reason instanceof HttpClientError &&
+      result.reason.code === 'system_tool_filter_invalid'
+    )
+      return ['工具部署筛选条件无效，请重新选择或重置后查询']
+    return [result.reason instanceof Error ? result.reason.message : '资料读取失败']
+  })
+  return { results, error: [...new Set(failures)].join('；') }
+})
+const load = { busy: listResource.loading, error: ref('') }
+watch(listResource.data, (batch) => {
+  if (!batch) return
+  load.error.value = batch.error
+  const [list, directory, options] = batch.results
+  if (list.status === 'fulfilled') {
+    rows.value = list.value
+    loaded.value = true
+  }
+  if (directory.status === 'fulfilled') tools.value = directory.value.tools
+  if (options.status === 'fulfilled') filterOptions.value = options.value
+})
 function reload() {
-  const identity = auth.identityVersion
-  void load.run(async () => {
-    const results = await Promise.allSettled([
-      api.systemAgentTools.list({ silent: true }),
-      allowed('foundation.system_agents.read')
-        ? api.systemAgents.mountOptions({ silent: true })
-        : Promise.resolve({ skills: [], tools: [], deployments: [] })
-    ])
-    if (identity !== auth.identityVersion) return
-    const [list, options] = results
-    if (list.status === 'fulfilled') rows.value = list.value
-    if (options.status === 'fulfilled') tools.value = options.value.tools
-    const failures = results.flatMap((result) => {
-      if (result.status === 'fulfilled') return []
-      if (result.reason instanceof HttpClientError) result.reason.claimFeedback()
-      return [result.reason instanceof Error ? result.reason.message : '资料读取失败']
+  load.error.value = ''
+  void listResource.reload()
+}
+function submitFilters() {
+  const next = {
+    search: filters.search.trim(),
+    environment: filters.environment,
+    active: filters.active
+  }
+  if (JSON.stringify(next) === JSON.stringify(applied.value)) {
+    filters.search = next.search
+    reload()
+    return
+  }
+  void navigation.run(async () => {
+    const failure = await router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        list_search: next.search || undefined,
+        list_environment: next.environment || undefined,
+        list_active: next.active || undefined
+      }
     })
-    if (failures.length) throw new Error([...new Set(failures)].join('；'))
+    if (failure) throw Error('查询条件未能更新到地址栏，请重试查询')
   })
 }
+function resetFilters() {
+  Object.assign(filters, { search: '', environment: '', active: '' })
+  submitFilters()
+}
+watch(
+  () => readFilters(route.query),
+  (next) => {
+    if (
+      props.toolDefinitionId ||
+      route.path !== '/platform/system-agent-tools' ||
+      JSON.stringify(next) === JSON.stringify(applied.value)
+    )
+      return
+    applied.value = next
+    Object.assign(filters, next)
+    listResource.invalidate()
+    listResource.data.value = undefined
+    rows.value = []
+    loaded.value = false
+    reload()
+  },
+  { deep: true }
+)
 async function refreshToolOptions() {
   if (!allowed('foundation.system_agents.read')) return
   const identity = auth.identityVersion
@@ -724,7 +815,10 @@ const formTipId = useId()
       >
       <ElButton :loading="load.busy.value" @click="reload">刷新</ElButton>
     </template>
-    <ElForm @keydown.capture="guardFormEnter" class="admin-filters filters" @submit.prevent="reload"
+    <ElForm
+      @keydown.capture="guardFormEnter"
+      class="admin-filters filters"
+      @submit.prevent="submitFilters"
       ><ElInput
         v-model="filters.search"
         aria-label="搜索工具部署"
@@ -735,18 +829,34 @@ const formTipId = useId()
         aria-label="部署环境"
         clearable
         placeholder="全部环境"
-        ><ElOption value="TEST" label="测试" /><ElOption
-          value="PRODUCTION"
-          label="生产" /></ElSelect
-      ><ElSelect v-model="filters.active" aria-label="部署状态" clearable placeholder="全部状态"
-        ><ElOption value="true" label="启用" /><ElOption value="false" label="停用" /></ElSelect
-      ><ElButton @click="Object.assign(filters, { search: '', environment: '', active: '' })"
-        >重置</ElButton
-      >
+        :loading="load.busy.value"
+        :disabled="!filterOptions"
+        ><ElOption
+          v-for="option in filterOptions?.environments ?? []"
+          :key="option.value"
+          :value="option.value"
+          :label="option.label" /></ElSelect
+      ><ElSelect
+        v-model="filters.active"
+        aria-label="部署状态"
+        clearable
+        placeholder="全部状态"
+        :loading="load.busy.value"
+        :disabled="!filterOptions"
+        ><ElOption
+          v-for="option in filterOptions?.statuses ?? []"
+          :key="option.value"
+          :value="option.value"
+          :label="option.label" /></ElSelect
+      ><ElButton native-type="submit" type="primary" :loading="navigation.busy.value">查询</ElButton
+      ><ElButton @click="resetFilters">重置</ElButton>
     </ElForm>
+    <p v-if="unqueried" class="admin-muted">筛选已修改，点击查询后生效；刷新使用上次查询条件。</p>
     <FeedbackNotice
-      v-if="load.error.value || (action.error.value && !open && !historyOpen)"
-      :title="load.error.value || action.error.value"
+      v-if="
+        load.error.value || navigation.error.value || (action.error.value && !open && !historyOpen)
+      "
+      :title="load.error.value || navigation.error.value || action.error.value"
       :closable="false"
       type="error"
     />
@@ -777,21 +887,33 @@ const formTipId = useId()
     >
       <ElButton @click="open = true">查看原操作并核对</ElButton>
     </ElAlert>
+    <p v-if="load.error.value" class="admin-muted">
+      部分资料未能刷新，已读取的资料可能已变化；可点击刷新重试。工具名称搜索取决于当前有权读取的工具目录。
+    </p>
+    <p v-if="loaded" class="admin-muted" role="status">
+      {{ load.error.value ? '已读取' : '当前' }} {{ filteredRows.length }} 个工具部署
+    </p>
     <ElTable
       table-layout="auto"
-      :empty-text="
-        load.busy.value
-          ? '正在读取工具部署…'
-          : load.error.value
-            ? '工具部署列表尚未读取，请查看上方错误'
-            : rows.length
-              ? '没有匹配的工具部署，可调整搜索词、环境或启用状态'
-              : '当前没有系统工具部署'
-      "
       v-loading="load.busy.value"
       :data="filteredRows"
       style="width: 100%"
     >
+      <template #empty>
+        <p v-if="load.busy.value">正在读取工具部署…</p>
+        <p v-else-if="load.error.value">工具部署资料读取失败，请调整筛选后查询或重试刷新</p>
+        <div v-else-if="loaded && hasFilters">
+          <p>没有符合当前查询条件的工具部署，可调整筛选后查询，或重置查看全部部署。</p>
+          <ElButton @click="resetFilters">重置并查看全部部署</ElButton>
+        </div>
+        <p v-else-if="loaded">
+          {{
+            allowed('foundation.system_agent_tools.create')
+              ? '尚未配置系统工具部署，请使用上方“新增部署”开始配置。'
+              : '尚未配置系统工具部署，请联系有配置权限的管理员添加。'
+          }}
+        </p>
+      </template>
       <ElTableColumn label="部署 / 工具" min-width="240">
         <template #default="{ row }">
           <div>{{ row.name }}</div>

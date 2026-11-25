@@ -21,6 +21,7 @@ import { createPermissionDirective } from '@skillforge/shared/directives/permiss
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  toolFilters: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   allowed: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../../api', () => ({
   api: {
     systemAgentTools: {
       list: mocks.list,
+      options: mocks.toolFilters,
       create: mocks.create,
       update: mocks.update,
       publish: mocks.publish,
@@ -104,6 +106,7 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.auth = reactive({ identityVersion: 1, user: { sub: 'platform-test' } })
   mocks.allowed.mockReturnValue(true)
+  mocks.toolFilters.mockResolvedValue({ environments: [], statuses: [] })
   mocks.list.mockResolvedValue([deployment])
   mocks.create.mockImplementation(async (input) => ({ ...deployment, ...input }))
   mocks.update.mockResolvedValue(deployment)

@@ -32,6 +32,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlatformAgentToolController {
     public static final String WRITE_REJECTED = "SYSTEM_AGENT_TOOL_WRITE_REJECTED";
     private final PlatformAgentResources resources;
+    private static final DeploymentListOptions LIST_OPTIONS = new DeploymentListOptions(
+            List.of(new FilterOption("TEST", "测试"), new FilterOption("PRODUCTION", "生产")),
+            List.of(new FilterOption("true", "启用"), new FilterOption("false", "停用")));
 
     public PlatformAgentToolController(PlatformAgentResources resources) {
         this.resources = resources;
@@ -39,9 +42,29 @@ public class PlatformAgentToolController {
 
     @RequirePermission("foundation.system_agent_tools.read")
     @GetMapping
-    public ApiResponse<List<DeploymentView>> deployments() {
-        return ApiResponses.wrap(resources.deployments());
+    public ApiResponse<List<DeploymentView>> deployments(
+            @RequestParam(defaultValue = "") String environment,
+            @RequestParam(defaultValue = "") String active) {
+        validateFilter(environment, LIST_OPTIONS.environments(), "部署环境");
+        validateFilter(active, LIST_OPTIONS.statuses(), "部署状态");
+        return ApiResponses.wrap(resources.deployments().stream().filter(row ->
+                (environment.isEmpty() || environment.equals(row.environment()))
+                && (active.isEmpty() || active.equals(Boolean.toString(row.active())))).toList());
     }
+
+    @RequirePermission("foundation.system_agent_tools.read")
+    @GetMapping("/options")
+    public ApiResponse<DeploymentListOptions> options() { return ApiResponses.wrap(LIST_OPTIONS); }
+
+    private static void validateFilter(String value, List<FilterOption> options, String label) {
+        if (!value.isEmpty() && options.stream().noneMatch(option -> option.value().equals(value))) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "system_tool_filter_invalid",
+                    label + "无效，请重新选择或重置后查询", false);
+        }
+    }
+
+    public record FilterOption(String value, String label) {}
+    public record DeploymentListOptions(List<FilterOption> environments, List<FilterOption> statuses) {}
 
     @RequirePermission("foundation.system_agent_tools.create")
     @PostMapping

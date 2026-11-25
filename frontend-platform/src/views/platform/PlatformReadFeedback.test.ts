@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { reactive } from 'vue'
 import { clearFeedback } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { routePermission } from '@skillforge/shared/foundation/navigation'
@@ -8,6 +9,8 @@ import HomePage from './HomePage.vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  filterOptions: vi.fn(),
+  route: undefined as unknown as { path: string; query: Record<string, string | undefined> },
   options: vi.fn(),
   tenants: vi.fn(),
   reviews: vi.fn(),
@@ -16,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => ({
   api: {
-    systemAgentTools: { list: mocks.list },
+    systemAgentTools: { list: mocks.list, options: mocks.filterOptions },
     systemAgents: { mountOptions: mocks.options },
     admin: { listTenants: mocks.tenants, models: { list: mocks.models } },
     marketplace: { reviews: mocks.reviews }
@@ -32,6 +35,12 @@ vi.mock('../../composables/actionPermissions', () => ({
   })
 }))
 vi.mock('vue-router', () => ({
+  useRoute: () => mocks.route,
+  useRouter: () => ({
+    replace: async (target: { query: Record<string, string | undefined> }) => {
+      mocks.route.query = target.query
+    }
+  }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
   RouterLink: { template: '<a><slot /></a>' }
@@ -39,6 +48,8 @@ vi.mock('vue-router', () => ({
 let wrapper: VueWrapper | undefined
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.route = reactive({ path: '/platform/system-agent-tools', query: {} })
+  mocks.filterOptions.mockResolvedValue({ environments: [], statuses: [] })
   mocks.permissions = ['foundation.system_agent_tools.read']
   mocks.list.mockResolvedValue([
     {
@@ -68,7 +79,10 @@ it('只读工具角色可查看所属列表，不请求系统智能体目录', a
   expect(wrapper.text()).toContain('已有工具部署')
   await wrapper.get('input[aria-label="搜索工具部署"]').setValue('ORDER_LOOKUP')
   expect(wrapper.text()).toContain('已有工具部署')
-  expect(mocks.list).toHaveBeenCalledWith({ silent: true })
+  expect(mocks.list).toHaveBeenCalledWith(
+    { environment: '', active: '' },
+    { signal: expect.any(AbortSignal), silent: true }
+  )
   expect(mocks.options).not.toHaveBeenCalled()
 })
 
@@ -86,12 +100,18 @@ it('按工具名或提供方引用查找部署，保留现有目录权限', asyn
   await flushPromises()
   const search = wrapper.get('input[aria-label="搜索工具部署"]')
   await search.setValue(' 查询订单 ')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
   expect(wrapper.text()).toContain('已有工具部署')
   await search.setValue('ORDER_LOOKUP')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
   expect(wrapper.text()).toContain('已有工具部署')
   await search.setValue('不存在')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
   expect(wrapper.text()).not.toContain('已有工具部署')
-  expect(mocks.options).toHaveBeenCalledTimes(1)
+  expect(mocks.options).toHaveBeenCalledTimes(4)
 })
 
 it('列表与辅助目录同时失败时认领全部错误，仅保留一条批次反馈', async () => {
@@ -106,7 +126,7 @@ it('列表与辅助目录同时失败时认领全部错误，仅保留一条批�
   await flushPromises()
   expect(errors.every((reason) => reason.hasFeedbackOwner)).toBe(true)
   expect(document.querySelectorAll('.el-message--error')).toHaveLength(1)
-  expect(mocks.options).toHaveBeenCalledWith({ silent: true })
+  expect(mocks.options).toHaveBeenCalledWith({ signal: expect.any(AbortSignal), silent: true })
 })
 
 it('首页并行统计失败由页面聚合成一条Message，保留成功读取的统计', async () => {

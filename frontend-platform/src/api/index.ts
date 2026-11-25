@@ -634,6 +634,10 @@ export interface SystemAgentMountOptions {
     environment: string
   }>
 }
+export interface SystemAgentToolListOptions {
+  environments: { value: string; label: string }[]
+  statuses: { value: string; label: string }[]
+}
 export interface SystemAgentToolDeploymentWrite {
   name: string
   tool_definition_id: string
@@ -978,8 +982,13 @@ export const api = {
       get<SystemAgentToolDeploymentView[]>(
         `/admin/system-agent-tools/history?id=${encodeURIComponent(id)}`
       ),
-    list: (opts?: RequestOptions) =>
-      get<SystemAgentToolDeploymentView[]>('/admin/system-agent-tools', opts),
+    options: (opts?: RequestOptions) =>
+      get<SystemAgentToolListOptions>('/admin/system-agent-tools/options', opts),
+    list: (filters: { environment: string; active: string }, opts?: RequestOptions) =>
+      get<SystemAgentToolDeploymentView[]>(
+        `/admin/system-agent-tools?${new URLSearchParams(filters)}`,
+        opts
+      ),
     create: (data: SystemAgentToolDeploymentWrite, key: string) =>
       post<SystemAgentToolDeploymentView>('/admin/system-agent-tools', data, {
         headers: { 'Idempotency-Key': key },

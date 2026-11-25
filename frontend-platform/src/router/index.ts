@@ -139,7 +139,7 @@ const router = createRouter({
         {
           path: 'system-agent-tools',
           component: () => import('../views/platform/SystemAgentToolsPage.vue'),
-          meta: { title: '系统工具' }
+          meta: { title: '系统工具', preserveOnQueryChange: true }
         },
         {
           path: 'agent-templates',
