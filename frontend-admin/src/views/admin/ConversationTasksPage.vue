@@ -1,5 +1,5 @@
 <template>
-  <AdminPage title="任务进展" description="按会话查看真实任务状态，并提交修订命令。"
+  <AdminPage title="任务进展" description="按会话查找任务，查看进展并更正记录。"
     ><FeedbackNotice
       v-if="error || loadError"
       :title="error || loadError"
@@ -14,34 +14,49 @@
       <ElButton :loading="busy" @click="checkReceipt">核对原操作</ElButton>
     </section>
     <p v-if="storageError" class="admin-field-help" role="status">{{ storageError }}</p>
-    <div class="admin-toolbar admin-card">
-      <ElSelect
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        v-model="sessionId"
-        :disabled="loading || busy || open || !!pending"
-        filterable
-        placeholder="选择会话"
-        class="task-session-select"
-        @change="search"
-        ><ElOption
-          v-if="sessionId && !sessions.some((session) => session.session_id === sessionId)"
-          :value="sessionId"
-          :label="sessionId" /><ElOption
-          v-for="session in sessions"
-          :key="session.session_id"
-          :label="session.summary || session.session_id"
-          :value="session.session_id" /></ElSelect
-      ><ElButton :disabled="loading || busy || open" @click="loadSessions">刷新会话</ElButton
-      ><ElInput
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        clearable
-        v-model="query"
-        placeholder="搜索任务"
-        :disabled="!sessionId || loading || busy || open"
-        @keyup.enter="search"
-      /><ElCheckbox
+    <ElForm class="admin-toolbar admin-card" label-position="top" @submit.prevent>
+      <ElFormItem label="会话" class="task-session-field">
+        <ElSelect
+          v-described-by="formTipId + '-group-0'"
+          :aria-describedby="formTipId + '-group-0'"
+          v-model="sessionId"
+          :disabled="loading || busy || open || !!pending"
+          filterable
+          fit-input-width
+          placeholder="选择会话"
+          class="task-session-select"
+          @change="search"
+          ><ElOption
+            v-if="sessionId && !sessions.some((session) => session.session_id === sessionId)"
+            :value="sessionId"
+            :label="sessionId"
+          /><ElOption
+            v-for="session in sessions"
+            :key="session.session_id"
+            :label="`${session.title || session.summary || '未命名会话'} · ${session.session_id}`"
+            :value="session.session_id"
+            :disabled="!session.agent_id"
+            class="task-session-option"
+            ><span
+              class="task-session-name"
+              :title="session.title || session.summary || '未命名会话'"
+              >{{ session.title || session.summary || '未命名会话' }}</span
+            ><span class="task-session-meta"
+              >{{ session.session_id }}{{ !session.agent_id ? ' · 暂不支持任务进展' : '' }}</span
+            ></ElOption
+          ></ElSelect
+        ></ElFormItem
+      ><ElButton :disabled="loading || busy || open" @click="loadSessions">刷新会话</ElButton>
+      <ElFormItem label="任务关键词" class="task-query-field"
+        ><ElInput
+          v-described-by="formTipId + '-group-0'"
+          :aria-describedby="formTipId + '-group-0'"
+          clearable
+          v-model="query"
+          placeholder="搜索任务"
+          :disabled="!sessionId || loading || busy || open"
+          @keyup.enter="search" /></ElFormItem
+      ><ElCheckbox
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
         v-model="includeClosed"
@@ -51,9 +66,9 @@
       ><ElButton :disabled="!sessionId || loading || busy || open" @click="search">查询</ElButton>
 
       <FieldTip :id="formTipId + '-group-0'"
-        >仅有一个可见会话时自动选择；也可选择其他会话并按任务关键词筛选，勾选包含已关闭可查看历史任务。</FieldTip
+        >当前支持智能体会话，团队会话暂不支持。仅有一个可选会话时自动选择；可按标题或会话标识查找，勾选“包含已结束任务”查看历史。</FieldTip
       >
-    </div>
+    </ElForm>
     <p v-if="refreshRequired" class="admin-field-help" role="status">
       任务操作已完成，但列表尚未更新。请刷新当前任务后继续操作。
       <ElButton :loading="loading" :disabled="busy || open" @click="refreshTasks"
@@ -434,8 +449,9 @@ async function loadSessions() {
       const value = await api.chat.sessions()
       if (!active || owner.value !== subject) return false
       sessions.value = value
-      if (!sessionId.value && !pending.value && value.length === 1) {
-        sessionId.value = value[0]!.session_id
+      const selectable = value.filter((session) => session.agent_id)
+      if (!sessionId.value && !pending.value && selectable.length === 1) {
+        sessionId.value = selectable[0]!.session_id
         return true
       }
       return false
@@ -603,6 +619,28 @@ const formTipId = useId()
 
 <style scoped>
 .task-session-select {
-  width: min(360px, 100%);
+  width: 100%;
+}
+.task-session-field {
+  width: min(420px, 100%);
+}
+.task-query-field {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.task-session-option {
+  height: auto;
+  padding-block: 8px;
+  line-height: 1.5;
+}
+.task-session-name,
+.task-session-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-session-meta {
+  font-size: var(--el-font-size-extra-small);
+  color: var(--el-text-color-secondary);
 }
 </style>

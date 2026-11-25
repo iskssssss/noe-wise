@@ -1848,6 +1848,7 @@ export const api = {
         Array<{
           session_id: string
           summary?: string | null
+          title?: string | null
           message_count: number
           updated_at: string
           agent_id?: number | null

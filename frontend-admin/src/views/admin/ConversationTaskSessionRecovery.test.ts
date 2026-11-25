@@ -38,7 +38,7 @@ vi.mock('vue-router', () => ({
   onBeforeRouteUpdate: vi.fn()
 }))
 let wrapper: VueWrapper | undefined
-const session = { session_id: 'session-1', summary: '资料会话' }
+const session = { session_id: 'session-1', summary: '资料会话', agent_id: 1 }
 function button(label: string) {
   return wrapper!.findAllComponents(ElButton).find((item) => item.text() === label)!
 }
@@ -51,7 +51,10 @@ beforeEach(() => {
     user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
   })
   calls.routeQuery = {}
-  calls.sessions.mockResolvedValue([session, { session_id: 'session-2', summary: '另一会话' }])
+  calls.sessions.mockResolvedValue([
+    session,
+    { session_id: 'session-2', summary: '另一会话', agent_id: 2 }
+  ])
   calls.list.mockResolvedValue([])
   calls.receipt.mockResolvedValue({ status: 'UNKNOWN', task: null })
 })
@@ -68,6 +71,38 @@ it('只有一个可见会话时自动读取任务，无需再选择', async () =
   expect(wrapper.text()).toContain('当前任务')
   expect(calls.select).not.toHaveBeenCalled()
   expect(calls.update).not.toHaveBeenCalled()
+})
+it('团队会话保留不可选原因，自动选择仅计算支持的智能体会话', async () => {
+  calls.sessions.mockResolvedValue([
+    { session_id: 'team-session', team_id: 'team-1', agent_id: null, title: '团队会话' },
+    { ...session, title: '核对巡检资料' }
+  ])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.list).toHaveBeenCalledExactlyOnceWith('session-1', '', false, 0)
+  const options = wrapper.findAllComponents(ElOption)
+  const team = options.find((item) => item.props('value') === 'team-session')!
+  expect(team.props('disabled')).toBe(true)
+  expect(team.text()).toContain('暂不支持任务进展')
+  await team.trigger('click')
+  await flushPromises()
+  expect(calls.list).toHaveBeenCalledTimes(1)
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
+  const agent = options.find((item) => item.props('value') === 'session-1')!
+  expect(agent.props('label')).toBe('核对巡检资料 · session-1')
+  expect(agent.text()).toContain('核对巡检资料')
+  expect(agent.text()).not.toContain('资料会话')
+})
+it('只有团队会话时不自动请求任务，缺少标题时仍显示摘要和标识', async () => {
+  calls.sessions.mockResolvedValue([
+    { session_id: 'team-session', agent_id: null, team_id: 'team-1', summary: '已有团队摘要' }
+  ])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(calls.list).not.toHaveBeenCalled()
+  expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('')
+  expect(wrapper.findComponent(ElOption).props('label')).toBe('已有团队摘要 · team-session')
+  expect(wrapper.text()).toContain('团队会话暂不支持')
 })
 it('会话读取失败后重试，如果只有一个会话则自动读取任务', async () => {
   calls.sessions.mockRejectedValueOnce(new Error('会话不可用')).mockResolvedValueOnce([session])
@@ -302,7 +337,7 @@ it('recovers the session picker after an initial failure without reloading the p
   await flushPromises()
   expect(calls.sessions).toHaveBeenCalledTimes(2)
   expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain(
-    '资料会话'
+    '资料会话 · session-1'
   )
   expect(calls.list).not.toHaveBeenCalled()
   wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'session-1')
@@ -325,7 +360,7 @@ it('retains the selected session and task result when only the directory refresh
   await flushPromises()
   expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('session-1')
   expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain(
-    '资料会话'
+    '资料会话 · session-1'
   )
   expect(calls.list).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).toContain('核对资料')
