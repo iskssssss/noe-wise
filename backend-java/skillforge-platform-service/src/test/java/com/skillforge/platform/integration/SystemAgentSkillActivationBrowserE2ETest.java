@@ -39,33 +39,34 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** 系统 Agent 挂载采用技能正式发布的激活方式，并执行到实际模型输入。 */
 @SpringBootTest(classes = PlatformApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"skillforge.platform-admin-username=", "skillforge.platform-admin-password="})
-@Testcontainers
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class SystemAgentSkillActivationBrowserE2ETest {
     private static final String USERNAME = "skill-activation-admin";
     private static final String PASSWORD = "PlatformIntegration123";
-    @Container static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("pgvector/pgvector:pg16")
-            .withDatabaseName("system_skill_activation").withUsername("skillforge").withPassword("test-only");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
-
     @DynamicPropertySource static void infrastructure(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        // 数据库与 Redis 由验收执行者创建并保留；测试只借用连接，不拥有删除资源的生命周期。
+        var properties = Map.of(
+                "spring.datasource.url", required("E2E_SYSTEM_AGENT_JDBC_URL"),
+                "spring.datasource.username", required("E2E_SYSTEM_AGENT_DB_USER"),
+                "spring.datasource.password", required("E2E_SYSTEM_AGENT_DB_PASSWORD"),
+                "spring.data.redis.host", required("E2E_SYSTEM_AGENT_REDIS_HOST"),
+                "spring.data.redis.port", required("E2E_SYSTEM_AGENT_REDIS_PORT"));
+        properties.forEach((key, value) -> registry.add(key, () -> value));
         registry.add("spring.cloud.nacos.discovery.enabled", () -> "false");
         registry.add("spring.cloud.nacos.config.enabled", () -> "false");
         registry.add("skillforge.secret-key", () -> "platform-integration-shared-model-secret");
         registry.add("sa-token.jwt-secret-key", () -> "platform-integration-jwt-secret-key");
+    }
+
+    private static String required(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank())
+            throw new IllegalStateException("系统技能浏览器验收需显式提供独立且保留数据的环境：" + name);
+        return value;
     }
 
     @LocalServerPort int port;

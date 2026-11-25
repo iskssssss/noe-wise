@@ -231,17 +231,18 @@ subprojects {
             // 测试环境容器与 JaCoCo 共享有限资源；固定单 worker，避免高核 CI 主机
             // 启动过多 Test Executor 导致 worker classpath/容器资源失效。
             maxParallelForks = 1
-            finalizedBy("jacocoTestReport")
             testLogging {
                 exceptionFormat = TestExceptionFormat.FULL
                 events("passed", "skipped", "failed")
             }
         }
 
-        // 每个模块都生成可审计的 XML/HTML 覆盖率报告；覆盖率门禁按任务在 CI 中
-        // 针对变更类执行，避免未覆盖的历史适配层掩盖本轮交付证据。
+        // 普通测试与其覆盖率报告成对执行，不能通过报告间接启动显式 E2E 或真实环境任务。
+        tasks.named<Test>("test") { finalizedBy("jacocoTestReport") }
+        tasks.named<JacocoReport>("jacocoTestReport") { dependsOn(tasks.named("test")) }
+
+        // 覆盖率门禁按任务针对变更类执行，避免历史适配层掩盖本轮交付证据。
         tasks.withType<JacocoReport>().configureEach {
-            dependsOn(tasks.withType<Test>())
             reports {
                 xml.required.set(true)
                 html.required.set(true)

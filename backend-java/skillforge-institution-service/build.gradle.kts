@@ -1705,11 +1705,6 @@ tasks.register<Test>("runtimeLatencyE2E") {
     }
 }
 
-tasks.named("jacocoTestReport") {
-    // 根约定会依赖每个 Test 任务；普通 test 的覆盖率收尾不能拉起受保护 staging 任务。
-    setDependsOn(listOf(tasks.named("test")))
-}
-
 /**
  * 仅运行显式的受保护环境 Smoke。普通 `test` 不选择 StagingRuntimeE2E，
  * 也不会读取 staging 凭据或端点。
@@ -1720,8 +1715,7 @@ tasks.register<Test>("stagingRuntimeE2E") {
     val testSourceSet = sourceSets.named("test")
     testClassesDirs = testSourceSet.get().output.classesDirs
     classpath = testSourceSet.get().runtimeClasspath
-    // 根约定会为每个 Test 任务添加 JaCoCo 收尾；受保护 Smoke 缺少环境变量时必须立即失败，
-    // 不能被普通测试或覆盖率任务间接拉起。
+    // 受保护 Smoke 独立执行，不追加普通测试或覆盖率收尾。
     setFinalizedBy(emptyList<Any>())
     filter {
         includeTestsMatching("com.skillforge.institution.integration.StagingRuntimeE2E")
