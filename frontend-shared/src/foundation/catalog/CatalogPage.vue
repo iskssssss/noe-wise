@@ -1413,6 +1413,9 @@ onBeforeUnmount(() => {
             ><el-select
               v-model="nodeForm.parent_code"
               clearable
+              filterable
+              placeholder="搜索并选择父节点，留空为顶级菜单"
+              no-match-text="未找到匹配节点，请换个关键词"
               @clear="nodeForm.parent_code = null"
               ><el-option
                 v-for="node in parentNodes"
