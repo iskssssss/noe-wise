@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
   confirm: vi.fn(),
   success: vi.fn(),
+  refreshAccessToken: vi.fn(),
+  fetchMe: vi.fn(),
   create: vi.fn(),
   saveWithReceipt: vi.fn(),
   saveReceipt: vi.fn(),
@@ -31,6 +33,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => mocks.session,
+  refreshAccessToken: mocks.refreshAccessToken,
   api: {
     teams: {
       list: mocks.list,
@@ -64,6 +67,7 @@ vi.mock('vue-router', () => ({
 const routeState = reactive({ query: {} as Record<string, string | undefined> })
 const authState = reactive({
   identityVersion: 1,
+  fetchMe: mocks.fetchMe,
   user: { tenant_id: 'tenant', sub: 'user', permissions: [] as string[] }
 })
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => authState }))
@@ -111,6 +115,8 @@ beforeEach(() => {
     total: 2
   })
   mocks.confirm.mockResolvedValue(true)
+  mocks.refreshAccessToken.mockResolvedValue('refreshed')
+  mocks.fetchMe.mockResolvedValue({})
   mocks.saveWithReceipt.mockImplementation(
     async (requestId: string, id: string | null, payload: { revision: number }) => {
       const result = id ? await mocks.update(id, payload) : await mocks.create(payload)
@@ -144,6 +150,143 @@ async function click(text: string) {
   await button(text).trigger('click')
   await flushPromises()
 }
+
+describe('团队写入登录拒绝后的显式恢复', () => {
+  it.each(['保存', '发布新修订', '保存并发布'])(
+    '%s明确拒绝后只刷新登录，人工再次提交',
+    async (action) => {
+      const write =
+        action === '保存'
+          ? mocks.saveWithReceipt
+          : action === '发布新修订'
+            ? mocks.publish
+            : mocks.saveAndPublish
+      write.mockRejectedValueOnce(
+        new HttpClientError({
+          status: 401,
+          code:
+            action === '保存' ? 'TEAM_DRAFT_SAVE_REJECTED' : 'TEAM_PUBLISH_PRE_DISPATCH_REJECTED',
+          userMessage: '访问令牌已过期'
+        })
+      )
+      await open()
+      if (action !== '发布新修订') {
+        await click('编辑')
+        await wrapper
+          .findComponent(ElDrawer)
+          .findAllComponents(ElInput)[1]!
+          .setValue('待保留的修改')
+      }
+      await click(action)
+      expect(document.body.textContent).toContain('本次未')
+      expect(document.body.textContent).not.toContain('结果尚未确认')
+      expect(sessionStorage.length).toBe(0)
+      expect(button(action).props('disabled')).toBe(true)
+      await click('刷新登录状态')
+      expect(mocks.refreshAccessToken).toHaveBeenCalledOnce()
+      expect(mocks.fetchMe).toHaveBeenCalledOnce()
+      expect(write).toHaveBeenCalledOnce()
+      expect(button(action).props('disabled')).toBe(false)
+      if (action !== '发布新修订')
+        expect(
+          wrapper.findComponent(ElDrawer).findAllComponents(ElInput)[1]!.props('modelValue')
+        ).toBe('待保留的修改')
+      await click(action)
+      expect(write).toHaveBeenCalledTimes(2)
+      if (action !== '发布新修订') expect(write.mock.calls[1]![0]).not.toBe(write.mock.calls[0]![0])
+    }
+  )
+
+  it('普通401没有前置拒绝契约时仍保留原UNKNOWN', async () => {
+    mocks.saveWithReceipt.mockRejectedValueOnce(
+      new HttpClientError({ status: 401, code: 'INVALID_ACCESS_TOKEN', userMessage: '登录过期' })
+    )
+    await open()
+    await click('编辑')
+    await click('保存')
+    expect(document.body.textContent).toContain('草稿保存结果尚未确认')
+    expect(document.body.textContent).not.toContain('刷新登录状态')
+    expect(sessionStorage.length).toBe(1)
+  })
+
+  it('刷新失败保留表单并提供重新登录入口，不重发写入', async () => {
+    mocks.saveWithReceipt.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TEAM_DRAFT_SAVE_REJECTED',
+        userMessage: '登录过期'
+      })
+    )
+    mocks.refreshAccessToken.mockImplementationOnce(async () => {
+      mocks.session = ''
+      return null
+    })
+    await open()
+    await click('编辑')
+    await wrapper
+      .findComponent(ElDrawer)
+      .findAllComponents(ElInput)[1]!
+      .setValue('可复制保留的内容')
+    await click('保存')
+    await click('刷新登录状态')
+    expect(document.body.textContent).toContain('请先复制需要保留的表单内容')
+    expect(wrapper.findComponent(ElDrawer).findAllComponents(ElInput)[1]!.props('modelValue')).toBe(
+      '可复制保留的内容'
+    )
+    expect(mocks.fetchMe).not.toHaveBeenCalled()
+    expect(mocks.saveWithReceipt).toHaveBeenCalledOnce()
+    await click('重新登录')
+    expect(mocks.push).toHaveBeenCalledWith(expect.objectContaining({ path: '/login' }))
+  })
+
+  it('恢复期间更换身份不读取新身份或显示旧成功结果', async () => {
+    mocks.saveWithReceipt.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TEAM_DRAFT_SAVE_REJECTED',
+        userMessage: '登录过期'
+      })
+    )
+    let finish!: (value: string) => void
+    mocks.refreshAccessToken.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await open()
+    await click('编辑')
+    await click('保存')
+    await button('刷新登录状态').trigger('click')
+    mocks.session = 'other-session'
+    authState.identityVersion++
+    await flushPromises()
+    finish('late-token')
+    await flushPromises()
+    expect(mocks.fetchMe).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.saveWithReceipt).toHaveBeenCalledOnce()
+  })
+
+  it('草稿回执查询被拒绝不解除原UNKNOWN', async () => {
+    mocks.saveWithReceipt.mockRejectedValueOnce(new Error('断连'))
+    mocks.saveReceipt.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TEAM_DRAFT_SAVE_REJECTED',
+        userMessage: '登录过期'
+      })
+    )
+    await open()
+    await click('编辑')
+    await click('保存')
+    const original = mocks.saveWithReceipt.mock.calls[0]![0]
+    await click('核对草稿保存')
+    expect(document.body.textContent).toContain(original)
+    expect(document.body.textContent).not.toContain('刷新登录状态')
+    expect(sessionStorage.length).toBe(1)
+  })
+})
 
 describe('团队成员目录前台刷新', () => {
   it('返回页面只更新目录，保留草稿与成员选择', async () => {

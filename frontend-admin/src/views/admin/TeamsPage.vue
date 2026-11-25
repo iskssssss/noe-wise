@@ -1,6 +1,9 @@
 <template>
   <AdminPage title="团队" description="将已发布智能体组成协作团队，并指定主智能体。"
     ><template #extra
+      ><ElButton v-if="loginRecovery && !open" :loading="busy" @click="restoreLogin">{{
+        loginRecovery === 'login' ? '重新登录' : '刷新登录状态'
+      }}</ElButton
       ><ElButton type="primary" @click="edit()" :disabled="writeLocked"
         >新增团队</ElButton
       ></template
@@ -285,12 +288,15 @@
         </ElFormItem></ElForm
       ><template #footer
         ><ElButton @click="closeDrawer0" :disabled="locked">取消</ElButton
+        ><ElButton v-if="loginRecovery" :loading="busy" @click="restoreLogin">{{
+          loginRecovery === 'login' ? '重新登录' : '刷新登录状态'
+        }}</ElButton
         ><span v-if="!members.length" class="admin-muted">选择团队成员后即可保存。</span
         ><ElButton
           v-permission="[editing ? 'foundation.teams.update' : 'foundation.teams.create']"
           type="primary"
           :loading="busy"
-          :disabled="locked || !members.length || !form.primary_agent_id"
+          :disabled="writeLocked || !members.length || !form.primary_agent_id"
           @click="save"
           >{{ stoppingTeam ? '保存并停用' : '保存' }}</ElButton
         ><span
@@ -305,7 +311,7 @@
           v-if="canSaveAndPublish"
           type="primary"
           :loading="busy"
-          :disabled="locked || !members.length || !form.primary_agent_id || stoppingTeam"
+          :disabled="writeLocked || !members.length || !form.primary_agent_id || stoppingTeam"
           @click="saveAndPublish"
           >{{ publicationActionLabel }}</ElButton
         ></template
@@ -337,6 +343,7 @@ import {
 import {
   api,
   getSessionId,
+  refreshAccessToken,
   type Team,
   type TeamDraft,
   type TeamSaveAndPublishReceipt
@@ -361,6 +368,7 @@ const draftStorageError = ref('')
 const draftStorageKey = (subject: string) => `skillforge.team-draft.${subject}`
 const storageError = ref('')
 const refreshRequired = ref(false)
+const loginRecovery = ref<'refresh' | 'login'>()
 const storageKey = (subject: string) => `skillforge.team-publication.${subject}`
 const operations = reactive<
   Record<
@@ -383,7 +391,7 @@ const locked = computed(
     !!draftPending.value ||
     !!draftStorageError.value
 )
-const writeLocked = computed(() => locked.value || refreshRequired.value)
+const writeLocked = computed(() => locked.value || refreshRequired.value || !!loginRecovery.value)
 const canSaveAndPublish = computed(
   () =>
     can(editing.value ? 'foundation.teams.update' : 'foundation.teams.create') &&
@@ -628,6 +636,7 @@ watch(
     loadError.value = ''
     agentLoadError.value = ''
     error.value = ''
+    loginRecovery.value = undefined
     query.value = ''
     memberSearch.value = ''
     open.value = false
@@ -722,6 +731,45 @@ async function loadAgents() {
   form.primary_agent_id = only
   autoMember.value = only
 }
+function requireLogin(cause: HttpClientError, action: string) {
+  if (cause.status !== 401) return
+  loginRecovery.value = 'refresh'
+  cause.claimFeedback()
+  throw Error(`登录已过期，本次未${action}。请刷新登录状态后重新提交，表单内容已保留。`)
+}
+async function restoreLogin() {
+  if (loginRecovery.value === 'login') {
+    await router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+  const identity = pageIdentity.value,
+    session = getSessionId()
+  await run(async () => {
+    const token = await refreshAccessToken()
+    if (
+      disposed ||
+      identity !== pageIdentity.value ||
+      (getSessionId() && session !== getSessionId())
+    )
+      return
+    if (!token) {
+      loginRecovery.value = 'login'
+      throw Error('无法刷新登录状态，请先复制需要保留的表单内容，再重新登录。本次操作未提交。')
+    }
+    try {
+      await auth.fetchMe()
+    } catch (cause) {
+      if (disposed || identity !== pageIdentity.value || session !== getSessionId()) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
+    if (disposed || identity !== pageIdentity.value || session !== getSessionId()) return
+    loginRecovery.value = undefined
+    message.success('登录状态已刷新，请检查内容后重新提交。')
+  })
+}
 async function save() {
   if (writeLocked.value) return
   const identity = pageIdentity.value,
@@ -773,6 +821,7 @@ async function save() {
         } catch {
           draftStorageError.value = '无法清除原草稿保存记录，请恢复浏览器存储后重新核对。'
         }
+        requireLogin(cause, '保存')
       }
       throw cause
     }
@@ -890,6 +939,7 @@ async function publish(row: Team) {
         } catch {
           storageError.value = '无法清除原发布请求记录，请恢复浏览器存储后重新核对。'
         }
+        requireLogin(cause, '发布')
       }
       throw cause
     }
@@ -1008,6 +1058,7 @@ async function saveAndPublish() {
         } catch {
           storageError.value = '无法清除原发布请求记录，请恢复浏览器存储后重新核对。'
         }
+        requireLogin(cause, '保存或发布')
       }
       throw cause
     }

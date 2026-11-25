@@ -166,7 +166,14 @@ const http = createHttpClient({
   }
 })
 
-export const { getAccessToken, getSessionId, authSessionKey, saveTokens, clearTokens } = http
+export const {
+  getAccessToken,
+  getSessionId,
+  authSessionKey,
+  saveTokens,
+  clearTokens,
+  refreshAccessToken
+} = http
 
 export const { get, post, put, patch, del } = http
 

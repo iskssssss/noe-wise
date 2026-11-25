@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/teams/save-with-receipt")
 public class TeamDraftSaveController {
+    public static final String REJECTED = "TEAM_DRAFT_SAVE_REJECTED";
     private final TeamDraftSaveService service;
     public TeamDraftSaveController(TeamDraftSaveService service) { this.service = service; }
     @PostMapping
@@ -19,7 +20,7 @@ public class TeamDraftSaveController {
         try { return ApiResponses.wrap(service.save(Long.parseLong(TenantIds.requireTenantId()), command)); }
         catch (ApiException failure) {
             if (!failure.getStatus().is4xxClientError() || failure.getStatus().value() == 408) throw failure;
-            throw new ApiException(failure.getStatus(), "TEAM_DRAFT_SAVE_REJECTED", String.valueOf(failure.getDetail()), false);
+            throw new ApiException(failure.getStatus(), REJECTED, String.valueOf(failure.getDetail()), false);
         }
     }
     @RequirePermission("foundation.teams.read")
