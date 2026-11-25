@@ -1124,7 +1124,7 @@ it('保存成功回执迟于切换账号归档原账号，不进入新账号页�
   mocks.auth.user = { sub: 'platform-test' }
   mocks.auth.identityVersion++
   await flushPromises()
-  expect(document.body.textContent).toContain('原账号的创建草稿已收到确定回执')
+  expect(document.body.textContent).toContain('最近一次创建草稿已成功')
   expect(document.body.textContent).not.toContain('原工具部署操作结果未知')
 })
 
@@ -1159,7 +1159,7 @@ it.each(['成功', '确定拒绝'])(
     mocks.auth.identityVersion++
     await flushPromises()
     expect(document.body.textContent).not.toContain('原工具部署操作结果未知')
-    expect(document.body.textContent).not.toContain('原账号的创建草稿')
+    expect(document.body.textContent).not.toContain('最近一次创建草稿')
     mocks.auth.user = { sub: 'platform-test' }
     mocks.auth.identityVersion++
     await flushPromises()
@@ -1176,12 +1176,12 @@ it.each(['成功', '确定拒绝'])(
     await flushPromises()
     expect(document.body.textContent).not.toContain('原工具部署操作结果未知')
     expect(document.body.textContent).toContain(
-      outcome === '成功' ? '原账号的创建草稿已收到确定回执' : '原账号的创建草稿已确定拒绝'
+      outcome === '成功' ? '最近一次创建草稿已成功' : '最近一次创建草稿已拒绝'
     )
     mocks.auth.user = { sub: 'other' }
     mocks.auth.identityVersion++
     await flushPromises()
-    expect(document.body.textContent).not.toContain('原账号的创建草稿')
+    expect(document.body.textContent).not.toContain('最近一次创建草稿')
     expect(mocks.create).toHaveBeenCalledTimes(1)
     expect(mocks.publish).not.toHaveBeenCalled()
   }
@@ -1301,12 +1301,12 @@ it('账号切换后记录损坏或读取失败不显示原账号回执', async (
     global: { directives: { permission: () => {} } }
   })
   await flushPromises()
-  expect(document.body.textContent).toContain('原账号的创建草稿已收到确定回执')
+  expect(document.body.textContent).toContain('最近一次创建草稿已成功')
   mocks.auth.user = { sub: 'other' }
   mocks.auth.identityVersion++
   await flushPromises()
   expect(document.body.textContent).toContain('原操作记录无法读取或已损坏')
-  expect(document.body.textContent).not.toContain('原账号的创建草稿已收到确定回执')
+  expect(document.body.textContent).not.toContain('最近一次创建草稿已成功')
   const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
     throw Error('denied')
   })
@@ -1314,7 +1314,7 @@ it('账号切换后记录损坏或读取失败不显示原账号回执', async (
   mocks.auth.identityVersion++
   await flushPromises()
   expect(document.body.textContent).toContain('原操作记录无法读取或已损坏')
-  expect(document.body.textContent).not.toContain('原账号的创建草稿已收到确定回执')
+  expect(document.body.textContent).not.toContain('最近一次创建草稿已成功')
   spy.mockRestore()
 })
 
@@ -1402,7 +1402,9 @@ it.each(['保存', '发布'])(
       global: { directives: { permission: () => {} } }
     })
     await flushPromises()
-    expect(document.body.textContent).toContain('已确定拒绝')
+    expect(document.body.textContent).toContain(
+      `最近一次${stage === '保存' ? '创建草稿' : '发布'}已拒绝`
+    )
     expect(document.body.textContent).not.toContain('原工具部署操作结果未知')
     await button('重试处理原操作记录').trigger('click')
     await flushPromises()

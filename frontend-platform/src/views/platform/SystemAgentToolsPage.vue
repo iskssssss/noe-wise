@@ -711,7 +711,7 @@ const formTipId = useId()
   <component
     :is="props.toolDefinitionId ? 'div' : AdminPage"
     v-show="!props.toolDefinitionId"
-    title="系统工具部署"
+    title="系统工具"
     description="维护系统智能体可挂载的工具部署实例"
   >
     <template #extra>
@@ -757,10 +757,11 @@ const formTipId = useId()
       v-if="archived && !open"
       type="info"
       :closable="false"
-      :title="`原账号的${archived.pending.stage}${archived.status === 'succeeded' ? '已收到确定回执' : '已确定拒绝'}`"
+      :title="`最近一次${archived.pending.stage}${archived.status === 'succeeded' ? '已成功' : '已拒绝'}`"
     >
       <template v-if="archived.result">
-        部署 {{ archived.result.id }}，草稿修订 {{ archived.result.revision }}，发布修订
+        部署 {{ archived.result.name }}（{{ archived.result.id }}），草稿修订
+        {{ archived.result.revision }}，发布修订
         {{ archived.result.published_revision ?? '未发布' }}。
       </template>
       <template v-else
@@ -1041,7 +1042,7 @@ const formTipId = useId()
               ? 'foundation.system_agent_tools.update'
               : 'foundation.system_agent_tools.create'
           ]"
-          type="primary"
+          :type="allowed('foundation.system_agent_tools.publish') ? 'default' : 'primary'"
           :loading="action.busy.value"
           :disabled="toolLoading || !!toolError || !selectedToolName || !!unknown || !!storageError"
           native-type="submit"
@@ -1075,6 +1076,7 @@ const formTipId = useId()
     </ElDrawer>
     <ElDrawer
       v-model="historyOpen"
+      class="admin-drawer"
       :title="'工具部署发布历史 · ' + historyDeployment?.name"
       size="760px"
       append-to-body
@@ -1085,7 +1087,9 @@ const formTipId = useId()
         type="error"
         :closable="false"
       />
-      <ElEmpty v-if="!publications.length" description="尚无发布记录" />
+      <ElEmpty v-if="!publications.length" description="此部署尚未发布，保存草稿不会生成发布记录">
+        <p class="admin-field-help">关闭此面板后可继续编辑草稿；发布成功后可在这里查看历史配置。</p>
+      </ElEmpty>
       <ElCard class="admin-card" v-for="publication in publications" :key="publication.revision">
         <h3>发布修订 {{ publication.revision }} · {{ publication.name }}</h3>
         <ElTag v-if="publication.revision === historyDeployment?.published_revision"
