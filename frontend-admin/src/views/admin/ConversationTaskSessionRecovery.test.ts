@@ -73,6 +73,55 @@ it('只有一个可见会话时自动读取任务，无需再选择', async () =
   expect(calls.select).not.toHaveBeenCalled()
   expect(calls.update).not.toHaveBeenCalled()
 })
+it.each(['COMPLETED', 'CANCELLED'])(
+  '已结束状态%s只提供重新打开，不发送无效选择',
+  async (status) => {
+    calls.sessions.mockResolvedValue([session])
+    calls.list.mockResolvedValue([
+      { taskId: 'closed', title: '已结束任务', summary: '', status, revision: 3 }
+    ])
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    expect(button('设为当前任务')).toBeUndefined()
+    expect(button('纠正')).toBeUndefined()
+    expect(wrapper.text()).toContain('重新打开后可纠正或设为当前任务')
+    await button('重新打开').trigger('click')
+    await flushPromises()
+    expect(calls.update).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ taskId: 'closed' }),
+      'reopen',
+      expect.any(String)
+    )
+    expect(calls.select).not.toHaveBeenCalled()
+  }
+)
+
+it('提交在途不显示结果未知，真正未确认时保留原请求和核对入口', async () => {
+  calls.sessions.mockResolvedValue([session])
+  calls.list.mockResolvedValue([
+    { taskId: 'one', title: '当前任务', summary: '', status: 'OPEN', revision: 1 }
+  ])
+  let rejectSelect!: (cause: Error) => void
+  calls.select.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      rejectSelect = reject
+    })
+  )
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  await button('设为当前任务').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('正在提交或核对任务操作')
+  expect(wrapper.text()).not.toContain('任务操作结果尚未确认')
+  expect(button('核对原操作')).toBeUndefined()
+  rejectSelect(new Error('连接中断'))
+  await flushPromises()
+  expect(wrapper.text()).toContain('任务操作结果尚未确认')
+  expect(button('核对原操作').exists()).toBe(true)
+  expect(calls.select).toHaveBeenCalledTimes(1)
+  expect(calls.receipt).toHaveBeenCalledTimes(1)
+})
 it('团队会话保留不可选原因，自动选择仅计算支持的智能体会话', async () => {
   calls.sessions.mockResolvedValue([
     { session_id: 'team-session', team_id: 'team-1', agent_id: null, title: '团队会话' },

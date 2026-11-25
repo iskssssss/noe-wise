@@ -7,11 +7,12 @@
       type="error"
     />
     <section v-if="pending && !open" class="admin-card" aria-label="任务操作结果核对">
-      <p role="status">
+      <p v-if="busy" role="status">正在提交或核对任务操作，请稍候。</p>
+      <p v-else role="status">
         任务操作结果尚未确认，请保留原请求 ID：<code>{{ pending.operationId }}</code
         >。未找到回执不代表操作失败。
       </p>
-      <ElButton :loading="busy" @click="checkReceipt">核对原操作</ElButton>
+      <ElButton v-if="!busy" @click="checkReceipt">核对原操作</ElButton>
     </section>
     <p v-if="storageError" class="admin-field-help" role="status">{{ storageError }}</p>
     <ElForm class="admin-toolbar admin-card" label-position="top" @submit.prevent>
@@ -78,7 +79,6 @@
     <ElEmpty v-if="!sessionId && !loading" description="选择会话后查看任务进展" />
     <ElTable
       v-else
-      table-layout="auto"
       :data="currentSession ? (data?.items ?? []) : []"
       v-loading="loading"
       :empty-text="
@@ -95,7 +95,8 @@
               : '当前没有进行中的任务，可勾选“包含已结束任务”查看历史'
       "
       ><ElTableColumn
-        min-width="200"
+        width="200"
+        fixed="left"
         show-overflow-tooltip
         prop="title"
         label="任务"
@@ -112,14 +113,16 @@
         prop="updatedAt"
         label="更新时间"
         ><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></ElTableColumn
-      ><ElTableColumn width="280" class-name="admin-table-actions" label="操作"
+      ><ElTableColumn width="280" fixed="right" class-name="admin-table-actions" label="操作"
         ><template #default="{ row }"
           ><ElButton
+            v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             link
             @click="select(row as ConversationTask)"
             :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
             >设为当前任务</ElButton
           ><ElButton
+            v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             link
             @click="correct(row as ConversationTask)"
             :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
@@ -142,7 +145,10 @@
             @click="update(row as ConversationTask, 'reopen')"
             :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
             >重新打开</ElButton
-          ></template
+          >
+          <p v-if="['COMPLETED', 'CANCELLED'].includes(row.status)" class="admin-field-help">
+            重新打开后可纠正或设为当前任务。
+          </p></template
         ></ElTableColumn
       ></ElTable
     >
@@ -180,11 +186,12 @@
       class="admin-drawer"
       size="680px"
       ><section v-if="pending" class="admin-card" aria-label="任务操作结果核对">
-        <p role="status">
+        <p v-if="busy" role="status">正在提交或核对任务操作，请稍候。</p>
+        <p v-else role="status">
           任务操作结果尚未确认，原请求 ID：<code>{{ pending.operationId }}</code
           >。未找到回执不代表失败。
         </p>
-        <ElButton :loading="busy" @click="checkReceipt">核对原操作</ElButton>
+        <ElButton v-if="!busy" @click="checkReceipt">核对原操作</ElButton>
       </section>
       <ElForm
         label-position="top"
