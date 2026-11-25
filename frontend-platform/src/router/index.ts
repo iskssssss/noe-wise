@@ -2,6 +2,7 @@ import { routePermission } from '@skillforge/shared/foundation/navigation'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { sessionListQueryKeys } from '../views/platform/sessionListLocation'
+import { trajectoryListQueryKeys } from '@skillforge/shared/trajectory-list/location'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -194,12 +195,16 @@ const router = createRouter({
         {
           path: 'trajectories',
           component: () => import('../views/platform/TrajectoriesPage.vue'),
-          meta: { title: 'Agent 轨迹' }
+          meta: { title: 'Agent 轨迹', preserveOnQueryChange: true }
         },
         {
           path: 'trajectories/detail',
           component: () => import('../views/platform/TrajectoryDetailPage.vue'),
-          meta: { title: '轨迹详情', preserveOnQueryChange: true }
+          meta: {
+            title: '轨迹详情',
+            parentQueryKeys: trajectoryListQueryKeys,
+            preserveOnQueryChange: true
+          }
         },
         {
           path: 'billing',

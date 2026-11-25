@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import { EntitySelect, guardFormEnter, statusLabel, useResource, type EntityOption } from '../admin'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import {
+  EntitySelect,
+  guardFormEnter,
+  statusLabel,
+  useResource,
+  useTask,
+  type EntityOption
+} from '../admin'
+import { readTrajectoryListQuery, trajectoryListQuery } from './location'
 import FieldTip from '../components/FieldTip.vue'
 import { formatDateTime, toBeijingDateTime } from '../utils/datetime'
 import type { RequestOptions } from '../utils/http'
@@ -26,6 +34,10 @@ const props = defineProps<{
   resolveTenant?: (id: string) => Promise<EntityOption | undefined>
 }>()
 const helpId = useId()
+const route = useRoute(),
+  router = useRouter()
+const listPath = route.path
+const navigation = useTask()
 const advancedOpen = ref(false)
 const validation = ref('')
 const dateRange = ref<[string, string] | null>(null)
@@ -51,6 +63,7 @@ const filters = reactive({
 })
 const applied = ref<TrajectoryListQuery>({ page: 1, page_size: 20 })
 const displayed = ref<TrajectoryListQuery>()
+const displayedRecent = ref(false)
 const result = useResource((signal) => props.load({ ...applied.value }, { signal, silent: true }))
 const rows = computed(() => result.data.value?.items ?? [])
 const advancedFields = [
@@ -222,7 +235,18 @@ function submit() {
 /** 只在读取成功时更新结果对应的筛选快照。 */
 async function loadApplied() {
   const query = { ...applied.value }
-  if (await result.reload()) displayed.value = query
+  const recent = appliedDefaultRange
+  if (await result.reload()) {
+    displayed.value = query
+    displayedRecent.value = recent
+    await navigation.run(async () => {
+      const target = { path: listPath, query: trajectoryListQuery(query, recent) }
+      if (router.resolve(target).fullPath !== route.fullPath) {
+        const failure = await router.replace(target)
+        if (failure) throw Error('结果条件未能更新到地址栏，请重新读取')
+      }
+    })
+  }
 }
 const displayedFilters = computed(() => {
   if (!displayed.value) return ''
@@ -281,7 +305,7 @@ function refresh() {
 }
 
 /** 账号或授权身份切换立即清除旧结果与在途读取，默认查询最近七天。 */
-function reset() {
+function reset(restoreLocation = false) {
   result.invalidate()
   result.data.value = undefined
   displayed.value = undefined
@@ -291,10 +315,27 @@ function reset() {
   selectedTrace.value = undefined
   traceOptions.value = []
   traceError.value = ''
+  traceGeneration++
+  traceLoading.value = false
   updateDefaultRange()
   appliedDefaultRange = true
   advancedOpen.value = false
   applied.value = { ...candidate(), page: 1, page_size: 20 }
+  const restored = restoreLocation ? readTrajectoryListQuery(route.query) : undefined
+  if (restored) {
+    if (!props.showTenant) delete restored.tenant_id
+    applied.value = restored
+    for (const key of Object.keys(filters) as Array<keyof typeof filters>)
+      filters[key] = restored[key] ?? ''
+    dateRange.value =
+      restored.started_from && restored.started_to
+        ? [formatDateTime(restored.started_from), formatDateTime(restored.started_to)]
+        : null
+    appliedDefaultRange = route.query.trajectory_recent === 'true'
+    if (appliedDefaultRange && dateRange.value) defaultRange = [...dateRange.value]
+    advancedOpen.value = advancedCount.value > 0
+    if (filters.trace_id) selectedTrace.value = { id: filters.trace_id, label: filters.trace_id }
+  }
   if (props.identity) void loadApplied()
 }
 function page(value: number) {
@@ -324,6 +365,7 @@ function target(row: TrajectorySummary) {
   return {
     path: props.detailPath,
     query: {
+      ...trajectoryListQuery(displayed.value, displayedRecent.value),
       tenant_id: row.tenant_id,
       session_id: row.session_id,
       root_input_id: row.root_input_id
@@ -342,7 +384,26 @@ function scrollTable(event: KeyboardEvent) {
   const region = event.currentTarget as HTMLElement
   region.scrollLeft += event.key === 'ArrowLeft' ? -160 : 160
 }
-watch(() => [props.identity, props.showTenant], reset, { immediate: true })
+watch(
+  () => [props.identity, props.showTenant],
+  (_, previous) => reset(!previous),
+  { immediate: true }
+)
+watch(
+  () => route.query,
+  (query) => {
+    if (route.path !== listPath) return
+    const restored = trajectoryListQuery(
+      readTrajectoryListQuery(query),
+      query.trajectory_recent === 'true'
+    )
+    if (
+      JSON.stringify(restored) !==
+      JSON.stringify(trajectoryListQuery(displayed.value, displayedRecent.value))
+    )
+      reset(true)
+  }
+)
 </script>
 
 <template>
@@ -443,7 +504,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
         <ElButton type="primary" native-type="submit" :loading="result.loading.value"
           >查询</ElButton
         >
-        <ElButton @click="reset">重置</ElButton>
+        <ElButton @click="reset()">重置</ElButton>
         <span v-if="pendingFilters" class="muted">条件已修改，点击查询后生效</span>
       </div>
       <FeedbackNotice
@@ -466,8 +527,8 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
       role="alert"
     />
     <FeedbackNotice
-      v-if="result.error.value"
-      :title="result.error.value"
+      v-if="result.error.value || navigation.error.value"
+      :title="result.error.value || navigation.error.value"
       type="error"
       :closable="false"
       role="alert"
@@ -514,7 +575,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
               : '当前查询范围没有轨迹，可清空关键词或调整时间范围后查询'
         "
       >
-        <ElTableColumn label="输入与结果" width="240">
+        <ElTableColumn label="输入与结果" min-width="300">
           <template #default="{ row }">
             <RouterLink :to="target(row as TrajectorySummary)" class="trajectory-input">{{
               row.input || '输入未记录'
@@ -526,7 +587,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
             </div>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="执行" width="170">
+        <ElTableColumn label="执行" min-width="220">
           <template #default="{ row }">
             <div>{{ row.agent_name ?? row.agent_id ?? '未记录' }}</div>
             <div class="muted">{{ row.models.length ? row.models.join('、') : '模型未记录' }}</div>
@@ -541,7 +602,7 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
             <div class="muted">{{ row.tool_calls }} 工具调用</div>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="用量 / 时间" width="120" align="right">
+        <ElTableColumn label="用量 / 时间" width="180" align="right">
           <template #default="{ row }">
             <div class="numeric">{{ tokens(row as TrajectorySummary) }}</div>
             <span class="muted">{{
@@ -632,6 +693,10 @@ watch(() => [props.identity, props.showTenant], reset, { immediate: true })
 .trajectory-table-region {
   max-width: 100%;
   overflow-x: auto;
+}
+.trajectory-table {
+  /* 列宽不足时由有键盘入口的外层区域统一滚动。 */
+  min-width: 790px;
 }
 .trajectory-table :deep(.el-table__cell > .cell) {
   white-space: normal;

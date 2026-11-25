@@ -74,7 +74,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 type Loader = (query: TrajectoryListQuery, options?: RequestOptions) => Promise<TrajectoryListPage>
-function render(load: Loader = vi.fn<Loader>(async () => result())) {
+async function render(load: Loader = vi.fn<Loader>(async () => result()), location = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -82,6 +82,8 @@ function render(load: Loader = vi.fn<Loader>(async () => result())) {
       { path: '/platform/trajectories/detail', component: { template: '<div />' } }
     ]
   })
+  await router.push(location)
+  await router.isReady()
   const wrapper = mount(TrajectoryListView, {
     props: {
       load,
@@ -112,10 +114,81 @@ async function setTrace(wrapper: VueWrapper, value: string) {
 }
 
 describe('轨迹列表查询与身份隔离', () => {
+  it('详情链接保留已显示条件和第二页，重建列表恢复时间、筛选与页码', async () => {
+    const load = vi.fn<Loader>(async (query) => result([row], query.page))
+    const wrapper = await render(load)
+    await flushPromises()
+    await wrapper.get('input[aria-label="输入关键词"]').setValue('评估')
+    await wrapper.get('input[aria-label="SessionID"]').setValue('session-filter')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('.btn-next').trigger('click')
+    await flushPromises()
+    const submitted = load.mock.lastCall![0]
+    await wrapper.get('input[aria-label="输入关键词"]').setValue('尚未提交')
+    const href = wrapper.get('a.trajectory-input').attributes('href')!
+    const url = new URL(href, 'http://localhost')
+    expect(url.searchParams.get('session_id')).toBe('session-owned')
+    expect(url.searchParams.get('trajectory_session_id')).toBe('session-filter')
+    expect(url.searchParams.get('trajectory_input_keyword')).toBe('评估')
+    expect(url.searchParams.get('trajectory_page')).toBe('2')
+    expect(url.searchParams.get('trajectory_started_from')).toBe(submitted.started_from)
+    wrapper.unmount()
+    const restored = await render(load, '/' + url.search)
+    await flushPromises()
+    expect(load.mock.lastCall![0]).toEqual(submitted)
+    expect((restored.get('input[aria-label="输入关键词"]').element as HTMLInputElement).value).toBe(
+      '评估'
+    )
+    expect(restored.get('details').attributes('open')).toBeDefined()
+    expect(restored.getComponent(ElPagination).props('currentPage')).toBe(2)
+  })
+
+  it('查询失败时详情仍返回成功页的条件，重试成功后才推进地址栏', async () => {
+    const load = vi
+      .fn<Loader>()
+      .mockResolvedValueOnce(result())
+      .mockRejectedValueOnce(new Error('读取失败'))
+      .mockResolvedValueOnce(result())
+    const wrapper = await render(load)
+    await flushPromises()
+    const before = wrapper.get('a.trajectory-input').attributes('href')
+    await wrapper.get('input[aria-label="输入关键词"]').setValue('新条件')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('a.trajectory-input').attributes('href')).toBe(before)
+    await button(wrapper, '重新读取').trigger('click')
+    await flushPromises()
+    const href = wrapper.get('a.trajectory-input').attributes('href')!
+    expect(new URL(href, 'http://localhost').searchParams.get('trajectory_input_keyword')).toBe(
+      '新条件'
+    )
+  })
+
+  it('全时间范围恢复后保持不限时间，重置清空条件并恢复默认近七天', async () => {
+    const load = vi.fn<Loader>(async (query) => result([row], query.page))
+    const wrapper = await render(
+      load,
+      '/?trajectory_page=2&trajectory_size=50&trajectory_model=model-A'
+    )
+    await flushPromises()
+    expect(load.mock.lastCall![0]).toMatchObject({
+      page: 2,
+      page_size: 50,
+      started_from: '',
+      started_to: '',
+      model: 'model-A'
+    })
+    await button(wrapper, '重置').trigger('click')
+    await flushPromises()
+    expect(load.mock.lastCall![0]).toMatchObject({ page: 1, page_size: 20, model: '' })
+    expect(load.mock.lastCall![0].started_from).toMatch(/\+08:00$/)
+  })
+
   it('刷新默认近七天时推进时间窗口并回到第一页，保留未提交的筛选', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-25T00:00:00Z'))
     const load = vi.fn<Loader>(async (query) => result([row], query.page))
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await wrapper.get('.btn-next').trigger('click')
     await setTrace(wrapper, '未提交')
@@ -137,7 +210,7 @@ describe('轨迹列表查询与身份隔离', () => {
   it('用户选择固定时间后刷新不改变时间窗口', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-25T00:00:00Z'))
     const load = vi.fn<Loader>(async () => result())
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     const picker = wrapper.getComponent({ name: 'ElDatePicker' })
     picker.vm.$emit('update:modelValue', ['2026-10-01 00:00:00', '2026-10-02 00:00:00'])
@@ -151,7 +224,7 @@ describe('轨迹列表查询与身份隔离', () => {
   })
 
   it('展示输入结果、精确Token总量和绑定原机构会话根输入的深链', async () => {
-    const wrapper = render()
+    const wrapper = await render()
     await flushPromises()
     expect(wrapper.text()).toContain('如何做评估')
     expect(wrapper.text()).toContain('请按以下步骤设置评估')
@@ -170,7 +243,7 @@ describe('轨迹列表查询与身份隔离', () => {
 
   it('TraceID 空关键词复用当前结果，不重复读取整页轨迹', async () => {
     const load = vi.fn<Loader>(async () => result())
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     expect(load).toHaveBeenCalledTimes(1)
     await traceSelect(wrapper).props('remoteMethod')('')
@@ -180,7 +253,7 @@ describe('轨迹列表查询与身份隔离', () => {
 
   it('翻页使用已提交条件，查询后采用新关键词并保持大ID和毫秒字符串', async () => {
     const load = vi.fn<Loader>(async (query) => result([row], query.page))
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await setTrace(wrapper, 'trace-new')
     await wrapper.get('input[aria-label="Agent ID"]').setValue('9223372036854775806')
@@ -205,7 +278,7 @@ describe('轨迹列表查询与身份隔离', () => {
       .mockResolvedValueOnce(result())
       .mockRejectedValueOnce(new Error('读取失败'))
       .mockResolvedValueOnce(result([{ ...row, input: '新筛选结果' }]))
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await setTrace(wrapper, 'trace-new')
     await wrapper.get('form').trigger('submit')
@@ -230,7 +303,7 @@ describe('轨迹列表查询与身份隔离', () => {
       .mockResolvedValueOnce(result())
       .mockRejectedValueOnce(new Error('读取失败'))
       .mockResolvedValueOnce(result([{ ...row, input: '第二页结果' }], 2))
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await wrapper.get('.btn-next').trigger('click')
     await flushPromises()
@@ -249,7 +322,7 @@ describe('轨迹列表查询与身份隔离', () => {
       .mockResolvedValueOnce(result())
       .mockRejectedValueOnce(new Error('读取失败'))
       .mockResolvedValueOnce({ ...result(), page_size: 50 })
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     wrapper.getComponent(ElPagination).vm.$emit('size-change', 50)
     await flushPromises()
@@ -268,7 +341,7 @@ describe('轨迹列表查询与身份隔离', () => {
       .mockRejectedValueOnce(new Error('读取失败'))
       .mockReturnValueOnce(old.promise)
       .mockReturnValueOnce(current.promise)
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await button(wrapper, '刷新').trigger('click')
     await flushPromises()
@@ -288,7 +361,7 @@ describe('轨迹列表查询与身份隔离', () => {
 
   it('耗时边界非法时保留当前结果并明确拒绝查询，不将字符串截断或转浮点', async () => {
     const load = vi.fn<Loader>(async () => result())
-    const wrapper = render(load)
+    const wrapper = await render(load)
     await flushPromises()
     await wrapper.get('input[aria-label="最短耗时（毫秒）"]').setValue('1e6')
     await wrapper.get('form').trigger('submit')

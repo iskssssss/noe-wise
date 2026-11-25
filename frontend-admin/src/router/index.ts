@@ -1,4 +1,5 @@
 import { routePermission } from '@skillforge/shared/foundation/navigation'
+import { trajectoryListQueryKeys } from '@skillforge/shared/trajectory-list/location'
 /**
  * 灵知 机构管理后台路由（Vue 3 + TypeScript）
  *
@@ -103,12 +104,12 @@ const router = createRouter({
         {
           path: 'trajectories',
           component: () => import('../views/admin/TrajectoriesPage.vue'),
-          meta: { title: 'Agent 轨迹' }
+          meta: { title: 'Agent 轨迹', preserveOnQueryChange: true }
         },
         {
           path: 'trajectories/detail',
           component: () => import('../views/TrajectoryDetailPage.vue'),
-          meta: { title: '轨迹详情' }
+          meta: { title: '轨迹详情', parentQueryKeys: trajectoryListQueryKeys }
         },
         {
           path: 'conversation-tasks',

@@ -12,8 +12,19 @@ import type {
   TrajectorySummary
 } from '@skillforge/shared/observation/types'
 import { api, getSessionId } from '../api'
+import {
+  readTrajectoryListQuery,
+  trajectoryListQuery
+} from '@skillforge/shared/trajectory-list/location'
 
 const route = useRoute()
+const trajectoryListTarget = computed(() => ({
+  path: '/admin/trajectories',
+  query: trajectoryListQuery(
+    readTrajectoryListQuery(route.query),
+    route.query.trajectory_recent === 'true'
+  )
+}))
 const session = computed(() => String(route.params.sessionId ?? route.query.session_id ?? ''))
 const rounds = ref<TrajectorySummary[]>([]),
   listPage = ref(1),
@@ -124,7 +135,10 @@ async function reload() {
   if (!value) {
     listPage.value = previousPage
     if (!rootInput.value && requested)
-      await selectRound(requested, typeof route.query.node_id === 'string' ? route.query.node_id : '')
+      await selectRound(
+        requested,
+        typeof route.query.node_id === 'string' ? route.query.node_id : ''
+      )
     return
   }
   rounds.value = value.items
@@ -213,7 +227,7 @@ watch(
 <template>
   <AdminPage title="Agent 执行轨迹" :description="session || '会话定位信息缺失'">
     <template #extra>
-      <RouterLink class="el-button" to="/admin/trajectories">返回轨迹列表</RouterLink>
+      <RouterLink class="el-button" :to="trajectoryListTarget">返回轨迹列表</RouterLink>
       <RouterLink class="el-button" to="/admin/sessions">会话记录</RouterLink>
       <ElButton :loading="listTask.loading.value || busy" @click="reload">刷新</ElButton>
     </template>
@@ -233,7 +247,9 @@ watch(
               <h2>业务轮次</h2>
               <p>选择一次请求，查看完整执行</p>
             </div>
-            <ElTag type="info" size="small">{{ error && !rounds.length ? '尚未读取' : `${listTotal} 轮` }}</ElTag>
+            <ElTag type="info" size="small">{{
+              error && !rounds.length ? '尚未读取' : `${listTotal} 轮`
+            }}</ElTag>
           </header>
           <ElMenu class="round-menu" :default-active="rootInput" @select="selectRound($event)">
             <ElMenuItem
