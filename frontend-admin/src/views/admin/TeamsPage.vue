@@ -14,12 +14,14 @@
       <p v-else>当前账号没有团队读取权限，请联系管理员授权后核对。</p>
     </section>
     <section v-if="publicationReceipt" class="admin-card" role="status">
-      团队“{{ publicationReceipt.team?.name }}”已发布，修订
+      发布回执：团队“{{ publicationReceipt.team?.name }}”发布成功，修订
       {{ publicationReceipt.team?.revision }}。
+      <span v-if="receiptCurrentTeam?.status === 'disabled'">当前团队已停用。</span>
       <ElButton
-        v-if="canTrial && publicationReceipt.team?.id"
+        v-if="canTrial && !refreshRequired && receiptCurrentTeam?.status === 'published'"
         link
-        @click="trialTeam(publicationReceipt.team.id)"
+        :disabled="locked"
+        @click="trialTeam(receiptCurrentTeam.id)"
         >试用当前发布版本</ElButton
       >
     </section>
@@ -100,9 +102,9 @@
             @click="publish(row as Team)"
             >{{ row.status === 'published' ? '发布新修订' : '发布' }}</ElButton
           ><ElButton
-            v-if="canTrial && row.status === 'published'"
+            v-if="canTrial && !refreshRequired && row.status === 'published'"
             link
-            :disabled="busy"
+            :disabled="locked"
             @click="trialTeam(row.id)"
             >试用</ElButton
           ></template
@@ -246,7 +248,7 @@
             v-described-by="formTipId + '-field-3'"
             :aria-describedby="formTipId + '-field-3'"
             v-model="form.primary_agent_id"
-            :disabled="!members.length"
+            :disabled="locked || !members.length"
             placeholder="先选择团队成员"
             ><ElOption
               v-for="id in members"
@@ -257,15 +259,28 @@
           <FieldTip :id="formTipId + '-field-3'"
             >从已选成员中选择协调任务的主智能体。</FieldTip
           > </ElFormItem
-        ><ElFormItem label="状态"
-          ><ElSelect
-            v-described-by="formTipId + '-field-4'"
-            :aria-describedby="formTipId + '-field-4'"
-            v-model="form.status"
-            ><ElOption value="draft" label="草稿" /><ElOption value="disabled" label="停用"
-          /></ElSelect>
-          <FieldTip :id="formTipId + '-field-4'"
-            >保存为草稿后发布，团队才能用于新会话；停用会停止提供新会话入口。</FieldTip
+        ><ElFormItem label="当前状态">
+          <ElTag>{{ statusLabel(editing?.status ?? 'draft') }}</ElTag>
+          <FieldTip v-if="editing?.status === 'published'" :id="formTipId + '-field-4'">
+            保存只更新配置，团队继续使用原发布版本；保存并发布后，新受理的执行使用新版本。
+          </FieldTip>
+          <FieldTip v-else-if="editing?.status === 'disabled'" :id="formTipId + '-field-4'">
+            保存配置后仍保持停用；选择“保存并重新启用”会发布当前配置，恢复团队的执行入口。
+          </FieldTip>
+          <FieldTip v-else :id="formTipId + '-field-4'">
+            保存后保留草稿；发布后团队才能用于会话。
+          </FieldTip>
+        </ElFormItem>
+        <ElFormItem v-if="editing && editing.status !== 'disabled'">
+          <ElCheckbox
+            v-described-by="formTipId + '-stop'"
+            :aria-describedby="formTipId + '-stop'"
+            :model-value="stoppingTeam"
+            @update:model-value="form.status = $event ? 'disabled' : editing.status"
+            >保存时停用团队</ElCheckbox
+          >
+          <FieldTip :id="formTipId + '-stop'"
+            >停用后不能发起新执行，已有会话和历史记录保留。</FieldTip
           >
         </ElFormItem></ElForm
       ><template #footer
@@ -277,7 +292,7 @@
           :loading="busy"
           :disabled="locked || !members.length || !form.primary_agent_id"
           @click="save"
-          >保存</ElButton
+          >{{ stoppingTeam ? '保存并停用' : '保存' }}</ElButton
         ><span
           v-if="
             can(editing ? 'foundation.teams.update' : 'foundation.teams.create') &&
@@ -290,11 +305,9 @@
           v-if="canSaveAndPublish"
           type="primary"
           :loading="busy"
-          :disabled="
-            locked || !members.length || !form.primary_agent_id || form.status === 'disabled'
-          "
+          :disabled="locked || !members.length || !form.primary_agent_id || stoppingTeam"
           @click="saveAndPublish"
-          >保存并发布</ElButton
+          >{{ publicationActionLabel }}</ElButton
         ></template
       ></ElDrawer
     ></AdminPage
@@ -358,6 +371,9 @@ const operations = reactive<
 >({})
 const uncertain = computed(() => operations[owner.value])
 const publicationReceipt = ref<TeamSaveAndPublishReceipt>()
+const receiptCurrentTeam = computed(() =>
+  data.value?.find((team) => team.id === publicationReceipt.value?.team?.id)
+)
 const receiptRequestId = ref('')
 const locked = computed(
   () =>
@@ -473,6 +489,12 @@ const open = ref(false),
   members = ref<string[]>([]),
   saved = ref(''),
   formRef = ref<FormInstance>()
+const stoppingTeam = computed(
+  () => !!editing.value && editing.value.status !== 'disabled' && form.status === 'disabled'
+)
+const publicationActionLabel = computed(() =>
+  editing.value?.status === 'disabled' ? '保存并重新启用' : '保存并发布'
+)
 let directoryRequest = 0
 const {
   data: agentDirectory,
@@ -658,7 +680,7 @@ async function edit(row?: Team) {
       revision: row?.revision ?? 0,
       name: row?.name ?? '',
       description: row?.description ?? '',
-      status: row?.status === 'disabled' ? 'disabled' : 'draft',
+      status: row?.status ?? 'draft',
       members: [],
       primary_agent_id: row?.primary_agent_id ?? ''
     })
@@ -706,7 +728,16 @@ async function save() {
     subject = owner.value
   await run(async () => {
     if (!(await formRef.value?.validate().catch(() => false))) return
-    if (identity !== pageIdentity.value) return
+    if (
+      stoppingTeam.value &&
+      !(await confirm({
+        title: '保存并停用团队',
+        confirmText: '保存并停用',
+        content: `保存当前配置并停用“${form.name}”？停用后不能发起新执行，已有会话和历史记录保留。`
+      }))
+    )
+      return
+    if (disposed || identity !== pageIdentity.value || owner.value !== subject) return
     if (!members.value.includes(form.primary_agent_id)) throw Error('主智能体必须属于团队')
     if (!subject) throw Error('当前身份不可用，请重新登录')
     const payload = { ...form, members: members.value.map((agent_id) => ({ agent_id })) }
@@ -781,7 +812,7 @@ async function acceptDraft(
   draftPending.value = undefined
   saved.value = snapshot()
   open.value = false
-  message.success('团队草稿已保存')
+  message.success('团队配置已保存')
   await refreshAfterWrite()
 }
 async function checkDraft(automatic = false) {
@@ -923,7 +954,7 @@ async function acceptReceipt(
   await refreshAfterWrite()
 }
 async function saveAndPublish() {
-  if (writeLocked.value || !canSaveAndPublish.value || form.status === 'disabled') return
+  if (writeLocked.value || !canSaveAndPublish.value || stoppingTeam.value) return
   const operationOwner = owner.value
   const identity = pageIdentity.value
   await run(async () => {
@@ -931,9 +962,9 @@ async function saveAndPublish() {
     if (!members.value.includes(form.primary_agent_id)) throw Error('主智能体必须属于团队')
     if (
       !(await confirm({
-        title: '保存并发布团队',
-        confirmText: '保存并发布',
-        content: `保存并发布“${form.name}”的当前配置？新受理的执行使用新发布，已经受理的执行保持原冻结配置。`
+        title: `${publicationActionLabel.value}团队`,
+        confirmText: publicationActionLabel.value,
+        content: `${publicationActionLabel.value}“${form.name}”的当前配置？新受理的执行使用新发布，已经受理的执行保持原冻结配置。`
       }))
     )
       return
@@ -947,7 +978,12 @@ async function saveAndPublish() {
       return
     const requestId = crypto.randomUUID()
     const teamId = editing.value?.id ?? null
-    const payload = { ...form, members: members.value.map((agent_id) => ({ agent_id })) }
+    // 组合发布接收待发布配置；停用团队由同一事务内的发布步骤重新启用。
+    const payload = {
+      ...form,
+      status: 'draft' as const,
+      members: members.value.map((agent_id) => ({ agent_id }))
+    }
     try {
       sessionStorage.setItem(storageKey(operationOwner), JSON.stringify({ requestId, teamId }))
     } catch {

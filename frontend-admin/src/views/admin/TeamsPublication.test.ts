@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElButton, ElDrawer, ElInput, ElOption, ElSelect } from 'element-plus'
+import { ElButton, ElCheckbox, ElDrawer, ElInput, ElOption, ElSelect } from 'element-plus'
 import { reactive } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import TeamsPage from './TeamsPage.vue'
@@ -477,7 +477,7 @@ it('同一主体授权版本变化后忽略迟到发布回执，保留原请求�
   finish({ request_id: requestId, status: 'SUCCEEDED', team: { ...team, revision: 5 } })
   await flushPromises()
   expect(document.body.textContent).toContain(requestId)
-  expect(document.body.textContent).not.toContain('团队“原团队”已发布')
+  expect(document.body.textContent).not.toContain('发布回执：团队“原团队”发布成功')
   expect(
     sessionStorage.getItem(`skillforge.team-publication.${JSON.stringify(['tenant', 'user'])}`)
   ).toContain(requestId)
@@ -816,6 +816,121 @@ describe('团队成员候选独立恢复', () => {
         .map((item) => item.props('value'))
     ).toEqual(['new'])
     expect(mocks.create).not.toHaveBeenCalled()
+  })
+})
+
+describe('团队保存与启停状态', () => {
+  it.each([
+    ['published', '已发布', '团队继续使用原发布版本'],
+    ['disabled', '已停用', '保存配置后仍保持停用']
+  ])('普通保存保留 %s 状态且不发布', async (status, label, explanation) => {
+    mocks.list.mockResolvedValue([{ ...team, status }])
+    mocks.update.mockResolvedValue({ ...team, status, revision: 5 })
+    await open()
+    await click('编辑')
+    const drawer = wrapper.findComponent(ElDrawer)
+    expect(document.querySelector('.el-drawer')?.textContent).toContain(label)
+    expect(document.querySelector('.el-drawer')?.textContent).toContain(explanation)
+    expect(drawer.findAllComponents(ElSelect)).toHaveLength(2)
+    await drawer.findAllComponents(ElInput)[1]!.setValue('更新说明')
+    await click('保存')
+    expect(mocks.update).toHaveBeenCalledExactlyOnceWith(
+      'team-1',
+      expect.objectContaining({ status, revision: 4, description: '更新说明' })
+    )
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(mocks.success).toHaveBeenCalledWith('团队配置已保存')
+  })
+
+  it('停用需明确确认，取消不写入，提交期间主智能体不可修改', async () => {
+    await open()
+    await click('编辑')
+    const drawer = wrapper.findComponent(ElDrawer)
+    drawer.findComponent(ElCheckbox).vm.$emit('update:modelValue', true)
+    await flushPromises()
+    expect(button('保存并发布').props('disabled')).toBe(true)
+    mocks.confirm.mockResolvedValueOnce(false)
+    await click('保存并停用')
+    expect(mocks.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: '保存并停用团队', confirmText: '保存并停用' })
+    )
+    expect(mocks.saveWithReceipt).not.toHaveBeenCalled()
+    let finish!: (value: typeof team) => void
+    mocks.update.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await click('保存并停用')
+    expect(drawer.findAllComponents(ElSelect)[1]!.props('disabled')).toBe(true)
+    expect(mocks.update).toHaveBeenCalledExactlyOnceWith(
+      'team-1',
+      expect.objectContaining({ status: 'disabled', revision: 4 })
+    )
+    finish({ ...team, status: 'disabled', revision: 5 })
+    await flushPromises()
+    expect(drawer.props('modelValue')).toBe(false)
+  })
+
+  it('停用团队通过当前配置的组合发布重新启用，取消不写入', async () => {
+    mocks.list.mockResolvedValueOnce([{ ...team, status: 'disabled' }])
+    mocks.saveAndPublish.mockImplementation(async (request_id: string) => ({
+      request_id,
+      status: 'SUCCEEDED',
+      team: { ...team, revision: 6 }
+    }))
+    await open()
+    await click('编辑')
+    expect(wrapper.findComponent(ElDrawer).findComponent(ElCheckbox).exists()).toBe(false)
+    mocks.confirm.mockResolvedValueOnce(false)
+    await click('保存并重新启用')
+    expect(mocks.saveAndPublish).not.toHaveBeenCalled()
+    await click('保存并重新启用')
+    expect(mocks.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: '保存并重新启用团队', confirmText: '保存并重新启用' })
+    )
+    expect(mocks.saveAndPublish).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      'team-1',
+      expect.objectContaining({ status: 'draft', revision: 4 })
+    )
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(button('试用当前发布版本').exists()).toBe(true)
+  })
+
+  it.each(['disabled', 'read-failed'])('旧发布回执在当前团队 %s 时不提供试用', async (state) => {
+    mocks.saveAndPublish.mockImplementation(async (request_id: string) => ({
+      request_id,
+      status: 'SUCCEEDED',
+      team: { ...team, revision: 5 }
+    }))
+    await open()
+    mocks.list.mockResolvedValue([{ ...team, revision: 5 }])
+    await click('编辑')
+    await click('保存并发布')
+    expect(button('试用当前发布版本').exists()).toBe(true)
+    await click('编辑')
+    wrapper.findComponent(ElDrawer).findComponent(ElCheckbox).vm.$emit('update:modelValue', true)
+    await flushPromises()
+    mocks.update.mockResolvedValue({ ...team, status: 'disabled', revision: 6 })
+    if (state === 'disabled')
+      mocks.list.mockResolvedValueOnce([{ ...team, status: 'disabled', revision: 6 }])
+    else mocks.list.mockRejectedValueOnce(new Error('读取失败'))
+    await click('保存并停用')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.list).toHaveBeenCalledTimes(3)
+    expect(wrapper.text()).toContain('发布回执：团队“原团队”发布成功，修订 5')
+    expect(
+      wrapper
+        .findAllComponents(ElButton)
+        .some((item) => ['试用当前发布版本', '试用'].includes(item.text()))
+    ).toBe(false)
+    if (state === 'disabled') expect(wrapper.text()).toContain('当前团队已停用')
+    else expect(wrapper.text()).toContain('请刷新列表后继续修改')
   })
 })
 
