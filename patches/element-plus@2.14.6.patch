@@ -10,6 +10,26 @@ index ad8ae2a795852c06c44b3ea7efe610fd0a40a241..9fb5ad143d8a9dda9c4b84f5cd365181
  		});
  		__expose({
  			/** @description get focus the input component */
+diff --git a/es/components/menu/src/sub-menu.mjs b/es/components/menu/src/sub-menu.mjs
+index 0005f3a2e8d0659f9e3cbf8779f34a7c9d834b99..6ece45735e3c30a90d4dbe017e62bdeed045d40c 100644
+--- a/es/components/menu/src/sub-menu.mjs
++++ b/es/components/menu/src/sub-menu.mjs
+@@ -173,9 +173,12 @@ var sub_menu_default = defineComponent({
+ 			}
+ 			subMenu.mouseInChild.value = true;
+ 			timeout?.();
+-			({stop: timeout} = useTimeoutFn(() => {
+-				rootMenu.openMenu(props.index, indexPath.value);
+-			}, showTimeout));
++			// 已展开时只取消离开定时器，避免悬停打开在导航关闭后重新执行。
++			if (!opened.value) {
++				({stop: timeout} = useTimeoutFn(() => {
++					rootMenu.openMenu(props.index, indexPath.value);
++				}, showTimeout));
++			}
+ 			if (appendToBody.value) parentMenu.value.vnode.el?.dispatchEvent(new MouseEvent("mouseenter"));
+ 			if (event.type === "mouseenter" && event.target) nextTick(() => {
+ 				focusElement(event.target, { preventScroll: true });
 diff --git a/lib/components/input-number/src/input-number.vue_vue_type_script_setup_true_lang.js b/lib/components/input-number/src/input-number.vue_vue_type_script_setup_true_lang.js
 index 51f050c07498357479f002ce37657f0ce7b1da3a..f957748d3e66d097ba7c04e1953b32e7d8b16d27 100644
 --- a/lib/components/input-number/src/input-number.vue_vue_type_script_setup_true_lang.js
@@ -22,3 +42,23 @@ index 51f050c07498357479f002ce37657f0ce7b1da3a..f957748d3e66d097ba7c04e1953b32e7
  		});
  		__expose({
  			/** @description get focus the input component */
+diff --git a/lib/components/menu/src/sub-menu.js b/lib/components/menu/src/sub-menu.js
+index a96921694bd89339ea33cbf63167543e6dfe9166..79933589c210b4b572ead8c767a3359b37a943e7 100644
+--- a/lib/components/menu/src/sub-menu.js
++++ b/lib/components/menu/src/sub-menu.js
+@@ -178,9 +178,12 @@ var sub_menu_default = (0, vue.defineComponent)({
+ 			}
+ 			subMenu.mouseInChild.value = true;
+ 			timeout?.();
+-			({stop: timeout} = (0, _vueuse_core.useTimeoutFn)(() => {
+-				rootMenu.openMenu(props.index, indexPath.value);
+-			}, showTimeout));
++			// 已展开时只取消离开定时器，避免悬停打开在导航关闭后重新执行。
++			if (!opened.value) {
++				({stop: timeout} = (0, _vueuse_core.useTimeoutFn)(() => {
++					rootMenu.openMenu(props.index, indexPath.value);
++				}, showTimeout));
++			}
+ 			if (appendToBody.value) parentMenu.value.vnode.el?.dispatchEvent(new MouseEvent("mouseenter"));
+ 			if (event.type === "mouseenter" && event.target) (0, vue.nextTick)(() => {
+ 				require_aria.focusElement(event.target, { preventScroll: true });

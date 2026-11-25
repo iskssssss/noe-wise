@@ -42,10 +42,54 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   document.body.innerHTML = ''
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
 describe('任务导航', () => {
+  it.each([true, false])(
+    '鼠标进入浮层后立即选择，路由允许=%s时不被延迟悬停覆盖导航结果',
+    async (allowed) => {
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: navigationLeaves(menus).map((item) => ({
+          path: item.path!,
+          component: { template: '<div />' }
+        }))
+      })
+      await router.push('/admin/home')
+      await router.isReady()
+      wrapper = mount(AdminNavigation, {
+        attachTo: document.body,
+        props: {
+          title: '机构后台',
+          home: '/admin/home',
+          menus,
+          collapsed: true,
+          activePath: '/admin/home'
+        },
+        global: { plugins: [router, ElementPlus] }
+      })
+      await flushPromises()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const group = wrapper.get('button[aria-label="资源构建"]')
+      await wrapper.get('.el-sub-menu').trigger('mouseenter')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(group.attributes('aria-expanded')).toBe('true')
+      const popup = document.querySelector('.el-menu--popup-container')!
+      popup.dispatchEvent(new MouseEvent('mouseenter'))
+      if (!allowed) router.beforeEach(() => false)
+      popup.querySelector<HTMLAnchorElement>('a[href="/admin/agents"]')!.click()
+      await flushPromises()
+      expect(router.currentRoute.value.path).toBe(allowed ? '/admin/agents' : '/admin/home')
+      expect(group.attributes('aria-expanded')).toBe(String(!allowed))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(group.attributes('aria-expanded')).toBe(String(!allowed))
+      expect(wrapper.emitted('navigated')?.length ?? 0).toBe(allowed ? 1 : 0)
+    }
+  )
   it('紧凑分组保留可聚焦名称，键盘展开进入链接，Esc返回且不触发导航', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
