@@ -1,33 +1,41 @@
 <template>
   <AdminPage title="开放 API" description="接口参数和示例。凭据使用占位符，不会自动发送请求。"
-    ><div class="admin-toolbar admin-card">
-      <ElInput
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        clearable
-        v-model="query"
-        placeholder="搜索接口名称或路径"
-      /><ElSelect v-model="method" clearable placeholder="全部请求方法" aria-label="请求方法"
-        ><ElOption v-for="value in methods" :key="value" :value="value" :label="value" /></ElSelect
-      ><ElInput
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        v-model="base"
-        placeholder="API 基础地址"
-        @blur="validateBase"
-      />
+    ><ElForm class="admin-card api-docs-filters" label-position="top" @submit.prevent>
+      <ElFormItem label="搜索接口">
+        <ElInput
+          v-described-by="formTipId + '-group-0'"
+          :aria-describedby="formTipId + '-group-0'"
+          clearable
+          v-model="query"
+          placeholder="搜索接口名称或路径"
+      /></ElFormItem>
+      <ElFormItem label="请求方法">
+        <ElSelect v-model="method" clearable placeholder="全部请求方法" aria-label="请求方法"
+          ><ElOption
+            v-for="value in methods"
+            :key="value"
+            :value="value"
+            :label="value" /></ElSelect
+      ></ElFormItem>
+      <ElFormItem label="API 基础地址" :error="baseError">
+        <ElInput
+          v-described-by="formTipId + '-group-0'"
+          :aria-describedby="formTipId + '-group-0'"
+          v-model="base"
+          placeholder="API 基础地址"
+          @blur="validateBase"
+      /></ElFormItem>
 
       <FieldTip :id="formTipId + '-group-0'"
         >按接口名称或路径搜索；API 基础地址用于生成调用示例，请填写目标服务的实际地址。</FieldTip
       >
-    </div>
-    <FeedbackNotice v-if="error" :title="error" :closable="false" type="error" />
+    </ElForm>
     <p class="admin-muted" role="status">{{ filtered.length }} 个匹配接口</p>
     <ElEmpty v-if="!filtered.length" description="没有匹配接口，试试其他关键词"
       ><ElButton @click="resetSearch">清空筛选</ElButton></ElEmpty
     >
     <div v-else class="api-docs-layout">
-      <ElMenu :default-active="selectedId" @select="selectedId = $event"
+      <ElMenu :default-active="selected?.id" @select="updateQuery({ endpoint: $event })"
         ><ElMenuItem v-for="endpoint in filtered" :key="endpoint.id" :index="endpoint.id">{{
           endpoint.title
         }}</ElMenuItem></ElMenu
@@ -83,12 +91,12 @@
   ></AdminPage>
 </template>
 <script setup lang="ts">
-import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { computed, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { message } from '@skillforge/shared/feedback'
 import { AdminPage } from '@skillforge/shared/admin'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
@@ -97,12 +105,36 @@ import { agentEndpoints } from './apiDocs/agents'
 import { runtimeEndpoints } from './apiDocs/runtime'
 import { serviceEndpoints } from './apiDocs/services'
 import { buildCurl, normalizeBaseUrl } from './apiDocs/examples'
-const endpoints = [...chatEndpoints, ...agentEndpoints, ...runtimeEndpoints, ...serviceEndpoints],
-  query = ref(''),
-  method = ref(''),
-  base = ref(window.location.origin),
-  selectedId = ref(endpoints[0]?.id ?? ''),
-  error = ref('')
+const endpoints = [...chatEndpoints, ...agentEndpoints, ...runtimeEndpoints, ...serviceEndpoints]
+const route = useRoute(),
+  router = useRouter()
+const query = computed({
+  get: () => (typeof route.query.q === 'string' ? route.query.q : ''),
+  set: (value: string) => updateQuery({ q: value || undefined })
+})
+const methods = [...new Set(endpoints.map((endpoint) => endpoint.method))]
+const method = computed({
+  get: () => methods.find((value) => value === route.query.method) ?? '',
+  set: (value: string) => updateQuery({ method: value || undefined })
+})
+const base = ref(typeof route.query.base === 'string' ? route.query.base : window.location.origin)
+const baseTouched = ref(false)
+watch(
+  () => route.query.base,
+  (value) => {
+    base.value = typeof value === 'string' ? value : window.location.origin
+    baseTouched.value = false
+  }
+)
+let pendingQuery: LocationQueryRaw | undefined
+function updateQuery(changes: LocationQueryRaw) {
+  // 连续选择接口和编辑地址时，后一个动作仍须带上尚未完成导航的前一个选择。
+  const next = { ...(pendingQuery ?? route.query), ...changes }
+  pendingQuery = next
+  void router.replace({ query: next }).then(() => {
+    if (pendingQuery === next) pendingQuery = undefined
+  })
+}
 const filtered = computed(() =>
     endpoints.filter(
       (e) =>
@@ -110,30 +142,30 @@ const filtered = computed(() =>
         (e.title + e.path).toLowerCase().includes(query.value.trim().toLowerCase())
     )
   ),
-  selected = computed(() => endpoints.find((e) => e.id === selectedId.value))
+  selected = computed(
+    () => filtered.value.find((e) => e.id === route.query.endpoint) ?? filtered.value[0]
+  )
 function resetSearch() {
-  query.value = ''
-  method.value = ''
+  updateQuery({ q: undefined, method: undefined, endpoint: undefined })
 }
-const methods = [...new Set(endpoints.map((endpoint) => endpoint.method))]
-watch(filtered, (items) => {
-  if (!items.some((item) => item.id === selectedId.value)) selectedId.value = items[0]?.id ?? ''
-})
 const normalizedBase = computed(() => normalizeBaseUrl(base.value))
+const baseError = computed(() =>
+  baseTouched.value && !normalizedBase.value ? '请输入有效 HTTP(S) 基础地址后生成调用示例' : ''
+)
 const example = computed(() =>
   selected.value && normalizedBase.value ? buildCurl(selected.value, normalizedBase.value) : ''
 )
 function validateBase() {
-  error.value = normalizedBase.value ? '' : '请输入有效 HTTP(S) 基础地址后生成调用示例'
+  baseTouched.value = true
+  // 只将已校验的地址写入导航上下文，凭据、查询串和无效输入留在当前字段。
+  if (normalizedBase.value) updateQuery({ base: normalizedBase.value })
 }
 async function copy() {
   try {
-    if (!normalizeBaseUrl(base.value)) throw Error('请输入有效 HTTP(S) 基础地址')
     await navigator.clipboard.writeText(example.value)
-    error.value = ''
     message.success('调用示例已复制')
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '复制失败'
+  } catch {
+    message.error('复制失败，请选中调用示例后手动复制')
   }
 }
 
@@ -141,6 +173,9 @@ const formTipId = useId()
 </script>
 
 <style scoped>
+.api-docs-filters {
+  padding: 20px;
+}
 .api-docs-layout {
   display: grid;
   grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);

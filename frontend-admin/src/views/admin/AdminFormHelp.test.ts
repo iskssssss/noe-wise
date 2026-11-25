@@ -16,8 +16,18 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn()
 }))
-vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ user: null, identityVersion: 0 }) }))
+vi.mock('../../stores/auth', () => ({
+  useAuthStore: () => ({
+    user: {
+      tenant_id: 'tenant-owned',
+      sub: 'member-owned',
+      permissions: ['foundation.knowledge.read']
+    },
+    identityVersion: 0
+  })
+}))
 vi.mock('../../api', () => ({
+  getSessionId: () => 'help-test-session',
   api: {
     billing: { records: mocks.records, requests: mocks.requests },
     knowledge: {
@@ -31,7 +41,8 @@ vi.mock('../../api', () => ({
   post: mocks.post
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'kb-owned' } }),
+  useRoute: () => ({ params: { id: 'kb-owned' }, query: {} }),
+  useRouter: () => ({ replace: vi.fn() }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))

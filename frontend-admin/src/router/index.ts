@@ -200,7 +200,7 @@ const router = createRouter({
         {
           path: 'api-docs',
           component: () => import('../views/admin/OpenApiDocsPage.vue'),
-          meta: { title: adminZhCN.route.apiDocs }
+          meta: { title: adminZhCN.route.apiDocs, preserveOnQueryChange: true }
         },
         {
           path: 'knowledge',

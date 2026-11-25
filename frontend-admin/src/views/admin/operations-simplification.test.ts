@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { reactive } from 'vue'
 import { ElButton, ElInput, ElSelect, ElPagination, ElCollapse } from 'element-plus'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import HandoffPage from './HandoffPage.vue'
@@ -57,7 +58,13 @@ vi.mock('../../stores/auth', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: mocks.routeQuery }),
-  useRouter: () => ({ push: mocks.push }),
+  useRouter: () => ({
+    push: mocks.push,
+    replace: ({ query }: { query: Record<string, string> }) => {
+      Object.assign(mocks.routeQuery, query)
+      return Promise.resolve()
+    }
+  }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
@@ -92,7 +99,7 @@ function button(wrapper: VueWrapper, text: string) {
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
-  mocks.routeQuery = {}
+  mocks.routeQuery = reactive({})
   mocks.session = 'test-session'
   mocks.permissions = ['foundation.handoff.read', 'foundation.handoff.update']
   mocks.handoffList.mockResolvedValue({ items: [ticket] })
@@ -1108,9 +1115,12 @@ describe('机构日常任务简化', () => {
     expect(button(wrapper, '复制示例').props('disabled')).toBe(true)
     input.vm.$emit('blur')
     await flushPromises()
-    expect(
-      Array.from(document.body.querySelectorAll('.el-message__content')).at(-1)?.textContent
-    ).toContain('请输入有效 HTTP(S) 基础地址后生成调用示例')
+    await vi.waitFor(() =>
+      expect(wrapper.get('.el-form-item__error').text()).toContain(
+        '请输入有效 HTTP(S) 基础地址后生成调用示例'
+      )
+    )
+    expect(mocks.routeQuery.base).toBeUndefined()
     input.vm.$emit('update:modelValue', 'https://api.example.com')
     input.vm.$emit('blur')
     await flushPromises()
