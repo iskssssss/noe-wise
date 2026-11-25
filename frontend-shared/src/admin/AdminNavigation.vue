@@ -63,7 +63,10 @@ watch(
 async function select(path: string) {
   try {
     const failure = await router.push(path)
-    if (!failure || route.path === path) emit('navigated')
+    if (!failure || route.path === path) {
+      if (props.collapsed) for (const key of keys.value) menu.value?.close(key)
+      emit('navigated')
+    }
   } finally {
     await nextTick()
     // Element Plus 的键盘选择先更新高亮；路由守卫取消后恢复实际页面。
@@ -118,6 +121,7 @@ function followLink(event: MouseEvent, path: string) {
         :default-active="activePath"
         :collapse="collapsed"
         :collapse-transition="false"
+        :close-on-click-outside="collapsed"
         :unique-opened="!query.trim()"
         @select="select"
       >
@@ -130,6 +134,7 @@ function followLink(event: MouseEvent, path: string) {
           :active-path="activePath"
           :home="home"
           @activate="followLink"
+          @group-open="(key, open) => (open ? menu?.open(key) : menu?.close(key))"
         />
       </ElMenu>
     </nav>
