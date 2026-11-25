@@ -31,6 +31,7 @@ class HandoffControllerCoverageTest {
     private AgentSessionRegistry sessions;
     private com.skillforge.institution.service.HandoffActionService actions;
     private HandoffController controller;
+    private com.skillforge.core.chat.ChatSessionService chat;
 
     @BeforeEach
     void setUp() {
@@ -38,12 +39,39 @@ class HandoffControllerCoverageTest {
         handoffs = mock(HandoffApplicationService.class);
         sessions = mock(AgentSessionRegistry.class);
         actions = mock(com.skillforge.institution.service.HandoffActionService.class);
-        controller = new HandoffController(handoffs, sessions, mock(com.skillforge.institution.service.HandoffReplyService.class), mock(com.skillforge.core.chat.ChatSessionService.class), actions);
+        chat = mock(com.skillforge.core.chat.ChatSessionService.class);
+        controller = new HandoffController(handoffs, sessions, mock(com.skillforge.institution.service.HandoffReplyService.class), chat, actions);
     }
 
     @AfterEach
     void clearTenant() {
         TenantContext.clear();
+    }
+
+    @Test
+    void statusOptionsCoverReadableStatusesAndRequireReadPermission() throws Exception {
+        assertThat(controller.statusOptions().data()).extracting(HandoffController.StatusOption::value)
+                .containsExactly("pending", "assigned", "resolved", "closed");
+        assertThat(controller.statusOptions().data()).extracting(HandoffController.StatusOption::label)
+                .containsExactly("待处理", "已接管", "已解决", "已关闭");
+        assertThat(HandoffController.class.getMethod("statusOptions").getAnnotation(RequirePermission.class).value())
+                .isEqualTo("foundation.handoff.read");
+    }
+
+    @Test
+    void detailReadsHumanAuthorFromCurrentProjectionContract() {
+        var existing = ticket("ticket-1", "assigned"); existing.setSessionId("session-1"); existing.setEndUserId(99L);
+        when(handoffs.require(7,"ticket-1")).thenReturn(existing);
+        var source = mock(com.skillforge.core.chat.session.SessionView.class);
+        when(source.getSessionId()).thenReturn("session-1"); when(source.getEndUserId()).thenReturn(99L);
+        when(handoffs.sourceSessionForRead(7,"session-1")).thenReturn(source);
+        var history = mock(com.skillforge.core.chat.dto.response.ChatHistoryResponse.class);
+        var human = mock(com.skillforge.core.chat.message.ChatMessageRecord.class);
+        when(human.role()).thenReturn("assistant");
+        when(human.metadata()).thenReturn(java.util.Map.of("author_type","human_operator","operator_name","巡检坐席"));
+        when(history.messages()).thenReturn(List.of(human));
+        when(chat.history("7","session-1",30,null)).thenReturn(history);
+        assertThat(controller.detail("ticket-1",null).data().messages().get(0).humanAuthor()).isEqualTo("巡检坐席");
     }
 
     @Test

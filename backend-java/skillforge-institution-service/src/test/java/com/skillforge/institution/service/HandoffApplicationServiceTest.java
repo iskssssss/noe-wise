@@ -60,6 +60,11 @@ class HandoffApplicationServiceTest {
  ticket.setCreatedBy(42L);doThrow(new ApiException(org.springframework.http.HttpStatus.FORBIDDEN,"无会话读权")).when(sessions).require("7","s");
  assertThatThrownBy(()->service.createReceipt(7,command)).isInstanceOf(ApiException.class);
  }
+ @Test void invalidListStatusRejectsBeforeQueryEvenWithEmptyScope(){
+ when(access.visibleSessionIds(any(),eq("read"))).thenReturn(java.util.List.of());
+ assertThatThrownBy(()->service.list(7,"not-a-status")).isInstanceOfSatisfying(ApiException.class,e->assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY));
+ verifyNoInteractions(tickets);
+ }
  @Test void emptyCurrentSessionScopeReturnsNoTicketFacts(){when(access.visibleSessionIds(any(),eq("read"))).thenReturn(java.util.List.of());assertThat(service.list(7,null)).isEmpty();verifyNoInteractions(tickets);}
  @Test void staleRevisionAndOversizedNoteRejectButEmptyNoteIsOptional(){when(tickets.update(any(LambdaUpdateWrapper.class))).thenReturn(false);
  assertThatThrownBy(()->service.accept(7,"t",42,1)).isInstanceOf(ApiException.class);

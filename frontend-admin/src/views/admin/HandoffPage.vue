@@ -13,23 +13,27 @@
         >重新读取原工单</ElButton
       >
     </section>
-    <div class="admin-toolbar admin-card">
-      <ElSelect
-        v-described-by="formTipId + '-group-0'"
-        :aria-describedby="formTipId + '-group-0'"
-        v-model="status"
-        clearable
-        :disabled="loading || busy"
-        style="width: 180px"
-        placeholder="全部状态"
-        @change="changeStatus"
-        ><ElOption value="pending" label="待处理" /><ElOption
-          value="assigned"
-          label="已接管" /><ElOption value="resolved" label="已解决" /></ElSelect
+    <ElForm class="admin-toolbar admin-card" label-position="top" @submit.prevent="reload">
+      <ElFormItem label="工单状态">
+        <ElSelect
+          v-described-by="formTipId + '-group-0'"
+          :aria-describedby="formTipId + '-group-0'"
+          v-model="status"
+          clearable
+          :disabled="loading || busy"
+          style="width: 180px"
+          placeholder="全部状态"
+          @change="changeStatus"
+          ><ElOption
+            v-for="option in data?.statuses ?? []"
+            :key="option.value"
+            :value="option.value"
+            :label="option.label"
+        /></ElSelect> </ElFormItem
       ><ElButton @click="reload" :loading="loading" :disabled="busy">刷新</ElButton>
 
       <FieldTip :id="formTipId + '-group-0'">选择工单处理状态；清除选择后显示全部状态。</FieldTip>
-    </div>
+    </ElForm>
     <ElTable
       table-layout="auto"
       :data="data?.items ?? []"
@@ -39,9 +43,9 @@
           ? loading
             ? '正在读取工单…'
             : '工单列表尚未读取，请刷新重试'
-          : status === 'pending'
-            ? '暂无待处理工单'
-            : '当前状态没有工单'
+          : status
+            ? `暂无${ticketStatusLabel(status)}工单，可查看全部状态。`
+            : '暂无可查看的工单。需要人工协助时，可在调试会话的“任务”页签创建工单。'
       "
       ><ElTableColumn
         min-width="200"
@@ -57,7 +61,7 @@
         width="128"
         show-overflow-tooltip
         label="状态"
-        ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
+        ><template #default="{ row }">{{ ticketStatusLabel(row.status) }}</template></ElTableColumn
       ><ElTableColumn
         min-width="200"
         show-overflow-tooltip
@@ -80,7 +84,16 @@
           ></template
         ></ElTableColumn
       ></ElTable
-    ><ElDrawer
+    >
+    <div v-if="data && !data.items.length && !loading && !loadError" class="admin-toolbar">
+      <ElButton v-if="status" :disabled="busy" @click="changeStatus('')">查看全部状态</ElButton>
+      <RouterLink
+        v-if="can('foundation.sessions.read') && can('foundation.handoff.create')"
+        to="/admin/chat"
+        >前往调试会话</RouterLink
+      >
+    </div>
+    <ElDrawer
       v-model="open"
       :title="'人工接管 · ' + (detail?.ticket.user ?? '工单')"
       size="760px"
@@ -142,9 +155,12 @@
           ><ElDescriptionsItem label="用户">{{ detail.ticket.user }}</ElDescriptionsItem
           ><ElDescriptionsItem label="原因">{{ detail.ticket.reason }}</ElDescriptionsItem
           ><ElDescriptionsItem label="状态">{{
-            statusLabel(detail.ticket.status)
-          }}</ElDescriptionsItem></ElDescriptions
-        >
+            ticketStatusLabel(detail.ticket.status)
+          }}</ElDescriptionsItem>
+          <ElDescriptionsItem v-if="detail.ticket.resolution_note" label="解决说明">{{
+            detail.ticket.resolution_note
+          }}</ElDescriptionsItem>
+        </ElDescriptions>
         <div class="admin-toolbar">
           <ElButton
             :disabled="
@@ -167,16 +183,33 @@
         <p v-else-if="detail.ticket.status === 'assigned' && !canHandleTicket" role="status">
           此工单由其他坐席处理；请联系负责人或管理员。
         </p>
+        <p
+          v-else-if="detail.ticket.status === 'resolved' || detail.ticket.status === 'closed'"
+          role="status"
+        >
+          此工单已结束，历史消息和解决说明保留，不再接受人工回复。
+        </p>
         <ElButton v-if="detail.has_more" :disabled="busy" @click="older">加载较早消息</ElButton
         ><ElCard v-for="message in detail.messages" :key="message.message_id" style="margin: 12px 0"
           ><div class="admin-muted">
-            {{ message.human_author || message.role }} · {{ formatDateTime(message.created_at) }}
+            {{
+              message.human_author
+                ? `人工坐席 · ${message.human_author}`
+                : message.role === 'user'
+                  ? '用户'
+                  : '助手'
+            }}
+            · {{ formatDateTime(message.created_at) }}
           </div>
           <MarkdownContent :content="message.content" /></ElCard
         ><ElAlert
           v-for="reply in detail.replies.filter((r) => r.status !== 'committed')"
           :key="reply.command_id"
-          :title="'人工回复：' + reply.status + (reply.error_code ? ' / ' + reply.error_code : '')"
+          :title="
+            reply.status === 'accepted'
+              ? '人工回复已受理，正在写入会话。'
+              : '人工回复未写入会话，请刷新状态核对会话与处理权限。'
+          "
           :type="reply.status === 'rejected' ? 'error' : 'info'"
         /><ElForm
           label-position="top"
@@ -279,7 +312,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import {
   AdminPage,
@@ -299,6 +332,7 @@ import {
   type HandoffActionReceipt
 } from '../../api'
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const subject = () => JSON.stringify([auth.user?.tenant_id, auth.user?.sub])
@@ -333,18 +367,39 @@ let disposed = false
 onScopeDispose(() => {
   disposed = true
 })
-const status = ref('pending'),
-  appliedStatus = ref('pending'),
+const status = ref(typeof route.query.status === 'string' ? route.query.status : 'pending'),
+  appliedStatus = ref(status.value),
   {
     data,
     loading,
     error: loadError,
     reload
-  } = useResource(() => api.handoff.list(status.value || undefined))
-async function changeStatus() {
-  if (await reload()) appliedStatus.value = status.value
-  else status.value = appliedStatus.value
+  } = useResource(async () => {
+    const [tickets, statuses] = await Promise.all([
+      api.handoff.list(status.value || undefined),
+      api.handoff.statusOptions()
+    ])
+    return { ...tickets, statuses }
+  })
+const ticketStatusLabel = (value: string) =>
+  data.value?.statuses.find((option) => option.value === value)?.label ?? statusLabel(value)
+async function changeStatus(value = status.value) {
+  status.value = value
+  if (await reload()) {
+    appliedStatus.value = status.value
+    await router.replace({ query: { ...route.query, status: status.value } })
+  } else status.value = appliedStatus.value
 }
+watch(
+  () => route.query.status,
+  (value) => {
+    const next = typeof value === 'string' ? value : 'pending'
+    if (next !== status.value) {
+      status.value = next
+      void changeStatus()
+    }
+  }
+)
 onMounted(() => {
   reload()
   const ticket = typeof route.query?.ticket_id === 'string' ? route.query.ticket_id : ''
@@ -398,6 +453,12 @@ const { requestClose } = useDrawerClose({
     open.value = false
     pendingReply.value = undefined
     pendingAction.value = undefined
+    if (route.query.ticket_id || route.query.session_id) {
+      const query = { ...route.query }
+      delete query.ticket_id
+      delete query.session_id
+      void router.replace({ query })
+    }
   }
 })
 async function view(row: HandoffTicket) {
@@ -1004,6 +1065,22 @@ async function resolve() {
     if (resolution.value.length > 2000) throw Error('解决说明不能超过 2000 个字符')
     const ticket = detail.value!.ticket
     const owner = subject()
+    const identity = auth.identityVersion
+    if (
+      !(await confirm({
+        title: '结束工单处理',
+        confirmText: '标记已解决',
+        content: '标记后，此工单不再接受人工回复，解决说明与历史消息将保留。确认结束处理？'
+      }))
+    )
+      return
+    if (
+      disposed ||
+      subject() !== owner ||
+      auth.identityVersion !== identity ||
+      detail.value?.ticket.id !== ticket.id
+    )
+      return
     const action = await beginAction(ticket.id, 'resolve', ticket.revision, resolution.value)
     if (!action) return
     let receipt: HandoffActionReceipt

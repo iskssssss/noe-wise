@@ -37,6 +37,8 @@ public class HandoffApplicationService {
     }
     public List<HumanHandoffTicketDO> list(long tenant, String status) {
         access.require("foundation.handoff.read"); requireSubject(tenant, null);
+        if(status!=null&&!status.isBlank()&&HandoffTicketStatus.fromCode(status)==null)
+            throw error(HttpStatus.UNPROCESSABLE_ENTITY,"工单状态无效，请从状态选项中选择");
         var query=new LambdaQueryWrapper<HumanHandoffTicketDO>().eq(HumanHandoffTicketDO::getTenantId,tenant)
                 .orderByDesc(HumanHandoffTicketDO::getCreatedAt);
         var visible=access.visibleSessionIds(access.currentSubject(),"read");

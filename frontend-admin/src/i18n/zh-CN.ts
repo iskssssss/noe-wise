@@ -75,7 +75,7 @@ export const adminZhCN = {
     dashboard: '数据看板',
     billing: '用量流水',
     governance: '治理中心',
-    handoff: '转人工'
+    handoff: '人工接管'
   },
   route: {
     home: '机构概览',
@@ -96,7 +96,7 @@ export const adminZhCN = {
     dashboard: '数据看板',
     billing: '用量流水',
     governance: '治理中心',
-    handoff: '转人工',
+    handoff: '人工接管',
     marketplace: '工作流市场',
     chat: '智能体测试',
     sessionTrace: '会话执行轨迹',

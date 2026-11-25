@@ -1865,6 +1865,7 @@ export const api = {
   },
 
   handoff: {
+    statusOptions: () => get<{ value: string; label: string }[]>('/handoff/tickets/status-options'),
     list: (status?: string) =>
       get<{ total: number; items: HandoffTicket[] }>(
         `/handoff/tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`

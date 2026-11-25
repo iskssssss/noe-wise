@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   session: 'test-session',
   permissions: ['foundation.handoff.read', 'foundation.handoff.update'],
   handoffList: vi.fn(),
+  handoffStatusOptions: vi.fn(),
   handoffDetail: vi.fn(),
   accept: vi.fn(),
   resolve: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('../../api', () => ({
   api: {
     handoff: {
       list: mocks.handoffList,
+      statusOptions: mocks.handoffStatusOptions,
       detail: mocks.handoffDetail,
       accept: mocks.accept,
       resolve: mocks.resolve,
@@ -61,6 +63,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: mocks.push,
     replace: ({ query }: { query: Record<string, string> }) => {
+      Object.keys(mocks.routeQuery).forEach((key) => delete mocks.routeQuery[key])
       Object.assign(mocks.routeQuery, query)
       return Promise.resolve()
     }
@@ -103,6 +106,13 @@ beforeEach(() => {
   mocks.session = 'test-session'
   mocks.permissions = ['foundation.handoff.read', 'foundation.handoff.update']
   mocks.handoffList.mockResolvedValue({ items: [ticket] })
+  mocks.confirm.mockResolvedValue(true)
+  mocks.handoffStatusOptions.mockResolvedValue([
+    { value: 'pending', label: '待处理' },
+    { value: 'assigned', label: '已接管' },
+    { value: 'resolved', label: '已解决' },
+    { value: 'closed', label: '已关闭' }
+  ])
   mocks.handoffDetail.mockResolvedValue({
     ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
     messages: [],
@@ -144,6 +154,52 @@ function render(component: typeof HandoffPage) {
 }
 
 describe('机构日常任务简化', () => {
+  it('工单筛选从路由恢复，清空后保留原工单链接并支持浏览器返回', async () => {
+    mocks.routeQuery.status = 'closed'
+    mocks.routeQuery.ticket_id = 'ticket-1'
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    expect(mocks.handoffList).toHaveBeenLastCalledWith('closed')
+    expect(wrapper.getComponent(ElSelect).props('modelValue')).toBe('closed')
+    const select = wrapper.getComponent(ElSelect)
+    select.vm.$emit('update:modelValue', '')
+    select.vm.$emit('change', '')
+    await flushPromises()
+    expect(mocks.routeQuery).toMatchObject({ status: '', ticket_id: 'ticket-1' })
+    expect(mocks.handoffList).toHaveBeenLastCalledWith(undefined)
+    mocks.routeQuery.status = 'resolved'
+    await flushPromises()
+    expect(mocks.handoffList).toHaveBeenLastCalledWith('resolved')
+    await button(wrapper, '关闭').trigger('click')
+    await flushPromises()
+    expect(mocks.routeQuery).toEqual({ status: 'resolved' })
+  })
+  it('结束处理取消不发送命令，保留说明；确认后展示持久解决说明', async () => {
+    const wrapper = render(HandoffPage)
+    await flushPromises()
+    await button(wrapper, '查看工单').trigger('click')
+    await flushPromises()
+    const note = wrapper
+      .findAllComponents(ElInput)
+      .filter((item) => item.props('type') === 'textarea')[1]!
+    note.vm.$emit('update:modelValue', '已核对回复')
+    mocks.confirm.mockResolvedValueOnce(false)
+    await button(wrapper, '标记已解决').trigger('click')
+    await flushPromises()
+    expect(mocks.resolve).not.toHaveBeenCalled()
+    expect(note.props('modelValue')).toBe('已核对回复')
+    mocks.handoffDetail.mockResolvedValueOnce({
+      ticket: { ...ticket, status: 'resolved', resolution_note: '已核对回复', revision: 4 },
+      messages: [],
+      replies: [],
+      has_more: false
+    })
+    await button(wrapper, '标记已解决').trigger('click')
+    await flushPromises()
+    expect(mocks.resolve).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('已核对回复')
+    expect(document.body.textContent).toContain('此工单已结束')
+  })
   it('手动刷新覆盖在途自动读取，旧结果不能回写', async () => {
     const current = {
       ticket: { ...ticket, status: 'assigned', assigned_to: 'member', revision: 3 },
@@ -729,7 +785,7 @@ describe('机构日常任务简化', () => {
       .vm.$emit('update:modelValue', '原解决说明')
     await flushPromises()
     await button(first, '标记已解决').trigger('click')
-    await flushPromises()
+    await vi.waitFor(() => expect(mocks.resolve).toHaveBeenCalledTimes(1))
     const command = mocks.resolve.mock.calls[0]![2]
     const key = `skillforge.handoff-action.${JSON.stringify(['tenant', 'member'])}`
     expect(sessionStorage.getItem(key)).not.toContain('原解决说明')

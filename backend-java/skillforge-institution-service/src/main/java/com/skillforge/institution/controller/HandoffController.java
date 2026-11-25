@@ -52,6 +52,19 @@ public class HandoffController {
 
     /** 审计员可读取当前租户工单，但不能执行状态写入。 */
     @RequirePermission("foundation.handoff.read")
+    @GetMapping("/tickets/status-options")
+    public ApiResponse<List<StatusOption>> statusOptions() {
+        return ApiResponses.wrap(java.util.Arrays.stream(HandoffTicketStatus.values())
+                .map(status -> new StatusOption(status.code(), switch (status) {
+                    case PENDING -> "待处理";
+                    case ASSIGNED -> "已接管";
+                    case RESOLVED -> "已解决";
+                    case CLOSED -> "已关闭";
+                })).toList());
+    }
+    public record StatusOption(String value, String label) { }
+
+    @RequirePermission("foundation.handoff.read")
     @GetMapping("/tickets")
     public ApiResponse<HandoffTicketListResponse> list(@RequestParam(defaultValue = "") String status) {
         long tenantId = tenantId();
@@ -120,7 +133,7 @@ public class HandoffController {
             context=history.messages().stream().filter(m->java.util.Set.of("user","assistant").contains(m.role()))
                     .map(m->new ContextMessage(m.messageId(),m.role(),redact(m.content()),m.createdAt(),
                             m.metadata()!=null&&"human_operator".equals(m.metadata().get("author_type"))
-                                    ? String.valueOf(m.metadata().get("author_display_name")):null)).toList();
+                                    ? (m.metadata().get("operator_name") instanceof String name ? name : "坐席"):null)).toList();
             next=history.nextBeforeMessageId();hasMore=history.hasMore();
         }
         return ApiResponses.wrap(new Detail(ticketItem(ticket),context,hasMore,next,replies.list(tenant,id)));
