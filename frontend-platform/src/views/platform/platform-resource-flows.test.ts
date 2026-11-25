@@ -82,7 +82,7 @@ vi.mock('../../stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRoute: () => ({ path: '/platform/models/new', params: {} }),
+  useRoute: () => ({ query: {}, path: '/platform/models/new', params: {} }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 

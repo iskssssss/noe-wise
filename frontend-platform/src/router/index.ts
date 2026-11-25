@@ -109,7 +109,7 @@ const router = createRouter({
         {
           path: 'models',
           component: () => import('../views/platform/ModelsPage.vue'),
-          meta: { title: '模型管理' }
+          meta: { title: '模型管理', preserveOnQueryChange: true }
         },
         {
           path: 'models/new',

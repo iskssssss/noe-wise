@@ -9,7 +9,7 @@ const route = vi.hoisted(() => ({ path: '/platform/models/existing' }))
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRoute: () => ({ path: route.path, params: { id: 'existing' } }),
+  useRoute: () => ({ query: {}, path: route.path, params: { id: 'existing' } }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 vi.mock('../../router', () => ({ default: {} }))

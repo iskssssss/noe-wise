@@ -45,7 +45,7 @@ vi.mock('@skillforge/shared/feedback', () => ({
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRoute: () => ({ path: mocks.path, params: { id: 'existing' } }),
+  useRoute: () => ({ query: {}, path: mocks.path, params: { id: 'existing' } }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 let wrapper: VueWrapper | undefined
@@ -343,7 +343,8 @@ it('逐项呈现保存配置的真实兼容报告，编辑后旧结果立即标�
   expect(result.text()).toContain('配置参数接受')
   expect(result.text()).toContain('结果未知')
   expect(result.text()).toContain('未执行')
-  expect(result.text()).toContain('stream_disconnected')
+  expect(result.text()).toContain('未识别诊断')
+  expect(result.text()).not.toContain('stream_disconnected')
   expect(result.text()).toContain('不代表推理效果或缓存命中已验证')
   field('名称').getComponent(ElInput).vm.$emit('update:modelValue', '修改配置')
   await flushPromises()

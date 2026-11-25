@@ -8,6 +8,8 @@ import com.skillforge.core.model.PlatformModelCatalogService;
 
 import com.skillforge.core.shared.web.ApiResponse;
 import com.skillforge.core.shared.web.ApiResponses;
+import com.skillforge.core.shared.exception.ApiException;
+import com.skillforge.runtime.adapter.model.provider.ModelProviderCatalog.ModelKind;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -19,6 +21,8 @@ import com.skillforge.platform.models.PlatformModelProbeService.Discovery;
 import com.skillforge.platform.models.PlatformModelProbeService.DiscoveryView;
 import com.skillforge.platform.models.PlatformModelProbeService.ProbeResult;
 import java.util.List;
+import java.util.Arrays;
+import java.util.Locale;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,6 +32,18 @@ import org.springframework.web.bind.annotation.*;
 public class PlatformModelController {
     private final PlatformModelCatalogService models;
     private final PlatformModelProbeService probes;
+    private static final ModelListOptions LIST_OPTIONS = new ModelListOptions(
+            Arrays.stream(ModelKind.values()).map(kind -> new FilterOption(kind.name(), switch (kind) {
+                case LLM -> "对话模型（LLM）";
+                case EMBEDDING -> "向量模型（Embedding）";
+                case RERANK -> "重排模型（Rerank）";
+                case IMAGE_GENERATION -> "图像生成与编辑";
+                case VIDEO_GENERATION -> "视频生成";
+                case SPEECH_RECOGNITION -> "语音识别";
+                case SPEECH_SYNTHESIS -> "语音合成";
+            })).toList(),
+            List.of(new FilterOption("true", "启用"), new FilterOption("false", "停用")),
+            List.of(new FilterOption("pending", "草稿待发布"), new FilterOption("published", "与发布一致")));
 
     public PlatformModelController(PlatformModelCatalogService models, PlatformModelProbeService probes) {
         this.models = models;
@@ -37,7 +53,37 @@ public class PlatformModelController {
     @GetMapping public ApiResponse<List<ModelView>> list() { return ApiResponses.wrap(models.list()); }
     @RequirePermission("foundation.models.read")
     @GetMapping("/summaries")
-    public ApiResponse<List<PlatformModelDirectorySummary>> summaries() { return ApiResponses.wrap(models.summaries()); }
+    public ApiResponse<List<PlatformModelDirectorySummary>> summaries(
+            @RequestParam(defaultValue = "") String search,
+            @RequestParam(defaultValue = "") String kind,
+            @RequestParam(defaultValue = "") String enabled,
+            @RequestParam(defaultValue = "") String publication) {
+        validateFilter(kind, LIST_OPTIONS.kinds(), "模型类型");
+        validateFilter(enabled, LIST_OPTIONS.statuses(), "模型状态");
+        validateFilter(publication, LIST_OPTIONS.publications(), "发布进度");
+        String term = search.trim().toLowerCase(Locale.ROOT);
+        return ApiResponses.wrap(models.summaries().stream().filter(model ->
+                (kind.isEmpty() || kind.equals(model.kind()))
+                && (enabled.isEmpty() || enabled.equals(Boolean.toString(model.enabled())))
+                && (publication.isEmpty() || (publication.equals("pending") == model.hasUnpublishedChanges()))
+                && (model.name() + " " + model.modelId() + " " + model.providerId()).toLowerCase(Locale.ROOT).contains(term))
+                .toList());
+    }
+
+    @RequirePermission("foundation.models.read")
+    @GetMapping("/options")
+    public ApiResponse<ModelListOptions> options() { return ApiResponses.wrap(LIST_OPTIONS); }
+
+    private static void validateFilter(String value, List<FilterOption> options, String label) {
+        if (!value.isEmpty() && options.stream().noneMatch(option -> option.value().equals(value))) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "model_filter_invalid",
+                    label + "无效，请重新选择或重置后查询", false);
+        }
+    }
+
+    public record FilterOption(String value, String label) {}
+    public record ModelListOptions(List<FilterOption> kinds, List<FilterOption> statuses,
+            List<FilterOption> publications) {}
     /** 详情页独立加载安全投影，不暴露凭据。 */
     @RequirePermission("foundation.models.read")
     @GetMapping("/detail")

@@ -34,7 +34,7 @@ vi.mock('@skillforge/shared/feedback', () => ({
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRoute: () => ({ path: mocks.path, params: { id: 'existing' } }),
+  useRoute: () => ({ query: {}, path: mocks.path, params: { id: 'existing' } }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 

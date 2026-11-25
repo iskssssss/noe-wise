@@ -51,6 +51,12 @@ const route = useRoute(),
   router = useRouter(),
   isNew = route.path.endsWith('/new')
 const auth = useAuthStore()
+const listContext = computed(() => ({
+  list_search: route.query.list_search,
+  list_kind: route.query.list_kind,
+  list_enabled: route.query.list_enabled,
+  list_publication: route.query.list_publication
+}))
 const actor = computed(() => auth.user?.sub ?? '')
 const createStorageKey = (subject: string) => `skillforge.model-create:${subject}`
 const pendingCreate = ref<{ requestId: string; name: string }>()
@@ -818,7 +824,10 @@ function save(continueToPublish = false) {
 async function navigateCreated(id: string) {
   committedNavigation.value = true
   try {
-    const failure = await router.replace('/platform/models/' + encodeURIComponent(id))
+    const failure = await router.replace({
+      path: '/platform/models/' + encodeURIComponent(id),
+      query: listContext.value
+    })
     if (failure) message.warning('模型已保存，详情导航失败，可从模型列表重新进入。')
   } catch {
     message.warning('模型已保存，详情导航失败，可从模型列表重新进入。')
@@ -1123,7 +1132,7 @@ const formTipId = useId()
     description="保存更新工作草稿；发布后新执行采用当前配置，进行中的执行保持原版本"
   >
     <template #extra>
-      <RouterLink to="/platform/models">
+      <RouterLink :to="{ path: '/platform/models', query: listContext }">
         <ElButton>返回列表</ElButton>
       </RouterLink>
       <ElTag v-if="dirty" type="warning">未保存</ElTag

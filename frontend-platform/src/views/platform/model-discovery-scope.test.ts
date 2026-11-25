@@ -33,7 +33,11 @@ vi.mock('@skillforge/shared/feedback', () => ({
   showMessage: vi.fn(() => vi.fn()),
   message: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), info: vi.fn() }
 }))
-const route = vi.hoisted(() => ({ path: '/platform/models/model-1', params: { id: 'model-1' } }))
+const route = vi.hoisted(() => ({
+  path: '/platform/models/model-1',
+  params: { id: 'model-1' },
+  query: { list_search: '巡检', list_enabled: 'false' }
+}))
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
@@ -507,7 +511,15 @@ it.each(['publish', 'cancel', 'publish-failure', 'create-failure', 'unknown-reco
       await check().trigger('click')
       await flushPromises()
       expect(calls.createReceipt).toHaveBeenCalledTimes(2)
-      expect(calls.replace).toHaveBeenCalledExactlyOnceWith('/platform/models/new-model')
+      expect(calls.replace).toHaveBeenCalledExactlyOnceWith({
+        path: '/platform/models/new-model',
+        query: {
+          list_search: '巡检',
+          list_enabled: 'false',
+          list_kind: undefined,
+          list_publication: undefined
+        }
+      })
       expect(sessionStorage.getItem('skillforge.model-create:actor')).toBeNull()
       expect(calls.publish).not.toHaveBeenCalled()
       return
@@ -518,7 +530,16 @@ it.each(['publish', 'cancel', 'publish-failure', 'create-failure', 'unknown-reco
     if (outcome === 'publish' || outcome === 'publish-failure')
       expect(calls.publish).toHaveBeenCalledWith('new-model', 1)
     if (outcome === 'create-failure') expect(calls.replace).not.toHaveBeenCalled()
-    else expect(calls.replace).toHaveBeenCalledExactlyOnceWith('/platform/models/new-model')
+    else
+      expect(calls.replace).toHaveBeenCalledExactlyOnceWith({
+        path: '/platform/models/new-model',
+        query: {
+          list_search: '巡检',
+          list_enabled: 'false',
+          list_kind: undefined,
+          list_publication: undefined
+        }
+      })
     expect(calls.update).not.toHaveBeenCalled()
   }
 )

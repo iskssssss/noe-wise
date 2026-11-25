@@ -16,8 +16,16 @@ import { api } from './index'
 
 it('keeps model summaries separate from full configuration reads', () => {
   const options = { signal: new AbortController().signal }
-  api.admin.models.summaries(options)
-  expect(http.get).toHaveBeenLastCalledWith('/admin/models/summaries', options)
+  api.admin.models.summaries(
+    { search: '名称 & model', kind: 'LLM', enabled: 'false', publication: 'pending' },
+    options
+  )
+  expect(http.get).toHaveBeenLastCalledWith(
+    '/admin/models/summaries?search=%E5%90%8D%E7%A7%B0+%26+model&kind=LLM&enabled=false&publication=pending',
+    options
+  )
+  api.admin.models.options(options)
+  expect(http.get).toHaveBeenLastCalledWith('/admin/models/options', options)
   api.admin.models.list(options)
   expect(http.get).toHaveBeenLastCalledWith('/admin/models', options)
   api.admin.models.detail('9007199254740993', options)

@@ -6,6 +6,7 @@ import com.skillforge.core.model.ModelWrite;
 import com.skillforge.core.model.PlatformModelCatalogService;
 import com.skillforge.platform.models.PlatformModelProbeService;
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -17,6 +18,47 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class PlatformModelControllerTest {
+    @Test void listOptionsAndFiltersShareValidatedValuesWithoutProbingModels() throws Exception {
+        var models = mock(PlatformModelCatalogService.class);
+        var probes = mock(PlatformModelProbeService.class);
+        var access = mock(com.skillforge.core.foundation.access.FoundationAccess.class);
+        var json = new ObjectMapper().findAndRegisterModules().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        var mvc = MockMvcBuilders.standaloneSetup(new PlatformModelController(models, probes))
+                .addInterceptors(new com.skillforge.core.foundation.access.FoundationPermissionInterceptor(access))
+                .setControllerAdvice(new com.skillforge.platform.exception.GlobalExceptionHandler(json))
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
+        var response = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/models/options"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var options = json.readTree(response).path("data");
+        assertEquals(com.skillforge.runtime.adapter.model.provider.ModelProviderCatalog.ModelKind.values().length, options.path("kinds").size());
+        assertEquals("false", options.path("statuses").get(1).path("value").textValue());
+        assertEquals("pending", options.path("publications").get(0).path("value").textValue());
+        verify(access).require("foundation.models.read");
+        for (var pair : List.of(new String[]{"kind", "unknown"}, new String[]{"enabled", "yes"}, new String[]{"publication", "draft"})) {
+            var rejected = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/models/summaries").param(pair[0], pair[1]))
+                    .andExpect(status().isUnprocessableEntity()).andReturn().getResponse().getContentAsString();
+            assertEquals("model_filter_invalid", json.readTree(rejected).path("code").textValue());
+        }
+        verifyNoInteractions(models, probes);
+        when(models.summaries()).thenReturn(List.of(
+                new com.skillforge.core.model.PlatformModelDirectorySummary("1", "业务模型", "LLM", "provider-a", "MODEL-A", false, null, true),
+                new com.skillforge.core.model.PlatformModelDirectorySummary("2", "向量模型", "EMBEDDING", "provider-b", "embed-b", true, 2L, false)));
+        var filtered = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/models/summaries")
+                        .param("search", " model-a ").param("kind", "LLM").param("enabled", "false").param("publication", "pending"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertEquals(1, json.readTree(filtered).path("data").size());
+        assertEquals("1", json.readTree(filtered).path("data").get(0).path("id").textValue());
+        var published = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/models/summaries").param("publication", "published"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertEquals("2", json.readTree(published).path("data").get(0).path("id").textValue());
+        clearInvocations(models);
+        doThrow(new com.skillforge.core.shared.exception.ApiException(org.springframework.http.HttpStatus.FORBIDDEN, "禁止访问"))
+                .when(access).require("foundation.models.read");
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/models/options"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(models, probes);
+    }
+
     @Test void summaryHttpProjectsEightFieldsAndEnforcesReadPermission() throws Exception {
         var models = mock(PlatformModelCatalogService.class);
         var access = mock(com.skillforge.core.foundation.access.FoundationAccess.class);

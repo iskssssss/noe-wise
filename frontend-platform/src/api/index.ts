@@ -358,7 +358,18 @@ export interface ModelCompatibilityReport {
   duration_ms: number
   reason_code: string | null
 }
-/** 模型目录只包含展示和本地筛选所需元数据。 */
+export interface ModelListFilters {
+  search: string
+  kind: string
+  enabled: string
+  publication: string
+}
+export interface ModelListOptions {
+  kinds: Array<{ value: ModelKind; label: string }>
+  statuses: Array<{ value: string; label: string }>
+  publications: Array<{ value: string; label: string }>
+}
+/** 模型目录只包含列表展示所需元数据。 */
 export interface ModelSummary {
   id: string
   name: string
@@ -697,7 +708,9 @@ export const api = {
       },
       publish: (id: string, expectedRevision: number) =>
         post<ModelView>('/admin/models/publish', { id, expected_revision: expectedRevision }),
-      summaries: (opts?: RequestOptions) => get<ModelSummary[]>('/admin/models/summaries', opts),
+      summaries: (filters: ModelListFilters, opts?: RequestOptions) =>
+        get<ModelSummary[]>(`/admin/models/summaries?${new URLSearchParams({ ...filters })}`, opts),
+      options: (opts?: RequestOptions) => get<ModelListOptions>('/admin/models/options', opts),
       list: (opts?: RequestOptions) => get<ModelView[]>('/admin/models', opts),
       detail: (id: string, opts?: RequestOptions) =>
         get<ModelView>(`/admin/models/detail?id=${encodeURIComponent(id)}`, opts),
