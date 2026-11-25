@@ -30,7 +30,12 @@ import type {
   TransferSubmission
 } from './contracts'
 
-const props = defineProps<{ request: FoundationRequest; apiBase: string; permissions: string[] }>()
+const props = defineProps<{
+  request: FoundationRequest
+  apiBase: string
+  permissions: string[]
+  catalogHref: string
+}>()
 const page = ref(1)
 const formTipId = useId()
 const pageSize = useFoundationPageSize()
@@ -166,7 +171,8 @@ function options(): Record<string, string> {
   const value: Record<string, string> = {}
   for (const field of currentHandler.value?.option_fields ?? []) {
     const input = optionValues[field.code] ?? ''
-    if (field.required && !input.trim()) throw new Error(`请填写${field.label}`)
+    if (field.required && !input.trim())
+      throw new Error(field.code === 'dictionary_code' ? '请选择字典' : `请填写${field.label}`)
     if (input || field.required) value[field.code] = input
   }
   return value
@@ -460,10 +466,13 @@ onScopeDispose(() => {
         :label="field.label"
         :required="field.required"
         ><ElSelect
-          v-if="field.code === 'dictionary_code' && needsDictionary"
+          v-if="field.code === 'dictionary_code'"
           v-model="optionValues[field.code]"
+          v-described-by="formTipId + '-dictionary'"
           filterable
-          :disabled="action.busy.value || submitted || !!pendingSubmission"
+          :loading="dictionaries.loading.value"
+          :disabled="!needsDictionary || action.busy.value || submitted || !!pendingSubmission"
+          :no-data-text="dictionaries.error.value ? '字典尚未读取成功' : '当前没有字典'"
           placeholder="选择字典"
         >
           <ElOption
@@ -478,16 +487,44 @@ onScopeDispose(() => {
           v-model="optionValues[field.code]"
           :disabled="action.busy.value || submitted || !!pendingSubmission"
           :placeholder="field.hint"
-      /></ElFormItem>
+        />
+        <FieldTip v-if="field.code === 'dictionary_code'" :id="formTipId + '-dictionary'">
+          <span v-if="!needsDictionary">当前账号没有字典读取权限，请联系管理员。</span>
+          <span v-else-if="dictionaries.loading.value" role="status">正在读取字典…</span>
+          <span v-else-if="dictionaries.error.value">字典尚未读取成功，请重试读取字典。</span>
+          <span v-else-if="dictionaries.data.value?.length === 0">
+            当前还没有字典。
+            {{
+              permissions.includes('foundation.dictionary.manage')
+                ? '请先新建字典，完成后返回此页刷新字典选项。'
+                : '请联系管理员创建字典，再刷新字典选项。'
+            }}
+          </span>
+          <span v-else>选择要导入或导出的字典；新建后可刷新字典选项。</span>
+        </FieldTip>
+      </ElFormItem>
+      <div v-if="needsDictionary && !submitted && !pendingSubmission" class="actions">
+        <ElLink
+          v-if="permissions.includes('foundation.dictionary.manage')"
+          :href="catalogHref"
+          target="_blank"
+          rel="noopener"
+          type="primary"
+          >管理字典（新标签页）</ElLink
+        >
+        <ElButton
+          :loading="dictionaries.loading.value"
+          :disabled="action.busy.value"
+          @click="dictionaries.reload()"
+          >{{ dictionaries.error.value ? '重试读取字典' : '刷新字典选项' }}</ElButton
+        >
+      </div>
       <FeedbackNotice
         v-if="needsDictionary && dictionaries.error.value"
         :title="dictionaries.error.value"
         type="error"
         :closable="false"
       />
-      <ElButton v-if="needsDictionary && dictionaries.error.value" @click="dictionaries.reload()"
-        >重试读取字典</ElButton
-      >
       <div v-if="currentHandler && operation === 'import'" class="actions">
         <ElButton @click="downloadTemplate">下载空白模板</ElButton
         ><span class="muted">{{ currentHandler.columns.length }} 列，按模板填写后上传</span>

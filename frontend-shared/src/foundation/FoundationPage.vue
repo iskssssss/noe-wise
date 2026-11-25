@@ -101,6 +101,7 @@ watch(
           v-if="assetTab === 'jobs'"
           :request="request"
           :api-base="`${base}/foundation`"
+          :catalog-href="`${platform ? '/platform' : '/admin'}/foundation/catalog?tab=dictionaries`"
           :permissions="permissions"
       /></ElTabPane>
     </ElTabs>

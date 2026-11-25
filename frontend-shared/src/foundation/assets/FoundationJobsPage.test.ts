@@ -73,6 +73,7 @@ async function render(
     props: {
       request,
       apiBase: '/tenant/foundation',
+      catalogHref: '/admin/foundation/catalog?tab=dictionaries',
       permissions: allowed
     },
     attachTo: document.body,
@@ -87,6 +88,83 @@ function button(wrapper: VueWrapper, label: string) {
 }
 
 describe('复杂导入导出任务状态和隔离', () => {
+  it('字典首读、失败和空态区分，创建入口保留原任务并可刷新选择', async () => {
+    let resolve!: (value: unknown) => void
+    let reject!: (reason: Error) => void
+    let read = new Promise<unknown>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    const request = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/handlers'))
+        return [
+          {
+            ...handlers[0]!,
+            code: 'dictionary_values',
+            option_fields: [{ code: 'dictionary_code', label: '字典', required: true }]
+          }
+        ]
+      if (path.endsWith('/catalog/dictionaries')) return read
+      return pageResult(path)
+    }) as FoundationRequest
+    const wrapper = await render(request, [
+      'foundation.jobs.read',
+      'foundation.jobs.create',
+      'foundation.dictionary.read',
+      'foundation.dictionary.manage'
+    ])
+    wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'dictionary_values')
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在读取字典')
+    expect(wrapper.text()).not.toContain('当前还没有字典')
+    reject(new Error('读取暂时失败'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('字典尚未读取成功')
+    expect(wrapper.text()).not.toContain('当前还没有字典')
+    read = Promise.resolve([])
+    await button(wrapper, '重试读取字典').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前还没有字典')
+    const link = wrapper.get('a')
+    expect(link.attributes('href')).toBe('/admin/foundation/catalog?tab=dictionaries')
+    expect(link.attributes('target')).toBe('_blank')
+    read = new Promise((yes) => {
+      resolve = yes
+    })
+    await button(wrapper, '刷新字典选项').trigger('click')
+    resolve([{ code: 'new_dictionary', name: '新建字典', enabled: true }])
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('当前还没有字典')
+    expect(
+      wrapper
+        .findAllComponents(ElSelect)[1]!
+        .findAllComponents({ name: 'ElOption' })
+        .map((item) => item.props('value'))
+    ).toEqual(['new_dictionary'])
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    await wrapper.setProps({
+      permissions: ['foundation.jobs.read', 'foundation.jobs.create', 'foundation.dictionary.read']
+    })
+    await flushPromises()
+    read = Promise.resolve([])
+    wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'dictionary_values')
+    await flushPromises()
+    expect(wrapper.find('a').exists()).toBe(false)
+    expect(wrapper.text()).toContain('请联系管理员创建字典')
+    await wrapper.setProps({ permissions: ['foundation.jobs.read', 'foundation.jobs.create'] })
+    await flushPromises()
+    const dictionaryReads = vi
+      .mocked(request)
+      .mock.calls.filter(([, path]) => path.endsWith('/catalog/dictionaries')).length
+    wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'dictionary_values')
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前账号没有字典读取权限')
+    expect(wrapper.findAllComponents(ElSelect)[1]!.props('disabled')).toBe(true)
+    expect(wrapper.findComponent({ name: 'ElInput' }).exists()).toBe(false)
+    expect(
+      vi.mocked(request).mock.calls.filter(([, path]) => path.endsWith('/catalog/dictionaries'))
+    ).toHaveLength(dictionaryReads)
+  })
   it('已到期结果保留任务事实和下一步，不再显示可下载入口', async () => {
     const expired = { ...jobs[0]!, expires_at: '2000-01-01T00:00:00Z' }
     const request: FoundationRequest = async <T>(_method: string, path: string) => {
