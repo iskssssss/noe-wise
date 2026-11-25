@@ -44,12 +44,15 @@
       </ElCollapseItem>
     </ElCollapse>
     <div class="admin-toolbar admin-filters">
+      <label :for="formTipId + '-search'">搜索团队</label>
       <ElInput
+        :id="formTipId + '-search'"
         v-model="query"
         clearable
         aria-label="搜索团队"
         placeholder="搜索团队名称、职责或成员"
       />
+      <ElButton v-if="query" @click="query = ''">清空搜索</ElButton>
       <ElButton :loading="loading" :disabled="locked" @click="refreshList">刷新</ElButton>
       <span v-if="data" class="admin-muted" role="status">{{ filtered.length }} 个团队</span>
     </div>
@@ -307,7 +310,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { onMounted, onScopeDispose, ref, shallowRef, reactive, computed, watch, useId } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { FormInstance } from 'element-plus'
@@ -334,6 +337,7 @@ const {
 } = useResource(() => api.teams.list())
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 const can = (permission: string) => auth.user?.permissions.includes(permission) === true
 const owner = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
@@ -438,7 +442,12 @@ watch(
   },
   { flush: 'sync', immediate: true }
 )
-const query = ref('')
+const query = computed({
+  get: () => (typeof route.query.q === 'string' ? route.query.q : ''),
+  set: (value: string) => {
+    void router.replace({ query: { ...route.query, q: value || undefined } })
+  }
+})
 const filtered = computed(() =>
   (data.value ?? []).filter((item) => {
     const keyword = query.value.trim().toLowerCase()

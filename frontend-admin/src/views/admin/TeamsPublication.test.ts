@@ -52,8 +52,16 @@ vi.mock('../../api', () => ({
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRouter: () => ({ push: mocks.push })
+  useRoute: () => routeState,
+  useRouter: () => ({
+    push: mocks.push,
+    replace: ({ query }: { query: Record<string, string | undefined> }) => {
+      routeState.query = query
+      return Promise.resolve()
+    }
+  })
 }))
+const routeState = reactive({ query: {} as Record<string, string | undefined> })
 const authState = reactive({
   identityVersion: 1,
   user: { tenant_id: 'tenant', sub: 'user', permissions: [] as string[] }
@@ -82,6 +90,7 @@ const team = {
 let wrapper: VueWrapper
 beforeEach(() => {
   vi.resetAllMocks()
+  routeState.query = {}
   sessionStorage.clear()
   mocks.tenant = 'tenant'
   mocks.member = 'user'

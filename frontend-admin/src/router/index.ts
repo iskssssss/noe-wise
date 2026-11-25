@@ -150,7 +150,7 @@ const router = createRouter({
         {
           path: 'teams',
           component: () => import('../views/admin/TeamsPage.vue'),
-          meta: { title: adminZhCN.route.teams }
+          meta: { title: adminZhCN.route.teams, preserveOnQueryChange: true }
         },
         {
           path: 'agents/:id',
