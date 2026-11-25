@@ -6,7 +6,7 @@ import type {
 } from './types'
 import { statusLabel } from '../admin/presentation'
 
-/** 公开回复包含失败说明，记录完成不代表执行成功。 */
+/** 公开回复状态表示回复的记录情况，不代表执行结果。 */
 export function observationAnswerStatus(value?: string | null): string {
   const labels: Record<string, string> = {
     COMPLETED: '已记录回复',
