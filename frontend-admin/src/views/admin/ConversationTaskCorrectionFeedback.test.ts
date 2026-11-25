@@ -27,6 +27,7 @@ vi.mock('../../stores/auth', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { sessionId: 'session-1' } }),
+  useRouter: () => ({ replace: vi.fn().mockResolvedValue(undefined) }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))

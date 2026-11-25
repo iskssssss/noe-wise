@@ -119,7 +119,7 @@ vi.mock('vue-router', () => ({
     params: { id: 'kb-1', definitionId: '2' },
     query: { sessionId: 'session-1' }
   }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn().mockResolvedValue(undefined) }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))

@@ -82,8 +82,12 @@
       :data="currentSession ? (data?.items ?? []) : []"
       v-loading="loading"
       :empty-text="
-        !currentSession && loadError
-          ? '任务尚未读取成功，请重新查询'
+        !currentSession
+          ? loading || busy
+            ? '正在读取任务…'
+            : loadError
+              ? '任务尚未读取成功，请重新查询'
+              : '任务尚未读取，请查询'
           : appliedQuery
             ? '当前条件没有匹配任务'
             : appliedIncludeClosed
@@ -141,7 +145,23 @@
           ></template
         ></ElTableColumn
       ></ElTable
-    ><ElPagination
+    >
+    <div
+      v-if="currentSession && !data?.items.length && !loading && !loadError"
+      class="admin-toolbar"
+    >
+      <ElButton v-if="appliedQuery" :disabled="busy || open || !!pending" @click="clearQuery"
+        >清空任务关键词</ElButton
+      >
+      <ElButton
+        v-else-if="!appliedIncludeClosed"
+        :disabled="busy || open || !!pending"
+        @click="showHistory"
+        >查看已结束任务</ElButton
+      >
+      <span v-else class="admin-field-help">此会话尚无任务记录，可选择其他会话查看。</span>
+    </div>
+    <ElPagination
       v-if="sessionId"
       layout="prev,next"
       :current-page="offset / 30 + 1"
@@ -209,7 +229,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import {
   AdminPage,
   useResource,
@@ -222,6 +242,7 @@ import { useAuthStore } from '../../stores/auth'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { ConversationTask, TaskOperation } from '../../api/conversationTasks'
 const route = useRoute(),
+  router = useRouter(),
   sessionId = ref(String(route.query.sessionId ?? '')),
   sessions = ref<Awaited<ReturnType<typeof api.chat.sessions>>>([]),
   query = ref(''),
@@ -254,14 +275,80 @@ function requireCurrentSession() {
   if (refreshRequired.value) throw Error('请先刷新当前任务，再执行操作')
 }
 onMounted(async () => {
+  restoreLocation()
   const selectedAutomatically = await loadSessions()
-  if (sessionId.value && !selectedAutomatically) await reload()
+  if (sessionId.value && !selectedAutomatically && (await reload())) await rememberLocation()
   if (active && pending.value) checkReceipt()
 })
 const { busy, error, run } = useTask()
 const auth = useAuthStore()
 const owner = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
+)
+
+const queryKeys = ['sessionId', 'task_query', 'task_closed', 'task_page'] as const
+function readLocation(value: LocationQuery) {
+  const page = Number(value.task_page)
+  const pageOffset = (page - 1) * 30
+  return {
+    sessionId: typeof value.sessionId === 'string' ? value.sessionId : '',
+    query: typeof value.task_query === 'string' ? value.task_query : '',
+    closed: value.task_closed === 'true',
+    offset:
+      Number.isSafeInteger(page) && page > 0 && Number.isSafeInteger(pageOffset) ? pageOffset : 0
+  }
+}
+const queryStorageKey = () => `skillforge.task-query.${owner.value}`
+function restoreLocation() {
+  if (pending.value) return
+  let location = readLocation(route.query)
+  if (!queryKeys.some((key) => route.query[key] !== undefined) && owner.value) {
+    try {
+      const saved = sessionStorage.getItem(queryStorageKey())
+      if (saved) location = readLocation(Object.fromEntries(new URLSearchParams(saved)))
+    } catch {
+      message.warning('无法恢复上次任务查询，请重新选择会话。')
+    }
+  }
+  sessionId.value = location.sessionId
+  query.value = appliedQuery.value = location.query
+  includeClosed.value = appliedIncludeClosed.value = location.closed
+  offset.value = location.offset
+}
+async function rememberLocation() {
+  if (!active || !owner.value || !currentSession.value || !sessionId.value || pending.value) return
+  const location = {
+    sessionId: sessionId.value,
+    task_query: appliedQuery.value,
+    task_closed: String(appliedIncludeClosed.value),
+    task_page: String(offset.value / 30 + 1)
+  }
+  try {
+    sessionStorage.setItem(queryStorageKey(), new URLSearchParams(location).toString())
+  } catch {
+    message.warning('无法保留菜单返回位置，可使用当前地址恢复任务查询。')
+  }
+  await router.replace({ query: { ...route.query, ...location } })
+}
+watch(
+  () => queryKeys.map((key) => route.query[key]),
+  async () => {
+    if (!active || pending.value || busy.value || open.value) return
+    const location = readLocation(route.query)
+    if (
+      location.sessionId === sessionId.value &&
+      location.query === appliedQuery.value &&
+      location.closed === appliedIncludeClosed.value &&
+      location.offset === offset.value
+    )
+      return
+    invalidate()
+    sessionId.value = location.sessionId
+    query.value = appliedQuery.value = location.query
+    includeClosed.value = appliedIncludeClosed.value = location.closed
+    offset.value = location.offset
+    if (sessionId.value && (await reload())) await rememberLocation()
+  }
 )
 type PendingTaskOperation = { sessionId: string; taskId: string; operationId: string }
 const pending = ref<PendingTaskOperation>()
@@ -568,7 +655,18 @@ async function search() {
     appliedQuery.value = previousQuery
     appliedIncludeClosed.value = previousIncludeClosed
     offset.value = previousOffset
-  } else if (currentSession.value) refreshRequired.value = false
+  } else if (active && currentSession.value) {
+    refreshRequired.value = false
+    await rememberLocation()
+  }
+}
+async function clearQuery() {
+  query.value = ''
+  await search()
+}
+async function showHistory() {
+  includeClosed.value = true
+  await search()
 }
 async function changePage(page: number) {
   if (
@@ -591,6 +689,7 @@ async function changePage(page: number) {
     return
   offset.value = next
   if ((await reload()) === undefined) offset.value = previous
+  else await rememberLocation()
 }
 watch(
   owner,

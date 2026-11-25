@@ -114,7 +114,7 @@ const router = createRouter({
         {
           path: 'conversation-tasks',
           component: () => import('../views/admin/ConversationTasksPage.vue'),
-          meta: { title: '任务进展' }
+          meta: { title: '任务进展', preserveOnQueryChange: true }
         },
         {
           path: 'workflows',

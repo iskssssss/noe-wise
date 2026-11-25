@@ -34,6 +34,7 @@ vi.mock('../../stores/auth', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: calls.routeQuery }),
+  useRouter: () => ({ replace: vi.fn().mockResolvedValue(undefined) }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))
