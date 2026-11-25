@@ -15,6 +15,11 @@ export interface ConversationTask {
 }
 export type TaskOperation = 'correct' | 'complete' | 'cancel' | 'reopen'
 
+export interface ConversationTaskDetail extends ConversationTask {
+  facts: Record<string, { value: string; confirmed: boolean }>
+  pending: string[]
+}
+
 /** HTTP DTO 使用宿主的蛇形字段；页面模型统一在边界转换。 */
 export interface ConversationTaskWire extends Omit<
   ConversationTask,
@@ -60,10 +65,42 @@ export function createConversationTaskApi(http: {
           `${root}/list?${params(sessionId, { query, include_closed: String(includeClosed), offset: String(offset), limit: '30' })}`
         )
         .then((tasks) => tasks.map(fromWire)),
-    detail: (sessionId: string, taskId: string) =>
-      http
-        .get<ConversationTaskWire>(`${root}/detail?${params(sessionId, { task_id: taskId })}`)
-        .then(fromWire),
+    detail: async (
+      sessionId: string,
+      taskId: string,
+      options?: RequestOptions
+    ): Promise<ConversationTaskDetail> => {
+      const task = fromWire(
+        await http.get<ConversationTaskWire>(
+          `${root}/detail?${params(sessionId, { task_id: taskId })}`,
+          options
+        )
+      )
+      // 在读取边界解释持久状态，异常内容不能冒充“尚无事实”。
+      let state
+      try {
+        state = JSON.parse(task.state.canonicalJson) as Partial<
+          Pick<ConversationTaskDetail, 'facts' | 'pending'>
+        >
+      } catch {
+        throw new Error('任务记录格式异常，请联系管理员核对后重新读取')
+      }
+      if (!state || typeof state !== 'object' || Array.isArray(state))
+        throw new Error('任务记录格式异常，请联系管理员核对后重新读取')
+      const facts = state.facts ?? {},
+        pending = state.pending ?? []
+      if (
+        typeof facts !== 'object' ||
+        Array.isArray(facts) ||
+        Object.values(facts).some(
+          (fact) => !fact || typeof fact.value !== 'string' || typeof fact.confirmed !== 'boolean'
+        ) ||
+        !Array.isArray(pending) ||
+        pending.some((item) => typeof item !== 'string')
+      )
+        throw new Error('任务记录格式异常，请联系管理员核对后重新读取')
+      return { ...task, facts, pending }
+    },
     receipt: (sessionId: string, taskId: string, operationId: string) =>
       http
         .get<{ status: 'SUCCEEDED' | 'UNKNOWN'; task: ConversationTaskWire | null }>(

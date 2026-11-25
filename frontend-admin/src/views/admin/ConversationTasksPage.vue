@@ -1,8 +1,8 @@
 <template>
   <AdminPage title="任务进展" description="按会话查找任务，查看进展并更正记录。"
     ><FeedbackNotice
-      v-if="error || loadError"
-      :title="error || loadError"
+      v-if="error || loadError || detailError"
+      :title="error || loadError || detailError"
       :closable="false"
       type="error"
     />
@@ -94,13 +94,18 @@
               ? '此会话暂无任务'
               : '当前没有进行中的任务，可勾选“包含已结束任务”查看历史'
       "
+      ><ElTableColumn width="200" fixed="left" show-overflow-tooltip prop="title" label="任务"
+        ><template #default="{ row }"
+          ><ElButton
+            link
+            type="primary"
+            class="task-title"
+            :disabled="busy || loading || !!pending"
+            @click="viewTask(row as ConversationTask)"
+            >{{ row.title }}</ElButton
+          ></template
+        ></ElTableColumn
       ><ElTableColumn
-        width="200"
-        fixed="left"
-        show-overflow-tooltip
-        prop="title"
-        label="任务"
-      /><ElTableColumn
         min-width="280"
         show-overflow-tooltip
         prop="summary"
@@ -176,7 +181,9 @@
       @current-change="changePage"
     /><ElDrawer
       v-model="open"
-      :title="'纠正任务进展 · ' + (selected?.title ?? '')"
+      :title="
+        (correcting ? '纠正任务进展 · ' : '任务详情 · ') + (detail?.title ?? selected?.title ?? '')
+      "
       :before-close="requestClose"
       append-to-body
       direction="rtl"
@@ -184,7 +191,7 @@
       :close-on-press-escape="!busy"
       :show-close="!busy"
       class="admin-drawer"
-      size="680px"
+      size="min(680px, 100vw)"
       ><section v-if="pending" class="admin-card" aria-label="任务操作结果核对">
         <p v-if="busy" role="status">正在提交或核对任务操作，请稍候。</p>
         <p v-else role="status">
@@ -193,13 +200,60 @@
         </p>
         <ElButton v-if="!busy" @click="checkReceipt">核对原操作</ElButton>
       </section>
+      <p v-if="detailLoading" role="status">正在读取任务详情…</p>
+      <section v-else-if="open && !detail" aria-label="任务详情读取">
+        <p>任务详情尚未读取成功，请重试。</p>
+        <ElButton @click="reloadDetail">重新读取任务</ElButton>
+      </section>
+      <template v-else-if="detail">
+        <p class="admin-field-help">
+          {{ statusLabel(detail.status) }} · 修订 {{ detail.revision }} ·
+          {{ formatDateTime(detail.updatedAt) }}
+        </p>
+        <section aria-label="任务进展">
+          <h3>进展</h3>
+          <p class="task-content">{{ detail.summary || '尚未记录进展。' }}</p>
+        </section>
+        <section aria-label="已记录事实">
+          <h3>已记录事实</h3>
+          <dl v-if="Object.keys(detail.facts).length" class="task-facts">
+            <template v-for="(fact, key) in detail.facts" :key="key">
+              <dt>
+                {{ key }}
+                <ElTag size="small" :type="fact.confirmed ? 'success' : 'info'">{{
+                  fact.confirmed ? '用户已确认' : '用户未确认'
+                }}</ElTag>
+              </dt>
+              <dd class="task-content">{{ fact.value === '' ? '（空字符串）' : fact.value }}</dd>
+            </template>
+          </dl>
+          <p v-else class="admin-field-help">
+            尚未记录具体事实。<template v-if="canCorrectDetail"
+              >可通过纠正补充已核实的信息。</template
+            >
+          </p>
+        </section>
+        <section aria-label="待补充事项">
+          <h3>待补充事项</h3>
+          <ul v-if="detail.pending.length" class="task-pending">
+            <li v-for="(item, index) in detail.pending" :key="index" class="task-content">
+              {{ item }}
+            </li>
+          </ul>
+          <p v-else class="admin-field-help">当前没有待补充事项；这不代表任务或外部业务已完成。</p>
+        </section>
+        <p v-if="!canCorrectDetail" class="admin-field-help">
+          任务已结束。请关闭详情并重新打开任务后再纠正。
+        </p>
+      </template>
       <ElForm
+        v-if="correcting && canCorrectDetail"
         label-position="top"
         @submit.prevent
         :disabled="busy || !!pending || !!storageError"
         scroll-to-error
         @keydown.capture="guardFormEnter"
-        ><ElFormItem label="更正说明"
+        ><ElFormItem label="更正说明" required
           ><ElInput
             v-described-by="formTipId + '-field-0'"
             :aria-describedby="formTipId + '-field-0'"
@@ -208,16 +262,26 @@
             :rows="8"
           />
           <FieldTip :id="formTipId + '-field-0'"
-            >记录对任务进展的事实更正和原因，避免把尚未完成的工作写成已完成。</FieldTip
+            >对照上方记录，填写本次事实更正和原因。提交后会更新任务事实与待补充事项，避免把尚未完成的工作写成已完成。</FieldTip
           >
         </ElFormItem></ElForm
       ><template #footer
-        ><ElButton @click="requestClose" :disabled="busy">取消</ElButton
+        ><ElButton @click="requestClose" :disabled="busy">{{
+          correcting ? '取消' : '关闭'
+        }}</ElButton
         ><ElButton
+          v-if="!correcting && canCorrectDetail"
+          v-permission="['foundation.sessions.update']"
+          type="primary"
+          :disabled="refreshRequired || !!pending || !!storageError"
+          @click="correcting = true"
+          >纠正任务</ElButton
+        ><ElButton
+          v-if="correcting && canCorrectDetail"
           v-permission="['foundation.sessions.update']"
           type="primary"
           :loading="busy"
-          :disabled="!!pending || !!storageError"
+          :disabled="!!pending || !!storageError || !text.trim()"
           @click="save"
           >提交纠正</ElButton
         ></template
@@ -559,15 +623,50 @@ async function loadSessions() {
 }
 const open = ref(false),
   selected = ref<ConversationTask>(),
+  correcting = ref(false),
   text = ref(''),
   { requestClose } = useDrawerClose({
     open: () => open.value,
     busy: () => busy.value,
-    dirty: () => open.value && text.value !== (selected.value?.summary ?? ''),
+    dirty: () => open.value && correcting.value && !!text.value,
     close: () => {
       open.value = false
     }
   })
+const {
+  data: detail,
+  loading: detailLoading,
+  error: detailError,
+  reload: reloadDetail,
+  invalidate: invalidateDetail
+} = useResource((signal) =>
+  api.conversationTasks.detail(sessionId.value, selected.value!.taskId, { signal })
+)
+const canCorrectDetail = computed(
+  () => !!detail.value && ['OPEN', 'WAITING_USER'].includes(detail.value.status)
+)
+watch(
+  open,
+  (value) => {
+    if (!value) {
+      invalidateDetail()
+      detail.value = undefined
+      detailError.value = ''
+    }
+  },
+  { flush: 'sync' }
+)
+function viewTask(row: ConversationTask, correction = false) {
+  if (!currentSession.value || busy.value || loading.value || pending.value) return
+  invalidateDetail()
+  detail.value = undefined
+  detailError.value = ''
+  selected.value = row
+  correcting.value = correction
+  text.value = ''
+  open.value = true
+  void reloadDetail()
+}
 async function select(row: ConversationTask) {
   if (refreshRequired.value || pending.value || storageError.value) return
   await runWrite(async () => {
@@ -613,16 +712,15 @@ function correct(row: ConversationTask) {
     storageError.value
   )
     return
-  selected.value = row
-  text.value = row.summary
-  open.value = true
+  viewTask(row, true)
 }
 async function save() {
-  if (refreshRequired.value || pending.value || storageError.value) return
+  if (refreshRequired.value || pending.value || storageError.value || !canCorrectDetail.value)
+    return
   await runWrite(async () => {
     requireCurrentSession()
     if (!text.value.trim()) throw Error('请输入纠正说明')
-    const task = selected.value!
+    const task = detail.value!
     if (
       !(await performOperation(task, (operation) =>
         api.conversationTasks.update(
@@ -744,6 +842,27 @@ const formTipId = useId()
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.task-title {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.task-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-facts dt {
+  margin-top: var(--space-4, 16px);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.task-facts dd {
+  margin: var(--space-1, 4px) 0 var(--space-4, 16px);
+}
+.task-pending {
+  padding-left: var(--space-6, 24px);
 }
 .task-session-meta {
   font-size: var(--el-font-size-extra-small);

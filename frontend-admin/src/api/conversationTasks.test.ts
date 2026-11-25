@@ -16,7 +16,7 @@ const wire: ConversationTaskWire = {
   summary: '进展',
   state: {
     schema_id: 'state.v1',
-    canonical_json: '{"facts":{"时间":{"value":"周五"}},"pending":["地点"]}'
+    canonical_json: '{"facts":{"时间":{"value":"周五","confirmed":true}},"pending":["地点"]}'
   },
   sources: [],
   updated_at: '2026-09-22T00:00:00Z'
@@ -102,11 +102,29 @@ describe('任务续接 API', () => {
       state: { schemaId: 'state.v1', canonicalJson: wire.state.canonical_json },
       updatedAt: wire.updated_at
     })
-    expect(await api.detail('session', task!.taskId)).toEqual(task)
+    const signal = new AbortController().signal
+    expect(await api.detail('session', task!.taskId, { signal })).toEqual({
+      ...task,
+      facts: { 时间: { value: '周五', confirmed: true } },
+      pending: ['地点']
+    })
+    expect(get.mock.calls[1]![1]).toEqual({ signal })
     expect(get.mock.calls[1]![0]).toBe(
       '/conversation-tasks/detail?session_id=session&task_id=task%2Fa'
     )
     expect(await api.select('session', task!, 'select')).toEqual(task)
     expect(await api.update('session', task!, 'complete', 'complete')).toEqual(task)
+  })
+  it.each([
+    'not-json',
+    'null',
+    '{"facts":[]}',
+    '{"facts":{"日期":{"value":3,"confirmed":true}}}',
+    '{"pending":[3]}'
+  ])('异常状态%s不能冒充空详情', async (canonical_json) => {
+    const get = vi.fn().mockResolvedValue({ ...wire, state: { ...wire.state, canonical_json } })
+    await expect(
+      createConversationTaskApi({ get, post: vi.fn() }).detail('session', 'task')
+    ).rejects.toThrow('任务记录格式异常')
   })
 })

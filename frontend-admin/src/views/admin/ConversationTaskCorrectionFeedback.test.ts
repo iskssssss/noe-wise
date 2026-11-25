@@ -3,27 +3,35 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElDrawer, ElInput } from 'element-plus'
 import ConversationTasksPage from './ConversationTasksPage.vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
+import { reactive } from 'vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  detail: vi.fn(),
   sessions: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
   showMessage: vi.fn(),
-  success: vi.fn()
+  success: vi.fn(),
+  auth: undefined as unknown as {
+    identityVersion: number
+    user: { tenant_id: string; sub: string; permissions: string[] }
+  }
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'browser-session',
   api: {
     chat: { sessions: mocks.sessions },
-    conversationTasks: { list: mocks.list, update: mocks.update, receipt: mocks.receipt }
+    conversationTasks: {
+      list: mocks.list,
+      detail: mocks.detail,
+      update: mocks.update,
+      receipt: mocks.receipt
+    }
   }
 }))
 vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({
-    identityVersion: 1,
-    user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
-  })
+  useAuthStore: () => mocks.auth
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { sessionId: 'session-1' } }),
@@ -58,6 +66,11 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.sessions.mockResolvedValue([{ session_id: 'session-1', summary: '资料会话' }])
   mocks.list.mockResolvedValue([task])
+  mocks.detail.mockResolvedValue({ ...task, facts: {}, pending: [] })
+  mocks.auth = reactive({
+    identityVersion: 1,
+    user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
+  })
   mocks.showMessage.mockReturnValue(vi.fn())
 })
 afterEach(() => {
@@ -85,6 +98,137 @@ async function submit(drawer: VueWrapper) {
 }
 
 describe('任务纠正失败反馈与显式重试', () => {
+  it('先读取最新详情，展示完整事实与待办，纠正使用最新修订', async () => {
+    mocks.detail.mockResolvedValue({
+      ...task,
+      revision: 8,
+      facts: {
+        日期: { value: '周五\n上午', confirmed: true },
+        备注: { value: '', confirmed: false }
+      },
+      pending: ['确认地点']
+    })
+    mocks.update.mockResolvedValue(task)
+    const drawer = await openCorrection()
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('周五\n上午')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('（空字符串）')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('用户未确认')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('确认地点')
+    await submit(drawer)
+    expect(mocks.update).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ revision: 8 }),
+      'correct',
+      expect.any(String),
+      '已收到资料，待人工核对'
+    )
+  })
+  it('详情读取失败保持重试入口，恢复后空说明不可提交', async () => {
+    mocks.detail.mockRejectedValueOnce(new Error('详情读取失败'))
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '纠正')!
+      .trigger('click')
+    await flushPromises()
+    const drawer = wrapper.findComponent(ElDrawer)
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('任务详情尚未读取成功')
+    expect(drawer.findComponent(ElInput).exists()).toBe(false)
+    expect(mocks.showMessage).toHaveBeenCalledTimes(1)
+    await drawer
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '重新读取任务')!
+      .trigger('click')
+    await flushPromises()
+    expect(drawer.findComponent(ElInput).props('modelValue')).toBe('')
+    expect(
+      drawer
+        .findAllComponents(ElButton)
+        .find((b) => b.text() === '提交纠正')!
+        .props('disabled')
+    ).toBe(true)
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('尚未记录具体事实')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('当前没有待补充事项')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+  it('已结束任务可看详情，无纠正入口', async () => {
+    mocks.detail.mockResolvedValue({ ...task, status: 'COMPLETED', facts: {}, pending: [] })
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === task.title)!
+      .trigger('click')
+    await flushPromises()
+    const drawer = wrapper.findComponent(ElDrawer)
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('任务已结束')
+    expect(drawer.findAllComponents(ElButton).some((b) => b.text() === '纠正任务')).toBe(false)
+  })
+  it('关闭后打开另一任务，旧详情的迟到响应不得覆盖新任务', async () => {
+    let resolve!: (value: unknown) => void
+    mocks.list.mockResolvedValue([task, { ...task, taskId: 'task-2', title: '另一任务' }])
+    mocks.detail
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolve = r
+        })
+      )
+      .mockResolvedValueOnce({
+        ...task,
+        taskId: 'task-2',
+        title: '另一任务',
+        summary: '新任务进展',
+        facts: {},
+        pending: []
+      })
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === task.title)!
+      .trigger('click')
+    await flushPromises()
+    const drawer = wrapper.findComponent(ElDrawer)
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('正在读取任务详情')
+    await drawer
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '关闭')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.detail.mock.calls[0]![2].signal.aborted).toBe(true)
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '另一任务')!
+      .trigger('click')
+    await flushPromises()
+    resolve({ ...task, summary: '旧任务迟到', facts: {}, pending: [] })
+    await flushPromises()
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('新任务进展')
+    expect(document.querySelector('[role=dialog]')?.textContent).not.toContain('旧任务迟到')
+  })
+  it('身份切换关闭详情并丢弃旧主体响应', async () => {
+    let resolve!: (value: unknown) => void
+    mocks.detail.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r
+      })
+    )
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === task.title)!
+      .trigger('click')
+    await flushPromises()
+    mocks.auth.user.sub = 'other-user'
+    await flushPromises()
+    resolve({ ...task, summary: '原身份任务', facts: {}, pending: [] })
+    await flushPromises()
+    expect(wrapper.findComponent(ElDrawer).props('modelValue')).toBe(false)
+    expect(document.body.textContent).not.toContain('原身份任务')
+    expect(mocks.detail.mock.calls[0]![2].signal.aborted).toBe(true)
+  })
   it('明确在修改前拒绝时保留草稿并允许修正', async () => {
     mocks.update.mockRejectedValueOnce(
       new HttpClientError({
