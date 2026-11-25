@@ -8,6 +8,8 @@ import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -35,6 +37,39 @@ public class TrajectoryListService {
         this.projection = projection;
         this.authorizer = authorizer;
         this.reads = reads;
+    }
+
+    /** 选项沿列表的可见会话授权读取；精确回显不受模糊搜索候选上限影响。 */
+    @Transactional(readOnly = true)
+    public List<TrajectoryView.FilterOption> filterOptions(SessionObservationScope scope, Long tenantId,
+            TrajectoryView.FilterKind kind, String q, String id) {
+        if (tenantId != null && tenantId <= 0) throw badRequest("机构 ID 必须为正数");
+        List<String> visible = authorizer.visibleSessionIds(scope);
+        if (tenantId != null && scope.kind() == SessionObservationScope.Kind.TENANT
+                && !tenantId.equals(scope.tenantId()))
+            throw new ApiException(HttpStatus.FORBIDDEN, "目标机构不在当前观测范围内");
+        if (kind == TrajectoryView.FilterKind.STATUS)
+            return Arrays.stream(TrajectoryView.Status.values())
+                    .filter(status -> normalized(id) == null || status.name().equals(id))
+                    .filter(status -> normalized(q) == null || status.label().contains(q.trim())
+                            || status.name().toLowerCase(Locale.ROOT).contains(q.trim().toLowerCase(Locale.ROOT)))
+                    .map(status -> new TrajectoryView.FilterOption(status.name(), status.label(), null)).toList();
+        if (visible != null && visible.isEmpty()) return List.of();
+        Long target = scope.kind() == SessionObservationScope.Kind.TENANT ? scope.tenantId() : tenantId;
+        var options = new LinkedHashMap<String, TrajectoryView.FilterOption>();
+        long after = 0;
+        for (;;) {
+            var targets = target == null ? reads.targets(null, after, CANDIDATE_BATCH_SIZE) : List.of(target);
+            for (long tenant : targets) {
+                var rows = reads.read(tenant, () -> mapper.filterOptions(
+                        new TrajectoryListMapper.Options(tenant, visible, kind, normalized(q), normalized(id))));
+                for (var option : rows) options.putIfAbsent(option.id(), option);
+            }
+            if (target != null || targets.size() < CANDIDATE_BATCH_SIZE) break;
+            after = targets.getLast();
+        }
+        return options.values().stream().sorted(Comparator.comparing(TrajectoryView.FilterOption::label)
+                .thenComparing(TrajectoryView.FilterOption::id)).limit(100).toList();
     }
 
     @Transactional(isolation = Isolation.REPEATABLE_READ)
@@ -151,6 +186,10 @@ public class TrajectoryListService {
             throw badRequest("page 必须为正数，page_size 仅支持 20、50、100");
         if (query.tenantId() != null && query.tenantId() <= 0 || query.agentId() != null && query.agentId() <= 0)
             throw badRequest("机构和智能体 ID 必须为正数");
+        String status = normalized(query.status());
+        if (status != null && Arrays.stream(TrajectoryView.Status.values())
+                .noneMatch(value -> value.name().equals(status.toUpperCase(Locale.ROOT))))
+            throw badRequest("执行状态无效，请从可用状态中选择");
         if (query.durationMinMs() != null && query.durationMinMs() < 0
                 || query.durationMaxMs() != null && query.durationMaxMs() < 0
                 || query.durationMinMs() != null && query.durationMaxMs() != null

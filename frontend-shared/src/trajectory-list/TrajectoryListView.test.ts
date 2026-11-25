@@ -3,9 +3,11 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ElementPlus, { ElPagination, ElSelect } from 'element-plus'
 import TrajectoryListView from './TrajectoryListView.vue'
+import EntitySelect from '../admin/EntitySelect.vue'
 import type {
   TrajectoryListPage,
   TrajectoryListQuery,
+  TrajectoryOptionsQuery,
   TrajectorySummary
 } from '../observation/types'
 import type { RequestOptions } from '../utils/http'
@@ -74,6 +76,18 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 type Loader = (query: TrajectoryListQuery, options?: RequestOptions) => Promise<TrajectoryListPage>
+const loadOptions = vi.fn(async (query: TrajectoryOptionsQuery) => [
+  {
+    id:
+      query.id ||
+      (query.kind === 'AGENT'
+        ? row.agent_id!
+        : query.kind === 'STATUS'
+          ? 'COMPLETED'
+          : row.session_id),
+    label: query.kind === 'AGENT' ? '知识助手' : query.kind === 'STATUS' ? '已完成' : '会话摘要'
+  }
+])
 async function render(load: Loader = vi.fn<Loader>(async () => result()), location = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -87,6 +101,7 @@ async function render(load: Loader = vi.fn<Loader>(async () => result()), locati
   const wrapper = mount(TrajectoryListView, {
     props: {
       load,
+      loadOptions,
       identity: 'account-A',
       detailPath: '/platform/trajectories/detail',
       showTenant: true
@@ -114,12 +129,66 @@ async function setTrace(wrapper: VueWrapper, value: string) {
 }
 
 describe('轨迹列表查询与身份隔离', () => {
+  it('名称选项由服务端提供，精确回显与租户切换隔离，选项失败不抹成功列表', async () => {
+    const wrapper = await render()
+    await flushPromises()
+    const session = wrapper
+      .findAllComponents(EntitySelect)
+      .find((item) => item.vm.$attrs['aria-label'] === '会话')!
+    await session.props('load')!('摘要')
+    expect(loadOptions).toHaveBeenLastCalledWith(
+      { kind: 'SESSION', tenant_id: undefined, q: '摘要' },
+      expect.anything()
+    )
+    session.vm.$emit('update:modelValue', 'session-selected')
+    await flushPromises()
+    expect(loadOptions).toHaveBeenCalledWith(
+      { kind: 'SESSION', tenant_id: undefined, id: 'session-selected' },
+      { silent: true }
+    )
+    expect(session.text()).toContain('会话摘要')
+    expect(
+      wrapper
+        .findAllComponents(EntitySelect)
+        .find((item) => item.vm.$attrs['aria-label'] === '执行状态')!
+        .props('load')
+    ).toBeTypeOf('function')
+    await wrapper.setProps({
+      loadTenants: async () => [],
+      resolveTenant: async (id: string) => ({ id, label: id })
+    })
+    await flushPromises()
+    wrapper
+      .findAllComponents(EntitySelect)
+      .find((item) => item.vm.$attrs['aria-label'] === '机构')!
+      .vm.$emit('update:modelValue', 'other-tenant')
+    await flushPromises()
+    const next = wrapper
+      .findAllComponents(EntitySelect)
+      .find((item) => item.vm.$attrs['aria-label'] === '会话')!
+    expect(next.props('modelValue')).toBe('')
+    await next.props('load')!('新的摘要')
+    expect(loadOptions).toHaveBeenLastCalledWith(
+      { kind: 'SESSION', tenant_id: 'other-tenant', q: '新的摘要' },
+      expect.anything()
+    )
+    loadOptions.mockRejectedValueOnce(new Error('选项读取失败'))
+    await next.findComponent(ElSelect).props('remoteMethod')!('失败')
+    await flushPromises()
+    expect(wrapper.text()).toContain('如何做评估')
+    expect(next.text()).toContain('重新搜索选项')
+  })
+
   it('详情链接保留已显示条件和第二页，重建列表恢复时间、筛选与页码', async () => {
     const load = vi.fn<Loader>(async (query) => result([row], query.page))
     const wrapper = await render(load)
     await flushPromises()
     await wrapper.get('input[aria-label="输入关键词"]').setValue('评估')
-    await wrapper.get('input[aria-label="SessionID"]').setValue('session-filter')
+    wrapper
+      .findAllComponents(EntitySelect)
+      .find((item) => item.vm.$attrs['aria-label'] === '会话')!
+      .vm.$emit('update:modelValue', 'session-filter')
+    await flushPromises()
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     await wrapper.get('.btn-next').trigger('click')
@@ -256,7 +325,11 @@ describe('轨迹列表查询与身份隔离', () => {
     const wrapper = await render(load)
     await flushPromises()
     await setTrace(wrapper, 'trace-new')
-    await wrapper.get('input[aria-label="Agent ID"]').setValue('9223372036854775806')
+    wrapper
+      .findAllComponents(EntitySelect)
+      .find((item) => item.vm.$attrs['aria-label'] === '智能体')!
+      .vm.$emit('update:modelValue', '9223372036854775806')
+    await flushPromises()
     await wrapper.get('input[aria-label="最短耗时（毫秒）"]').setValue('9007199254740993')
     await wrapper.get('.btn-next').trigger('click')
     await flushPromises()

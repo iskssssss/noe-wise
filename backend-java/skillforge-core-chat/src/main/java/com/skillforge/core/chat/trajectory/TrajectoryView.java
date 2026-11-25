@@ -13,6 +13,18 @@ public final class TrajectoryView {
 
     public enum Kind { ENTRY, AGENT, STEP, LLM, TOOL, RETRIEVAL, MEMORY, GUARDRAIL, COMPACTION, WORKFLOW }
 
+    /** 列表投影、可选状态和请求校验共用同一公开状态集。 */
+    public enum Status {
+        QUEUED("排队中"), RUNNING("运行中"), WAITING("等待中"), COMPLETED("已完成"),
+        FAILED("失败"), TERMINATED("已终止"), CANCELLED("已取消"), OUTCOME_UNKNOWN("结果待核实");
+        private final String label;
+        Status(String label) { this.label = label; }
+        public String label() { return label; }
+    }
+
+    public enum FilterKind { SESSION, AGENT, STATUS }
+    public record FilterOption(String id, String label, String description) { }
+
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Summary(
             @JsonProperty("tenant_id") String tenantId,

@@ -1,10 +1,12 @@
+import type { EntityOption } from '@skillforge/shared/admin'
 import type { RequestOptions } from '@skillforge/shared/utils/http'
 import type {
   ObservationPage,
   TrajectoryContent,
   TrajectoryDetail,
   TrajectoryListPage,
-  TrajectoryListQuery
+  TrajectoryListQuery,
+  TrajectoryOptionsQuery
 } from '@skillforge/shared/observation/types'
 
 export interface TrajectoryResource {
@@ -30,6 +32,8 @@ function query(params: object) {
 /** 机构轨迹资源只携带业务定位键；租户身份由已认证的服务端作用域确定。 */
 export function createTrajectoryApi(get: <T>(path: string, opts?: RequestOptions) => Promise<T>) {
   return {
+    options: (input: TrajectoryOptionsQuery, opts?: RequestOptions) =>
+      get<EntityOption[]>(`/chat/trajectories/options?${query(input)}`, opts),
     list: (input: TrajectoryListQuery, opts?: RequestOptions) =>
       get<TrajectoryListPage>(`/chat/trajectories?${query(input)}`, opts),
     detail: (input: TrajectoryResource, opts?: RequestOptions) =>

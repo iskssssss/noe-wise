@@ -113,6 +113,34 @@ class TrajectoryListServiceTest {
         assertThrows(ApiException.class, () -> service.list(scope, query(7L, 21)));
     }
 
+    @Test void optionsRespectVisibleSessionsTenantAndExactIdentityAndRejectUnknownStatuses() {
+        var mapper = mock(TrajectoryListMapper.class);
+        var access = mock(FoundationAccess.class);
+        var subject = new FoundationAccess.Subject(false, "7", "99");
+        when(access.currentSubject()).thenReturn(subject);
+        when(access.visibleSessionIds(subject, "read")).thenReturn(List.of("visible"));
+        var authorizer = new SessionObservationAuthorizer(access);
+        var scope = authorizer.tenant();
+        var option = new TrajectoryView.FilterOption("9223372036854775806", "协作智能体", "机构7");
+        when(mapper.filterOptions(any())).thenReturn(List.of(option));
+        var service = new TrajectoryListService(mapper, mock(TrajectoryProjectionService.class), authorizer, reads());
+        assertEquals(List.of(option), service.filterOptions(scope, null, TrajectoryView.FilterKind.AGENT, null, option.id()));
+        verify(mapper).filterOptions(new TrajectoryListMapper.Options(7L, List.of("visible"), TrajectoryView.FilterKind.AGENT, null, option.id()));
+        assertThrows(ApiException.class, () -> service.filterOptions(scope, 8L, TrajectoryView.FilterKind.SESSION, null, null));
+        when(access.visibleSessionIds(subject, "read")).thenReturn(List.of());
+        assertTrue(service.filterOptions(scope, null, TrajectoryView.FilterKind.SESSION, null, null).isEmpty());
+        var statuses = service.filterOptions(scope, null, TrajectoryView.FilterKind.STATUS, null, null);
+        assertEquals(List.of("QUEUED", "RUNNING", "WAITING", "COMPLETED", "FAILED", "TERMINATED", "CANCELLED", "OUTCOME_UNKNOWN"),
+                statuses.stream().map(TrajectoryView.FilterOption::id).toList());
+        assertEquals("结果待核实", statuses.getLast().label());
+        var invalid = new TrajectoryListQuery(7L, null, null, null, null, null, "UNKNOWN_STATUS",
+                null, null, null, null, null, null, 1, 20);
+        assertThrows(ApiException.class, () -> service.list(scope, invalid));
+        verify(mapper, never()).readAt();
+        when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false, "7", "100"));
+        assertThrows(ApiException.class, () -> service.filterOptions(scope, null, TrajectoryView.FilterKind.STATUS, null, null));
+    }
+
     private static TrajectoryListQuery query(Long tenant, int pageSize) {
         return new TrajectoryListQuery(tenant, null, null, null, null, null, null,
                 null, null, null, null, null, null, 1, pageSize);

@@ -435,13 +435,13 @@ public class TrajectoryProjectionService {
                 && !children.contains(run.runId())).toList();
         if (roots.isEmpty()) roots = captured.runs().stream().filter(run -> run.sessionId().equals(resource.sessionId())
                 && run.rootInputId().equals(resource.rootInputId())).limit(1).toList();
-        var status = roots.stream().anyMatch(run -> "UNCERTAIN".equals(run.phase())) ? "OUTCOME_UNKNOWN"
-                : roots.stream().allMatch(run -> "QUEUED".equals(run.status())) ? "QUEUED"
-                : roots.stream().anyMatch(run -> Set.of("RUNNING", "QUEUED", "RESUMING").contains(run.status())) ? "RUNNING"
-                : roots.stream().anyMatch(run -> "SUSPENDED".equals(run.status())) ? "WAITING"
-                : roots.stream().anyMatch(run -> "FAILED".equals(run.status())) ? "FAILED"
-                : roots.stream().allMatch(run -> "CANCELLED".equals(run.status())) ? "CANCELLED"
-                : roots.stream().anyMatch(run -> "TERMINATED".equals(run.status())) ? "TERMINATED" : "COMPLETED";
+        var status = roots.stream().anyMatch(run -> "UNCERTAIN".equals(run.phase())) ? TrajectoryView.Status.OUTCOME_UNKNOWN
+                : roots.stream().allMatch(run -> "QUEUED".equals(run.status())) ? TrajectoryView.Status.QUEUED
+                : roots.stream().anyMatch(run -> Set.of("RUNNING", "QUEUED", "RESUMING").contains(run.status())) ? TrajectoryView.Status.RUNNING
+                : roots.stream().anyMatch(run -> "SUSPENDED".equals(run.status())) ? TrajectoryView.Status.WAITING
+                : roots.stream().anyMatch(run -> "FAILED".equals(run.status())) ? TrajectoryView.Status.FAILED
+                : roots.stream().allMatch(run -> "CANCELLED".equals(run.status())) ? TrajectoryView.Status.CANCELLED
+                : roots.stream().anyMatch(run -> "TERMINATED".equals(run.status())) ? TrajectoryView.Status.TERMINATED : TrajectoryView.Status.COMPLETED;
         Instant start = roots.stream().map(TrajectoryRepository.RunFact::createdAt).min(Comparator.naturalOrder()).orElse(null);
         Instant finish = roots.stream().allMatch(run -> TrajectoryGraph.terminal(run.status()))
                 ? roots.stream().map(TrajectoryRepository.RunFact::updatedAt).max(Comparator.naturalOrder()).orElse(null) : null;
@@ -450,8 +450,8 @@ public class TrajectoryProjectionService {
                 .filter(Objects::nonNull).collect(Collectors.joining("\n"));
         String output = messages.stream().filter(message -> "assistant".equals(message.role()) && "final".equalsIgnoreCase(message.phase()))
                 .map(SessionObservationView.Message::content).filter(Objects::nonNull).collect(Collectors.joining("\n"));
-        String answer = output.isBlank() ? Set.of("RUNNING", "QUEUED", "WAITING").contains(status) ? "IN_PROGRESS"
-                : Set.of("FAILED", "TERMINATED").contains(status) ? "FAILED" : "NONE" : "COMPLETED";
+        String answer = output.isBlank() ? Set.of("RUNNING", "QUEUED", "WAITING").contains(status.name()) ? "IN_PROGRESS"
+                : Set.of("FAILED", "TERMINATED").contains(status.name()) ? "FAILED" : "NONE" : "COMPLETED";
         var models = modelAttempts(captured).stream().map(TrajectoryRepository.ModelUsageFact::model).filter(Objects::nonNull).distinct().toList();
         var tools = graph.nodes().stream().filter(node -> node.kind() == TrajectoryView.Kind.TOOL).map(TrajectoryView.ObservationNode::name).distinct().toList();
         var traces = graph.nodes().stream().map(TrajectoryView.ObservationNode::traceId).filter(Objects::nonNull).distinct().toList();
@@ -460,7 +460,7 @@ public class TrajectoryProjectionService {
         int modelCalls = modelAttempts(captured).size();
         int toolCalls = (int) captured.attempts().stream().filter(value -> !"MODEL".equals(value.kind())).count();
         return new TrajectoryView.Summary(Long.toString(resource.tenantId()), session.tenantName(), resource.sessionId(), resource.rootInputId(),
-                session.agentId(), session.agentName(), input.isBlank() ? null : input, output.isBlank() ? null : output, status, answer,
+                session.agentId(), session.agentName(), input.isBlank() ? null : input, output.isBlank() ? null : output, status.name(), answer,
                 start, finish, TrajectoryGraph.duration(start, finish), traces, models, tools, steps, modelCalls,
                 toolCalls, usage.totals(), usage.coverage());
     }

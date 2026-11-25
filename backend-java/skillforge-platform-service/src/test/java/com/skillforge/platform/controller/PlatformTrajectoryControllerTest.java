@@ -51,6 +51,13 @@ class PlatformTrajectoryControllerTest {
                 .andExpect(status().isOk());
         verify(projection).nodes(any(), org.mockito.ArgumentMatchers.eq(new TrajectoryQuery.Nodes(
                 7L, "session", "root", "snapshot-A", null, 50, "target", "检索")));
+        mvc.perform(get("/api/v1/platform/trajectories/options").param("kind", "AGENT")
+                .param("tenant_id", "7").param("id", "9223372036854775806")).andExpect(status().isOk());
+        verify(lists).filterOptions(any(), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(TrajectoryView.FilterKind.AGENT), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq("9223372036854775806"));
+        mvc.perform(get("/api/v1/platform/trajectories/options").param("kind", "BOGUS"))
+                .andExpect(status().isBadRequest());
         assertTrue(Arrays.stream(PlatformTrajectoryController.class.getDeclaredMethods())
                 .filter(method -> method.isAnnotationPresent(GetMapping.class))
                 .allMatch(method -> "foundation.sessions.read".equals(method.getAnnotation(RequirePermission.class).value())));

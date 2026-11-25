@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
 class TrajectoryControllerTest {
     @Test void trajectoryResourcesRequireMemberJwtAndAreOutsideEveryExternalOpenPath() {
         for (String path : java.util.List.of("/api/v1/chat/trajectories", "/api/v1/chat/trajectories/detail",
-                "/api/v1/chat/trajectories/nodes", "/api/v1/chat/trajectories/content",
+                "/api/v1/chat/trajectories/options", "/api/v1/chat/trajectories/nodes", "/api/v1/chat/trajectories/content",
                 "/api/v1/chat/sessions/trace", "/api/v1/chat/sessions/trace/content")) {
             assertFalse(ExternalAuthPaths.OPEN_PATHS.stream().anyMatch(pattern ->
                     org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse(pattern)
@@ -32,8 +32,12 @@ class TrajectoryControllerTest {
         var access = mock(FoundationAccess.class);
         when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false, "7", "99"));
         var projection = mock(TrajectoryProjectionService.class);
+        var lists = mock(TrajectoryListService.class);
         var controller = new TrajectoryController(new SessionObservationAuthorizer(access),
-                mock(TrajectoryListService.class), projection);
+                lists, projection);
+        controller.options(com.skillforge.core.chat.trajectory.TrajectoryView.FilterKind.SESSION, null, "摘要", null);
+        verify(lists).filterOptions(any(), eq(7L), eq(com.skillforge.core.chat.trajectory.TrajectoryView.FilterKind.SESSION), eq("摘要"), org.mockito.ArgumentMatchers.isNull());
+        assertThrows(ApiException.class, () -> controller.options(com.skillforge.core.chat.trajectory.TrajectoryView.FilterKind.AGENT, 8L, null, null));
         controller.detail(null, "session", "root");
         verify(projection).detail(any(), eq(new TrajectoryQuery.Resource(7L, "session", "root")));
         assertThrows(ApiException.class, () -> controller.content(8L, "session", "root", "ref"));

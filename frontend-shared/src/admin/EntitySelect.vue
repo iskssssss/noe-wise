@@ -131,7 +131,9 @@ function change(value: string) {
       fit-input-width
       popper-class="entity-select-options"
       :placeholder="placeholder"
-      :no-data-text="error ? '选项未加载，请重新加载选项' : '暂无可选项'"
+      :no-data-text="
+        error ? '选项未加载，请重新加载选项' : '当前范围没有匹配选项，请更换关键词或确认权限'
+      "
       no-match-text="未找到匹配选项，请更换关键词"
       @visible-change="expanded = $event"
       @update:model-value="change"

@@ -267,3 +267,11 @@ export interface TrajectoryListPage {
   total: number
   read_at: string
 }
+
+/** 双端轨迹选择器共用服务端授权候选与精确名称回显。 */
+export interface TrajectoryOptionsQuery {
+  kind: 'SESSION' | 'AGENT' | 'STATUS'
+  tenant_id?: string
+  q?: string
+  id?: string
+}

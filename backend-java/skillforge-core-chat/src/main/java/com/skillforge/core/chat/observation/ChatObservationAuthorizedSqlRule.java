@@ -21,6 +21,10 @@ public final class ChatObservationAuthorizedSqlRule implements AuthorizedSqlRule
                 || !"foundation.sessions.read".equals(access.action())
                 || !access.targetTenants().equals(Set.of(access.tenant()))) return false;
         String id = access.statementId();
+        if (id.equals("com.skillforge.core.chat.trajectory.TrajectoryListMapper.filterOptions")
+                && access.parameters() instanceof TrajectoryListMapper.Options query)
+            return Long.toString(query.tenantId()).equals(access.tenant())
+                    && query.kind() != com.skillforge.core.chat.trajectory.TrajectoryView.FilterKind.STATUS;
         if (id.startsWith(TRAJECTORY) && TRAJECTORY_READS.contains(id.substring(TRAJECTORY.length())))
             return access.parameterEquals("tenant", access.tenant());
         if (id.equals(SESSION + "filterOptions"))

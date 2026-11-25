@@ -13,6 +13,41 @@
   <select id="readAt" resultType="java.time.Instant" useCache="false" flushCache="true">
     SELECT clock_timestamp()
   </select>
+  <select id="filterOptions" resultType="com.skillforge.core.chat.trajectory.TrajectoryView$FilterOption">
+WITH options AS (
+    SELECT DISTINCT
+      <choose>
+        <when test="kind.name() == 'SESSION'">
+          session.session_id AS id, COALESCE(NULLIF(session.summary_text,''),session.session_id) AS label,
+          tenant.name || ' · ' || session.session_id AS description
+        </when>
+        <otherwise>
+          run.agent_id AS id, COALESCE(NULLIF(agent.name,''),run.agent_id) AS label,
+          tenant.name || ' · ' || run.agent_id AS description
+        </otherwise>
+      </choose>
+      FROM public.nw_chat_sessions session
+      JOIN public.agent_runtime_execution_runs run
+        ON run.tenant_id=session.tenant_id::text AND run.session_id=session.session_id
+      JOIN public.nw_tenants tenant ON tenant.id=session.tenant_id
+ LEFT JOIN public.nw_agents agent ON agent.tenant_id=session.tenant_id AND agent.id::text=run.agent_id
+     WHERE session.tenant_id=#{tenantId}
+       <if test="kind.name() == 'AGENT'">AND run.agent_id IS NOT NULL</if>
+       <if test="visibleSessionIds != null">
+         <choose>
+           <when test="visibleSessionIds.isEmpty()">AND FALSE</when>
+           <otherwise>AND session.session_id IN
+             <foreach collection="visibleSessionIds" item="session" open="(" separator="," close=")">#{session}</foreach>
+           </otherwise>
+         </choose>
+       </if>
+)
+SELECT id,label,description FROM options
+ WHERE (#{id,jdbcType=VARCHAR} IS NULL OR id=#{id})
+   AND (#{q,jdbcType=VARCHAR} IS NULL OR position(lower(#{q}) in lower(id))&gt;0
+        OR position(lower(#{q}) in lower(label))&gt;0)
+ ORDER BY label,id LIMIT 100
+  </select>
   <select id="candidates" resultMap="candidate">
 WITH roots AS (
     SELECT DISTINCT ON (run.tenant_id,run.session_id,run.root_input_id)

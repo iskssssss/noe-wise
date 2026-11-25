@@ -13,6 +13,7 @@ const identity = computed(() => `${auth.sessionIdentity}:${auth.identityVersion}
   <AdminPage title="Agent 轨迹" description="查找当前机构有权查看的输入、执行过程与结果。">
     <TrajectoryListView
       :load="api.trajectories.list"
+      :load-options="api.trajectories.options"
       :identity="auth.sessionIdentity ? identity : ''"
       detail-path="/admin/trajectories/detail"
     />

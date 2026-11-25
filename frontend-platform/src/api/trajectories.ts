@@ -1,10 +1,12 @@
+import type { EntityOption } from '@skillforge/shared/admin'
 import type { RequestOptions } from '@skillforge/shared/utils/http'
 import type {
   ObservationPage,
   TrajectoryContent,
   TrajectoryDetail,
   TrajectoryListPage,
-  TrajectoryListQuery
+  TrajectoryListQuery,
+  TrajectoryOptionsQuery
 } from '@skillforge/shared/observation/types'
 
 export interface TrajectoryResource {
@@ -31,6 +33,8 @@ function query(params: object) {
 /** 平台跨机构定位始终显式携带目标机构；服务端逐资源重验管理员作用域。 */
 export function createTrajectoryApi(get: <T>(path: string, opts?: RequestOptions) => Promise<T>) {
   return {
+    options: (input: TrajectoryOptionsQuery, opts?: RequestOptions) =>
+      get<EntityOption[]>(`/platform/trajectories/options?${query(input)}`, opts),
     list: (input: TrajectoryListQuery, opts?: RequestOptions) =>
       get<TrajectoryListPage>(`/platform/trajectories?${query(input)}`, opts),
     detail: (input: TrajectoryResource, opts?: RequestOptions) =>

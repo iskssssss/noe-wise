@@ -22,11 +22,13 @@ import {
 import type {
   TrajectoryListPage,
   TrajectoryListQuery,
+  TrajectoryOptionsQuery,
   TrajectorySummary
 } from '../observation/types'
 
 const props = defineProps<{
   load: (query: TrajectoryListQuery, options?: RequestOptions) => Promise<TrajectoryListPage>
+  loadOptions: (query: TrajectoryOptionsQuery, options?: RequestOptions) => Promise<EntityOption[]>
   identity: string
   detailPath: string
   showTenant?: boolean
@@ -67,26 +69,48 @@ const displayedRecent = ref(false)
 const result = useResource((signal) => props.load({ ...applied.value }, { signal, silent: true }))
 const rows = computed(() => result.data.value?.items ?? [])
 const advancedFields = [
-  { key: 'session_id', label: 'SessionID' },
-  { key: 'agent_id', label: 'Agent ID' },
   { key: 'model', label: '模型' },
   { key: 'tool', label: '工具名' },
   { key: 'duration_min_ms', label: '最短耗时（毫秒）' },
   { key: 'duration_max_ms', label: '最长耗时（毫秒）' }
 ] as const
 const advancedCount = computed(
-  () => advancedFields.filter((field) => filters[field.key] !== '').length
+  () =>
+    advancedFields.filter((field) => filters[field.key] !== '').length +
+    Number(!!filters.session_id) +
+    Number(!!filters.agent_id)
 )
-const statuses = [
-  'QUEUED',
-  'RUNNING',
-  'WAITING',
-  'COMPLETED',
-  'FAILED',
-  'TERMINATED',
-  'CANCELLED',
-  'OUTCOME_UNKNOWN'
-]
+const entityFilters = [
+  { key: 'session_id', kind: 'SESSION', label: '会话', placeholder: '搜索会话摘要或 ID' },
+  { key: 'agent_id', kind: 'AGENT', label: '智能体', placeholder: '搜索智能体名称或 ID' }
+] as const
+const optionSources = computed(() => {
+  const tenant_id = filters.tenant_id || undefined
+  return Object.fromEntries(
+    (['SESSION', 'AGENT', 'STATUS'] as const).map((kind) => [
+      kind,
+      {
+        load: (q: string, signal?: AbortSignal) =>
+          props.loadOptions({ kind, tenant_id, q }, { signal, silent: true }),
+        resolve: async (id: string) =>
+          (await props.loadOptions({ kind, tenant_id, id }, { silent: true })).find(
+            (option) => option.id === id
+          )
+      }
+    ])
+  ) as Record<
+    TrajectoryOptionsQuery['kind'],
+    {
+      load: (q: string, signal?: AbortSignal) => Promise<EntityOption[]>
+      resolve: (id: string) => Promise<EntityOption | undefined>
+    }
+  >
+})
+function selectTenant(value: string) {
+  filters.tenant_id = value
+  filters.session_id = ''
+  filters.agent_id = ''
+}
 const traceChoices = computed(() => {
   const selected = selectedTrace.value
   return selected && !traceOptions.value.some((item) => item.id === selected.id)
@@ -253,8 +277,8 @@ const displayedFilters = computed(() => {
   const labels: Array<[keyof TrajectoryListQuery, string]> = [
     ['tenant_id', '机构'],
     ['trace_id', 'TraceID'],
-    ['session_id', 'SessionID'],
-    ['agent_id', 'Agent ID'],
+    ['session_id', '会话'],
+    ['agent_id', '智能体'],
     ['model', '模型'],
     ['tool', '工具名'],
     ['status', '状态'],
@@ -264,7 +288,9 @@ const displayedFilters = computed(() => {
     ['output_keyword', '输出关键词']
   ]
   const values = labels.flatMap(([key, label]) =>
-    displayed.value?.[key] ? [`${label}：${displayed.value[key]}`] : []
+    displayed.value?.[key]
+      ? [`${label}：${key === 'status' ? statusLabel(displayed.value[key]) : displayed.value[key]}`]
+      : []
   )
   const range = [displayed.value.started_from, displayed.value.started_to]
   if (range.some(Boolean))
@@ -417,7 +443,8 @@ watch(
       <ElFormItem v-if="showTenant" label="机构">
         <EntitySelect
           v-if="loadTenants && resolveTenant"
-          v-model="filters.tenant_id"
+          :model-value="filters.tenant_id"
+          @update:model-value="selectTenant"
           :load="loadTenants"
           :resolve="resolveTenant"
           placeholder="搜索并选择机构"
@@ -463,14 +490,16 @@ watch(
         <ElInput v-model="filters.output_keyword" clearable aria-label="输出关键词" />
       </ElFormItem>
       <ElFormItem label="执行状态">
-        <ElSelect v-model="filters.status" clearable placeholder="全部状态" aria-label="执行状态">
-          <ElOption
-            v-for="status in statuses"
-            :key="status"
-            :value="status"
-            :label="statusLabel(status)"
-          />
-        </ElSelect>
+        <EntitySelect
+          v-if="identity"
+          :key="`${identity}:status`"
+          v-model="filters.status"
+          :load="optionSources.STATUS.load"
+          :resolve="optionSources.STATUS.resolve"
+          :disabled="!identity"
+          placeholder="全部状态"
+          aria-label="执行状态"
+        />
       </ElFormItem>
       <ElFormItem class="trajectory-range" label="开始时间范围（北京时间）">
         <ElDatePicker
@@ -490,6 +519,18 @@ watch(
       >
         <summary>更多筛选{{ advancedCount ? ` · ${advancedCount} 项已填写` : '' }}</summary>
         <div class="trajectory-advanced-fields">
+          <ElFormItem v-for="field in entityFilters" :key="field.key" :label="field.label">
+            <EntitySelect
+              v-if="identity"
+              :key="`${identity}:${filters.tenant_id}:${field.key}`"
+              v-model="filters[field.key]"
+              :load="optionSources[field.kind].load"
+              :resolve="optionSources[field.kind].resolve"
+              :disabled="!identity"
+              :placeholder="field.placeholder"
+              :aria-label="field.label"
+            />
+          </ElFormItem>
           <ElFormItem v-for="field in advancedFields" :key="field.key" :label="field.label">
             <ElInput
               v-model="filters[field.key]"
@@ -515,7 +556,7 @@ watch(
         :closable="false"
       />
       <FieldTip :id="helpId" class="trajectory-help">
-        多个条件同时匹配；TraceID、SessionID、模型与工具名精确查找，输入与输出按关键词匹配。默认查询近七天，耗时包含主执行的排队和等待，未记录耗时不匹配耗时范围。
+        多个条件同时匹配；TraceID、会话、模型与工具名精确查找，输入与输出按关键词匹配。默认查询近七天，耗时包含主执行的排队和等待，未记录耗时不匹配耗时范围。
       </FieldTip>
     </ElForm>
 

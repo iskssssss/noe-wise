@@ -55,6 +55,16 @@ public class PlatformTrajectoryController {
     }
 
     @RequirePermission("foundation.sessions.read")
+    @GetMapping("/options")
+    public ApiResponse<java.util.List<TrajectoryView.FilterOption>> options(
+            @RequestParam(name = "kind") TrajectoryView.FilterKind kind,
+            @RequestParam(name = "tenant_id", required = false) Long tenantId,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "id", required = false) String id) {
+        return ApiResponses.wrap(lists.filterOptions(authorizer.platformAdmin(), tenantId, kind, q, id));
+    }
+
+    @RequirePermission("foundation.sessions.read")
     @GetMapping("/detail")
     public ApiResponse<TrajectoryView.Detail> detail(
             @RequestParam(name = "tenant_id") long tenantId,

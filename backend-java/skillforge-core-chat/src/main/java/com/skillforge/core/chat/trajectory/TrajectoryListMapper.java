@@ -9,6 +9,10 @@ import org.apache.ibatis.annotations.Mapper;
 public interface TrajectoryListMapper {
     Instant readAt();
     List<Candidate> candidates(Candidates query);
+    List<TrajectoryView.FilterOption> filterOptions(Options query);
+
+    record Options(long tenantId, List<String> visibleSessionIds, TrajectoryView.FilterKind kind,
+                   String q, String id) { }
 
     record Candidate(long tenantId, String sessionId, String rootInputId,
                      long startedSecond, int startedNano) { }
