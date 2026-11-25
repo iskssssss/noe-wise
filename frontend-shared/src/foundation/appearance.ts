@@ -108,9 +108,6 @@ export function useFoundationAppearance(
       if (version !== generation) throw new Error('账号已变化，请在当前账号重新操作')
       branding.value = result
       return result
-    } catch (cause) {
-      if (version === generation) error.value = message(cause)
-      throw cause
     } finally {
       if (version === generation) saving.value = false
     }

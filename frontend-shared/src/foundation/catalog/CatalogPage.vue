@@ -6,7 +6,13 @@ import { useRoute, useRouter } from 'vue-router'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { FoundationOption } from '../optionTypes'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import {
+  ElMessage,
+  ElMessageBox,
+  type FormInstance,
+  type FormItemRule,
+  type FormRules
+} from 'element-plus'
 import { useDrawerClose } from '../../admin/drawer'
 import { confirmPageLeave, useUnsavedChanges } from '../../admin/leave'
 import type {
@@ -68,6 +74,50 @@ const branding = reactive<Branding>({
   support_url: null,
   revision: 0
 })
+const brandingFormRef = ref<FormInstance>()
+const brandingUrlRule: FormItemRule = {
+  trigger: 'blur',
+  validator: (_rule, value: string | null, callback) => {
+    if (!value?.trim()) return callback()
+    if (value.length > 2048) return callback(new Error('链接最多 2048 个字符'))
+    try {
+      const url = new URL(value)
+      if (
+        !value.startsWith('https://') ||
+        /\s/.test(value) ||
+        !url.hostname ||
+        url.username ||
+        url.password
+      )
+        return callback(new Error('请输入不含账号密码的完整 HTTPS 链接'))
+      callback()
+    } catch {
+      callback(new Error('请输入不含账号密码的完整 HTTPS 链接'))
+    }
+  }
+}
+const brandingRules: FormRules<Branding> = {
+  display_name: [
+    { required: true, whitespace: true, message: '请输入品牌名称', trigger: 'blur' },
+    {
+      trigger: 'blur',
+      validator: (_rule, value: string, callback) =>
+        callback(
+          Array.from(value.trim()).length > 128 ? new Error('品牌名称最多 128 个字符') : undefined
+        )
+    }
+  ],
+  logo_url: [brandingUrlRule],
+  primary_color: [
+    { required: true, message: '请选择品牌色', trigger: 'change' },
+    { pattern: /^#[0-9a-fA-F]{6}$/, message: '请选择六位十六进制品牌色', trigger: 'change' }
+  ],
+  contact_email: [
+    { pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: '请输入有效的联系邮箱', trigger: 'blur' },
+    { max: 254, message: '联系邮箱最多 254 个字符', trigger: 'blur' }
+  ],
+  support_url: [brandingUrlRule]
+}
 const personal = reactive<PersonalPreference>({
   theme: 'system',
   locale: 'zh-CN',
@@ -768,6 +818,8 @@ async function savePersonal() {
 }
 /** 品牌完整保存后当前壳立即采用实际返回的展示值。 */
 async function saveBranding() {
+  if (saving.value || loading.value) return
+  if (!(await brandingFormRef.value?.validate().catch(() => false))) return
   const command = {
     display_name: branding.display_name,
     logo_url: branding.logo_url || null,
@@ -996,18 +1048,29 @@ onBeforeUnmount(() => {
       >
       <el-form
         v-if="active === 'branding'"
+        ref="brandingFormRef"
+        :model="branding"
+        :rules="brandingRules"
         label-position="top"
         class="settings-form"
-        :disabled="saving || !can('foundation.settings.manage')"
-        ><el-form-item label="品牌名称"
-          ><el-input v-model="branding.display_name" maxlength="128" /></el-form-item
-        ><el-form-item label="公开 Logo HTTPS 链接"
-          ><el-input v-model="branding.logo_url" clearable /></el-form-item
-        ><el-form-item label="品牌色"
+        :disabled="loading || saving || !can('foundation.settings.manage')"
+        ><p class="admin-field-help">保存后更新当前机构的品牌展示；未保存的修改不会生效。</p>
+        <el-form-item label="品牌名称" prop="display_name"
+          ><el-input v-model="branding.display_name" /></el-form-item
+        ><el-form-item label="公开 Logo HTTPS 链接" prop="logo_url"
+          ><el-input
+            v-model="branding.logo_url"
+            placeholder="留空使用品牌名称首字"
+            clearable /></el-form-item
+        ><el-form-item label="品牌色" prop="primary_color"
           ><el-color-picker v-model="branding.primary_color" /></el-form-item
-        ><el-form-item label="联系邮箱"><el-input v-model="branding.contact_email" /></el-form-item
-        ><el-form-item label="支持页面 HTTPS 链接"
-          ><el-input v-model="branding.support_url" clearable /></el-form-item
+        ><el-form-item label="联系邮箱" prop="contact_email"
+          ><el-input v-model="branding.contact_email" placeholder="选填" /></el-form-item
+        ><el-form-item label="支持页面 HTTPS 链接" prop="support_url"
+          ><el-input
+            v-model="branding.support_url"
+            placeholder="选填，完整 HTTPS 链接"
+            clearable /></el-form-item
         ><el-button
           v-if="can('foundation.settings.manage')"
           :loading="saving"

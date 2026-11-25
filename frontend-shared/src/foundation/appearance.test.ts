@@ -29,6 +29,35 @@ const branding: Branding = {
 const permissions = () => ['foundation.preferences.manage', 'foundation.settings.read']
 
 describe('服务端展示设置', () => {
+  it('品牌写入拒绝由表单处理，已保存品牌和读取错误状态不会变为写入失败', async () => {
+    const request = vi.fn(async (method: string, path: string) => {
+      if (method === 'PUT') throw new Error('品牌修订冲突')
+      return path.endsWith('/branding') ? branding : personal
+    })
+    const scope = effectScope()
+    const state = scope.run(() =>
+      useFoundationAppearance(
+        request as HttpClient['request'],
+        '/tenant',
+        () => 'tenant:11:101',
+        permissions
+      )
+    )!
+    await nextTick()
+    await Promise.resolve()
+    await expect(
+      state.saveBranding({
+        ...branding,
+        display_name: '未保存品牌',
+        expected_revision: branding.revision
+      })
+    ).rejects.toThrow('品牌修订冲突')
+    expect(state.branding.value).toEqual(branding)
+    expect(state.error.value).toBe('')
+    expect(state.saving.value).toBe(false)
+    scope.stop()
+  })
+
   it('平台只读取本人偏好，主题保存携带完整当前修订且失败不污染已保存视图', async () => {
     let reject = false
     const request = vi.fn(async (method: string, path: string, body?: unknown) => {

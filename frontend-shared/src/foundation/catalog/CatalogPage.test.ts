@@ -110,6 +110,114 @@ async function editName(value: string) {
   return dialog
 }
 describe('目录编辑实际交互保护', () => {
+  it('品牌字段错误就地提示，按码点校验名称且修正后保存完整品牌与原修订', async () => {
+    const current = {
+      display_name: '巡检机构',
+      logo_url: null,
+      primary_color: '#2563eb',
+      contact_email: null,
+      support_url: null,
+      revision: 4
+    }
+    const request = vi.fn(async (method: string, _path: string, data?: object) =>
+      method === 'GET' ? current : { ...data, revision: 5 }
+    ) as unknown as CatalogRequest
+    await render(
+      request,
+      ['foundation.settings.read', 'foundation.settings.manage'],
+      false,
+      '/?tab=branding'
+    )
+    function field(label: string) {
+      const item = [...document.querySelectorAll('.el-form-item')].find(
+        (item) => item.querySelector('label')?.textContent === label
+      )!
+      return item.querySelector<HTMLInputElement>('input')!
+    }
+    function fill(label: string, value: string) {
+      const input = field(label)
+      input.value = value
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    fill('品牌名称', '   ')
+    fill('公开 Logo HTTPS 链接', 'http://example.invalid/logo.png')
+    fill('联系邮箱', 'invalid-email')
+    fill('支持页面 HTTPS 链接', 'https://account@example.invalid/support')
+    await flushPromises()
+    button('保存品牌').click()
+    await vi.waitFor(() => expect(document.body.textContent).toContain('请输入品牌名称'))
+    expect(document.querySelectorAll('.el-form-item__error')).toHaveLength(4)
+    expect(document.body.textContent).toContain('请输入有效的联系邮箱')
+    expect(document.body.textContent).toContain('请输入不含账号密码的完整 HTTPS 链接')
+    expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')).toHaveLength(0)
+    fill('品牌名称', '灵'.repeat(129))
+    fill('公开 Logo HTTPS 链接', 'https://example.invalid/logo.png')
+    fill('联系邮箱', 'audit@example.invalid')
+    fill('支持页面 HTTPS 链接', 'https://example.invalid/support')
+    await flushPromises()
+    button('保存品牌').click()
+    await vi.waitFor(() => expect(document.body.textContent).toContain('品牌名称最多 128 个字符'))
+    expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')).toHaveLength(0)
+    fill('品牌名称', '🌿'.repeat(128))
+    await flushPromises()
+    button('保存品牌').click()
+    await flushPromises()
+    const writes = vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')
+    expect(writes).toHaveLength(1)
+    expect(writes[0]?.[2]).toEqual({
+      display_name: '🌿'.repeat(128),
+      logo_url: 'https://example.invalid/logo.png',
+      primary_color: '#2563eb',
+      contact_email: 'audit@example.invalid',
+      support_url: 'https://example.invalid/support',
+      expected_revision: 4
+    })
+    expect(button('保存品牌').disabled).toBe(true)
+    for (const label of ['公开 Logo HTTPS 链接', '联系邮箱', '支持页面 HTTPS 链接']) fill(label, '')
+    await flushPromises()
+    button('保存品牌').click()
+    await flushPromises()
+    expect(
+      vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')[1]?.[2]
+    ).toMatchObject({
+      logo_url: null,
+      contact_email: null,
+      support_url: null,
+      expected_revision: 5
+    })
+  })
+
+  it('品牌写入失败只提示一次并保留编辑输入，不显示读取设置恢复动作', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'PUT') throw new Error('品牌保存暂时不可用')
+      return {
+        display_name: '原机构',
+        primary_color: '#2563eb',
+        logo_url: null,
+        contact_email: null,
+        support_url: null,
+        revision: 2
+      }
+    }) as unknown as CatalogRequest
+    await render(
+      request,
+      ['foundation.settings.read', 'foundation.settings.manage'],
+      false,
+      '/?tab=branding'
+    )
+    const input = document.querySelector<HTMLInputElement>('.settings-form input')!
+    input.value = '保留品牌草稿'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    button('保存品牌').click()
+    await flushPromises()
+    expect(input.value).toBe('保留品牌草稿')
+    expect(document.querySelectorAll('.el-message--error')).toHaveLength(1)
+    expect(document.body.textContent).toContain('品牌保存暂时不可用')
+    expect(document.body.textContent).not.toContain('重新读取展示设置')
+    expect(button('保存品牌').disabled).toBe(false)
+  })
+
   it.each(['dictionary', 'value'])('%s 必填和编码错误就地提示，修正后才提交', async (kind) => {
     const request = vi.fn(async (_method: string, path: string) =>
       path.endsWith('/dictionary-values') ? [] : [dictionary]
