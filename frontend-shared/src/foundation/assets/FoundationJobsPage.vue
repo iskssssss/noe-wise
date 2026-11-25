@@ -3,6 +3,7 @@ import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { HttpClientError } from '../../utils/http'
 import {
   computed,
+  nextTick,
   onScopeDispose,
   reactive,
   ref,
@@ -48,6 +49,7 @@ const checked = ref<TransferPreflight>()
 const idempotencyKey = ref(crypto.randomUUID())
 const selected = ref<FoundationJob>()
 const selectedId = ref('')
+const detailHeading = useTemplateRef<HTMLHeadingElement>('detailHeading')
 const message = ref('')
 const action = useTask()
 const handlers = useResource((signal) =>
@@ -282,12 +284,14 @@ async function cancel(job: FoundationJob) {
     void poll(generation)
   }
 }
-/** 详情选定稳定身份，后发查询拥有更新权。 */
-function inspect(job: FoundationJob) {
+/** 用户查看详情时定位标题；后台轮询只更新内容，不移动焦点。 */
+async function inspect(job: FoundationJob) {
   selected.value = job
   if (selectedId.value === job.id) void errors.reload()
   selectedId.value = job.id
   void poll(generation)
+  await nextTick()
+  detailHeading.value?.focus()
 }
 /** 结果继续由文件服务重新鉴权下载。 */
 async function download(job: FoundationJob) {
@@ -676,8 +680,11 @@ onScopeDispose(() => {
       @size-change="resize"
     />
     <FieldTip :id="formTipId + '-pagination'"> 条数仅对当前列表生效。 </FieldTip>
-    <ElDescriptions v-if="selected" title="任务详情" :column="1" :label-width="110" border
-      ><ElDescriptionsItem label="任务身份">{{ selected.id }}</ElDescriptionsItem
+    <ElDescriptions v-if="selected" :column="1" :label-width="110" border>
+      <template #title>
+        <h2 ref="detailHeading" class="detail-heading" tabindex="-1">任务详情</h2>
+      </template>
+      <ElDescriptionsItem label="任务身份">{{ selected.id }}</ElDescriptionsItem
       ><ElDescriptionsItem label="状态">{{
         stateLabels[selected.state] ?? selected.state
       }}</ElDescriptionsItem
@@ -734,6 +741,10 @@ onScopeDispose(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm, 8px);
+}
+.detail-heading {
+  margin: 0;
+  font: inherit;
 }
 .actions :deep(.el-button + .el-button) {
   margin-left: 0;
