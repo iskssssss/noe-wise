@@ -240,7 +240,7 @@ onScopeDispose(() => {
       @size-change="resize"
     />
     <FieldTip :id="formTipId + '-pagination'">
-      条数仅对当前列表生效。使用中的文件不能删除；孤立文件至少保留 24 小时。
+      条数仅对当前列表生效。使用中的文件不能删除；无引用文件可手动删除，自动清理由服务端保留策略决定。
     </FieldTip>
   </section>
 </template>

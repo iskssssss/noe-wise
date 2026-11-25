@@ -132,6 +132,10 @@ function handlerTitle(code: string) {
 function shortId(value: string) {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
 }
+/** 列表与详情说明已知到期状态；停留页面期间的下载仍由服务端重新核验。 */
+function resultExpired(job: FoundationJob) {
+  return job.expires_at !== null && new Date(job.expires_at).getTime() < Date.now()
+}
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
@@ -387,7 +391,9 @@ onScopeDispose(() => {
 
 <template>
   <section class="foundation-jobs" aria-label="管理任务中心">
-    <p class="muted">导入须先预检。取消只停止后续行；已提交行保留。结果保留七天。</p>
+    <p class="muted">
+      导入须先预检。取消只停止后续行；已提交行保留。结果保留七天，到期后无法下载；可查看已保存的文件，或新建导出任务获取当前数据。
+    </p>
     <FeedbackNotice
       v-if="action.error.value"
       :title="action.error.value"
@@ -596,21 +602,24 @@ onScopeDispose(() => {
       >
       <ElTableColumn label="操作" width="180" fixed="right"
         ><template #default="{ row }"
-          ><ElButton link @click="inspect(row as FoundationJob)">详情</ElButton
-          ><ElButton
-            v-if="row.result_file_id"
-            link
-            :disabled="action.busy.value"
-            @click="download(row as FoundationJob)"
-            >下载结果</ElButton
-          ><ElButton
-            v-if="canCancel && ['queued', 'running'].includes(row.state)"
-            link
-            type="danger"
-            :disabled="action.busy.value"
-            @click="cancel(row as FoundationJob)"
-            >取消</ElButton
-          ></template
+          ><div class="actions">
+            <ElButton link @click="inspect(row as FoundationJob)">详情</ElButton
+            ><ElButton
+              v-if="row.result_file_id && !resultExpired(row as FoundationJob)"
+              link
+              :disabled="action.busy.value"
+              @click="download(row as FoundationJob)"
+              >下载结果</ElButton
+            ><span v-else-if="row.result_file_id" class="admin-field-help">结果已到期</span
+            ><ElButton
+              v-if="canCancel && ['queued', 'running'].includes(row.state)"
+              link
+              type="danger"
+              :disabled="action.busy.value"
+              @click="cancel(row as FoundationJob)"
+              >取消</ElButton
+            >
+          </div></template
         ></ElTableColumn
       >
     </ElTable>
@@ -636,9 +645,10 @@ onScopeDispose(() => {
         stateLabels[selected.state] ?? selected.state
       }}</ElDescriptionsItem
       ><ElDescriptionsItem label="失败说明">{{ selected.error_message ?? '—' }}</ElDescriptionsItem
-      ><ElDescriptionsItem label="结果保留截止">{{
-        formatDateTime(selected.expires_at)
-      }}</ElDescriptionsItem></ElDescriptions
+      ><ElDescriptionsItem label="结果保留截止"
+        >{{ formatDateTime(selected.expires_at)
+        }}<span v-if="resultExpired(selected)">（已到期）</span>
+      </ElDescriptionsItem></ElDescriptions
     >
     <FeedbackNotice
       v-if="errors.error.value"

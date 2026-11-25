@@ -181,7 +181,10 @@ export async function readApiResponseError(
     status: res.status,
     code: readableField(body.code),
     retryable: body.retryable === true,
-    userMessage: userMessageForStatus(res.status, method),
+    userMessage:
+      res.status === 410 && body.code === 'job_result_expired'
+        ? '任务结果已到期，请查看已保存的文件；导出可新建任务获取当前数据'
+        : userMessageForStatus(res.status, method),
     technicalDetails,
     traceId,
     fieldErrors: safeFieldErrors(body.field_errors)

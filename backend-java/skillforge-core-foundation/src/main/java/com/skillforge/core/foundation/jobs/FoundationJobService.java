@@ -12,6 +12,7 @@ import com.skillforge.core.foundation.catalog.entitlements.FeatureGate;
 import com.skillforge.core.foundation.catalog.entitlements.ResourceKind;
 import com.skillforge.core.foundation.catalog.entitlements.ResourceQuota;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -164,7 +165,7 @@ public class FoundationJobService implements FoundationFileReferenceAuthorizer {
     private void requireFeature(){if(!access.currentSubject().platform())features.require("foundation.jobs");}
     /** {@inheritDoc} */ @Override public String ownerKind(){return "foundation.job";}
     /** 结果下载继承任务读取与原领域动作权限；过期或不匹配关联拒绝，Agent共享不会影响此权限。 */
-    @Override public void authorizeFile(String ownerId,String fileId){access.require("foundation.jobs.read");tx.executeWithoutResult(status->{bind();var job=mapper.find(ownerId);if(job==null||!fileId.equals(job.getResultFileId())||job.getExpiresAt()==null||job.getExpiresAt().isBefore(java.time.OffsetDateTime.now())||!List.of("succeeded","failed","cancelled").contains(job.getState()))throw new ApiException(HttpStatus.FORBIDDEN,"任务结果不可访问");requireOperation(handler(job.getHandler()),job.getOperation());});}
+    @Override public void authorizeFile(String ownerId,String fileId){access.require("foundation.jobs.read");tx.executeWithoutResult(status->{bind();var job=mapper.find(ownerId);if(job==null||!fileId.equals(job.getResultFileId())||job.getExpiresAt()==null||!List.of("succeeded","failed","cancelled").contains(job.getState()))throw new ApiException(HttpStatus.FORBIDDEN,"任务结果不可访问");requireOperation(handler(job.getHandler()),job.getOperation());if(job.getExpiresAt().isBefore(OffsetDateTime.now()))throw new ApiException(HttpStatus.GONE,"job_result_expired","任务结果已到期，请查看已保存的文件；导出可新建任务获取当前数据",false);});}
     /** 调度错误收尾只恢复已持久化作用域，不借助失效 JWT。 */
     private void bindPersisted(FoundationJobDO job){mapper.bind(job.getTenantId()==null?"":job.getTenantId().toString(),job.getTenantId()==null);}
     /** 错误/生命周期收尾恢复已持久化租户并在异常时还原；每条SQL的RLS拦截不能被单次set_config替代。 */

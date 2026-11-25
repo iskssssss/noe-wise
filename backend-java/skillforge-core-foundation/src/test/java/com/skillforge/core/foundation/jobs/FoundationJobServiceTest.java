@@ -52,6 +52,17 @@ class FoundationJobServiceTest {
     @Test void failedTenantJobRestoresPersistedRlsScope(){var row=job();row.setTenantId(7L);when(mapper.claim(anyString())).thenAnswer(i->{row.setLeaseOwner(i.getArgument(0));return row;});doThrow(new ApiException(HttpStatus.FORBIDDEN,"撤权")).when(access).require("foundation.example.manage");when(mapper.finish(eq(row.getId()),anyString(),eq("failed"),anyString(),isNull(),anyInt())).thenAnswer(i->{assertEquals("7",TenantContext.getTenantId());return 1;});TenantContext.setTenantId("8");assertTrue(jobs.runNext(false));assertEquals("8",TenantContext.getTenantId());verify(mapper).finish(eq(row.getId()),anyString(),eq("failed"),anyString(),isNull(),eq(1));}
     /** 数据库到期退役后才释放文件与回执；同事务失败可重试，调用线程作用域必须还原。 */
     @Test void expiredTenantMaterialsReleaseUnderPersistedScope(){var row=job();row.setTenantId(7L);row.setState("failed");row.setExpiresAt(OffsetDateTime.now().minusDays(1));when(mapper.expired(100)).thenReturn(List.of(row));when(mapper.lock(row.getId())).thenReturn(row);when(mapper.expire(row.getId())).thenAnswer(i->{assertEquals("7",TenantContext.getTenantId());return 1;});TenantContext.setTenantId("8");jobs.cleanup(false);assertEquals("8",TenantContext.getTenantId());var order=inOrder(mapper,files);order.verify(mapper).expire(row.getId());order.verify(files).releaseExpiredJobReferences(row.getId(),7L);order.verify(mapper).deleteReceipts(row.getId());order.verify(mapper).deleteReceiptBlocks(row.getId());}
+    /** 到期只向有原领域权限且关联匹配的主体说明，其他拒绝继续保持403。 */
+    @Test void resultExpiryIsDistinctFromPermissionDenial(){
+        var row=job();row.setState("succeeded");row.setResultFileId(fileId);row.setExpiresAt(OffsetDateTime.now().plusDays(1));when(mapper.find(row.getId())).thenReturn(row);
+        assertDoesNotThrow(()->jobs.authorizeFile(row.getId(),fileId));
+        row.setExpiresAt(OffsetDateTime.now().minusDays(1));
+        var expired=assertThrows(ApiException.class,()->jobs.authorizeFile(row.getId(),fileId));assertEquals(HttpStatus.GONE,expired.getStatus());assertEquals("job_result_expired",expired.getCode());
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,()->jobs.authorizeFile(row.getId(),UUID.randomUUID().toString())).getStatus());
+        doThrow(new ApiException(HttpStatus.FORBIDDEN,"撤权")).when(access).require("foundation.example.manage");
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,()->jobs.authorizeFile(row.getId(),fileId)).getStatus());
+        verify(files,never()).download(anyString());
+    }
     /** 使用合法租约的通用工作者夹具；Mapper替身不证明实际提交原子性。 */
     private FoundationJobDO workingJob(){var row=job();when(mapper.claim(anyString())).thenAnswer(i->{row.setLeaseOwner(i.getArgument(0));return row;});when(mapper.lock(row.getId())).thenReturn(row);when(mapper.guardLease(eq(row.getId()),anyString())).thenReturn(true);when(mapper.finish(anyString(),anyString(),anyString(),nullable(String.class),nullable(String.class),anyInt())).thenReturn(1);return row;}
     /** 保存主体和材料，不从测试运行线程 JWT 取身份。 */

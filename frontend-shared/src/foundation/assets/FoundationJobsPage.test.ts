@@ -17,7 +17,7 @@ const jobs: FoundationJob[] = Array.from({ length: 27 }, (_, i) => ({
   error_message: i ? '部分行校验失败' : null,
   result_file_id: `result-${i}`,
   created_at: '2026-10-12T08:00:00+08:00',
-  expires_at: '2026-10-19T08:00:00+08:00'
+  expires_at: '2099-10-19T08:00:00+08:00'
 }))
 const handlers: TransferHandler[] = Array.from({ length: 3 }, (_, i) => ({
   code: `members-${i}`,
@@ -87,6 +87,23 @@ function button(wrapper: VueWrapper, label: string) {
 }
 
 describe('复杂导入导出任务状态和隔离', () => {
+  it('已到期结果保留任务事实和下一步，不再显示可下载入口', async () => {
+    const expired = { ...jobs[0]!, expires_at: '2000-01-01T00:00:00Z' }
+    const request: FoundationRequest = async <T>(_method: string, path: string) => {
+      if (path.endsWith('/handlers')) return handlers as T
+      if (path.includes('/errors?')) return [] as T
+      if (path.includes('/detail?')) return expired as T
+      return pageResult(path, [expired, jobs[1]!]) as T
+    }
+    const wrapper = await render(request)
+    expect(wrapper.findAll('button').filter((item) => item.text() === '下载结果')).toHaveLength(1)
+    expect(wrapper.text()).toContain('结果已到期')
+    expect(wrapper.text()).toContain('新建导出任务获取当前数据')
+    await button(wrapper, '详情').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('（已到期）')
+    expect(wrapper.text()).toContain('失败')
+  })
   it('已受理后查看任务只读取详情，不重复提交写请求', async () => {
     const commands: unknown[] = []
     const request: FoundationRequest = async <T>(method: string, path: string, body?: unknown) => {
