@@ -8,13 +8,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { adminZhCN } from '../i18n/zh-CN'
 
-const ROUTE_TITLES: Record<string, string> = {
-  'admin.app.loginTitle': adminZhCN.app.loginTitle,
-  ...Object.fromEntries(
-    Object.entries(adminZhCN.route).map(([key, value]) => [`admin.route.${key}`, value])
-  )
-}
-
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -62,7 +55,7 @@ const router = createRouter({
           path: 'foundation/catalog',
           component: () => import('../views/FoundationPage.vue'),
           meta: {
-            title: '菜单、字典与配置',
+            title: '基础目录与设置',
             foundationArea: 'catalog',
             preserveOnQueryChange: true
           }
@@ -90,7 +83,7 @@ const router = createRouter({
         {
           path: 'chat',
           component: () => import('../views/ChatPage.vue'),
-          meta: { titleKey: 'admin.route.chat', chatLayout: true }
+          meta: { title: adminZhCN.route.chat, chatLayout: true }
         },
         {
           path: 'chat/sessions/:sessionId/trace',
@@ -100,12 +93,12 @@ const router = createRouter({
         {
           path: 'home',
           component: () => import('../views/admin/HomePage.vue'),
-          meta: { titleKey: 'admin.route.home' }
+          meta: { title: adminZhCN.route.home }
         },
         {
           path: 'sessions',
           component: () => import('../views/admin/SessionsPage.vue'),
-          meta: { titleKey: 'admin.route.sessions' }
+          meta: { title: adminZhCN.route.sessions }
         },
         {
           path: 'trajectories',
@@ -125,23 +118,23 @@ const router = createRouter({
         {
           path: 'workflows',
           component: () => import('../views/admin/WorkflowsPage.vue'),
-          meta: { titleKey: 'admin.route.workflows' }
+          meta: { title: adminZhCN.route.workflows }
         },
         // 新建路由用 create 而非 new：避免与真实 workflow_id 恰为 "new" 的工作流详情路由冲突（静态路由优先匹配）
         {
           path: 'workflows/create',
           component: () => import('../views/admin/WorkflowDetailPage.vue'),
-          meta: { titleKey: 'admin.route.workflowCreate' }
+          meta: { title: adminZhCN.route.workflowCreate }
         },
         {
           path: 'workflows/:workflowId',
           component: () => import('../views/admin/WorkflowDetailPage.vue'),
-          meta: { titleKey: 'admin.route.workflowDetail' }
+          meta: { title: adminZhCN.route.workflowDetail }
         },
         {
           path: 'agents',
           component: () => import('../views/admin/AgentsPage.vue'),
-          meta: { titleKey: 'admin.route.agentDetail' }
+          meta: { title: adminZhCN.route.agentDetail }
         },
         {
           path: 'agent-deployments',
@@ -156,17 +149,17 @@ const router = createRouter({
         {
           path: 'teams',
           component: () => import('../views/admin/TeamsPage.vue'),
-          meta: { titleKey: 'admin.route.teams' }
+          meta: { title: adminZhCN.route.teams }
         },
         {
           path: 'agents/:id',
           component: () => import('../views/admin/AgentManagePage.vue'),
-          meta: { titleKey: 'admin.route.agentDetail' }
+          meta: { title: adminZhCN.route.agentDetail }
         },
         {
           path: 'channels',
           component: () => import('../views/admin/ChannelsPage.vue'),
-          meta: { titleKey: 'admin.route.channels' }
+          meta: { title: adminZhCN.route.channels }
         },
         {
           path: 'tools',
@@ -176,7 +169,7 @@ const router = createRouter({
         {
           path: 'connectors',
           component: () => import('../views/admin/ConnectorsPage.vue'),
-          meta: { titleKey: 'admin.route.connectors' }
+          meta: { title: adminZhCN.route.connectors }
         },
         {
           path: 'tool-deployments',
@@ -191,67 +184,67 @@ const router = createRouter({
         {
           path: 'capabilities',
           component: () => import('../views/admin/CapabilityCatalogPage.vue'),
-          meta: { titleKey: 'admin.route.capabilities' }
+          meta: { title: adminZhCN.route.capabilities }
         },
         {
           path: 'skills',
           component: () => import('../views/admin/SkillWorkbenchListPage.vue'),
-          meta: { titleKey: 'admin.route.skills' }
+          meta: { title: adminZhCN.route.skills }
         },
         {
           path: 'skills/:definitionId',
           component: () => import('../views/admin/SkillWorkbenchPage.vue'),
-          meta: { titleKey: 'admin.route.skills' }
+          meta: { title: adminZhCN.route.skills }
         },
         {
           path: 'api-docs',
           component: () => import('../views/admin/OpenApiDocsPage.vue'),
-          meta: { titleKey: 'admin.route.apiDocs' }
+          meta: { title: adminZhCN.route.apiDocs }
         },
         {
           path: 'knowledge',
           component: () => import('../views/admin/KnowledgePage.vue'),
-          meta: { titleKey: 'admin.route.knowledge' }
+          meta: { title: adminZhCN.route.knowledge }
         },
         {
           path: 'memory',
           component: () => import('../views/admin/MemoryPage.vue'),
-          meta: { titleKey: 'admin.route.memory' }
+          meta: { title: adminZhCN.route.memory }
         },
         {
           path: 'settings',
           component: () => import('../views/admin/SettingsPage.vue'),
-          meta: { titleKey: 'admin.route.settings' }
+          meta: { title: adminZhCN.route.settings }
         },
         {
           path: 'knowledge/:id',
           component: () => import('../views/admin/KnowledgeManagePage.vue'),
-          meta: { titleKey: 'admin.route.knowledge' }
+          meta: { title: adminZhCN.route.knowledge }
         },
         {
           path: 'dashboard',
           component: () => import('../views/admin/DashboardPage.vue'),
-          meta: { titleKey: 'admin.route.dashboard' }
+          meta: { title: adminZhCN.route.dashboard }
         },
         {
           path: 'billing-records',
           component: () => import('../views/admin/BillingRecordsPage.vue'),
-          meta: { titleKey: 'admin.route.billing' }
+          meta: { title: adminZhCN.route.billing }
         },
         {
           path: 'governance',
           component: () => import('../views/admin/GovernancePage.vue'),
-          meta: { titleKey: 'admin.route.governance' }
+          meta: { title: adminZhCN.route.governance }
         },
         {
           path: 'handoff',
           component: () => import('../views/admin/HandoffPage.vue'),
-          meta: { titleKey: 'admin.route.handoff' }
+          meta: { title: adminZhCN.route.handoff }
         },
         {
           path: 'marketplace',
           component: () => import('../views/admin/MarketplacePage.vue'),
-          meta: { titleKey: 'admin.route.marketplace' }
+          meta: { title: adminZhCN.route.marketplace }
         },
         { path: '', redirect: '/admin/home' }
       ]
@@ -259,12 +252,12 @@ const router = createRouter({
     {
       path: '/login',
       component: () => import('../views/LoginPage.vue'),
-      meta: { public: true, titleKey: 'admin.app.loginTitle' }
+      meta: { public: true, title: adminZhCN.app.loginTitle }
     },
     {
       path: '/404',
       component: () => import('../views/NotFoundPage.vue'),
-      meta: { requiresAuth: false, titleKey: 'admin.route.notFound' }
+      meta: { requiresAuth: false, title: adminZhCN.route.notFound }
     },
     { path: '/403', component: () => import('../views/ForbiddenPage.vue') },
     { path: '/', redirect: '/admin/home' },
@@ -273,12 +266,10 @@ const router = createRouter({
   ]
 })
 
-router.afterEach((to) => {
-  const titleKey = typeof to.meta.titleKey === 'string' ? to.meta.titleKey : ''
-  const pageTitle =
-    typeof to.meta.title === 'string'
-      ? to.meta.title
-      : (ROUTE_TITLES[titleKey] ?? adminZhCN.app.title)
+router.afterEach((to, _from, failure) => {
+  // 后台标题由布局结合已生效路由与机构品牌维护；独立页面才在这里设置。
+  if (failure || to.matched.some((record) => record.path === '/admin')) return
+  const pageTitle = typeof to.meta.title === 'string' ? to.meta.title : adminZhCN.app.title
   document.title = `${pageTitle} · ${adminZhCN.app.brand}`
 })
 

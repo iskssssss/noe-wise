@@ -25,7 +25,7 @@ const router = createRouter({
           path: 'foundation/catalog',
           component: () => import('../views/FoundationPage.vue'),
           meta: {
-            title: '菜单、字典与配置',
+            title: '基础目录与设置',
             foundationArea: 'catalog',
             preserveOnQueryChange: true
           }
@@ -239,7 +239,9 @@ router.beforeEach(async (to) => {
   }
   return true
 })
-router.afterEach((to) => {
+router.afterEach((to, _from, failure) => {
+  // 后台标题由共享布局维护，取消导航不得改写当前页面标题。
+  if (failure || to.matched.some((record) => record.path === '/platform')) return
   document.title = `${to.meta.title ?? '平台运营'} · 灵知`
 })
 export default router

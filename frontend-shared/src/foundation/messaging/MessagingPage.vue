@@ -454,7 +454,7 @@ watch(
 </script>
 
 <template>
-  <AdminPage title="消息与公告">
+  <AdminPage title="公告与通知">
     <template #extra
       ><ElButton :loading="active?.loading.value" @click="reload">刷新</ElButton></template
     >
