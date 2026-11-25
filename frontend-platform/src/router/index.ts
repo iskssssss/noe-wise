@@ -1,6 +1,7 @@
 import { routePermission } from '@skillforge/shared/foundation/navigation'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { sessionListQueryKeys } from '../views/platform/sessionListLocation'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -179,12 +180,12 @@ const router = createRouter({
         {
           path: 'sessions',
           component: () => import('../views/platform/SessionsPage.vue'),
-          meta: { title: '会话观察' }
+          meta: { title: '会话观察', preserveOnQueryChange: true }
         },
         {
           path: 'sessions/detail',
           component: () => import('../views/platform/SessionDetailPage.vue'),
-          meta: { title: '会话详情' }
+          meta: { title: '会话详情', parentQueryKeys: sessionListQueryKeys }
         },
         {
           path: 'trajectories',

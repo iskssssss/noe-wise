@@ -124,6 +124,12 @@ const activeMenu = computed(
       .sort((a, b) => b.path!.length - a.path!.length)[0]
 )
 const pageTitle = computed(() => String(route.meta.title ?? activeMenu.value?.title ?? props.title))
+const parentQuery = computed(() => {
+  const keys = route.meta.parentQueryKeys
+  return Object.fromEntries(
+    Object.entries(route.query).filter(([key]) => Array.isArray(keys) && keys.includes(key))
+  )
+})
 watch(
   () => `${pageTitle.value} · ${props.title}`,
   (value) => {
@@ -193,7 +199,9 @@ function restoreNavigationFocus() {
               route.path !== activeMenu.path &&
               activeMenu.title !== pageTitle
             "
-            ><RouterLink :to="activeMenu.path">{{ activeMenu.title }}</RouterLink></ElBreadcrumbItem
+            ><RouterLink :to="{ path: activeMenu.path, query: parentQuery }">{{
+              activeMenu.title
+            }}</RouterLink></ElBreadcrumbItem
           >
           <ElBreadcrumbItem
             ><span aria-current="page">{{ pageTitle }}</span></ElBreadcrumbItem

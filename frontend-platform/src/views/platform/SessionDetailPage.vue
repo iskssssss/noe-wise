@@ -26,9 +26,14 @@ import {
 import { mergeById, mergeMessages, messageState } from './sessionTimeline'
 import SessionAttemptDiagnostics from './SessionAttemptDiagnostics.vue'
 import { useActionPermissions } from '../../composables/actionPermissions'
+import { readSessionListQuery, sessionListQuery } from './sessionListLocation'
 const route = useRoute(),
   router = useRouter()
 const { allowed } = useActionPermissions()
+const sessionListTarget = computed(() => ({
+  path: '/platform/sessions',
+  query: sessionListQuery(readSessionListQuery(route.query))
+}))
 const canReadDiagnostics = computed(() => allowed('foundation.sessions.diagnostic_read'))
 const cacheAvailabilityLabels: Record<string, string> = {
   AVAILABLE: '已有缓存统计',
@@ -460,7 +465,7 @@ watch(canReadDiagnostics, (allowed) => {
   <AdminPage title="会话执行轨迹" description="按业务轮次查看执行树、问答与模型用量">
     <template #extra>
       <RouterLink class="el-button" to="/platform/trajectories">轨迹列表</RouterLink>
-      <RouterLink class="el-button" to="/platform/sessions">会话列表</RouterLink>
+      <RouterLink class="el-button" :to="sessionListTarget">会话列表</RouterLink>
       <ElButton
         :loading="load.loading.value || initialRounds.loading.value"
         :disabled="busy"

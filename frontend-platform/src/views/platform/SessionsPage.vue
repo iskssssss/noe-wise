@@ -5,14 +5,21 @@ import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter, statusLabel } from '@skillforge/shared/admin'
-import { computed, onMounted, reactive, ref, useId } from 'vue'
-import { AdminPage, EntitySelect, useResource } from '@skillforge/shared/admin'
+import { computed, onMounted, reactive, ref, useId, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { AdminPage, EntitySelect, useResource, useTask } from '@skillforge/shared/admin'
 import { formatDateTime, toBeijingDateTime } from '@skillforge/shared/utils/datetime'
 import { loadTenantOptions, resolveTenantOption } from '../../api/entityOptions'
 import { api, type SessionListQuery } from '../../api'
 import { observationAnswerStatus } from '@skillforge/shared/observation/presentation'
-const range = ref<[string, string]>()
-const advancedOpen = ref(false)
+import { readSessionListQuery, sessionListQuery } from './sessionListLocation'
+const route = useRoute(),
+  router = useRouter()
+const navigation = useTask()
+const query = reactive<SessionListQuery>(readSessionListQuery(route.query))
+const range = ref<[string, string] | undefined>(
+  query.started_from && query.started_to ? [query.started_from, query.started_to] : undefined
+)
 const advancedCount = computed(
   () =>
     [
@@ -24,6 +31,7 @@ const advancedCount = computed(
       range.value
     ].filter(Boolean).length
 )
+const advancedOpen = ref(advancedCount.value > 0)
 // 日期控件只处理北京墙上时间，业务筛选仍保留带偏移的绝对时刻。
 const dateRange = computed<[string, string] | undefined>({
   get: (): [string, string] | undefined =>
@@ -34,25 +42,28 @@ const dateRange = computed<[string, string] | undefined>({
     range.value = from && to ? [from, to] : undefined
   }
 })
-const query = reactive<SessionListQuery>({
-  page: 1,
-  page_size: 20,
-  tenant_id: '',
-  session_id: '',
-  user_id: '',
-  agent_id: '',
-  team_id: '',
-  channel: '',
-  status: '',
-  summary: ''
-})
 // 输入中的筛选与当前结果的查询快照分开；翻页只使用已提交条件。
 const applied = ref<SessionListQuery>({ ...query })
+const listContext = computed(() => sessionListQuery(applied.value))
+const unqueried = computed(
+  () =>
+    JSON.stringify(
+      sessionListQuery({
+        ...query,
+        page: applied.value.page,
+        started_from: range.value?.[0],
+        started_to: range.value?.[1]
+      })
+    ) !== JSON.stringify(listContext.value)
+)
 const load = useResource(async (signal) => {
-  const requestedPage = query.page
+  const requestedPage = applied.value.page
   const result = await api.sessions.list({ ...applied.value, page: requestedPage }, { signal })
   return { ...result, page: requestedPage }
 })
+const resultContext = computed(() =>
+  sessionListQuery({ ...applied.value, page: load.data.value?.page ?? applied.value.page })
+)
 function sessionOptionSource(kind: 'session' | 'user' | 'agent' | 'team' | 'channel') {
   return {
     async load(keyword: string, signal?: AbortSignal) {
@@ -91,28 +102,55 @@ function filterStatusLabel(value: string) {
 function reload() {
   void load.reload()
 }
+async function applyFilters(next: SessionListQuery) {
+  const changed =
+    JSON.stringify(sessionListQuery({ ...next, page: applied.value.page })) !==
+    JSON.stringify(listContext.value)
+  applied.value = next
+  query.page = next.page
+  if (changed) {
+    load.invalidate()
+    load.data.value = undefined
+  }
+  const updated = await navigation.run(async () => {
+    const target = { path: route.path, query: listContext.value }
+    if (router.resolve(target).fullPath !== route.fullPath) {
+      const failure = await router.replace(target)
+      if (failure) throw Error('查询条件未能更新到地址栏，请重试查询')
+    }
+    return true
+  })
+  if (updated) reload()
+}
 function submitFilters() {
-  query.page = 1
-  applied.value = { ...query, started_from: range.value?.[0], started_to: range.value?.[1] }
-  load.data.value = undefined
-  reload()
+  void applyFilters({
+    ...query,
+    page: 1,
+    started_from: range.value?.[0],
+    started_to: range.value?.[1]
+  })
 }
 function resetFilters() {
-  Object.assign(query, {
-    page: 1,
-    tenant_id: '',
-    session_id: '',
-    user_id: '',
-    agent_id: '',
-    team_id: '',
-    channel: '',
-    status: '',
-    summary: ''
-  })
+  Object.assign(query, readSessionListQuery({}))
   range.value = undefined
   query.page = 1
   submitFilters()
 }
+watch(
+  () => route.query,
+  (value) => {
+    const next = readSessionListQuery(value)
+    if (JSON.stringify(sessionListQuery(next)) === JSON.stringify(listContext.value)) return
+    applied.value = next
+    Object.assign(query, next)
+    range.value =
+      next.started_from && next.started_to ? [next.started_from, next.started_to] : undefined
+    advancedOpen.value = advancedCount.value > 0
+    load.invalidate()
+    load.data.value = undefined
+    reload()
+  }
+)
 onMounted(reload)
 
 const formTipId = useId()
@@ -227,9 +265,10 @@ const formTipId = useId()
         >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配公开回复或执行任一状态；已记录回复包含失败说明，执行结果以“执行”状态为准。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
       >
     </ElForm>
+    <p v-if="unqueried" class="admin-field-help" role="status">筛选条件已修改，点击查询后生效。</p>
     <FeedbackNotice
-      v-if="load.error.value"
-      :title="load.error.value"
+      v-if="load.error.value || navigation.error.value"
+      :title="[load.error.value, navigation.error.value].filter(Boolean).join('；')"
       :closable="false"
       type="error"
     />
@@ -263,7 +302,7 @@ const formTipId = useId()
           <RouterLink
             :to="{
               path: '/platform/sessions/detail',
-              query: { tenantId: row.tenant_id, sessionId: row.session_id }
+              query: { ...resultContext, tenantId: row.tenant_id, sessionId: row.session_id }
             }"
             >{{ row.summary || row.session_id }}</RouterLink
           >
@@ -295,8 +334,7 @@ const formTipId = useId()
       :total="total"
       @current-change="
         ($event: number) => {
-          query.page = $event
-          reload()
+          applyFilters({ ...applied, page: $event })
         }
       "
     />

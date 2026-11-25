@@ -55,7 +55,11 @@ async function render(
       {
         path: '/first/detail',
         component: { render: () => h('h1', '执行详情') },
-        meta: { title: '执行详情', navigationPath: '/second' }
+        meta: {
+          title: '执行详情',
+          navigationPath: '/second',
+          parentQueryKeys: ['list_summary', 'page']
+        }
       }
     ]
   })
@@ -98,7 +102,7 @@ describe('共享布局响应式导航', () => {
   it('详情页按明确归属高亮菜单，标题与面包屑保留当前详情名称', async () => {
     mobile = false
     const { router } = await render()
-    await router.push('/first/detail')
+    await router.push('/first/detail?list_summary=菜单&page=2&sessionId=detail-session')
     await flushPromises()
     expect(document.querySelector('.el-menu-item.is-active')?.textContent).toContain('第二页')
     expect(document.querySelector('[aria-label="面包屑"]')?.textContent).toContain('第二页')
@@ -106,6 +110,10 @@ describe('共享布局响应式导航', () => {
       '执行详情'
     )
     expect(document.title).toBe('执行详情 · 机构后台')
+    const parent = document.querySelector<HTMLAnchorElement>(
+      '.admin-breadcrumb a[href^="/second"]'
+    )!
+    expect(parent.getAttribute('href')).toBe('/second?list_summary=%E8%8F%9C%E5%8D%95&page=2')
   })
   it('窄屏首次不占侧栏，无偏好写权也能打开导航；Esc关闭恢复按钮焦点', async () => {
     const { compactChange } = await render()
