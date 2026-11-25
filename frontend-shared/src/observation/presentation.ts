@@ -6,13 +6,13 @@ import type {
 } from './types'
 import { statusLabel } from '../admin/presentation'
 
-/** 公开回复状态表示回复的记录情况，不代表执行结果。 */
+/** 最终回复状态独立于执行结果；失败或取消说明不代表最终答复完成。 */
 export function observationAnswerStatus(value?: string | null): string {
   const labels: Record<string, string> = {
-    COMPLETED: '已记录回复',
+    COMPLETED: '最终回复已完成',
     IN_PROGRESS: '回复处理中',
     FAILED: '未形成最终回复',
-    NONE: '暂无回复'
+    NONE: '暂无最终回复'
   }
   return value ? (labels[value] ?? statusLabel(value)) : '未记录'
 }

@@ -17,8 +17,41 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class SessionObservationServiceTest {
+
+    @ParameterizedTest
+    @CsvSource({"COMPLETED,completed,答复,COMPLETED", "FAILED,failed,失败说明,FAILED",
+            "CANCELLED,cancelled,取消说明,NONE", "OUTCOME_UNKNOWN,failed,未知结果,FAILED",
+            "COMPLETED,failed,公开检查拒绝说明,FAILED", "COMPLETED,completed,'',NONE",
+            "RUNNING,completed,已有正文,IN_PROGRESS", "WAITING,completed,已有正文,IN_PROGRESS"})
+    void sessionReplyStatusKeepsTerminationNoticesSeparateFromCompletedAnswers(
+            String execution, String messageState, String content, String expectedAnswer) {
+        var repository = mock(SessionObservationRepository.class);
+        var time = Instant.parse("2026-10-25T02:00:00Z");
+        var row = new SessionObservationRepository.SessionRow(7L, "机构", "session-1", 8L,
+                "用户", "AGENT", 9L, "Agent", null, null, 10L, "web", "网页", "NONE", execution,
+                null, 0, 1, null, null, null, null, time, time, time, 1, "root-1", 1, 0);
+        when(repository.find(any(), anyLong(), any())).thenReturn(Optional.of(row));
+        when(repository.readAt()).thenReturn(time);
+        var answers = mock(RuntimeCompletedAnswerReader.class);
+        var guard = mock(PublicOutputGuard.class);
+        when(guard.capture(any(com.skillforge.runtime.api.port.SessionOwner.class)))
+                .thenReturn(mock(PublicOutputGuard.Scope.class));
+        when(answers.read(any(), any())).thenReturn(List.of(new RuntimeCompletedAnswerReader.Answer(
+                "reply", "run-1", "root-1", 1, content, "final", messageState, 1, 1, "event-1", time)));
+        var service = new SessionObservationService(repository, mock(SessionTraceService.class),
+                mock(ObservationReadAudit.class), new ObjectMapper(), answers, guard, mock(PlatformObservationAccess.class));
+
+        var detail = service.detail(new SessionObservationScope(SessionObservationScope.Kind.PLATFORM_ADMIN, null, "99"),
+                new SessionObservationQuery.Resource(7L, "session-1"));
+
+        assertEquals(expectedAnswer, detail.session().answerStatus());
+        assertEquals(execution, detail.session().executionStatus());
+        assertEquals(1, detail.session().messageCount());
+    }
 
     @Test
     void typedTraceUsesActualActionKindsAndAlreadyPublicEventSources() {

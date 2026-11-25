@@ -605,7 +605,7 @@ describe('会话详情实际接线', () => {
     expect(overview.text()).toContain('本轮最终回答')
     const summary = wrapper.get('[aria-label="会话概要"]')
     expect(summary.text()).toContain('公开回复')
-    expect(summary.text()).toContain('已记录回复')
+    expect(summary.text()).toContain('最终回复已完成')
     expect(summary.text()).not.toContain('回答状态')
     expect(
       overview.element.compareDocumentPosition(tree.element) & Node.DOCUMENT_POSITION_FOLLOWING

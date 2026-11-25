@@ -274,8 +274,8 @@ describe('平台读取请求快照', () => {
       ]
     })
     const wrapper = await open(SessionsPage)
-    expect(wrapper.text()).toContain('状态匹配公开回复或执行任一状态')
-    expect(wrapper.text()).toContain('暂无回复')
+    expect(wrapper.text()).toContain('状态匹配最终回复或执行任一状态')
+    expect(wrapper.text()).toContain('暂无最终回复')
     const select = wrapper
       .findAllComponents(ElSelect)
       .find((item) => item.props('ariaLabel') === '回复或执行状态')!

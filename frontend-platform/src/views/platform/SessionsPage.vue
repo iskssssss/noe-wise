@@ -94,7 +94,7 @@ const channelOptions = sessionOptionSource('channel')
 const rows = computed(() => load.data.value?.items ?? []),
   total = computed(() => load.data.value?.total ?? 0)
 function filterStatusLabel(value: string) {
-  if (value === 'COMPLETED') return '执行已完成或已记录回复'
+  if (value === 'COMPLETED') return '执行或最终回复已完成'
   if (value === 'FAILED') return '执行失败或未形成最终回复'
   if (value === 'NONE' || value === 'IN_PROGRESS') return observationAnswerStatus(value)
   return statusLabel(value)
@@ -262,7 +262,7 @@ const formTipId = useId()
       </div>
 
       <FieldTip :id="formTipId + '-group-0'"
-        >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配公开回复或执行任一状态；已记录回复包含失败说明，执行结果以“执行”状态为准。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
+        >按机构、会话、终端用户、Agent、团队、渠道、摘要关键词、状态和时间范围组合筛选。状态匹配最终回复或执行任一状态；失败或取消说明不代表最终回复完成，执行结果以“执行”状态为准。时间范围按北京时间选择，留空的条件不参与查询。</FieldTip
       >
     </ElForm>
     <p v-if="unqueried" class="admin-field-help" role="status">筛选条件已修改，点击查询后生效。</p>

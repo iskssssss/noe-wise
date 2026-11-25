@@ -210,7 +210,7 @@ describe('共享执行树', () => {
     const wrapper = await render([{ ...node('model'), kind: 'LLM', attempts: [old] }], { detail })
     expect(wrapper.get('.overview-heading').text()).toContain('执行：已完成')
     expect(wrapper.get('.trajectory-overview').text()).toContain(
-      '公开回复状态表示回复的记录情况；执行结果请看任务概览中的执行状态。'
+      '此状态仅表示最终回复是否完成；失败或取消说明可在公开结果中查看，执行结果以任务概览为准。'
     )
     expect(wrapper.get('.trajectory-overview').text()).not.toContain('公开回复包含失败说明')
     expect(wrapper.get('.coverage-note').text()).toBe('用量：记录完整')
@@ -225,13 +225,13 @@ describe('共享执行树', () => {
       }
     })
     expect(wrapper.get('.overview-heading').text()).toContain('执行：失败')
-    expect(wrapper.get('.overview-metrics').text()).toContain('公开回复已记录回复')
-    expect(wrapper.get('.overview-metrics').text()).not.toContain('已完成')
-    expect(wrapper.get('.trajectory-overview').text()).toContain('公开回复状态表示回复的记录情况')
+    expect(wrapper.get('.overview-metrics').text()).toContain('公开回复最终回复已完成')
+    expect(wrapper.get('.overview-metrics').text()).not.toContain('执行已完成')
+    expect(wrapper.get('.trajectory-overview').text()).toContain('此状态仅表示最终回复是否完成')
     for (const [state, label] of [
       ['IN_PROGRESS', '回复处理中'],
       ['FAILED', '未形成最终回复'],
-      ['NONE', '暂无回复']
+      ['NONE', '暂无最终回复']
     ]) {
       await wrapper.setProps({
         detail: { ...detail, summary: { ...detail.summary, answer_status: state } }

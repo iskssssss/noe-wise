@@ -38,9 +38,51 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.ObjectProvider;
 
 class TrajectoryProjectionServiceTest {
+    @ParameterizedTest
+    @CsvSource(value = {
+            "COMPLETED,FINISHED,final,completed,答复,COMPLETED",
+            "FAILED,FINISHED,final,failed,失败说明,FAILED",
+            "CANCELLED,FINISHED,final,cancelled,取消说明,NONE",
+            "TERMINATED,FINISHED,final,failed,停止说明,FAILED",
+            "COMPLETED,UNCERTAIN,final,failed,未知结果,FAILED",
+            "COMPLETED,FINISHED,final,failed,公开检查拒绝说明,FAILED",
+            "COMPLETED,FINISHED,final,completed,'',NONE",
+            "COMPLETED,FINISHED,process,completed,过程消息,NONE",
+            "COMPLETED,FINISHED,final,streaming,未完成正文,NONE",
+            "RUNNING,ACTIVE,final,completed,已有正文,IN_PROGRESS",
+            "SUSPENDED,ACTIVE,final,completed,已有正文,IN_PROGRESS",
+            "COMPLETED,FINISHED,<null>,<null>,主动答复,COMPLETED"
+    }, nullValues = "<null>")
+    void replyStatusUsesCompletedFinalFactsWithoutHidingTerminationMessages(
+            String runStatus, String runPhase, String messagePhase, String messageState,
+            String content, String expectedAnswer) throws Exception {
+        var fixture = new Fixture();
+        var time = Instant.parse("2026-10-25T02:00:00Z");
+        var run = new TrajectoryRepository.RunFact("main", "session", "root", "input", "trace", "span", "9",
+                runStatus, runPhase, time.getEpochSecond(), 0, time.plusSeconds(1).getEpochSecond(), 0, 100, 100);
+        when(fixture.repository.runs(any())).thenReturn(List.of(run));
+        when(fixture.sessions.messages(any(), any())).thenReturn(new SessionObservationView.MessagePage(
+                "7", "session", "root", List.of(new SessionObservationView.Message("reply", "assistant", content,
+                "root", "main", messagePhase, messageState, "1", time)), null, time));
+        var resource = new TrajectoryQuery.Resource(7, "session", "root");
+
+        var summary = fixture.service.summary(fixture.scope, resource);
+        var detail = fixture.service.detail(fixture.scope, resource);
+
+        assertEquals(expectedAnswer, summary.answerStatus());
+        assertEquals(summary, detail.summary());
+        assertEquals(messageState, detail.messages().getFirst().state());
+        assertEquals(content, detail.messages().getFirst().content());
+        assertEquals(content.isBlank() || "process".equals(messagePhase) ? null : content, summary.output());
+        assertEquals("UNCERTAIN".equals(runPhase) ? "OUTCOME_UNKNOWN"
+                : "SUSPENDED".equals(runStatus) ? "WAITING" : runStatus, summary.status());
+    }
+
     @Test
     void summaryAndNodePagesReadOnlyGraphFactsWhileDetailKeepsTheOriginalEventRead() throws Exception {
         var fixture = new Fixture(); var resource = new TrajectoryQuery.Resource(7, "session", "root");

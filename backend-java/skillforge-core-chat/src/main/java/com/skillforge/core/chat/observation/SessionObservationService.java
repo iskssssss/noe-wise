@@ -434,15 +434,10 @@ public class SessionObservationService {
 
     /** 成功回答必须是同根公开final的完成态；真实未知执行结果和未知计量保持原语义。 */
     private static String answerStatus(String execution, List<VisibleMessage> messages) {
-        if ("RUNNING".equals(execution) || "WAITING".equals(execution)) return "IN_PROGRESS";
-        // 无phase/state的合法主动助手消息是宿主已提交正文；空正文和Run完成都不能证明回答已交付。
-        if (messages.stream().anyMatch(message -> "assistant".equals(message.role())
-                && message.content() != null && !message.content().isBlank()
-                && (message.phase() == null || "final".equals(message.phase()))
-                && (message.state() == null || "completed".equals(message.state())))) return "COMPLETED";
-        if ("FAILED".equals(execution) || "OUTCOME_UNKNOWN".equals(execution)
-                || messages.stream().anyMatch(message -> "assistant".equals(message.role()) && "failed".equals(message.state()))) return "FAILED";
-        return "NONE";
+        return PublicAnswerStatus.from(execution,
+                messages.stream().anyMatch(message -> PublicAnswerStatus.isCompletedAnswer(
+                        message.role(), message.content(), message.phase(), message.state())),
+                messages.stream().anyMatch(message -> "assistant".equals(message.role()) && "failed".equals(message.state())));
     }
 
     private static SessionKey key(SessionRow session) { return new SessionKey(session.tenantId(), session.sessionId()); }

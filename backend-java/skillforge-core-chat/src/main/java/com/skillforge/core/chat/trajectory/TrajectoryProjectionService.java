@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.core.billing.application.BillingTraceQueryService;
 import com.skillforge.core.billing.application.BillingTraceFacts;
 import com.skillforge.core.capability.connector.MemorySearchObservation;
+import com.skillforge.core.chat.observation.PublicAnswerStatus;
 import com.skillforge.core.chat.observation.SessionObservationAuthorizer;
 import com.skillforge.core.chat.observation.SessionObservationQuery;
 import com.skillforge.core.chat.observation.SessionObservationScope;
@@ -448,10 +449,13 @@ public class TrajectoryProjectionService {
         var usage = usage(resource, captured, graph.nodes());
         String input = messages.stream().filter(message -> "user".equals(message.role())).map(SessionObservationView.Message::content)
                 .filter(Objects::nonNull).collect(Collectors.joining("\n"));
-        String output = messages.stream().filter(message -> "assistant".equals(message.role()) && "final".equalsIgnoreCase(message.phase()))
+        String output = messages.stream().filter(message -> "assistant".equals(message.role())
+                && (message.phase() == null || "final".equals(message.phase())))
                 .map(SessionObservationView.Message::content).filter(Objects::nonNull).collect(Collectors.joining("\n"));
-        String answer = output.isBlank() ? Set.of("RUNNING", "QUEUED", "WAITING").contains(status.name()) ? "IN_PROGRESS"
-                : Set.of("FAILED", "TERMINATED").contains(status.name()) ? "FAILED" : "NONE" : "COMPLETED";
+        String answer = PublicAnswerStatus.from(status.name(),
+                messages.stream().anyMatch(message -> PublicAnswerStatus.isCompletedAnswer(
+                        message.role(), message.content(), message.phase(), message.state())),
+                messages.stream().anyMatch(message -> "assistant".equals(message.role()) && "failed".equals(message.state())));
         var models = modelAttempts(captured).stream().map(TrajectoryRepository.ModelUsageFact::model).filter(Objects::nonNull).distinct().toList();
         var tools = graph.nodes().stream().filter(node -> node.kind() == TrajectoryView.Kind.TOOL).map(TrajectoryView.ObservationNode::name).distinct().toList();
         var traces = graph.nodes().stream().map(TrajectoryView.ObservationNode::traceId).filter(Objects::nonNull).distinct().toList();

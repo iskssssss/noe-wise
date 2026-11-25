@@ -448,7 +448,9 @@ function nodeLabel(kind: string) {
             <dd>{{ formatObservationDuration(summary.duration_ms) }}</dd>
           </div>
         </dl>
-        <p class="muted">公开回复状态表示回复的记录情况；执行结果请看任务概览中的执行状态。</p>
+        <p class="muted">
+          此状态仅表示最终回复是否完成；失败或取消说明可在公开结果中查看，执行结果以任务概览为准。
+        </p>
         <p class="muted coverage-note">用量：{{ observationCoverage(summary.coverage?.status) }}</p>
         <div v-if="detail?.usage_summary" class="cost-summary">
           <span
