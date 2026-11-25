@@ -7,7 +7,7 @@ import CatalogPage from './CatalogPage.vue'
 import type { CatalogRequest, FeatureGrant, Limits, TenantEntitlements } from './types'
 import { confirm } from '../../feedback'
 import { useFoundationNavigation } from '../navigation'
-import type { HttpClient } from '../../utils/http'
+import { HttpClientError, type HttpClient } from '../../utils/http'
 
 vi.mock('../../feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../feedback')>()),
@@ -110,6 +110,112 @@ async function editName(value: string) {
   return dialog
 }
 describe('目录编辑实际交互保护', () => {
+  it('品牌冲突保留草稿；取消和读失败不解锁保存，成功读取后使用新修订', async () => {
+    const initial = {
+      display_name: '原品牌',
+      logo_url: null,
+      primary_color: '#2563eb',
+      contact_email: null,
+      support_url: null,
+      revision: 2
+    }
+    let latest = initial
+    let readFails = false
+    const request = vi.fn(async (method: string, _path: string, data?: object) => {
+      if (method === 'GET') {
+        if (readFails) throw new Error('品牌读取暂不可用')
+        return latest
+      }
+      if (latest.revision === 2)
+        throw new HttpClientError({
+          status: 409,
+          code: 'catalog_revision_conflict',
+          userMessage: '通用冲突提示'
+        })
+      return { ...data, revision: 4 }
+    }) as unknown as CatalogRequest
+    const router = await render(
+      request,
+      ['foundation.settings.read', 'foundation.settings.manage'],
+      false,
+      '/?tab=branding'
+    )
+    const input = document.querySelector<HTMLInputElement>('.settings-form input')!
+    input.value = '保留本页草稿'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    button('保存品牌').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('品牌已在其他页面更新，本次修改未保存')
+    expect(document.querySelectorAll('.el-message--error')).toHaveLength(1)
+    expect(input.value).toBe('保留本页草稿')
+    expect(button('保存品牌').disabled).toBe(true)
+    const closeMessage = document.querySelector<HTMLElement>('.el-message__closeBtn')
+    expect(closeMessage).not.toBeNull()
+    closeMessage!.click()
+    await flushPromises()
+    await vi.waitFor(() =>
+      expect(document.body.textContent).not.toContain('品牌已在其他页面更新，本次修改未保存')
+    )
+    expect(button('保存品牌').disabled).toBe(true)
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    button('重新读取品牌').click()
+    await flushPromises()
+    expect(confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: '重新读取品牌', confirmText: '丢弃修改并读取' })
+    )
+    expect(vi.mocked(request).mock.calls.filter(([method]) => method === 'GET')).toHaveLength(1)
+    expect(input.value).toBe('保留本页草稿')
+    readFails = true
+    button('重新读取品牌').click()
+    await flushPromises()
+    expect(input.value).toBe('保留本页草稿')
+    expect(document.body.textContent).toContain('品牌读取暂不可用')
+    expect(button('保存品牌').disabled).toBe(true)
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    await router.push('/away')
+    expect(router.currentRoute.value.path).toBe('/')
+    readFails = false
+    latest = { ...initial, display_name: '其他页面已保存', revision: 3 }
+    button('重新读取品牌').click()
+    await flushPromises()
+    expect(input.value).toBe('其他页面已保存')
+    expect(button('保存品牌').disabled).toBe(true)
+    input.value = '读取后重新编辑'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    expect(button('保存品牌').disabled).toBe(false)
+    button('保存品牌').click()
+    await flushPromises()
+    const writes = vi.mocked(request).mock.calls.filter(([method]) => method === 'PUT')
+    expect(writes).toHaveLength(2)
+    expect(writes[1]?.[2]).toMatchObject({
+      display_name: '读取后重新编辑',
+      expected_revision: 3
+    })
+  })
+
+  it('品牌只读身份可恢复读取，草稿未修改时不要求丢弃确认', async () => {
+    const current = {
+      display_name: '只读品牌',
+      logo_url: null,
+      primary_color: '#2563eb',
+      contact_email: null,
+      support_url: null,
+      revision: 1
+    }
+    const request = vi.fn(async () => current) as unknown as CatalogRequest
+    await render(request, ['foundation.settings.read'], false, '/?tab=branding')
+    expect(button('重新读取品牌').disabled).toBe(false)
+    expect(document.querySelector<HTMLInputElement>('.settings-form input')?.disabled).toBe(true)
+    expect(document.body.textContent).not.toContain('保存品牌')
+    button('重新读取品牌').click()
+    await flushPromises()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(vi.mocked(request).mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   it('品牌字段错误就地提示，按码点校验名称且修正后保存完整品牌与原修订', async () => {
     const current = {
       display_name: '巡检机构',

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
+import { confirm } from '../../feedback'
 import { HttpClientError } from '../../utils/http'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -75,6 +76,7 @@ const branding = reactive<Branding>({
   revision: 0
 })
 const brandingFormRef = ref<FormInstance>()
+const brandingConflict = ref(false)
 const brandingUrlRule: FormItemRule = {
   trigger: 'blur',
   validator: (_rule, value: string | null, callback) => {
@@ -425,6 +427,8 @@ async function load() {
       if (version === requestVersion) {
         Object.assign(branding, result)
         brandingBaseline.value = JSON.stringify(branding)
+        brandingConflict.value = false
+        if (appearance) appearance.branding.value = result
       }
     }
     if (tab === 'preferences') {
@@ -603,7 +607,14 @@ async function mutate(
     if (refreshed && !error.value) ElMessage.success(successText)
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
-    error.value = message(cause)
+    if (
+      active.value === 'branding' &&
+      cause instanceof HttpClientError &&
+      cause.code === 'catalog_revision_conflict'
+    ) {
+      brandingConflict.value = true
+      error.value = '品牌已在其他页面更新，本次修改未保存。请重新读取品牌后再编辑并保存。'
+    } else error.value = message(cause)
   } finally {
     saving.value = false
   }
@@ -818,7 +829,7 @@ async function savePersonal() {
 }
 /** 品牌完整保存后当前壳立即采用实际返回的展示值。 */
 async function saveBranding() {
-  if (saving.value || loading.value) return
+  if (saving.value || loading.value || brandingConflict.value) return
   if (!(await brandingFormRef.value?.validate().catch(() => false))) return
   const command = {
     display_name: branding.display_name,
@@ -838,6 +849,23 @@ async function saveBranding() {
     },
     async () => {}
   )
+}
+/** 读取成功才替换草稿及修订；取消或读取失败均保留当前输入。 */
+async function reloadBranding() {
+  if (saving.value || loading.value) return
+  if (
+    brandingBaseline.value &&
+    JSON.stringify(branding) !== brandingBaseline.value &&
+    !(await confirm({
+      title: '重新读取品牌',
+      content: '读取成功后将用最新品牌替换当前未保存的修改。读取失败会保留当前内容。',
+      confirmText: '丢弃修改并读取',
+      cancelText: '保留修改'
+    }))
+  )
+    return
+  await load()
+  if (!error.value) brandingFormRef.value?.clearValidate()
 }
 /** 同一路由的浏览位置变更也经过已有离开保护，确认成功后才替换对象。 */
 watch(
@@ -1046,6 +1074,11 @@ onBeforeUnmount(() => {
           ></el-table
         ></template
       >
+      <div v-if="active === 'branding'" class="toolbar">
+        <el-button :loading="loading" :disabled="saving" @click="reloadBranding"
+          >重新读取品牌</el-button
+        >
+      </div>
       <el-form
         v-if="active === 'branding'"
         ref="brandingFormRef"
@@ -1074,7 +1107,9 @@ onBeforeUnmount(() => {
         ><el-button
           v-if="can('foundation.settings.manage')"
           :loading="saving"
-          :disabled="!brandingBaseline || JSON.stringify(branding) === brandingBaseline"
+          :disabled="
+            brandingConflict || !brandingBaseline || JSON.stringify(branding) === brandingBaseline
+          "
           type="primary"
           @click="saveBranding"
           >保存品牌</el-button
