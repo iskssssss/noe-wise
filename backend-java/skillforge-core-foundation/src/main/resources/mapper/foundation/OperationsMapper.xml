@@ -33,6 +33,40 @@
     FROM nw_audit_logs <include refid="filters"/> ORDER BY created_at DESC,id DESC LIMIT #{limit}
   </select>
   <select id="auditCount" resultType="long">SELECT count(*) FROM nw_audit_logs <include refid="filters"/></select>
+  <select id="auditFilterValues" resultType="string">
+    SELECT DISTINCT <choose><when test="kind == 'action'">action</when><otherwise>resource_type</otherwise></choose> AS value
+    FROM nw_audit_logs WHERE <include refid="auditScope"/>
+    AND <choose><when test="kind == 'action'">action</when><otherwise>resource_type</otherwise></choose> IS NOT NULL
+    ORDER BY value
+  </select>
+  <select id="auditIdentityOptions" resultType="com.skillforge.core.foundation.access.FoundationOptionService$Option">
+    SELECT o.id,o.name,o.id AS code,NULL::text AS status FROM (
+      <choose>
+        <when test="kind == 'actors'">
+          SELECT a.actor_id AS id,coalesce(m.username,'历史操作者 · ' || a.actor_id) AS name
+          FROM (SELECT DISTINCT actor_id FROM nw_audit_logs WHERE <include refid="auditScope"/> AND actor_id IS NOT NULL) a
+          <choose>
+            <when test="scope == 'platform'">
+              LEFT JOIN nw_platform_members m ON a.actor_id=m.id::text OR a.actor_id='platform_member:' || m.id::text
+            </when>
+            <otherwise>
+              LEFT JOIN nw_tenant_members m ON m.tenant_id=CAST(#{scope} AS bigint)
+                AND (a.actor_id=m.id::text OR a.actor_id='tenant_member:' || m.id::text)
+            </otherwise>
+          </choose>
+        </when>
+        <otherwise>
+          SELECT DISTINCT trace_id AS id,trace_id AS name FROM nw_audit_logs
+          WHERE <include refid="auditScope"/> AND trace_id IS NOT NULL
+        </otherwise>
+      </choose>
+    ) o WHERE o.id != ''
+    <choose>
+      <when test="!query.ids.isEmpty()">AND o.id IN <foreach collection="query.ids" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+      <when test="query.keyword != ''">AND (strpos(lower(o.name),lower(#{query.keyword}))&gt;0 OR strpos(lower(o.id),lower(#{query.keyword}))&gt;0)</when>
+    </choose>
+    ORDER BY o.name,o.id LIMIT #{query.limit} OFFSET #{query.offset}
+  </select>
   <insert id="insertReadBatch">
     INSERT INTO nw_foundation_audit_read_batches(audit_id,scope,actor_id,authorization_version,query_digest,
       window_start,window_end,filter_action,filter_actor_id,filter_category,filter_outcome,filter_resource_type,

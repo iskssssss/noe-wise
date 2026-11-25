@@ -58,6 +58,18 @@ public class FoundationOperationsController {
         return ApiResponses.wrap(audits.summaries(new AuditQuery(action,actorId,category,outcome,resourceType,traceId,from,to,page,pageSize)));
     }
 
+    /** 筛选枚举只来自当前审计作用域。 */
+    @GetMapping("/audit/options")
+    public ApiResponse<AuditFilterOptions> options() { audience(); return ApiResponses.wrap(audits.options()); }
+
+    /** 远程搜索或解析当前审计范围的操作者和追踪标识。 */
+    @GetMapping("/audit/options/{kind}")
+    public ApiResponse<com.skillforge.core.foundation.access.FoundationOptionService.Page> identityOptions(
+            @PathVariable String kind, @RequestParam(required=false) String keyword,
+            @RequestParam(required=false) List<String> ids, @RequestParam(defaultValue="1") int page) {
+        audience(); return ApiResponses.wrap(audits.identityOptions(kind, keyword, ids, page));
+    }
+
     /** 二进制CSV出口保留附件头，不能包装为JSON。 */
     @PostMapping("/audit/export")
     public ResponseEntity<byte[]> export(@RequestBody AuditQuery query) {

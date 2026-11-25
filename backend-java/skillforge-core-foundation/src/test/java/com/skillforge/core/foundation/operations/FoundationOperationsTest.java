@@ -36,6 +36,36 @@ class FoundationOperationsTest {
     /** 清理测试线程身份，避免后续测试借用本例租户。 */
     @AfterEach void clear() { TenantContext.clear(); }
 
+    @Test void filterOptionsPreserveScopedStringIdentitiesAndRejectUnknownInputs() {
+        when(access.currentSubject()).thenReturn(subject);
+        when(mapper.auditFilterValues("7", "action")).thenReturn(List.of("auth.login"));
+        when(mapper.auditFilterValues("7", "resource")).thenReturn(List.of("member"));
+        var service = new FoundationAuditService(access, mapper, audit);
+        var options = service.options();
+        assertEquals("登录", options.actions().getFirst().label());
+        assertTrue(options.outcomes().stream().anyMatch(option -> option.value().equals("failure")));
+        var option = new com.skillforge.core.foundation.access.FoundationOptionService.Option(
+                "platform_member:9007199254740993", "管理员", "platform_member:9007199254740993", null);
+        when(mapper.auditIdentityOptions(eq("7"), eq("actors"), any())).thenReturn(List.of(option));
+        assertEquals(option, service.identityOptions("actors", null, List.of(option.id()), 1).items().getFirst());
+        var query = ArgumentCaptor.forClass(com.skillforge.core.foundation.access.FoundationOptionService.Query.class);
+        verify(mapper).auditIdentityOptions(eq("7"), eq("actors"), query.capture());
+        assertEquals(List.of(option.id()), query.getValue().ids());
+        assertThrows(ApiException.class, () -> service.identityOptions("unknown", null, null, 1));
+        assertThrows(ApiException.class, () -> service.identityOptions("actors", null, null, 0));
+        when(access.currentSnapshot()).thenReturn(new FoundationAccess.Snapshot(List.of(), List.of(FoundationAuditService.READ), 3));
+        var invalid = new AuditQuery(null,null,null,null,"outside",null,null,null,1,50);
+        assertThrows(ApiException.class, () -> service.summaries(invalid));
+        assertThrows(ApiException.class, () -> service.exportRows(invalid));
+        verify(mapper, never()).auditCount(any(), any());
+        verifyNoInteractions(audit);
+        clearInvocations(mapper);
+        doThrow(new ApiException(HttpStatus.FORBIDDEN, "拒绝")).when(access).require(FoundationAuditService.READ);
+        assertThrows(ApiException.class, service::options);
+        assertThrows(ApiException.class, () -> service.identityOptions("actors", null, null, 1));
+        verifyNoInteractions(mapper);
+    }
+
     /** 无租户平台事实不会再静默丢失，payload秘密递归遮盖。 */
     @Test void platformEventIsRecordedAndSecretsAreRedacted() {
         AuditLogMapper sink = mock(AuditLogMapper.class); when(sink.insert(any(AuditLogDO.class))).thenReturn(1);

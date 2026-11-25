@@ -2,6 +2,8 @@
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { computed, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
 import AdminPage from '../../admin/AdminPage.vue'
+import FoundationOptionSelect from '../FoundationOptionSelect.vue'
+import type { FoundationOptionPage } from '../optionTypes'
 import { ElMessageBox } from 'element-plus'
 import { useResource, useTask } from '../../admin/tasks'
 import { confirm } from '../../feedback'
@@ -26,7 +28,6 @@ import type {
 const props = defineProps<{
   request: OperationsRequest
   apiBase: string
-  auditOptionsPath?: string
   permissions: readonly string[]
 }>()
 const tabs = computed(() =>
@@ -77,8 +78,8 @@ onBeforeUnmount(() => {
   viewGeneration++
 })
 const task = useTask()
-const audit = useResource((signal) =>
-  props.request<AuditSummaryPage>(
+const audit = useResource(async (signal) => {
+  const result = await props.request<AuditSummaryPage>(
     'GET',
     `${props.apiBase}/audit/summaries?${query()}`,
     undefined,
@@ -88,14 +89,25 @@ const audit = useResource((signal) =>
       silent: true
     }
   )
-)
+  const ids = [...new Set(result.items.flatMap((row) => (row.actor_id ? [row.actor_id] : [])))]
+  const params = new URLSearchParams()
+  ids.forEach((id) => params.append('ids', id))
+  const actors = ids.length
+    ? await props.request<FoundationOptionPage>(
+        'GET',
+        `${props.apiBase}/audit/options/actors?${params}`,
+        undefined,
+        false,
+        { signal, silent: true }
+      )
+    : { items: [], has_more: false }
+  return { ...result, actors: actors.items }
+})
 const auditOptions = useResource((signal) =>
-  props.auditOptionsPath
-    ? props.request<AuditOptions>('GET', props.auditOptionsPath, undefined, false, {
-        signal,
-        silent: true
-      })
-    : Promise.resolve(undefined)
+  props.request<AuditOptions>('GET', `${props.apiBase}/audit/options`, undefined, false, {
+    signal,
+    silent: true
+  })
 )
 const retention = useResource(async (signal) => {
   const [current, runs, holds] = await Promise.all([
@@ -120,26 +132,11 @@ const status = useResource((signal) =>
     silent: true
   })
 )
-const categories = [
-  { value: 'authentication', label: '认证' },
-  { value: 'authorization', label: '授权' },
-  { value: 'sensitive', label: '敏感访问' },
-  { value: 'export', label: '导出' },
-  { value: 'operation', label: '业务操作' }
-]
-const outcomes = [
-  { value: 'success', label: '成功' },
-  { value: 'failure', label: '失败' },
-  { value: 'denied', label: '拒绝' }
-]
 const categoryChoices = computed<AuditFilterOption[]>(
-  () => auditOptions.data.value?.categories ?? categories
+  () => auditOptions.data.value?.categories ?? []
 )
-const outcomeChoices = computed<AuditFilterOption[]>(
-  () => auditOptions.data.value?.outcomes ?? outcomes
-)
+const outcomeChoices = computed<AuditFilterOption[]>(() => auditOptions.data.value?.outcomes ?? [])
 const actionChoices = computed(() => auditOptions.data.value?.actions ?? [])
-const actorChoices = computed(() => auditOptions.data.value?.actors ?? [])
 const resourceChoices = computed(() => auditOptions.data.value?.resource_types ?? [])
 const stateNames: Record<string, string> = {
   ready: '待执行',
@@ -172,10 +169,9 @@ function resourceLabel(row: AuditSummaryPage['items'][number]) {
   return optionLabel(resourceChoices.value, row.resource_type, '无特定资源')
 }
 function actorLabel(row: AuditSummaryPage['items'][number]) {
-  return optionLabel(
-    actorChoices.value,
-    row.actor_id,
-    row.actor_id ? '平台或历史操作者' : '系统或未知来源'
+  return (
+    audit.data.value?.actors.find((actor) => actor.id === row.actor_id)?.name ??
+    (row.actor_id ? '历史操作者' : '系统或未知来源')
   )
 }
 function shortIdentifier(value: string) {
@@ -193,7 +189,7 @@ function query() {
 async function load() {
   const generation = viewGeneration
   if (active.value === 'audit' && can('audit_read')) {
-    await Promise.all([audit.reload(), props.auditOptionsPath ? auditOptions.reload() : undefined])
+    await Promise.all([audit.reload(), auditOptions.reload()])
   }
   if (active.value === 'retention' && can('retention_read')) {
     const value = await retention.reload()
@@ -431,50 +427,49 @@ watch(active, () => {
     </el-tabs>
     <template v-if="active === 'audit' && can('audit_read')">
       <form class="filters" v-described-by="formTipId + '-filters'" @submit.prevent="search">
-        <template v-if="advancedFilters"
-          ><template v-if="auditOptionsPath"
-            ><label
-              >操作类型<el-select v-model="filters.action" clearable filterable
-                ><el-option
-                  v-for="item in actionChoices"
-                  :key="item.value"
-                  :value="item.value"
-                  :label="item.label" /></el-select
-            ></label>
-            <label
-              >操作者<el-select v-model="filters.actor_id" clearable filterable
-                ><el-option
-                  v-for="item in actorChoices"
-                  :key="item.value"
-                  :value="item.value"
-                  :label="item.label" /></el-select
-            ></label>
-            <label
-              >资源类型<el-select v-model="filters.resource_type" clearable
-                ><el-option
-                  v-for="item in resourceChoices"
-                  :key="item.value"
-                  :value="item.value"
-                  :label="item.label" /></el-select
-            ></label>
-          </template>
-          <template v-else
-            ><label
-              >动作编码<el-input v-model="filters.action" placeholder="auth.login" clearable
-            /></label>
-            <label>操作者ID<el-input v-model="filters.actor_id" clearable /></label>
-            <label
-              >资源类型<el-input v-model="filters.resource_type" clearable />
-            </label> </template
-          ><label
-            >追踪ID<el-input
-              v-model="filters.trace_id"
-              placeholder="仅在已知 Trace ID 时填写"
+        <template v-if="advancedFilters">
+          <label
+            >操作类型<el-select
+              :loading="auditOptions.loading.value"
+              v-model="filters.action"
               clearable
+              filterable
+              ><el-option
+                v-for="item in actionChoices"
+                :key="item.value"
+                :value="item.value"
+                :label="item.label" /></el-select
+          ></label>
+          <label
+            >操作者<FoundationOptionSelect
+              v-model="filters.actor_id"
+              :request="request"
+              :path="`${apiBase}/audit/options/actors`"
+              label="操作者"
+              placeholder="搜索操作者名称或标识"
+          /></label>
+          <label
+            >资源类型<el-select
+              :loading="auditOptions.loading.value"
+              v-model="filters.resource_type"
+              clearable
+              ><el-option
+                v-for="item in resourceChoices"
+                :key="item.value"
+                :value="item.value"
+                :label="item.label" /></el-select
+          ></label>
+          <label
+            >追踪标识<FoundationOptionSelect
+              v-model="filters.trace_id"
+              :request="request"
+              :path="`${apiBase}/audit/options/traces`"
+              label="追踪标识"
+              placeholder="搜索并选择完整追踪标识"
           /></label>
         </template>
         <label
-          >分类<el-select v-model="filters.category" clearable
+          >分类<el-select :loading="auditOptions.loading.value" v-model="filters.category" clearable
             ><el-option
               v-for="item in categoryChoices"
               :key="item.value"
@@ -482,7 +477,7 @@ watch(active, () => {
               :label="item.label" /></el-select
         ></label>
         <label
-          >结果<el-select v-model="filters.outcome" clearable
+          >结果<el-select :loading="auditOptions.loading.value" v-model="filters.outcome" clearable
             ><el-option
               v-for="item in outcomeChoices"
               :key="item.value"
@@ -508,6 +503,15 @@ watch(active, () => {
         >
       </form>
       <FeedbackNotice
+        v-if="auditOptions.error.value"
+        :title="auditOptions.error.value"
+        type="error"
+      >
+        <el-button link :loading="auditOptions.loading.value" @click="auditOptions.reload()"
+          >重新读取筛选选项</el-button
+        >
+      </FeedbackNotice>
+      <FeedbackNotice
         v-if="audit.error.value"
         :title="audit.error.value"
         type="error"
@@ -524,7 +528,9 @@ watch(active, () => {
             ? '审计记录尚未读取成功'
             : audit.loading.value
               ? '正在读取审计记录…'
-              : '当前查询范围没有审计事件'
+              : Object.keys(applied).length
+                ? '没有符合条件的审计事件，可调整条件或点击重置查看当前授权范围'
+                : '当前授权范围尚无审计事件，完成业务操作后可点击检索刷新'
         "
       >
         <el-table-column label="审计事件" min-width="300"
@@ -784,6 +790,7 @@ watch(active, () => {
 <style scoped>
 .operations-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 .operations-page h2 {

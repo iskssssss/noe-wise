@@ -1,7 +1,8 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import ElementPlus, { ElMessageBox, ElPagination, ElTabs } from 'element-plus'
+import ElementPlus, { ElMessageBox, ElPagination, ElTabs, ElSelect } from 'element-plus'
 import OperationsPage from './OperationsPage.vue'
+import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { OperationsRequest } from './contracts'
 
 const audits = Array.from({ length: 137 }, (_, i) => ({
@@ -50,6 +51,21 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 function read(path: string) {
+  if (path.includes('/audit/options/actors'))
+    return {
+      items: Array.from({ length: 7 }, (_, i) => ({
+        id: `actor-${i}`,
+        name: `演示管理员${i}`,
+        code: `actor-${i}`,
+        status: null
+      })),
+      has_more: false
+    }
+  if (path.includes('/audit/options/traces'))
+    return {
+      items: [{ id: 'trace-0', name: 'trace-0', code: 'trace-0', status: null }],
+      has_more: false
+    }
   if (path.endsWith('/audit/options'))
     return {
       actions: [
@@ -86,13 +102,9 @@ function read(path: string) {
     page_size: 50
   }
 }
-async function render(
-  request: OperationsRequest,
-  apiBase = '/tenant/foundation/operations',
-  auditOptionsPath?: string
-) {
+async function render(request: OperationsRequest, apiBase = '/tenant/foundation/operations') {
   const wrapper = mount(OperationsPage, {
-    props: { request, apiBase, permissions, auditOptionsPath },
+    props: { request, apiBase, permissions },
     attachTo: document.body,
     global: { plugins: [ElementPlus] }
   })
@@ -105,6 +117,61 @@ function button(wrapper: VueWrapper, label: string) {
 }
 
 describe('复杂安全审计、CAS和冻结清理快照', () => {
+  it('远程身份只能选择且提交原字符串，未提交变更不改变导出范围', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = []
+    const request: OperationsRequest = async <T>(method: string, path: string, body?: unknown) => {
+      calls.push({ method, path, body })
+      if (method === 'POST') throw new Error('受控导出拒绝')
+      return read(path) as T
+    }
+    const wrapper = await render(request)
+    await wrapper.setProps({ permissions: [...permissions, 'foundation.operations.audit_export'] })
+    await flushPromises()
+    await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
+    const selectors = wrapper.findAllComponents(FoundationOptionSelect)
+    expect(selectors.map((item) => item.props('path'))).toEqual([
+      '/tenant/foundation/operations/audit/options/actors',
+      '/tenant/foundation/operations/audit/options/traces'
+    ])
+    for (const selector of selectors)
+      expect(selector.getComponent(ElSelect).props('allowCreate')).toBe(false)
+    selectors[0]!.vm.$emit('update:modelValue', 'platform_member:9007199254740993')
+    selectors[1]!.vm.$emit('update:modelValue', 'trace-0')
+    await wrapper.get('form.filters').trigger('submit')
+    await flushPromises()
+    const submitted = calls.findLast((call) => call.path.includes('/audit/summaries?'))!
+    expect(new URL(submitted.path, 'http://fixture').searchParams.get('actor_id')).toBe(
+      'platform_member:9007199254740993'
+    )
+    selectors[1]!.vm.$emit('update:modelValue', 'trace-draft')
+    await button(wrapper, '导出当前范围').trigger('click')
+    await flushPromises()
+    expect(calls.findLast((call) => call.method === 'POST')!.body).toEqual({
+      actor_id: 'platform_member:9007199254740993',
+      trace_id: 'trace-0'
+    })
+  })
+
+  it('选项读取失败不降级成手填或本地枚举，重试读取当前范围', async () => {
+    let fail = true
+    const request: OperationsRequest = async <T>(_method: string, path: string) => {
+      if (fail && path.endsWith('/audit/options')) throw new Error('筛选目录暂不可读')
+      return read(path) as T
+    }
+    const wrapper = await render(request)
+    await button(wrapper, '更多条件').trigger('click')
+    expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
+    expect(document.querySelector('.el-message--error')?.textContent).toContain('筛选目录暂不可读')
+    fail = false
+    const retry = Array.from(document.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === '重新读取筛选选项'
+    )!
+    retry.click()
+    await flushPromises()
+    expect(wrapper.text()).toContain('登录')
+    expect(wrapper.text()).toContain('演示管理员0')
+  })
   it.each(['/tenant/foundation/operations', '/admin/foundation/operations'])(
     '双宿主 %s 仅请求九字段摘要，翻页保留精确总数和调查身份',
     async (apiBase) => {
@@ -127,8 +194,9 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
       wrapper.getComponent(ElPagination).vm.$emit('update:currentPage', 3)
       wrapper.getComponent(ElPagination).vm.$emit('current-change', 3)
       await flushPromises()
-      expect(calls.at(-1)!.path).toContain('/audit/summaries?')
-      expect(calls.at(-1)!.path).toContain('page=3')
+      expect(calls.findLast((call) => call.path.includes('/audit/summaries?'))!.path).toContain(
+        'page=3'
+      )
       await button(wrapper, '调查保护').trigger('click')
       await flushPromises()
       expect(wrapper.get('form.filters input').element).toHaveProperty('value', audits[100]!.id)
@@ -149,38 +217,42 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     }
     const wrapper = await render(request)
     await button(wrapper, '更多条件').trigger('click')
-    await wrapper.get('input[placeholder="auth.login"]').setValue('auth.login')
+    wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'auth.login')
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
     fail = true
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
     expect(wrapper.findAll('.el-table__body tbody tr')).toHaveLength(50)
-    expect(wrapper.get('input[placeholder="auth.login"]').element).toHaveProperty(
-      'value',
-      'auth.login'
-    )
+    expect(wrapper.findAllComponents(ElSelect)[0]!.props('modelValue')).toBe('auth.login')
     fail = false
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
-    expect(calls.at(-1)).toContain('/audit/summaries?')
-    expect(calls.at(-1)).toContain('action=auth.login')
-    expect(calls.every((path) => path.includes('/audit/summaries?'))).toBe(true)
+    expect(calls.findLast((path) => path.includes('/audit/summaries?'))).toContain(
+      'action=auth.login'
+    )
+    expect(
+      calls.every((path) => path.includes('/audit/summaries?') || path.includes('/audit/options'))
+    ).toBe(true)
   })
 
-  it('机构宿主使用服务端审计枚举并在列表中展示可读值', async () => {
-    const request: OperationsRequest = async <T>(_method: string, path: string) => read(path) as T
-    const wrapper = await render(request, '/tenant/foundation/operations', '/tenant/audit/options')
-    expect(wrapper.text()).toContain('登录')
-    expect(wrapper.text()).toContain('认证')
-    expect(wrapper.text()).toContain('成功')
-    expect(wrapper.text()).toContain('成员')
-    await button(wrapper, '更多条件').trigger('click')
-    expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('操作类型')
-    expect(wrapper.text()).toContain('操作者')
-    expect(wrapper.text()).toContain('资源类型')
-  })
+  it.each(['/tenant/foundation/operations', '/admin/foundation/operations'])(
+    '宿主%s使用同范围服务端选项且保留操作者名称',
+    async (apiBase) => {
+      const request: OperationsRequest = async <T>(_method: string, path: string) => read(path) as T
+      const wrapper = await render(request, apiBase)
+      expect(wrapper.text()).toContain('演示管理员0')
+      expect(wrapper.text()).toContain('登录')
+      expect(wrapper.text()).toContain('认证')
+      expect(wrapper.text()).toContain('成功')
+      expect(wrapper.text()).toContain('成员')
+      await button(wrapper, '更多条件').trigger('click')
+      expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('操作类型')
+      expect(wrapper.text()).toContain('操作者')
+      expect(wrapper.text()).toContain('资源类型')
+    }
+  )
 
   it('默认四个条件，展开后八个条件及保护表单均有可见说明', async () => {
     const request: OperationsRequest = async <T>(_method: string, path: string) => read(path) as T
@@ -217,17 +289,21 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     const wrapper = await render(request)
     expect(wrapper.findAll('.el-table__body tbody tr')).toHaveLength(50)
     await button(wrapper, '更多条件').trigger('click')
-    await wrapper.get('input[placeholder="auth.login"]').setValue('permissions.update')
+    wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'permissions.update')
     wrapper.getComponent(ElPagination).vm.$emit('update:currentPage', 3)
     wrapper.getComponent(ElPagination).vm.$emit('current-change', 3)
     await flushPromises()
-    expect(paths.at(-1)).toContain('page=3')
-    expect(paths.at(-1)).not.toContain('permissions.update')
+    expect(paths.findLast((path) => path.includes('/audit/summaries?'))).toContain('page=3')
+    expect(paths.findLast((path) => path.includes('/audit/summaries?'))).not.toContain(
+      'permissions.update'
+    )
     expect(wrapper.findAll('.el-table__body tbody tr')).toHaveLength(37)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(paths.at(-1)).toContain('action=permissions.update')
-    expect(paths.at(-1)).toContain('page=1')
+    expect(paths.findLast((path) => path.includes('/audit/summaries?'))).toContain(
+      'action=permissions.update'
+    )
+    expect(paths.findLast((path) => path.includes('/audit/summaries?'))).toContain('page=1')
   })
 
   it('从审计行登记保护自动带入精确身份且不自动写入，重置清空已提交范围', async () => {
@@ -244,12 +320,14 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     wrapper.getComponent(ElTabs).vm.$emit('update:modelValue', 'audit')
     await flushPromises()
     await button(wrapper, '更多条件').trigger('click')
-    await wrapper.get('input[placeholder="auth.login"]').setValue('auth.login')
+    wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'auth.login')
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
     await button(wrapper, '重置').trigger('click')
     await flushPromises()
-    expect(calls.at(-1)!.path).not.toContain('action=')
+    expect(calls.findLast((call) => call.path.includes('/audit/summaries?'))!.path).not.toContain(
+      'action='
+    )
   })
 
   it('12保护与41候选预览不能替代执行，取消无写且策略CAS失败不重放', async () => {

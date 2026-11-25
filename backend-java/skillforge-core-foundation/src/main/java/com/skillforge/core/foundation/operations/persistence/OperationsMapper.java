@@ -23,6 +23,12 @@ public interface OperationsMapper {
             @Param("limit") int limit);
     /** 与列表相同过滤条件计数。 */
     long auditCount(@Param("scope") String scope, @Param("query") AuditQuery query);
+    /** 只返回同一审计范围实际出现的操作或资源种类。 */
+    List<String> auditFilterValues(@Param("scope") String scope, @Param("kind") String kind);
+    /** 操作者与追踪标识共用受权搜索和已选解析；不读取审计正文。 */
+    List<com.skillforge.core.foundation.access.FoundationOptionService.Option> auditIdentityOptions(
+            @Param("scope") String scope, @Param("kind") String kind,
+            @Param("query") com.skillforge.core.foundation.access.FoundationOptionService.Query query);
     /** 原子受理一分钟内同主体/授权版本/过滤的首个读取；重复返回0，不更新不可变审计。 */
     int insertReadBatch(AuditReadBatch batch);
     /** 锁定具体审计事实以串行保护登记和清理。 */

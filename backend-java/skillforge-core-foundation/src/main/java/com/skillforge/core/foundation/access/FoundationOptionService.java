@@ -26,7 +26,7 @@ public class FoundationOptionService {
         this.mapper = mapper;
     }
 
-    /** @param id 精确十进制身份 @param name 名称 @param code 区分同名对象的业务编码 @param status 当前状态 */
+    /** @param id 精确字符串身份，格式由所属接口校验 @param name 名称 @param code 区分同名对象的业务编码 @param status 当前状态 */
     public record Option(String id, String name, String code, String status) { }
     /** @param items 当前页候选 @param hasMore 当前查询是否还有后续页 */
     public record Page(List<Option> items, boolean hasMore) {

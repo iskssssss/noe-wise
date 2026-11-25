@@ -45,10 +45,9 @@ export interface AuditFilterOption {
   value: string
   label: string
 }
-/** 当前机构审计中实际出现且可解释的筛选值。 */
+/** 当前授权审计范围的类型选项；身份通过同范围远程选择器读取。 */
 export interface AuditOptions {
   actions: AuditFilterOption[]
-  actors: AuditFilterOption[]
   categories: AuditFilterOption[]
   outcomes: AuditFilterOption[]
   resource_types: AuditFilterOption[]

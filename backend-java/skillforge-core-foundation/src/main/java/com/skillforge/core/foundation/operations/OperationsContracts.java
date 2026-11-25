@@ -58,6 +58,13 @@ public final class OperationsContracts {
         public AuditSummaryPage { items = List.copyOf(items); }
     }
 
+    /** 审计筛选的精确值与可读名称。 */
+    public record AuditFilterOption(String value, String label) { }
+
+    /** 当前审计范围的操作和资源目录，分类与结果使用服务端允许值。 */
+    public record AuditFilterOptions(List<AuditFilterOption> actions, List<AuditFilterOption> categories,
+            List<AuditFilterOption> outcomes, List<AuditFilterOption> resourceTypes) { }
+
     /** @param content UTF-8 CSV字节 @param filename 安全文件名 @param rows 已输出行数 */
     public record AuditExport(byte[] content, String filename, int rows) {
         /** 保护导出内容的所有权。 */

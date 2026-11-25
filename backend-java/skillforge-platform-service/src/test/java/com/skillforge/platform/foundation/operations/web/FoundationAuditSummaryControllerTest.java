@@ -48,9 +48,25 @@ class FoundationAuditSummaryControllerTest {
         assertEquals(new AuditQuery("auth.login", "42", "authentication", "failure", "account", "trace",
                 Instant.parse("2026-10-29T12:00:00Z"), Instant.parse("2026-10-30T12:00:00Z"), 2, 50), query.getValue());
         verify(audits, never()).query(any());
+        when(audits.options()).thenReturn(new AuditFilterOptions(List.of(), List.of(), List.of(),
+                List.of(new AuditFilterOption("account", "账号"))));
+        var options = mvc.perform(get("/api/v1/admin/foundation/operations/audit/options"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertEquals("account", json.readTree(options).path("data").path("resource_types").get(0).path("value").asText());
+        var identity = new com.skillforge.core.foundation.access.FoundationOptionService.Option(
+                "platform_member:9007199254740993", "管理员", null, null);
+        when(audits.identityOptions("actors", null, List.of(identity.id()), 1)).thenReturn(
+                new com.skillforge.core.foundation.access.FoundationOptionService.Page(List.of(identity), false));
+        var actors = mvc.perform(get("/api/v1/admin/foundation/operations/audit/options/actors").param("ids", identity.id()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertEquals(identity.id(), json.readTree(actors).path("data").path("items").get(0).path("id").asText());
+        assertFalse(json.readTree(actors).path("data").path("has_more").asBoolean());
         clearInvocations(audits);
         when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(false, "7", "42"));
         mvc.perform(get("/api/v1/admin/foundation/operations/audit/summaries")).andExpect(status().isForbidden());
+        verifyNoInteractions(audits);
+        mvc.perform(get("/api/v1/admin/foundation/operations/audit/options")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/foundation/operations/audit/options/actors")).andExpect(status().isForbidden());
         verifyNoInteractions(audits);
         when(access.currentSubject()).thenReturn(new FoundationAccess.Subject(true, null, "42"));
         when(audits.summaries(any())).thenThrow(new ApiException(HttpStatus.FORBIDDEN, "拒绝"));

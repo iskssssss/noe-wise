@@ -109,7 +109,6 @@ watch(
     v-else-if="area === 'operations'"
     :request="request"
     :api-base="`${base}/foundation/operations`"
-    :audit-options-path="platform ? undefined : '/audit/options'"
     :permissions="permissions"
   />
 </template>
