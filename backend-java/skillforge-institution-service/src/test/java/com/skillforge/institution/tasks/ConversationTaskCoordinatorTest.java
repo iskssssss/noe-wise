@@ -143,6 +143,23 @@ class ConversationTaskCoordinatorTest {
         verifyNoInteractions(fixture.execution);
     }
 
+    @Test void currentManagementSelectionReadsOwnedLatestTaskWithoutMutation() {
+        var fixture = new Fixture();
+        var management = new ConversationTaskManagement(mock(com.skillforge.core.chat.session.SessionService.class),
+                fixture.tasks, fixture.coordinator, fixture.json, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+        assertTrue(management.current(owner).isEmpty());
+        when(fixture.tasks.current(owner, owner.target().requireAgent())).thenReturn(Optional.of("task"));
+        var latest = fixture.task("task", 9, "最新进展");
+        fixture.stored.put("task", latest);
+        assertEquals(latest, management.current(owner).orElseThrow());
+        var other = SessionOwner.user(new SessionRef(tenant, "other-session"), owner.target().requireAgent(), new EndUserId(8));
+        when(fixture.tasks.current(other, other.target().requireAgent())).thenReturn(Optional.of("task"));
+        assertThrows(IllegalArgumentException.class, () -> management.current(other));
+        assertTrue(fixture.events.isEmpty());
+        verify(fixture.tasks, never()).commit(any());
+        verifyNoInteractions(fixture.execution);
+    }
+
     private SessionPreparations.Key key(int iteration) {
         return new SessionPreparations.Key(identity(), "loop", iteration);
     }

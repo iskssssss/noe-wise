@@ -32,6 +32,13 @@ public class ConversationTaskController {
         return ApiResponses.wrap(service.list(service.owner(TenantIds.requireTenantId(), session), query, closed, offset, limit).stream().map(TaskView::from).toList());
     }
     @RequirePermission("foundation.sessions.read")
+    @GetMapping("/current")
+    @Operation(summary = "读取当前会话已保存的任务选择，不改变后续聊天输入")
+    public ApiResponse<TaskView> current(@RequestParam("session_id") String session) {
+        return ApiResponses.wrap(service.current(service.owner(TenantIds.requireTenantId(), session))
+                .map(TaskView::from).orElse(null));
+    }
+    @RequirePermission("foundation.sessions.read")
     @GetMapping("/detail")
     @Operation(summary = "查看任务进展")
     public ApiResponse<TaskView> detail(@RequestParam("session_id") String session, @RequestParam("task_id") String task) {

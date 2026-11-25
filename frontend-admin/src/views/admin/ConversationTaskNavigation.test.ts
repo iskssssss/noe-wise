@@ -7,12 +7,16 @@ import ConversationTasksPage from './ConversationTasksPage.vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  current: vi.fn(),
   sessions: vi.fn(),
   user: { tenant_id: 'tenant', sub: 'member', permissions: ['foundation.sessions.read'] }
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'task-navigation-session',
-  api: { chat: { sessions: mocks.sessions }, conversationTasks: { list: mocks.list } }
+  api: {
+    chat: { sessions: mocks.sessions },
+    conversationTasks: { current: mocks.current, list: mocks.list }
+  }
 }))
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({ identityVersion: 1, user: mocks.user })
@@ -20,6 +24,7 @@ vi.mock('../../stores/auth', () => ({
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
   sessionStorage.clear()
+  mocks.current.mockReset().mockResolvedValue(null)
   mocks.list.mockReset().mockResolvedValue([])
   mocks.sessions.mockReset().mockResolvedValue([
     { session_id: 'one', agent_id: 1, title: '会话一' },

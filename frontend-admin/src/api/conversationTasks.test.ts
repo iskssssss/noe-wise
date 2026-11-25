@@ -23,6 +23,14 @@ const wire: ConversationTaskWire = {
 }
 
 describe('任务续接 API', () => {
+  it('按授权来源会话读取已保存选择，未选择保持空值', async () => {
+    const get = vi.fn().mockResolvedValueOnce(wire).mockResolvedValueOnce(null)
+    const api = createConversationTaskApi({ get, post: vi.fn() })
+    expect((await api.current('session/a'))?.taskId).toBe('task/a')
+    expect(get).toHaveBeenCalledWith('/conversation-tasks/current?session_id=session%2Fa')
+    expect(await api.current('other')).toBeNull()
+    expect(() => api.current('')).toThrow('请先选择会话')
+  })
   it('没有授权来源会话时不查询任务，并保留分页及状态筛选', async () => {
     const get = vi.fn().mockResolvedValue([]),
       post = vi.fn()

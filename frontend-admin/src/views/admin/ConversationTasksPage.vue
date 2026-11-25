@@ -80,6 +80,27 @@
         >刷新当前任务</ElButton
       >
     </p>
+    <section v-if="currentSession" class="admin-card task-selection" aria-label="会话已选任务">
+      <p v-if="data?.current" class="task-selection-heading">
+        <span>会话已选任务</span>
+        <ElButton
+          link
+          type="primary"
+          class="task-selection-title"
+          :disabled="busy || loading || !!pending"
+          @click="viewTask(data.current)"
+          >{{ data.current.title }}</ElButton
+        >
+        <span>{{ statusLabel(data.current.status) }} · 修订 {{ data.current.revision }}</span>
+      </p>
+      <p v-else>此会话尚未选择任务，可在下方列表中设为当前任务。</p>
+      <p class="admin-field-help">
+        这里保存当前会话的任务选择，便于管理和回看；后续聊天不会自动使用该任务。
+        <template v-if="data?.current && ['COMPLETED', 'CANCELLED'].includes(data.current.status)">
+          已选任务已结束，选择记录保留；如需继续处理，请先重新打开任务。
+        </template>
+      </p>
+    </section>
     <ElEmpty v-if="!sessionId && !loading" description="选择会话后查看任务进展" />
     <ElTable
       v-else
@@ -107,6 +128,10 @@
             :disabled="busy || loading || !!pending"
             @click="viewTask(row as ConversationTask)"
             >{{ row.title }}</ElButton
+          ><span
+            v-if="data?.current?.taskId === row.taskId"
+            class="admin-field-help task-current-label"
+            >会话已选</span
           ></template
         ></ElTableColumn
       ><ElTableColumn
@@ -129,9 +154,17 @@
             link
             @click="select(row as ConversationTask)"
             :disabled="
-              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+              busy ||
+              loading ||
+              refreshRequired ||
+              !!pending ||
+              !!storageError ||
+              !!loginRecovery ||
+              data?.current?.taskId === row.taskId
             "
-            >设为当前任务</ElButton
+            >{{
+              data?.current?.taskId === row.taskId ? '已设为当前任务' : '设为当前任务'
+            }}</ElButton
           ><ElButton
             v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             link
@@ -346,15 +379,18 @@ const {
   invalidate
 } = useResource(async () => {
   const requestedSession = sessionId.value
-  const items = requestedSession
-    ? await api.conversationTasks.list(
-        requestedSession,
-        appliedQuery.value,
-        appliedIncludeClosed.value,
-        offset.value
-      )
-    : []
-  return { sessionId: requestedSession, items }
+  const [items, current] = requestedSession
+    ? await Promise.all([
+        api.conversationTasks.list(
+          requestedSession,
+          appliedQuery.value,
+          appliedIncludeClosed.value,
+          offset.value
+        ),
+        api.conversationTasks.current(requestedSession)
+      ])
+    : [[], null]
+  return { sessionId: requestedSession, items, current }
 })
 const currentSession = computed(() => data.value?.sessionId === sessionId.value)
 const refreshRequired = ref(false)
@@ -748,7 +784,14 @@ function viewTask(row: ConversationTask, correction = false) {
   void reloadDetail()
 }
 async function select(row: ConversationTask) {
-  if (refreshRequired.value || pending.value || storageError.value || loginRecovery.value) return
+  if (
+    refreshRequired.value ||
+    pending.value ||
+    storageError.value ||
+    loginRecovery.value ||
+    data.value?.current?.taskId === row.taskId
+  )
+    return
   await runWrite(async () => {
     requireCurrentSession()
     if (
@@ -931,6 +974,21 @@ const formTipId = useId()
   text-overflow: ellipsis;
 }
 .task-title {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.task-current-label {
+  display: block;
+}
+.task-selection-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2, 8px);
+}
+.task-selection-title {
   max-width: 100%;
   white-space: normal;
   text-align: left;

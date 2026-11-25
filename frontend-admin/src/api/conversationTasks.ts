@@ -59,6 +59,10 @@ export function createConversationTaskApi(http: {
     return new URLSearchParams({ session_id: sessionId, ...values }).toString()
   }
   return {
+    current: (sessionId: string) =>
+      http
+        .get<ConversationTaskWire | null>(`${root}/current?${params(sessionId, {})}`)
+        .then((task) => (task ? fromWire(task) : null)),
     list: (sessionId: string, query = '', includeClosed = false, offset = 0) =>
       http
         .get<ConversationTaskWire[]>(

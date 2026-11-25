@@ -7,6 +7,7 @@ import { reactive } from 'vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  current: vi.fn(),
   detail: vi.fn(),
   refresh: vi.fn(),
   fetchMe: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../../api', () => ({
   api: {
     chat: { sessions: mocks.sessions },
     conversationTasks: {
+      current: mocks.current,
       list: mocks.list,
       detail: mocks.detail,
       update: mocks.update,
@@ -68,6 +70,7 @@ let wrapper: VueWrapper
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  mocks.current.mockReset().mockResolvedValue(null)
   mocks.sessions.mockResolvedValue([{ session_id: 'session-1', summary: '资料会话' }])
   mocks.list.mockResolvedValue([task])
   mocks.detail.mockResolvedValue({ ...task, facts: {}, pending: [] })

@@ -37,6 +37,10 @@ public class ConversationTaskManagement {
         return coordinator.require(owner, owner.target().requireAgent(), id);
     }
 
+    public Optional<ConversationTask> current(SessionOwner owner) {
+        return tasks.current(owner, owner.target().requireAgent()).map(id -> detail(owner, id));
+    }
+
     /** 只读取当前操作者在当前会话的原操作回执；未找到不代表操作失败或终止。 */
     public Optional<ConversationTask> receipt(SessionOwner owner, String id, String operationId, String actor) {
         if (operationId == null || operationId.isBlank() || operationId.length() > 200 || actor == null || actor.isBlank())

@@ -8,6 +8,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 const calls = vi.hoisted(() => ({
   sessions: vi.fn(),
   list: vi.fn(),
+  current: vi.fn(),
   select: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../../api', () => ({
   api: {
     chat: { sessions: calls.sessions },
     conversationTasks: {
+      current: calls.current,
       list: calls.list,
       select: calls.select,
       update: calls.update,
@@ -51,6 +53,7 @@ function button(label: string) {
 beforeEach(() => {
   vi.resetAllMocks()
   sessionStorage.clear()
+  calls.current.mockReset().mockResolvedValue(null)
   calls.session = 'browser-session'
   calls.auth = reactive({
     identityVersion: 1,
@@ -80,6 +83,44 @@ it('只有一个可见会话时自动读取任务，无需再选择', async () =
   expect(wrapper.text()).toContain('当前任务')
   expect(calls.select).not.toHaveBeenCalled()
   expect(calls.update).not.toHaveBeenCalled()
+})
+it('已选任务独立于筛选结果显示，已结束仍回显，禁止重复选择', async () => {
+  calls.sessions.mockResolvedValue([session])
+  const task = { taskId: 'selected', title: '已选资料任务', status: 'OPEN', revision: 8 }
+  calls.current.mockResolvedValue(task)
+  calls.list.mockResolvedValue([task])
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(button('已设为当前任务').props('disabled')).toBe(true)
+  expect(wrapper.find('[aria-label="会话已选任务"]').text()).toContain('修订 8')
+  expect(wrapper.text()).toContain('后续聊天不会自动使用该任务')
+  calls.list.mockResolvedValue([])
+  calls.current.mockResolvedValue({ ...task, status: 'COMPLETED', revision: 9 })
+  await button('查询').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('[aria-label="会话已选任务"]').text()).toContain('已完成 · 修订 9')
+  expect(wrapper.find('[aria-label="会话已选任务"]').text()).toContain('已选任务已结束')
+  expect(calls.select).not.toHaveBeenCalled()
+})
+it('切换会话读取失败不沿用旧标记或声称尚未选择', async () => {
+  calls.sessions.mockResolvedValue([session, { ...session, session_id: 'session-2' }])
+  calls.current.mockResolvedValueOnce({
+    taskId: 'old',
+    title: '旧会话选择',
+    status: 'OPEN',
+    revision: 2
+  })
+  calls.routeQuery = { sessionId: 'session-1' }
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  expect(wrapper.find('[aria-label="会话已选任务"]').text()).toContain('旧会话选择')
+  calls.current.mockRejectedValueOnce(new Error('无法读取会话选择'))
+  wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'session-2')
+  wrapper.findComponent(ElSelect).vm.$emit('change', 'session-2')
+  await flushPromises()
+  expect(wrapper.find('[aria-label="会话已选任务"]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('此会话尚未选择任务')
+  expect(calls.current).toHaveBeenLastCalledWith('session-2')
 })
 it.each(['COMPLETED', 'CANCELLED'])(
   '已结束状态%s只提供重新打开，不发送无效选择',
