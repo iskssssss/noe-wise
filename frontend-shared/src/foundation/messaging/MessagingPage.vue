@@ -124,7 +124,8 @@ const paged = computed(() =>
         : undefined
 )
 const task = useTask(),
-  edit = ref<'announcement' | 'template' | ''>(''),
+  edit = ref<'announcement' | 'template'>('announcement'),
+  editorVisible = ref(false),
   form = ref<FormInstance>()
 const announcement = reactive({
   title: '',
@@ -159,11 +160,12 @@ const editBaseline = ref(''),
   disposition = ref('rejected')
 const editValue = () => JSON.stringify(edit.value === 'announcement' ? announcement : template)
 const drawer = useDrawerClose({
-  open: () => !!edit.value,
+  open: () => editorVisible.value,
   busy: () => task.busy.value,
   dirty: () => editValue() !== editBaseline.value,
   close: () => {
-    edit.value = ''
+    // 关闭动画仍展示原表单，不能通过清空类型切换标题和内容。
+    editorVisible.value = false
   }
 })
 const mailboxDirty = computed(
@@ -258,6 +260,7 @@ function newAnnouncement() {
     deduplication_key: crypto.randomUUID()
   })
   edit.value = 'announcement'
+  editorVisible.value = true
   editBaseline.value = editValue()
   form.value?.clearValidate()
 }
@@ -275,13 +278,15 @@ function newTemplate(value?: TemplateView) {
       : { key: '', subject: '', body: '' }
   )
   edit.value = 'template'
+  editorVisible.value = true
   editBaseline.value = editValue()
   form.value?.clearValidate()
 }
 /** 提交绑定点击时的内容快照，保存期间不允许二次提交或编辑。 */
 async function publish() {
   const generation = identityGeneration
-  if (!edit.value || !allowed(edit.value === 'announcement' ? 'publish' : 'configure')) return
+  if (!editorVisible.value || !allowed(edit.value === 'announcement' ? 'publish' : 'configure'))
+    return
   if (task.busy.value || !(await form.value?.validate().catch(() => false))) return
   if (generation !== identityGeneration) return
   const kind = edit.value
@@ -306,7 +311,7 @@ async function publish() {
     body
   )
   if (result) {
-    edit.value = ''
+    editorVisible.value = false
     message.success(kind === 'announcement' ? '公告已发布，通知已受理' : '模板版本已发布')
     reload()
   }
@@ -416,7 +421,7 @@ watch(
     })
     unread.invalidate()
     unread.data.value = undefined
-    edit.value = ''
+    editorVisible.value = false
     reconcileId.value = ''
     evidence.value = ''
     mailboxBaseline.value = ''
@@ -759,7 +764,7 @@ watch(
       </div>
     </template>
     <ElDrawer
-      :model-value="!!edit"
+      :model-value="editorVisible"
       :title="edit === 'announcement' ? '发布公告' : '发布通知模板'"
       size="min(680px, calc(100vw - 24px))"
       :before-close="() => drawer.requestClose()"

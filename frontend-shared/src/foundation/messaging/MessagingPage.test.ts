@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElDrawer } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { confirm, message } from '../../feedback'
@@ -188,6 +188,50 @@ describe('消息页真实状态与账号边界', () => {
     ).toBe(false)
     wrapper.unmount()
   })
+
+  it.each(['发布', '取消'] as const)(
+    '公告%s后关闭动画保留原表单，再打开时重新初始化',
+    async (action) => {
+      vi.mocked(confirm).mockResolvedValue(true)
+      const request = vi.fn(async (method: string) =>
+        method === 'POST' ? 'announcement-1' : { items: [], has_more: false, next_cursor: null }
+      )
+      const wrapper = await mountPage(
+        ['foundation.messaging.publish'],
+        request as MessagingRequest,
+        true
+      )
+      const open = wrapper.findAll('button').find((button) => button.text() === '发布公告')!
+      await open.trigger('click')
+      await flushPromises()
+      const drawer = wrapper.get('.el-drawer')
+      await drawer.get('input').setValue('公告关闭测试')
+      await drawer.get('textarea').setValue('关闭动画期间保留此正文')
+      await drawer
+        .findAll('button')
+        .find((button) => button.text() === action)!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.getComponent(ElDrawer).props('modelValue')).toBe(false)
+      expect(drawer.text()).toContain('发布公告')
+      expect(drawer.text()).not.toContain('标题模板')
+      expect((drawer.get('textarea').element as HTMLTextAreaElement).value).toBe(
+        '关闭动画期间保留此正文'
+      )
+      expect(request.mock.calls.filter((call) => call[0] === 'POST')).toHaveLength(
+        action === '发布' ? 1 : 0
+      )
+      if (action === '发布') expect(confirm).not.toHaveBeenCalled()
+      else expect(confirm).toHaveBeenCalledOnce()
+      await open.trigger('click')
+      await flushPromises()
+      expect(wrapper.getComponent(ElDrawer).props('modelValue')).toBe(true)
+      const reopened = wrapper.get('.el-drawer')
+      expect((reopened.get('input').element as HTMLInputElement).value).toBe('')
+      expect((reopened.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+      wrapper.unmount()
+    }
+  )
 
   it('模板变量从正文和标题自动提取去重，发布无需重复填写变量声明', async () => {
     const request = vi.fn(async (method: string) => (method === 'POST' ? '12' : []))
