@@ -1,5 +1,9 @@
 <template>
   <AdminPage title="任务进展" description="按会话查找任务，查看进展并更正记录。"
+    ><template #extra
+      ><ElButton v-if="loginRecovery && !open" :loading="busy" @click="restoreLogin">{{
+        loginRecovery === 'login' ? '重新登录' : '刷新登录状态'
+      }}</ElButton></template
     ><FeedbackNotice
       v-if="error || loadError || detailError"
       :title="error || loadError || detailError"
@@ -124,31 +128,41 @@
             v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             link
             @click="select(row as ConversationTask)"
-            :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
+            :disabled="
+              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+            "
             >设为当前任务</ElButton
           ><ElButton
             v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             link
             @click="correct(row as ConversationTask)"
-            :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
+            :disabled="
+              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+            "
             >纠正</ElButton
           ><ElButton
             link
             v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             @click="update(row as ConversationTask, 'complete')"
-            :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
+            :disabled="
+              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+            "
             >完成</ElButton
           ><ElButton
             link
             v-if="['OPEN', 'WAITING_USER'].includes(row.status)"
             @click="update(row as ConversationTask, 'cancel')"
-            :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
+            :disabled="
+              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+            "
             >取消</ElButton
           ><ElButton
             link
             v-if="['COMPLETED', 'CANCELLED'].includes(row.status)"
             @click="update(row as ConversationTask, 'reopen')"
-            :disabled="busy || loading || refreshRequired || !!pending || !!storageError"
+            :disabled="
+              busy || loading || refreshRequired || !!pending || !!storageError || !!loginRecovery
+            "
             >重新打开</ElButton
           >
           <p v-if="['COMPLETED', 'CANCELLED'].includes(row.status)" class="admin-field-help">
@@ -269,6 +283,9 @@
         ><ElButton @click="requestClose" :disabled="busy">{{
           correcting ? '取消' : '关闭'
         }}</ElButton
+        ><ElButton v-if="loginRecovery" :loading="busy" @click="restoreLogin">{{
+          loginRecovery === 'login' ? '重新登录' : '刷新登录状态'
+        }}</ElButton
         ><ElButton
           v-if="!correcting && canCorrectDetail"
           v-permission="['foundation.sessions.update']"
@@ -281,7 +298,7 @@
           v-permission="['foundation.sessions.update']"
           type="primary"
           :loading="busy"
-          :disabled="!!pending || !!storageError || !text.trim()"
+          :disabled="!!pending || !!storageError || !!loginRecovery || !text.trim()"
           @click="save"
           >提交纠正</ElButton
         ></template
@@ -308,7 +325,7 @@ import {
   useDrawerClose,
   useUnsavedChanges
 } from '@skillforge/shared/admin'
-import { api, getSessionId } from '../../api'
+import { api, getSessionId, refreshAccessToken } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import type { ConversationTask, TaskOperation } from '../../api/conversationTasks'
@@ -352,6 +369,7 @@ onMounted(async () => {
   if (active && pending.value) checkReceipt()
 })
 const { busy, error, run } = useTask()
+const loginRecovery = ref<'refresh' | 'login'>()
 const auth = useAuthStore()
 const owner = computed(() =>
   auth.user?.tenant_id && auth.user?.sub ? JSON.stringify([auth.user.tenant_id, auth.user.sub]) : ''
@@ -508,14 +526,30 @@ async function performOperation(
     identity = auth.identityVersion,
     session = getSessionId(),
     operation = beginOperation(task)
+  const current = () =>
+    active &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
   try {
     await write(operation)
   } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      return false
+    }
     if (
       cause instanceof HttpClientError &&
       cause.code === 'TASK_OPERATION_REJECTED_BEFORE_MUTATION'
     ) {
       finishOperation(subject, operation)
+      if (cause.status === 401) {
+        loginRecovery.value = 'refresh'
+        cause.claimFeedback()
+        throw Error('登录已过期，本次任务操作未提交。请刷新登录状态后重新操作，更正说明已保留。', {
+          cause
+        })
+      }
     } else if (
       active &&
       owner.value === subject &&
@@ -530,7 +564,53 @@ async function performOperation(
     }
     throw cause
   }
-  return finishOperation(subject, operation)
+  return current() && finishOperation(subject, operation)
+}
+async function restoreLogin() {
+  if (loginRecovery.value === 'login') {
+    await router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId()
+  await run(async () => {
+    const token = await refreshAccessToken()
+    if (
+      !active ||
+      owner.value !== subject ||
+      auth.identityVersion !== identity ||
+      (getSessionId() && getSessionId() !== session)
+    )
+      return
+    if (!token) {
+      loginRecovery.value = 'login'
+      throw Error('无法刷新登录状态，请先复制需要保留的更正说明，再重新登录。本次操作未提交。')
+    }
+    try {
+      await auth.fetchMe()
+    } catch (cause) {
+      if (
+        !active ||
+        owner.value !== subject ||
+        auth.identityVersion !== identity ||
+        getSessionId() !== session
+      ) {
+        if (cause instanceof HttpClientError) cause.claimFeedback()
+        return
+      }
+      throw cause
+    }
+    if (
+      !active ||
+      owner.value !== subject ||
+      auth.identityVersion !== identity ||
+      getSessionId() !== session
+    )
+      return
+    loginRecovery.value = undefined
+    message.success('登录状态已刷新，请核对任务和更正说明后重新操作。')
+  })
 }
 async function runWrite(write: () => Promise<void>) {
   if (busy.value) return
@@ -668,7 +748,7 @@ function viewTask(row: ConversationTask, correction = false) {
   void reloadDetail()
 }
 async function select(row: ConversationTask) {
-  if (refreshRequired.value || pending.value || storageError.value) return
+  if (refreshRequired.value || pending.value || storageError.value || loginRecovery.value) return
   await runWrite(async () => {
     requireCurrentSession()
     if (
@@ -681,7 +761,7 @@ async function select(row: ConversationTask) {
   })
 }
 async function update(row: ConversationTask, operation: TaskOperation) {
-  if (refreshRequired.value || pending.value || storageError.value) return
+  if (refreshRequired.value || pending.value || storageError.value || loginRecovery.value) return
   if (
     operation === 'cancel' &&
     !(await confirm({
@@ -715,7 +795,13 @@ function correct(row: ConversationTask) {
   viewTask(row, true)
 }
 async function save() {
-  if (refreshRequired.value || pending.value || storageError.value || !canCorrectDetail.value)
+  if (
+    refreshRequired.value ||
+    pending.value ||
+    storageError.value ||
+    loginRecovery.value ||
+    !canCorrectDetail.value
+  )
     return
   await runWrite(async () => {
     requireCurrentSession()
@@ -814,6 +900,7 @@ watch(
     refreshRequired.value = false
     loadError.value = ''
     error.value = ''
+    loginRecovery.value = undefined
   },
   { flush: 'sync' }
 )

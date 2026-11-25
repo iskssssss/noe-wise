@@ -8,6 +8,8 @@ import { reactive } from 'vue'
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   detail: vi.fn(),
+  refresh: vi.fn(),
+  fetchMe: vi.fn(),
   sessions: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
@@ -16,10 +18,12 @@ const mocks = vi.hoisted(() => ({
   auth: undefined as unknown as {
     identityVersion: number
     user: { tenant_id: string; sub: string; permissions: string[] }
+    fetchMe: () => Promise<void>
   }
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => 'browser-session',
+  refreshAccessToken: mocks.refresh,
   api: {
     chat: { sessions: mocks.sessions },
     conversationTasks: {
@@ -69,9 +73,12 @@ beforeEach(() => {
   mocks.detail.mockResolvedValue({ ...task, facts: {}, pending: [] })
   mocks.auth = reactive({
     identityVersion: 1,
+    fetchMe: mocks.fetchMe,
     user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
   })
   mocks.showMessage.mockReturnValue(vi.fn())
+  mocks.refresh.mockResolvedValue('refreshed-access-token')
+  mocks.fetchMe.mockResolvedValue(undefined)
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -98,6 +105,88 @@ async function submit(drawer: VueWrapper) {
 }
 
 describe('任务纠正失败反馈与显式重试', () => {
+  it('认证前置拒绝保留更正说明和原修订，刷新登录不重发', async () => {
+    mocks.update.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TASK_OPERATION_REJECTED_BEFORE_MUTATION',
+        userMessage: '登录过期'
+      })
+    )
+    const drawer = await openCorrection()
+    await submit(drawer)
+    expect(drawer.findComponent(ElInput).props('modelValue')).toBe('已收到资料，待人工核对')
+    expect(mocks.showMessage).toHaveBeenCalledWith(
+      'error',
+      expect.stringContaining('本次任务操作未提交'),
+      expect.anything(),
+      expect.anything()
+    )
+    expect(mocks.receipt).not.toHaveBeenCalled()
+    await drawer
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '刷新登录状态')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.detail).toHaveBeenCalledTimes(1)
+    expect(drawer.findComponent(ElInput).props('modelValue')).toBe('已收到资料，待人工核对')
+    expect(
+      drawer
+        .findAllComponents(ElButton)
+        .find((b) => b.text() === '提交纠正')!
+        .props('disabled')
+    ).toBe(false)
+  })
+  it('刷新登录失败保留说明并提供重新登录，不发送业务写入', async () => {
+    mocks.update.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TASK_OPERATION_REJECTED_BEFORE_MUTATION',
+        userMessage: '登录过期'
+      })
+    )
+    mocks.refresh.mockResolvedValueOnce(undefined)
+    const drawer = await openCorrection()
+    await submit(drawer)
+    await drawer
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '刷新登录状态')!
+      .trigger('click')
+    await flushPromises()
+    expect(drawer.findAllComponents(ElButton).some((b) => b.text() === '重新登录')).toBe(true)
+    expect(drawer.findComponent(ElInput).props('modelValue')).toBe('已收到资料，待人工核对')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.fetchMe).not.toHaveBeenCalled()
+  })
+  it('登录刷新期间身份变化，不将旧结果应用到新身份', async () => {
+    mocks.update.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 401,
+        code: 'TASK_OPERATION_REJECTED_BEFORE_MUTATION',
+        userMessage: '登录过期'
+      })
+    )
+    let resolve!: (value: string) => void
+    mocks.refresh.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r
+      })
+    )
+    const drawer = await openCorrection()
+    await submit(drawer)
+    await drawer
+      .findAllComponents(ElButton)
+      .find((b) => b.text() === '刷新登录状态')!
+      .trigger('click')
+    await flushPromises()
+    mocks.auth.user.sub = 'other-user'
+    resolve('new-token')
+    await flushPromises()
+    expect(mocks.fetchMe).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(drawer.props('modelValue')).toBe(false)
+  })
   it('先读取最新详情，展示完整事实与待办，纠正使用最新修订', async () => {
     mocks.detail.mockResolvedValue({
       ...task,

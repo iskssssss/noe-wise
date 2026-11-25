@@ -8,6 +8,7 @@ import com.skillforge.institution.team.TeamDraftSaveController;
 import com.skillforge.institution.team.TeamSavedPublishController;
 import com.skillforge.institution.skill.SkillPublishController;
 import com.skillforge.institution.controller.KnowledgeRevisionPublishController;
+import com.skillforge.institution.controller.ConversationTaskController;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,9 @@ final class PublishPreDispatchRejection {
     private PublishPreDispatchRejection() { }
     private static String code(HttpServletRequest request, Object handler) {
         if (request.getDispatcherType() != DispatcherType.REQUEST || !(handler instanceof HandlerMethod method)) return null;
+        if (method.getBeanType() == ConversationTaskController.class
+                && (method.getMethod().getName().equals("select") || method.getMethod().getName().equals("update")))
+            return "TASK_OPERATION_REJECTED_BEFORE_MUTATION";
         if (method.getBeanType() == TeamDraftSaveController.class && method.getMethod().getName().equals("save"))
             return TeamDraftSaveController.REJECTED;
         if (!method.getMethod().getName().equals("publish")) return null;

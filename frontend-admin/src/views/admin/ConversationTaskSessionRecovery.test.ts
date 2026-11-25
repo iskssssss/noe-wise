@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElCheckbox, ElInput, ElOption, ElPagination, ElSelect } from 'element-plus'
 import ConversationTasksPage from './ConversationTasksPage.vue'
 import { reactive } from 'vue'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 
 const calls = vi.hoisted(() => ({
   sessions: vi.fn(),
@@ -10,15 +11,19 @@ const calls = vi.hoisted(() => ({
   select: vi.fn(),
   update: vi.fn(),
   receipt: vi.fn(),
+  refresh: vi.fn(),
+  fetchMe: vi.fn(),
   auth: undefined as unknown as {
     identityVersion: number
     user: { tenant_id: string; sub: string; permissions: string[] }
+    fetchMe: () => Promise<void>
   },
   session: 'browser-session',
   routeQuery: {} as Record<string, string>
 }))
 vi.mock('../../api', () => ({
   getSessionId: () => calls.session,
+  refreshAccessToken: calls.refresh,
   api: {
     chat: { sessions: calls.sessions },
     conversationTasks: {
@@ -49,9 +54,12 @@ beforeEach(() => {
   calls.session = 'browser-session'
   calls.auth = reactive({
     identityVersion: 1,
+    fetchMe: calls.fetchMe,
     user: { tenant_id: 'tenant-1', sub: 'user-1', permissions: ['foundation.sessions.read'] }
   })
   calls.routeQuery = {}
+  calls.refresh.mockResolvedValue('refreshed-access-token')
+  calls.fetchMe.mockResolvedValue(undefined)
   calls.sessions.mockResolvedValue([
     session,
     { session_id: 'session-2', summary: '另一会话', agent_id: 2 }
@@ -121,6 +129,67 @@ it('提交在途不显示结果未知，真正未确认时保留原请求和核�
   expect(button('核对原操作').exists()).toBe(true)
   expect(calls.select).toHaveBeenCalledTimes(1)
   expect(calls.receipt).toHaveBeenCalledTimes(1)
+})
+it.each(['设为当前任务', '完成'])(
+  '%s收到明确认证前置拒绝时不核对或重发，显式刷新只恢复登录',
+  async (action) => {
+    calls.sessions.mockResolvedValue([session])
+    const task = { taskId: 'one', title: '任务', summary: '', status: 'OPEN', revision: 1 }
+    calls.list.mockResolvedValue([task])
+    const write = action === '设为当前任务' ? calls.select : calls.update
+    write
+      .mockRejectedValueOnce(
+        new HttpClientError({
+          status: 401,
+          code: 'TASK_OPERATION_REJECTED_BEFORE_MUTATION',
+          userMessage: '登录过期'
+        })
+      )
+      .mockResolvedValueOnce(task)
+    wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+    await flushPromises()
+    await button(action).trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('本次任务操作未提交')
+    expect(button('核对原操作')).toBeUndefined()
+    expect(calls.receipt).not.toHaveBeenCalled()
+    expect(calls.refresh).not.toHaveBeenCalled()
+    expect(button(action).props('disabled')).toBe(true)
+    await button('刷新登录状态').trigger('click')
+    await flushPromises()
+    expect(calls.refresh).toHaveBeenCalledTimes(1)
+    expect(calls.fetchMe).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(button(action).props('disabled')).toBe(false)
+    await button(action).trigger('click')
+    await flushPromises()
+    expect(write).toHaveBeenCalledTimes(2)
+    const idIndex = action === '设为当前任务' ? 2 : 3
+    expect(write.mock.calls[1]![idIndex]).not.toBe(write.mock.calls[0]![idIndex])
+  }
+)
+it('无前置拒绝契约的401仍核对原操作，读取401不能清除UNKNOWN', async () => {
+  calls.sessions.mockResolvedValue([session])
+  calls.list.mockResolvedValue([
+    { taskId: 'one', title: '任务', summary: '', status: 'OPEN', revision: 1 }
+  ])
+  calls.select.mockRejectedValueOnce(
+    new HttpClientError({ status: 401, code: 'OTHER_AUTH_ERROR', userMessage: '登录错误' })
+  )
+  calls.receipt.mockRejectedValueOnce(
+    new HttpClientError({ status: 401, userMessage: '无法读取回执' })
+  )
+  wrapper = mount(ConversationTasksPage, { attachTo: document.body })
+  await flushPromises()
+  await button('设为当前任务').trigger('click')
+  await flushPromises()
+  expect(button('核对原操作')).toBeDefined()
+  expect(button('刷新登录状态')).toBeUndefined()
+  expect(calls.select).toHaveBeenCalledTimes(1)
+  expect(calls.receipt).toHaveBeenCalledTimes(1)
+  expect(
+    sessionStorage.getItem(`skillforge.task-operation.${JSON.stringify(['tenant-1', 'user-1'])}`)
+  ).toContain(calls.select.mock.calls[0]![2])
 })
 it('团队会话保留不可选原因，自动选择仅计算支持的智能体会话', async () => {
   calls.sessions.mockResolvedValue([
