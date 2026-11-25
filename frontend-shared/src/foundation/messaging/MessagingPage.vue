@@ -127,6 +127,12 @@ const task = useTask(),
   edit = ref<'announcement' | 'template'>('announcement'),
   editorVisible = ref(false),
   form = ref<FormInstance>()
+const reading = ref<InboxItem | AnnouncementItem>(),
+  readerVisible = ref(false)
+function readBody(item: InboxItem | AnnouncementItem) {
+  reading.value = item
+  readerVisible.value = true
+}
 const announcement = reactive({
   title: '',
   body: '',
@@ -422,6 +428,8 @@ watch(
     unread.invalidate()
     unread.data.value = undefined
     editorVisible.value = false
+    readerVisible.value = false
+    reading.value = undefined
     reconcileId.value = ''
     evidence.value = ''
     mailboxBaseline.value = ''
@@ -509,7 +517,19 @@ watch(
                 {{ scope.row.read_at ? '已读' : '未读' }}
               </div></template
             ></ElTableColumn
-          ><ElTableColumn prop="body" label="正文" min-width="240" show-overflow-tooltip />
+          ><ElTableColumn label="正文" min-width="240">
+            <template #default="scope">
+              <div class="messaging-preview">{{ scope.row.body }}</div>
+              <ElButton
+                link
+                type="primary"
+                :aria-label="'阅读全文：' + scope.row.title"
+                @click="readBody(scope.row as InboxItem)"
+              >
+                阅读全文
+              </ElButton>
+            </template>
+          </ElTableColumn>
           <ElTableColumn label="操作" width="112" fixed="right"
             ><template #default="scope"
               ><ElButton
@@ -554,12 +574,19 @@ watch(
                 {{ formatDateTime(scope.row.created_at) }}
               </div></template
             ></ElTableColumn
-          ><ElTableColumn
-            prop="body"
-            label="正文"
-            min-width="220"
-            show-overflow-tooltip
-          /><ElTableColumn v-if="allowed('publish')" label="操作" width="96" fixed="right"
+          ><ElTableColumn label="正文" min-width="220">
+            <template #default="scope">
+              <div class="messaging-preview">{{ scope.row.body }}</div>
+              <ElButton
+                link
+                type="primary"
+                :aria-label="'阅读全文：' + scope.row.title"
+                @click="readBody(scope.row as AnnouncementItem)"
+              >
+                阅读全文
+              </ElButton>
+            </template> </ElTableColumn
+          ><ElTableColumn v-if="allowed('publish')" label="操作" width="96" fixed="right"
             ><template #default="scope"
               ><ElButton
                 v-if="scope.row.status === 'published'"
@@ -846,12 +873,55 @@ watch(
         ></template
       >
     </ElDrawer>
+    <ElDrawer
+      v-model="readerVisible"
+      title="正文详情"
+      size="min(680px, calc(100vw - 24px))"
+      destroy-on-close
+    >
+      <article v-if="reading" class="messaging-reading">
+        <h2>{{ reading.title }}</h2>
+        <p class="admin-field-help">
+          {{ formatDateTime(reading.created_at) }} ·
+          {{
+            'read_at' in reading
+              ? reading.read_at
+                ? '已读'
+                : '未读'
+              : reading.status === 'published'
+                ? '已发布'
+                : '已撤回'
+          }}
+        </p>
+        <div class="messaging-body">{{ reading.body }}</div>
+      </article>
+      <template #footer><ElButton @click="readerVisible = false">关闭</ElButton></template>
+    </ElDrawer>
   </AdminPage>
 </template>
 
 <style scoped>
 .messaging-form {
   max-width: 48rem;
+}
+.messaging-preview {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.messaging-reading {
+  overflow-wrap: anywhere;
+}
+.messaging-reading h2 {
+  margin: 0;
+  font-size: var(--el-font-size-large);
+}
+.messaging-reading .admin-field-help {
+  margin: 8px 0 16px;
+}
+.messaging-body {
+  white-space: pre-wrap;
+  line-height: var(--el-font-line-height-primary);
 }
 .audience-options {
   flex-wrap: wrap;

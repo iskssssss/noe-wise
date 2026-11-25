@@ -130,6 +130,52 @@ describe('消息页真实状态与账号边界', () => {
     wrapper.unmount()
   })
 
+  it.each(['inbox', 'read'] as const)(
+    '仅%s权限可读完整纯文本，展开不写已读且身份切换清空正文',
+    async (permission) => {
+      const body = '第一段\n\n<img src=x onerror=alert(1)>\n' + '长正文'.repeat(400)
+      const item = {
+        id: '41',
+        title: '完整阅读',
+        body,
+        created_at: '2026-11-25T06:00:00Z',
+        ...(permission === 'inbox'
+          ? { read_at: null }
+          : { status: 'withdrawn', recipients: 1, audience: 'members' })
+      }
+      const request = vi.fn(async (_method: string, path: string) =>
+        path.endsWith('/unread') ? 1 : { items: [item], has_more: false, next_cursor: null }
+      )
+      const wrapper = await mountPage(
+        [`foundation.messaging.${permission}`],
+        request as MessagingRequest,
+        true
+      )
+      const read = wrapper.findAll('button').find((button) => button.text() === '阅读全文')!
+      expect(read.attributes('aria-label')).toBe('阅读全文：完整阅读')
+      await read.trigger('click')
+      await flushPromises()
+      expect(wrapper.get('.messaging-body').text()).toBe(body)
+      expect(wrapper.find('.messaging-body img').exists()).toBe(false)
+      expect(wrapper.get('.messaging-reading').text()).toContain(
+        permission === 'inbox' ? '未读' : '已撤回'
+      )
+      expect(request.mock.calls.every((call) => call[0] === 'GET')).toBe(true)
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '关闭')!
+        .trigger('click')
+      await flushPromises()
+      await read.trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ identityKey: 'tenant-2/member-2', permissions: [] })
+      await flushPromises()
+      expect(wrapper.find('.messaging-body').exists()).toBe(false)
+      expect(request.mock.calls.every((call) => call[0] === 'GET')).toBe(true)
+      wrapper.unmount()
+    }
+  )
+
   it('邮件投递空态说明 SMTP 未配置原因并可跳到配置', async () => {
     const request = vi.fn(async (_method: string, path: string) => {
       if (path.endsWith('/mailbox')) return mailbox
