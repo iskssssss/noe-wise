@@ -64,6 +64,7 @@ describe('关联选择表单', () => {
       .findAllComponents({ name: 'ElOption' })
       .map((option) => option.props('label'))
     expect(options).toContain('新结果')
+    expect(options).not.toContain('已选机构')
     expect(options).not.toContain('过期结果')
     wrapper.unmount()
   })
@@ -94,11 +95,11 @@ describe('关联选择表单', () => {
     const search = wrapper.findComponent(ElSelect).props('remoteMethod')!
     const pending = search('新机构')
     await wrapper.vm.$nextTick()
-    expect(options()).toEqual(['已选机构'])
+    expect(options()).toEqual([])
     rejectSearch(new Error('搜索失败'))
     await pending
     await flushPromises()
-    expect(options()).toEqual(['已选机构'])
+    expect(options()).toEqual([])
     expect(messages()).toContain('搜索失败')
     expect(wrapper.findComponent(ElSelect).props('automaticDropdown')).toBe(true)
     const retry = [...document.querySelectorAll('button')].find((button) =>
@@ -107,13 +108,68 @@ describe('关联选择表单', () => {
     retry.click()
     await wrapper.vm.$nextTick()
     expect(load.mock.calls.at(-1)?.[0]).toBe('新机构')
-    expect(options()).toEqual(['已选机构'])
+    expect(options()).toEqual([])
     finishRetry([{ id: 'new', label: '新机构' }])
     await flushPromises()
-    expect(options()).toEqual(['已选机构', '新机构'])
+    expect(options()).toEqual(['新机构'])
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
     expect(messages()).not.toContain('搜索失败')
     expect(wrapper.findComponent(ElSelect).props('automaticDropdown')).toBe(false)
+    await wrapper.get('input').trigger('keydown', { code: 'Escape', key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选机构')
+    wrapper.unmount()
+  })
+  it('搜索无匹配不把已选值混入候选，关闭后保留名称，重搜仍可选择', async () => {
+    const current = { id: 'selected', label: '当前机构' }
+    const other = { id: 'other', label: '另一机构' }
+    const wrapper = mount(EntitySelect, {
+      props: {
+        modelValue: current.id,
+        resolve: async () => current,
+        load: async (query: string) => (query === '无匹配' ? [] : [current, other])
+      },
+      global: { plugins: [ElementPlus] },
+      attachTo: document.body
+    })
+    await flushPromises()
+    const input = wrapper.get('input')
+    await input.trigger('click')
+    const search = wrapper.getComponent(ElSelect).props('remoteMethod')!
+    await search('无匹配')
+    await flushPromises()
+    expect(wrapper.findAllComponents({ name: 'ElOption' })).toHaveLength(0)
+    expect(document.body.textContent).toContain('当前范围没有匹配选项，请更换关键词或确认权限')
+    await input.trigger('keydown', { code: 'Escape', key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前机构')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    await input.trigger('click')
+    await search('')
+    await flushPromises()
+    const options = wrapper.findAllComponents({ name: 'ElOption' })
+    expect(options.map((option) => option.props('label'))).toEqual(['当前机构', '另一机构'])
+    await options[1]!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['other'])
+    wrapper.unmount()
+  })
+  it('本地候选继续按名称过滤，独立回显不增加无关候选', async () => {
+    const wrapper = mount(EntitySelect, {
+      props: {
+        modelValue: 'outside',
+        resolve: async () => ({ id: 'outside', label: '原机构' }),
+        options: [{ id: 'one', label: '候选机构' }]
+      },
+      global: { plugins: [ElementPlus] },
+      attachTo: document.body
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('原机构')
+    await wrapper.get('input').setValue('没有匹配')
+    await wrapper.get('input').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('未找到匹配选项，请更换关键词')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
     wrapper.unmount()
   })
   it('候选加载器更换时用当前关键词查询新目录', async () => {

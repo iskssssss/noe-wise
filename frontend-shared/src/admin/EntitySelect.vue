@@ -32,16 +32,14 @@ let generation = 0,
   searchQuery = '',
   controller: AbortController | undefined,
   disposed = false
-const choices = computed(() => {
-  const values = props.load ? remoteOptions.value : props.options
-  if (
-    selected.value &&
-    selected.value.id === props.modelValue &&
-    !values.some((item) => item.id === selected.value!.id)
-  )
-    return [selected.value, ...values]
-  return values
-})
+const choices = computed(() => (props.load ? remoteOptions.value : props.options))
+// 回显与候选分开：已选名称不作为本次搜索的匹配项，也不参与方向键选择。
+const selectedLabel = computed(
+  () =>
+    choices.value.find((item) => item.id === props.modelValue)?.label ??
+    (selected.value?.id === props.modelValue ? selected.value?.label : undefined) ??
+    props.modelValue
+)
 async function search(query = '') {
   if (!props.load) return
   searchQuery = query
@@ -81,7 +79,9 @@ async function resolveSelected() {
     resolve = props.resolve
   const current = ++resolveGeneration
   resolveError.value = ''
-  selected.value = choices.value.find((item) => item.id === id)
+  selected.value =
+    choices.value.find((item) => item.id === id) ??
+    (selected.value?.id === id ? selected.value : undefined)
   if (!id || !resolve) return
   try {
     const option = await resolve(id)
@@ -138,6 +138,7 @@ function change(value: string) {
       @visible-change="expanded = $event"
       @update:model-value="change"
     >
+      <template #label>{{ selectedLabel }}</template>
       <template v-if="searchError" #header>
         <ElButton link :loading="loading" @mousedown.prevent @click="retry">重新加载选项</ElButton>
       </template>
