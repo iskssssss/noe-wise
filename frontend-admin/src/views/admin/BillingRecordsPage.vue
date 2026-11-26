@@ -239,6 +239,7 @@
     <ElForm
       class="admin-card billing-settings"
       v-else
+      autocomplete="off"
       label-position="top"
       @submit.prevent="saveProvider"
       :disabled="busy || loading"
@@ -267,6 +268,9 @@
           v-described-by="formTipId + '-field-1'"
           :aria-describedby="formTipId + '-field-1'"
           v-model="provider.endpoint"
+          name="billing-reconciliation-endpoint"
+          type="url"
+          autocomplete="off"
         />
         <FieldTip :id="formTipId + '-field-1'"
           >填写返回用量数据的对账 API 地址。</FieldTip
@@ -276,6 +280,8 @@
           v-described-by="formTipId + '-field-2'"
           :aria-describedby="formTipId + '-field-2'"
           v-model="provider.api_key"
+          name="billing-reconciliation-api-key"
+          autocomplete="new-password"
           type="password"
           show-password
           placeholder="留空保持当前凭据"
@@ -299,6 +305,8 @@
               v-described-by="formTipId + '-field-3'"
               :aria-describedby="formTipId + '-field-3'"
               v-model="provider.api_key_header"
+              name="billing-reconciliation-api-key-header"
+              autocomplete="off"
             />
             <FieldTip :id="formTipId + '-field-3'"
               >填写发送访问凭据时使用的 HTTP 请求头名称。</FieldTip
