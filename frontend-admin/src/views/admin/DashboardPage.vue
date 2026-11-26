@@ -29,7 +29,7 @@
       <ElCard class="admin-card">
         <template #header>
           <div class="section-heading">
-            <span>本月事件用量</span>
+            <span>本月已记录用量</span>
             <ElTag :type="statusTagType(total?.usage_status)">{{
               usageStatusLabel(total?.usage_status)
             }}</ElTag>
@@ -37,7 +37,9 @@
         </template>
         <p v-if="total?.missing_cost_count" class="admin-field-help" role="status">
           {{ formatCount(total.missing_cost_count) }}
-          项成本待确认。已确认成本只代表已知部分，未核实不视为零费用。
+          项成本待确认，包含已有用量但成本未确认的记录，以及尚未取得用量的调用。
+          下表只展示已有用量记录，因此分类合计可能少于总数。
+          已确认成本只代表已知部分，未核实不视为零费用。
         </p>
         <ElTable
           table-layout="auto"
