@@ -79,6 +79,10 @@ tasks.bootJar {
 
 tasks.test {
     exclude("**/SystemAgentSkillActivationBrowserE2ETest.class")
+    val operationOptionsDatabase = providers.environmentVariable("OPERATION_OPTIONS_JDBC_URL").map { it.isNotBlank() }.orElse(false)
+    inputs.property("operationOptionsDatabase", operationOptionsDatabase)
+    outputs.upToDateWhen { !operationOptionsDatabase.get() }
+    outputs.doNotCacheIf("保留数据库的候选验收必须读取本次实际状态") { operationOptionsDatabase.get() }
     // 系统智能体创建测试会启动真实前端；页面变化必须使该测试结果失效。
     inputs.files(
         fileTree("../../frontend-platform") { include("src/**", "e2e/system-agent-create-real.spec.ts", "playwright.system-agent-create.config.ts", "vite.config.ts", "package*.json", "index.html") },

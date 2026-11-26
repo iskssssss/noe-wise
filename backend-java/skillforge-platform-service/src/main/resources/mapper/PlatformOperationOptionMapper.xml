@@ -10,6 +10,7 @@
   </sql>
   <sql id="tenantFilter">
     <include refid="allowedFilter"/>
+    AND t.status&lt;&gt;'internal'
     AND (#{query}='' OR strpos(lower(t.name),lower(#{query}))&gt;0 OR strpos(lower(t.slug),lower(#{query}))&gt;0)
   </sql>
   <select id="tenants" resultMap="option">

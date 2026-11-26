@@ -28,8 +28,8 @@ class PlatformOperationOptionMapperIntegrationTest {
         try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
                 var sql = connection.createStatement()) {
             sql.execute("CREATE ROLE option_reader LOGIN PASSWORD 'isolated-test-only'");
-            sql.execute("CREATE TABLE nw_tenants(id bigint PRIMARY KEY,name text,slug text)");
-            sql.execute("INSERT INTO nw_tenants VALUES(7,'门店甲','clinic-a'),(8,'其他机构','clinic-b'),(9223372036854775807,'门店乙','clinic-c')");
+            sql.execute("CREATE TABLE nw_tenants(id bigint PRIMARY KEY,name text,slug text,status text NOT NULL DEFAULT 'active')");
+            sql.execute("INSERT INTO nw_tenants(id,name,slug) VALUES(7,'门店甲','clinic-a'),(8,'其他机构','clinic-b'),(9223372036854775807,'门店乙','clinic-c')");
             sql.execute("CREATE TABLE nw_agent_templates(id bigint PRIMARY KEY,name text,version text,owner_kind text,status text,distribution_policy text)");
             sql.execute("INSERT INTO nw_agent_templates VALUES(31,'可直接授权','v1','platform','published','AUTHORIZED_DEPLOY'),(32,'开放安装','v1','platform','published','OPEN_INSTALL'),(33,'草稿','v1','platform','draft','AUTHORIZED_DEPLOY'),(34,'机构源','v1','tenant','published','AUTHORIZED_DEPLOY')");
             sql.execute("CREATE TABLE nw_institution_integrations(tenant_id bigint,integration_id text,PRIMARY KEY(tenant_id,integration_id))");

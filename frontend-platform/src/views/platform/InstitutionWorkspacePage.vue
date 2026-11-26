@@ -82,7 +82,17 @@ const selected = computed(() => nodes.value.find((node) => node.id === displayId
 const details = useResource(async (signal) => {
   const requested = selectedId.value
   if (!requested || !allowed('foundation.tenants.read')) return undefined
-  const result = await api.admin.getTenant(requested, { signal, silent: true })
+  let result
+  try {
+    result = await api.admin.getTenant(requested, { signal, silent: true })
+  } catch (reason) {
+    // 旧链接的不存在状态由工作台承接，不继续挂载依赖该机构的维护面板。
+    if (reason instanceof HttpClientError && reason.status === 404) {
+      reason.claimFeedback()
+      return null
+    }
+    throw reason
+  }
   if (!allowed('foundation.tenants.read') || requested !== selectedId.value)
     throw Error('机构读取目标已变化')
   return result
@@ -103,14 +113,16 @@ const canUsage = computed(() =>
   ['summary', 'details', 'events'].some((kind) => allowed(`platform.usage.${kind}.read`))
 )
 const visibleSections = computed(() =>
-  platformInstitutionSections.filter(({ key }) => {
-    if (key === 'settings') return allowed('foundation.tenants.read')
-    if (key === 'access') return canAccess.value
-    if (key === 'agents') return canAgents.value
-    if (key === 'relations') return allowed('platform.institution_relations.read')
-    if (key === 'usage') return canUsage.value
-    return true
-  })
+  details.data.value === null
+    ? []
+    : platformInstitutionSections.filter(({ key }) => {
+        if (key === 'settings') return allowed('foundation.tenants.read')
+        if (key === 'access') return canAccess.value
+        if (key === 'agents') return canAgents.value
+        if (key === 'relations') return allowed('platform.institution_relations.read')
+        if (key === 'usage') return canUsage.value
+        return true
+      })
 )
 const title = computed(
   () =>
@@ -212,7 +224,10 @@ onMounted(() => {
       @changed="refresh"
       @target-selected="(value) => (onboardingTarget = value.tenantId)"
     />
-    <ElEmpty v-else-if="!selectedId" description="点击右上角“选择机构”；也可新增或接入一个机构。" />
+    <ElEmpty
+      v-else-if="!selectedId"
+      description="从机构目录选择要维护的机构；也可新增或接入一个机构。"
+    />
     <div v-else :key="`${selectedId}:${section}:${route.query.view ?? ''}:${integrationId}`">
       <FeedbackNotice
         v-if="details.error.value"
@@ -220,7 +235,18 @@ onMounted(() => {
         type="error"
         :closable="false"
       />
-      <div v-if="section === 'overview'" class="institution-overview">
+      <ElSkeleton
+        v-if="details.loading.value && details.data.value === undefined"
+        :rows="4"
+        animated
+      />
+      <ElEmpty
+        v-else-if="details.data.value === null"
+        description="该机构不存在或不属于机构维护范围，请返回机构目录选择。"
+      >
+        <ElButton @click="navigate('', 'overview')">返回机构目录</ElButton>
+      </ElEmpty>
+      <div v-else-if="section === 'overview'" class="institution-overview">
         <div class="institution-overview__intro">
           <p>在当前机构上下文中继续维护，下面的入口会自动带入机构身份。</p>
           <p v-if="selected?.parentId" class="admin-field-help">

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { useUnsavedChanges } from '@skillforge/shared/admin'
+import { HttpClientError } from '@skillforge/shared/utils/http'
 import InstitutionWorkspacePage from '../views/platform/InstitutionWorkspacePage.vue'
 
 const fixture = vi.hoisted(() => ({
@@ -215,6 +216,22 @@ function deferred<T>() {
 }
 
 describe('平台机构工作台的路由、当前目标和权限装配', () => {
+  it('旧链接的机构不存在时停止挂载维护面板，可返回目录并选择正常机构', async () => {
+    fixture.detail.mockRejectedValueOnce(
+      new HttpClientError({ status: 404, userMessage: '机构不存在' })
+    )
+    const { wrapper, router } = await open('/platform/tenants/900000000000000001?section=settings')
+    expect(wrapper.text()).toContain('不属于机构维护范围')
+    expect(wrapper.find('[data-settings]').exists()).toBe(false)
+    expect(wrapper.find('[data-nav="settings"]').exists()).toBe(false)
+    await click(wrapper, '返回机构目录')
+    expect(router.currentRoute.value.params.id ?? '').toBe('')
+    expect(wrapper.text()).toContain('从机构目录选择')
+    await click(wrapper, '选择机构甲')
+    await click(wrapper, '机构设置')
+    expect(wrapper.get('[data-settings]').text()).toBe('10')
+  })
+
   it('深链固定映射/凭证面板目标与接入，切换不修改平台登录身份', async () => {
     const { wrapper, router } = await open(
       '/platform/tenants/10?section=access&view=credentials&integration_id=stable-integration'
