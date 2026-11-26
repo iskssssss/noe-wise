@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
-import { computed, onBeforeUnmount, ref, watch, useAttrs } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, useAttrs } from 'vue'
 import { ElOption, ElSelect, ElButton } from 'element-plus'
 import type { EntityOption } from './presentation'
 import { HttpClientError } from '../utils/http'
@@ -16,7 +16,7 @@ const props = withDefaults(
     disabled?: boolean
     clearable?: boolean
   }>(),
-  { options: () => [], placeholder: '搜索名称并选择', clearable: true }
+  { options: () => [], placeholder: '搜索名称并选择', clearable: true, disabled: undefined }
 )
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const remoteOptions = ref<EntityOption[]>([]),
@@ -114,41 +114,66 @@ function change(value: string) {
   selected.value = choices.value.find((item) => item.id === value)
   emit('update:modelValue', value || '')
 }
+async function clearSelection() {
+  select.value?.blur()
+  change('')
+  await nextTick()
+  select.value?.focus()
+}
 </script>
 <template>
   <div class="entity-select">
-    <ElSelect
-      ref="select"
-      v-bind="attrs"
-      :model-value="modelValue || undefined"
-      filterable
-      :remote="!!load"
-      :remote-method="search"
-      :loading="loading"
-      :disabled="disabled"
-      :automatic-dropdown="!!searchError"
-      :clearable="clearable"
-      fit-input-width
-      popper-class="entity-select-options"
-      :placeholder="placeholder"
-      :no-data-text="
-        error ? '选项未加载，请重新加载选项' : '当前范围没有匹配选项，请更换关键词或确认权限'
-      "
-      no-match-text="未找到匹配选项，请更换关键词"
-      @visible-change="expanded = $event"
-      @update:model-value="change"
-    >
-      <template #label>{{ selectedLabel }}</template>
-      <template v-if="searchError" #header>
-        <ElButton link :loading="loading" @mousedown.prevent @click="retry">重新加载选项</ElButton>
-      </template>
-      <ElOption v-for="option in choices" :key="option.id" :value="option.id" :label="option.label"
-        ><span class="entity-label">{{ option.label }}</span
-        ><small v-if="option.description" class="entity-description">{{
-          option.description
-        }}</small></ElOption
-      > </ElSelect
-    ><FeedbackNotice
+    <div class="entity-select-controls">
+      <ElSelect
+        ref="select"
+        v-bind="attrs"
+        :model-value="modelValue || undefined"
+        filterable
+        :remote="!!load"
+        :remote-method="search"
+        :loading="loading"
+        :disabled="disabled"
+        :automatic-dropdown="!!searchError"
+        :clearable="false"
+        fit-input-width
+        popper-class="entity-select-options"
+        :placeholder="placeholder"
+        :no-data-text="
+          error ? '选项未加载，请重新加载选项' : '当前范围没有匹配选项，请更换关键词或确认权限'
+        "
+        no-match-text="未找到匹配选项，请更换关键词"
+        @visible-change="expanded = $event"
+        @update:model-value="change"
+      >
+        <template #label>{{ selectedLabel }}</template>
+        <template v-if="searchError" #header>
+          <ElButton link :loading="loading" @mousedown.prevent @click="retry"
+            >重新加载选项</ElButton
+          >
+        </template>
+        <ElOption
+          v-for="option in choices"
+          :key="option.id"
+          :value="option.id"
+          :label="option.label"
+          ><span class="entity-label">{{ option.label }}</span
+          ><small v-if="option.description" class="entity-description">{{
+            option.description
+          }}</small></ElOption
+        >
+      </ElSelect>
+      <ElButton
+        v-if="clearable && modelValue"
+        class="entity-select-clear"
+        link
+        native-type="button"
+        :disabled="disabled"
+        :aria-label="`清除${attrs['aria-label'] || '选择'}`"
+        @click="clearSelection"
+        >清除</ElButton
+      >
+    </div>
+    <FeedbackNotice
       v-if="resolveError"
       :title="resolveError"
       type="error"
@@ -174,6 +199,19 @@ function change(value: string) {
 .entity-select {
   width: 100%;
   min-width: 160px;
+}
+.entity-select-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entity-select-controls > .el-select {
+  min-width: 0;
+  flex: 1;
+}
+.entity-select-clear {
+  flex-shrink: 0;
+  min-height: var(--el-component-size);
 }
 .entity-description {
   display: block;

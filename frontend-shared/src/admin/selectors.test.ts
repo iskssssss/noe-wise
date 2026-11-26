@@ -1,6 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import ElementPlus, { ElSelect } from 'element-plus'
+import ElementPlus, { ElForm, ElSelect } from 'element-plus'
 import EntitySelect from './EntitySelect.vue'
 import CapabilityRequirementFields from './CapabilityRequirementFields.vue'
 import { statusLabel } from './presentation'
@@ -16,6 +17,64 @@ function messages() {
 }
 
 describe('关联选择表单', () => {
+  it('清除按钮具名且不提交表单，清除后焦点回到选择框并可重新选择', async () => {
+    const submitted = vi.fn()
+    const wrapper = mount(
+      defineComponent({
+        components: { EntitySelect },
+        setup: () => ({ value: ref('one'), submitted }),
+        template: `<form @submit.prevent="submitted"><EntitySelect v-model="value" aria-label="机构" :options="[{id:'one',label:'机构一'}]" /></form>`
+      }),
+      { global: { plugins: [ElementPlus] }, attachTo: document.body }
+    )
+    await flushPromises()
+    const button = wrapper.get('button[aria-label="清除机构"]')
+    expect(button.attributes('type')).toBe('button')
+    expect(button.attributes('disabled')).toBeUndefined()
+    ;(button.element as HTMLButtonElement).focus()
+    ;(button.element as HTMLButtonElement).click()
+    await flushPromises()
+    expect(wrapper.getComponent(EntitySelect).props('modelValue')).toBe('')
+    expect(submitted).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(wrapper.get('input').element)
+    expect(wrapper.find('button[aria-label="清除机构"]').exists()).toBe(false)
+    await wrapper.get('input').trigger('click')
+    await flushPromises()
+    await wrapper.getComponent({ name: 'ElOption' }).trigger('click')
+    expect(wrapper.getComponent(EntitySelect).props('modelValue')).toBe('one')
+    expect(wrapper.find('button[aria-label="清除机构"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+  it('表单禁用同时禁用选择和清除，解除后恢复；字段禁用及不可清除约束仍有效', async () => {
+    const locked = ref(true)
+    const wrapper = mount(
+      defineComponent({
+        components: { EntitySelect, ElForm },
+        setup: () => ({ locked, value: ref('one') }),
+        template: `<ElForm :disabled="locked"><EntitySelect v-model="value" :options="[{id:'one',label:'机构一'}]" /></ElForm>`
+      }),
+      { global: { plugins: [ElementPlus] }, attachTo: document.body }
+    )
+    await flushPromises()
+    expect(wrapper.get('input').attributes('disabled')).toBeDefined()
+    const clear = wrapper.get('button[aria-label="清除选择"]')
+    expect(clear.attributes('disabled')).toBeDefined()
+    ;(clear.element as HTMLButtonElement).click()
+    expect(wrapper.getComponent(EntitySelect).props('modelValue')).toBe('one')
+    locked.value = false
+    await flushPromises()
+    expect(wrapper.get('input').attributes('disabled')).toBeUndefined()
+    expect(clear.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+    const field = mount(EntitySelect, {
+      props: { modelValue: 'one', disabled: true },
+      global: { plugins: [ElementPlus] }
+    })
+    expect(field.get('button').attributes('disabled')).toBeDefined()
+    await field.setProps({ disabled: false, clearable: false })
+    expect(field.find('button').exists()).toBe(false)
+    field.unmount()
+  })
   it('重复依赖就近报错，删除前一行不复用另一行的输入实例', async () => {
     const wrapper = mount(CapabilityRequirementFields, {
       props: {
@@ -241,7 +300,10 @@ describe('关联选择表单', () => {
     })
     await flushPromises()
     expect(messages()).toContain('回显失败')
-    await wrapper.find('button').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重新加载选项')!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('恢复名称')
     expect(messages()).not.toContain('回显失败')
