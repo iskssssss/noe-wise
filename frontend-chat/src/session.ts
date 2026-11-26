@@ -60,6 +60,8 @@ export function useConversation() {
     notice = ref(''),
     connection = ref('未连接')
   const connecting = ref(false),
+    targetsLoading = ref(false),
+    targetsError = ref(''),
     loading = ref(false),
     sessionsLoading = ref(false),
     sessionsError = ref(''),
@@ -606,6 +608,8 @@ export function useConversation() {
     target.value = ''
     userId.value = ''
     connecting.value = false
+    targetsLoading.value = false
+    targetsError.value = ''
   }
   async function connect(address: string, credentials: Credentials, name: string) {
     disconnect()
@@ -674,7 +678,13 @@ export function useConversation() {
         if (version !== identity) return
         teams.value = values
       } catch (cause) {
-        if (version === identity) fail(cause)
+        if (version === identity) {
+          error.value =
+            cause instanceof RequestError
+              ? cause.message
+              : '对话对象读取失败，请检查网络后重新读取。'
+          targetsError.value = error.value
+        }
       }
       const first = catalog.items.find((item) => item.is_default) ?? catalog.items[0]
       if (first) await changeTarget(`agent:${first.id}`)
@@ -687,6 +697,38 @@ export function useConversation() {
     } finally {
       if (version === identity) connecting.value = false
     }
+  }
+  /** 重读当前连接的对象目录，保留访问者身份、会话和未发送草稿。 */
+  async function refreshTargets() {
+    const api = client.value,
+      version = identity
+    if (!api || connecting.value || targetsLoading.value) return
+    targetsLoading.value = true
+    notice.value = ''
+    if (targetsError.value && error.value === targetsError.value) error.value = ''
+    targetsError.value = ''
+    const results = await Promise.allSettled([
+      api.json<{ items: Agent[] }>('/chat/agents', 'GET', undefined, identityAbort.signal),
+      api.json<Team[]>(
+        `/chat/teams?${query({ client_ref: clientRef.value })}`,
+        'GET',
+        undefined,
+        identityAbort.signal
+      )
+    ])
+    if (version !== identity) return
+    const [catalog, groups] = results
+    if (catalog.status === 'fulfilled') agents.value = catalog.value.items
+    if (groups.status === 'fulfilled') teams.value = groups.value
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') {
+      error.value =
+        failure.reason instanceof RequestError
+          ? failure.reason.message
+          : '对话对象读取失败，请检查网络后重新读取。'
+      targetsError.value = error.value
+    } else notice.value = '对话对象已重新读取。'
+    targetsLoading.value = false
   }
   async function refreshSessions() {
     const api = client.value,
@@ -1919,6 +1961,9 @@ export function useConversation() {
     uploadStorageUnavailable,
     connection,
     connecting,
+    targetsLoading,
+    targetsError,
+    refreshTargets,
     loading,
     sessionsLoading,
     sessionsError,

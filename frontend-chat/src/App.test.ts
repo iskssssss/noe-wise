@@ -157,6 +157,9 @@ function createState() {
     uploading: false,
     sending: false,
     connecting: false,
+    targetsLoading: false,
+    targetsError: '',
+    refreshTargets: vi.fn(async () => {}),
     cancelling: false,
     cancelUnconfirmed: false,
     cancelRetrying: false,
@@ -197,6 +200,38 @@ beforeEach(() => {
   )
   sessionStorage.clear()
   holder.state = createState()
+})
+it('空对象目录说明配置原因并能重读，读取失败与等待不伪装为空，恢复对象后允许选择', async () => {
+  holder.state.agents = []
+  const wrapper = mount(App, { attachTo: document.body })
+  try {
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前连接暂无可用对话对象')
+    expect(wrapper.text()).toContain('联系机构管理员核对当前渠道')
+    expect(wrapper.text()).not.toContain('今天想完成什么')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重新读取对话对象')!
+      .trigger('click')
+    expect(holder.state.refreshTargets).toHaveBeenCalledOnce()
+    holder.state.targetsLoading = true
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在读取对话对象')
+    expect(wrapper.text()).not.toContain('当前连接暂无可用对话对象')
+    holder.state.targetsLoading = false
+    holder.state.targetsError = '连接中断'
+    await flushPromises()
+    expect(wrapper.text()).toContain('对话对象尚未读取完整')
+    expect(wrapper.text()).not.toContain('当前连接暂无可用对话对象')
+    holder.state.targetsError = ''
+    holder.state.agents = [{ id: 'a', name: '恢复的助手' }]
+    await flushPromises()
+    expect(wrapper.text()).toContain('今天想完成什么')
+    expect(wrapper.text()).not.toContain('对话对象尚未读取完整')
+    expect(holder.state.submit).not.toHaveBeenCalled()
+  } finally {
+    wrapper.unmount()
+  }
 })
 
 describe('对话任务入口与单一侧栏', () => {

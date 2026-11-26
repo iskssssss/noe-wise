@@ -132,6 +132,12 @@ const filteredSessions = computed(() => {
     .map((session) => ({ ...session, displayTitle: session.title || '无文字或空会话' }))
     .filter((session) => !search || session.displayTitle.toLocaleLowerCase().includes(search))
 })
+const targetDirectoryState = computed(() => {
+  if (c.target) return ''
+  if (c.connecting || c.targetsLoading) return 'loading'
+  if (c.targetsError) return 'error'
+  return !c.agents.length && !c.teams.some((team) => team.status !== 'disabled') ? 'empty' : ''
+})
 const composerExpanded = computed(() =>
   Boolean(
     c.active ||
@@ -1033,7 +1039,24 @@ const formTipId = useId()
               >按名称或角色说明查找智能体；团队由负责人协调成员协作。</FieldTip
             >
           </ChatFormItem></ChatForm
-        ><ChatButton
+        >
+        <p v-if="targetDirectoryState" class="muted small" role="status">
+          {{
+            targetDirectoryState === 'loading'
+              ? '正在读取对话对象…'
+              : targetDirectoryState === 'error'
+                ? '对象目录未读取完整，请重新读取。'
+                : '当前连接暂无可用对象，请联系机构管理员核对渠道配置。'
+          }}
+        </p>
+        <ChatButton
+          v-if="targetDirectoryState"
+          text
+          :loading="c.connecting || c.targetsLoading"
+          @click="c.refreshTargets"
+          >重新读取对话对象</ChatButton
+        >
+        <ChatButton
           native-type="button"
           class="primary new-conversation"
           :disabled="c.locked || !c.target || c.targetDisabled"
@@ -1077,6 +1100,7 @@ const formTipId = useId()
               }}
             </p>
           </div>
+          <p v-else-if="!c.target" class="muted">选择对话对象后，可查看它的历史会话。</p>
           <p v-else-if="!c.sessions.length" class="muted">
             还没有历史会话，发送首条消息后会显示在这里
           </p>
@@ -1318,12 +1342,45 @@ const formTipId = useId()
             class="empty-state"
           >
             <div class="brand-mark">灵</div>
-            <h2>今天想完成什么？</h2>
-            <p>向{{ c.targetName || '智能体' }}描述需求，也可以附上资料和图片。</p>
-            <ChatButton v-if="!c.target" @click="historyOpen = true">选择对话对象</ChatButton>
-            <ChatButton v-else :disabled="commandBusy || c.composerLocked" @click="startPlanning">{{
-              c.history.collaboration.selected_active ? '已开启规划，去描述需求' : '先制定计划'
-            }}</ChatButton>
+            <template v-if="targetDirectoryState">
+              <h2>
+                {{
+                  targetDirectoryState === 'loading'
+                    ? '正在读取对话对象…'
+                    : targetDirectoryState === 'error'
+                      ? '对话对象尚未读取完整'
+                      : '当前连接暂无可用对话对象'
+                }}
+              </h2>
+              <p role="status">
+                {{
+                  targetDirectoryState === 'loading'
+                    ? '读取完成后即可选择智能体或团队。'
+                    : targetDirectoryState === 'error'
+                      ? '请重新读取对话对象；已获取的对象仍可通过顶部入口选择。'
+                      : '请联系机构管理员核对当前渠道的智能体配置，完成后重新读取；也可以更换连接信息。'
+                }}
+              </p>
+              <ChatButton :loading="c.connecting || c.targetsLoading" @click="c.refreshTargets"
+                >重新读取对话对象</ChatButton
+              >
+              <ChatButton text :disabled="c.connecting || c.targetsLoading" @click="disconnect"
+                >更换连接信息</ChatButton
+              >
+            </template>
+            <template v-else>
+              <h2>今天想完成什么？</h2>
+              <p>向{{ c.targetName || '智能体' }}描述需求，也可以附上资料和图片。</p>
+              <ChatButton v-if="!c.target" @click="historyOpen = true">选择对话对象</ChatButton>
+              <ChatButton
+                v-else
+                :disabled="commandBusy || c.composerLocked"
+                @click="startPlanning"
+                >{{
+                  c.history.collaboration.selected_active ? '已开启规划，去描述需求' : '先制定计划'
+                }}</ChatButton
+              >
+            </template>
           </section>
           <ConversationTimeline
             :history="c.history"

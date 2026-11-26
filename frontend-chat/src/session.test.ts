@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useConversation } from './session'
 import { emptyHistory } from './projection'
+import { RequestError } from './client'
 import type {
   Attachment,
   Limits,
@@ -407,6 +408,83 @@ it('成果刷新断网保留已读内容，恢复网络后重读清除错误', a
   expect(state.artifacts.value).toEqual([])
   expect(state.artifactsError.value).toBe('')
   expect(posts).toHaveLength(0)
+})
+it('对象目录重读独立更新成功部分，失败保留旧团队与身份草稿，重试不创建会话', async () => {
+  agentCatalog = []
+  await connect()
+  const api = state.client.value!
+  const visitor = state.userId.value
+  const profile = state.clientRef.value
+  state.draft.value = '未发送的需求'
+  state.teams.value = [{ id: 'retained-team', name: '保留团队', status: 'disabled' } as never]
+  const requests: string[] = []
+  let failTeams = true
+  vi.spyOn(api, 'json').mockImplementation(async (path) => {
+    requests.push(path)
+    if (path === '/chat/agents') return { items: [{ id: 'new-agent', name: '新增助手' }] } as never
+    if (failTeams) throw new RequestError('团队目录暂不可读', 503)
+    return [] as never
+  })
+  await state.refreshTargets()
+  expect(state.agents.value.map((agent) => agent.id)).toEqual(['new-agent'])
+  expect(state.teams.value[0]!.id).toBe('retained-team')
+  expect(state.targetsError.value).toBe('团队目录暂不可读')
+  failTeams = false
+  await state.refreshTargets()
+  expect(state.targetsError.value).toBe('')
+  expect(state.error.value).toBe('')
+  expect(state.teams.value).toEqual([])
+  expect(state.client.value).toBe(api)
+  expect(state.userId.value).toBe(visitor)
+  expect(state.clientRef.value).toBe(profile)
+  expect(state.draft.value).toBe('未发送的需求')
+  expect(state.target.value).toBe('')
+  expect(createdSessions).toBe(0)
+  expect(requests).toHaveLength(4)
+  expect(requests.every((path) => path === '/chat/agents' || path.startsWith('/chat/teams?'))).toBe(
+    true
+  )
+})
+it('对象目录断网显示可操作的中文错误，成功重读清除错误并保留草稿', async () => {
+  agentCatalog = []
+  await connect()
+  state.draft.value = '未发送的需求'
+  const request = vi
+    .spyOn(state.client.value!, 'json')
+    .mockRejectedValue(new TypeError('Failed to fetch'))
+  await state.refreshTargets()
+  expect(state.targetsError.value).toBe('对话对象读取失败，请检查网络后重新读取。')
+  expect(state.error.value).toBe(state.targetsError.value)
+  expect(state.targetsLoading.value).toBe(false)
+  request.mockImplementation(
+    async (path) => (path === '/chat/agents' ? { items: [] } : []) as never
+  )
+  await state.refreshTargets()
+  expect(state.targetsError.value).toBe('')
+  expect(state.error.value).toBe('')
+  expect(state.draft.value).toBe('未发送的需求')
+  expect(createdSessions).toBe(0)
+})
+it('断开连接后迟到对象目录不恢复旧身份和对象', async () => {
+  agentCatalog = []
+  await connect()
+  const finish: ((value: unknown) => void)[] = []
+  vi.spyOn(state.client.value!, 'json').mockImplementation(
+    async () =>
+      (await new Promise<unknown>((resolve) => {
+        finish.push(resolve)
+      })) as never
+  )
+  const loading = state.refreshTargets()
+  await flushPromises()
+  expect(state.targetsLoading.value).toBe(true)
+  state.disconnect()
+  finish[0]!({ items: [{ id: 'late', name: '旧连接助手' }] })
+  finish[1]!([])
+  await loading
+  expect(state.client.value).toBeUndefined()
+  expect(state.agents.value).toEqual([])
+  expect(state.targetsLoading.value).toBe(false)
 })
 it('没有智能体时自动选择唯一可用团队并读取其会话', async () => {
   agentCatalog = []
