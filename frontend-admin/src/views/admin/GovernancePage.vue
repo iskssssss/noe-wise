@@ -526,6 +526,7 @@
               v-model="form.signing_secret"
               type="password"
               show-password
+              autocomplete="new-password"
             />
             <p id="webhook-secret-help" class="admin-field-help">
               请与接收回调的服务约定签名密钥，并妥善保存。
