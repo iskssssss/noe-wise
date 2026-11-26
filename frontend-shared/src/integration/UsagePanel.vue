@@ -2,7 +2,7 @@
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
 import { message } from '../feedback'
 import { computed, reactive, ref, useId, watch } from 'vue'
-import { EntitySelect, guardFormEnter, useResource, type EntityOption } from '../admin'
+import { EntitySelect, guardFormEnter, useResource } from '../admin'
 import { statusLabel } from '../admin/presentation'
 import FieldTip from '../components/FieldTip.vue'
 import { vDescribedBy } from '../directives/describedBy'
@@ -18,10 +18,6 @@ const props = withDefaults(
     initialTenantId?: string
     fixedTenantId?: string
     showTenant?: boolean
-    tenantOptions?: {
-      load: (query: string, signal?: AbortSignal) => Promise<EntityOption[]>
-      resolve: (id: string) => Promise<EntityOption | undefined>
-    }
     tenantLabel?: (id: string | null | undefined) => string
     canEvents?: boolean
     canSummary?: boolean
@@ -440,20 +436,10 @@ watch(
       </ElFormItem>
       <ElFormItem v-if="showTenant && !fixedTenantId" label="机构"
         ><EntitySelect
-          v-if="tenantOptions"
-          v-model="filters.tenant_id"
-          :load="tenantOptions.load"
-          :resolve="tenantOptions.resolve"
-          placeholder="选择机构"
-          aria-label="机构"
-          v-described-by="help"
-          :aria-describedby="help"
-        />
-        <EntitySelect
-          v-else
           v-model="filters.tenant_id"
           :load="historicalOptions.tenant_id.load"
           :resolve="historicalOptions.tenant_id.resolve"
+          :disabled="!canSummary && !canReadRecords"
           placeholder="搜索历史机构"
           aria-label="机构"
           v-described-by="help"
