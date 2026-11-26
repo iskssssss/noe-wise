@@ -1,5 +1,5 @@
 <template>
-  <AdminPage title="运行仪表盘" description="查看本月用量、费用核对状态与依赖服务。"
+  <AdminPage :title="adminZhCN.route.dashboard" description="查看本月用量、费用核对状态与依赖服务。"
     ><template #extra><ElButton :loading="loading" @click="reload">刷新</ElButton></template
     ><FeedbackNotice
       v-if="usageError"
@@ -119,6 +119,7 @@ import { AdminPage, statusLabel, useResource } from '@skillforge/shared/admin'
 import { api, type UsageAggregateRow } from '../../api'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { adminZhCN } from '../../i18n/zh-CN'
 import { routePermission } from '@skillforge/shared/foundation/navigation'
 const router = useRouter(),
   auth = useAuthStore()
@@ -215,7 +216,7 @@ const summaryCards = computed(() => {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 16px;
 }
-.summary-card {
+.summary-card :deep(.el-card__body) {
   display: flex;
   flex-direction: column;
   gap: 8px;

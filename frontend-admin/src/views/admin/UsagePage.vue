@@ -4,6 +4,7 @@ import { AdminPage } from '@skillforge/shared/admin'
 import UsagePanel from '@skillforge/shared/integration/UsagePanel.vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { adminZhCN } from '../../i18n/zh-CN'
 const props = defineProps<{ tenantId?: string; embedded?: boolean }>()
 const auth = useAuthStore()
 const identity = computed(() =>
@@ -19,7 +20,7 @@ const identity = computed(() =>
 <template>
   <AdminPage
     :embedded="embedded"
-    title="用量查询"
+    :title="adminZhCN.route.usage"
     description="核对本机构调用用量、成本确认与调整记录。"
   >
     <UsagePanel

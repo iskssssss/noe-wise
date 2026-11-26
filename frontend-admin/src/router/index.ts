@@ -145,7 +145,7 @@ const router = createRouter({
         {
           path: 'usage',
           component: () => import('../views/admin/UsagePage.vue'),
-          meta: { title: '应用用量' }
+          meta: { title: adminZhCN.route.usage }
         },
         {
           path: 'teams',
