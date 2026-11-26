@@ -20,7 +20,12 @@ vi.mock('../../api', () => ({
 vi.mock('../../stores/auth', () => ({
   useAuthStore: () => ({ user: { tenant_id: '7', sub: '8', permissions: [] } })
 }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() })
+}))
 vi.mock('@skillforge/shared/feedback', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@skillforge/shared/feedback')>()
   return {

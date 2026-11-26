@@ -1,5 +1,5 @@
 <template>
-  <AdminPage title="渠道" description="配置接入渠道、智能体路由与访问凭据。"
+  <AdminPage :title="adminZhCN.route.channels" description="配置接入渠道、智能体路由与访问凭据。"
     ><template #extra
       ><ElButton
         type="primary"
@@ -29,8 +29,10 @@
         :aria-describedby="formTipId + '-group-0'"
         v-model="query"
         placeholder="搜索渠道名称"
+        aria-label="搜索渠道名称"
         clearable
       /><ElSelect v-model="type" clearable placeholder="全部类型" aria-label="渠道类型筛选">
+        <ElOption label="全部类型" value="" />
         <ElOption
           v-for="item in channelTypes"
           :key="item.value"
@@ -38,7 +40,7 @@
           :value="item.value"
         />
       </ElSelect>
-      <span class="admin-muted" role="status">{{ filtered.length }} 个渠道</span
+      <span v-if="data" class="admin-muted" role="status">{{ filtered.length }} 个渠道</span
       ><ElButton @click="reload" :loading="loading" :disabled="busy">刷新</ElButton>
 
       <FieldTip :id="formTipId + '-group-0'"
@@ -52,9 +54,13 @@
       row-key="id"
       stripe
       :empty-text="
-        query || type
-          ? '没有匹配渠道，清空名称或类型后查看全部'
-          : '尚未创建渠道，新增渠道后绑定智能体即可接入'
+        !data
+          ? loading
+            ? '正在读取渠道…'
+            : '尚未取得渠道列表，请点击刷新重新读取'
+          : query || type
+            ? '没有匹配渠道，清空名称或类型后查看全部'
+            : '尚未创建渠道，新增渠道后绑定智能体即可接入'
       "
       ><ElTableColumn min-width="120" show-overflow-tooltip prop="name" label="名称"></ElTableColumn
       ><ElTableColumn min-width="100" show-overflow-tooltip label="类型"
@@ -403,6 +409,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, onScopeDispose, reactive, ref, watch, useId } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
 import {
   AdminPage,
@@ -415,6 +422,9 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { api, type ChannelItem } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { adminZhCN } from '../../i18n/zh-CN'
+const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const canRead = computed(() => auth.user?.permissions.includes('foundation.channels.read') === true)
 const owner = computed(() =>
@@ -455,8 +465,6 @@ onMounted(() => {
   if (pendingCreate.value && canRead.value) void checkCreate(true)
 })
 const { busy, error, run } = useTask(),
-  query = ref(''),
-  type = ref(''),
   open = ref(false),
   editing = ref<ChannelItem>(),
   saved = ref(''),
@@ -489,6 +497,22 @@ const channelTypes = [
   { value: 'web_widget', label: '网页组件' },
   { value: 'openapi', label: '开放 API' }
 ]
+const query = computed({
+  get: () => (typeof route.query.q === 'string' ? route.query.q : ''),
+  set: (value: string) => {
+    void router.replace({ query: { ...route.query, q: value || undefined } })
+  }
+})
+const type = computed({
+  get: () =>
+    typeof route.query.type === 'string' &&
+    channelTypes.some((item) => item.value === route.query.type)
+      ? route.query.type
+      : '',
+  set: (value: string) => {
+    void router.replace({ query: { ...route.query, type: value || undefined } })
+  }
+})
 const channelTypeLabel = (value: string) =>
   channelTypes.find((item) => item.value === value)?.label ?? value
 const filtered = computed(() =>

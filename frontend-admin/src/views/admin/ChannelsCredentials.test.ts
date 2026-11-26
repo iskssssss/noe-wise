@@ -26,7 +26,12 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn()
 }))
 vi.mock('../../api', () => ({ api: { channels: mocks, agents: { list: mocks.agents } } }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() })
+}))
 vi.mock('@skillforge/shared/feedback', async (load) => {
   const actual = await load<typeof import('@skillforge/shared/feedback')>()
   return { ...actual, confirm: mocks.confirm, message: { ...actual.message, error: mocks.error } }

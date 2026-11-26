@@ -85,7 +85,7 @@ export const adminZhCN = {
     workflowDetail: '工作流详情',
     agentDetail: '智能体管理',
     teams: '团队管理',
-    channels: '渠道配置',
+    channels: '渠道',
     connectors: '连接器管理',
     capabilities: '能力目录',
     skills: '技能维护台',

@@ -160,7 +160,7 @@ const router = createRouter({
         {
           path: 'channels',
           component: () => import('../views/admin/ChannelsPage.vue'),
-          meta: { title: adminZhCN.route.channels }
+          meta: { title: adminZhCN.route.channels, preserveOnQueryChange: true }
         },
         {
           path: 'tools',

@@ -53,7 +53,8 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
-  useRouter: () => ({ push: vi.fn() })
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 const wrappers: VueWrapper[] = []
 function render(component: Component) {
