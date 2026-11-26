@@ -201,7 +201,13 @@ public class WebConfig implements WebMvcConfigurer {
         }).addPathPatterns("/api/v1/**")
                 .excludePathPatterns("/api/v1/chat/artifact-content/detail", "/api/v1/chat/deliverable-content/detail",
                         "/api/v1/agent/ws", "/api/v1/callbacks/*/*", "/api/v1/runtime/callbacks/deliveries").order(15);
-        registry.addInterceptor(permissionCheckInterceptor).addPathPatterns("/api/v1/**").order(20);
+        registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
+            @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,
+                    jakarta.servlet.http.HttpServletResponse response, Object handler) throws Exception {
+                try { return permissionCheckInterceptor.preHandle(request, response, handler); }
+                catch (RuntimeException failure) { throw PublishPreDispatchRejection.map(request, handler, failure); }
+            }
+        }).addPathPatterns("/api/v1/**").order(20);
         registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
             @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,
                     jakarta.servlet.http.HttpServletResponse response, Object handler) throws Exception {

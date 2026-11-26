@@ -9,6 +9,8 @@ import com.skillforge.institution.team.TeamSavedPublishController;
 import com.skillforge.institution.skill.SkillPublishController;
 import com.skillforge.institution.controller.KnowledgeRevisionPublishController;
 import com.skillforge.institution.controller.ConversationTaskController;
+import com.skillforge.institution.controller.ConnectorController;
+import com.skillforge.institution.controller.ConnectorDeleteReceiptController;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,14 @@ final class PublishPreDispatchRejection {
     private PublishPreDispatchRejection() { }
     private static String code(HttpServletRequest request, Object handler) {
         if (request.getDispatcherType() != DispatcherType.REQUEST || !(handler instanceof HandlerMethod method)) return null;
+        if (method.getBeanType() == ConnectorController.class)
+            return switch (method.getMethod().getName()) {
+                case "createWithReceipt" -> "CONNECTOR_CREATE_REJECTED";
+                case "updateWithReceipt" -> "CONNECTOR_UPDATE_REJECTED";
+                default -> null;
+            };
+        if (method.getBeanType() == ConnectorDeleteReceiptController.class && method.getMethod().getName().equals("delete"))
+            return "CONNECTOR_DELETE_REJECTED";
         if (method.getBeanType() == ConversationTaskController.class
                 && (method.getMethod().getName().equals("select") || method.getMethod().getName().equals("update")))
             return "TASK_OPERATION_REJECTED_BEFORE_MUTATION";

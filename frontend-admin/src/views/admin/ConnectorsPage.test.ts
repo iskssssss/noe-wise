@@ -333,6 +333,23 @@ it('连接器更新断连后只保留身份，重新进入自动核对原回执'
   expect(calls.updateInstanceWithReceipt).toHaveBeenCalledOnce()
   expect(calls.updateInstance).not.toHaveBeenCalled()
 })
+it.each([401, 403, 429])(
+  '原更新回执读取 HTTP %s 失败仍保留 UNKNOWN，不重发写入',
+  async (status) => {
+    const requestId = '1d0bb5bf-0000-4000-8000-000000000001'
+    const key = 'skillforge.connector-update:1:member-1'
+    const original = JSON.stringify({ requestId, instanceId: 'server', name: 'MCP服务' })
+    sessionStorage.setItem(key, original)
+    calls.updateResult.mockRejectedValueOnce(
+      new HttpClientError({ status, code: 'READ_REJECTED', userMessage: '暂时无法读取原回执' })
+    )
+    page()
+    await flushPromises()
+    expect(sessionStorage.getItem(key)).toBe(original)
+    expect(wrapper!.text()).toContain('更新结果尚未确认')
+    expect(calls.updateInstanceWithReceipt).not.toHaveBeenCalled()
+  }
+)
 it('真实抽屉中可核对未知的连接器更新', async () => {
   calls.updateInstanceWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
   wrapper = mount(ConnectorsPage, { attachTo: document.body })
@@ -406,10 +423,10 @@ it('不同成员的连接器更新记录不会被读取', async () => {
   expect(calls.updateResult).not.toHaveBeenCalled()
   expect(sessionStorage.getItem(key)).not.toBeNull()
 })
-it('连接器更新明确拒绝后保留输入，允许修正', async () => {
+it.each([400, 401, 403, 429])('连接器更新明确拒绝 HTTP %s 后保留输入，允许修正', async (status) => {
   calls.updateInstanceWithReceipt.mockRejectedValueOnce(
     new HttpClientError({
-      status: 400,
+      status,
       code: 'CONNECTOR_UPDATE_REJECTED',
       userMessage: '更新被拒绝',
       traceId: 'test'
@@ -499,39 +516,42 @@ it('创建结果未知时保留原请求且不持久化凭据，核对后继续�
   expect(calls.createInstanceWithReceipt).toHaveBeenCalledOnce()
 })
 
-it('明确发生在保存前的发现失败解除待核对并保留输入', async () => {
-  calls.createInstanceWithReceipt.mockRejectedValueOnce(
-    new HttpClientError({
-      status: 502,
-      code: 'CONNECTOR_CREATE_REJECTED',
-      userMessage: '目录发现失败'
-    })
-  )
-  page()
-  await flushPromises()
-  await button('新增连接器').trigger('click')
-  await flushPromises()
-  for (const [label, value] of [
-    ['名称', '失败后保留'],
-    ['服务地址', 'https://new.example/mcp']
-  ])
-    await wrapper!
-      .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === label)!
-      .findComponent(ElInput)
-      .setValue(value)
-  await button('保存').trigger('click')
-  await flushPromises()
-  expect(wrapper!.text()).not.toContain('创建结果尚未确认')
-  expect(sessionStorage.getItem('skillforge.connector-create:1:member-1')).toBeNull()
-  expect(
-    wrapper!
-      .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === '名称')!
-      .findComponent(ElInput)
-      .props('modelValue')
-  ).toBe('失败后保留')
-})
+it.each([401, 403, 429, 502])(
+  '创建在保存前明确拒绝 HTTP %s 后解除待核对并保留输入',
+  async (status) => {
+    calls.createInstanceWithReceipt.mockRejectedValueOnce(
+      new HttpClientError({
+        status,
+        code: 'CONNECTOR_CREATE_REJECTED',
+        userMessage: '目录发现失败'
+      })
+    )
+    page()
+    await flushPromises()
+    await button('新增连接器').trigger('click')
+    await flushPromises()
+    for (const [label, value] of [
+      ['名称', '失败后保留'],
+      ['服务地址', 'https://new.example/mcp']
+    ])
+      await wrapper!
+        .findAllComponents(ElFormItem)
+        .find((item) => item.props('label') === label)!
+        .findComponent(ElInput)
+        .setValue(value)
+    await button('保存').trigger('click')
+    await flushPromises()
+    expect(wrapper!.text()).not.toContain('创建结果尚未确认')
+    expect(sessionStorage.getItem('skillforge.connector-create:1:member-1')).toBeNull()
+    expect(
+      wrapper!
+        .findAllComponents(ElFormItem)
+        .find((item) => item.props('label') === '名称')!
+        .findComponent(ElInput)
+        .props('modelValue')
+    ).toBe('失败后保留')
+  }
+)
 
 it('切换身份后旧删除确认不能派发请求', async () => {
   let answer!: (value: boolean) => void
@@ -613,10 +633,10 @@ it('没有读取权限时不发送删除请求', async () => {
   expect(calls.deleteInstanceWithReceipt).not.toHaveBeenCalled()
 })
 
-it('删除被明确拒绝后解除待核对状态', async () => {
+it.each([401, 403, 409, 429])('删除被明确拒绝 HTTP %s 后解除待核对状态', async (status) => {
   calls.deleteInstanceWithReceipt.mockRejectedValueOnce(
     new HttpClientError({
-      status: 409,
+      status,
       code: 'CONNECTOR_DELETE_REJECTED',
       userMessage: '连接器仍被引用',
       traceId: 'test'
