@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { computed, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { FoundationOptionPage } from '../optionTypes'
@@ -38,9 +39,36 @@ const tabs = computed(() =>
   ].filter((tab) => can(tab.permission))
 )
 const active = ref('audit')
-const advancedFilters = ref(false)
+const route = useRoute(),
+  router = useRouter()
+const filterKeys = [
+  'action',
+  'actor_id',
+  'category',
+  'outcome',
+  'resource_type',
+  'trace_id',
+  'from',
+  'to'
+] as const
+function readQuery(query: LocationQuery) {
+  const filters: Record<string, string> = {}
+  for (const key of filterKeys)
+    if (typeof query[key] === 'string' && query[key]) filters[key] = query[key]
+  const page = Number(query.page)
+  return {
+    filters,
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1,
+    advanced:
+      query.advanced === '1' ||
+      (query.advanced !== '0' &&
+        ['action', 'actor_id', 'resource_type', 'trace_id'].some((key) => !!filters[key]))
+  }
+}
+const initialQuery = readQuery(route.query)
+const advancedFilters = ref(initialQuery.advanced)
 const formTipId = useId()
-const page = ref(1)
+const page = ref(initialQuery.page)
 const filters = reactive({
   action: '',
   actor_id: '',
@@ -51,7 +79,21 @@ const filters = reactive({
   from: '',
   to: ''
 })
-const applied = ref<Record<string, string>>({})
+function restoreFilters(values: Record<string, string>) {
+  for (const key of filterKeys) {
+    let value = values[key] ?? ''
+    if ((key === 'from' || key === 'to') && value) {
+      const date = new Date(value)
+      if (Number.isFinite(date.getTime()))
+        value = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+          .toISOString()
+          .slice(0, 16)
+    }
+    filters[key] = value
+  }
+}
+restoreFilters(initialQuery.filters)
+const applied = ref(initialQuery.filters)
 const policy = reactive<RetentionPolicy>({
   resource: 'audit',
   retention_days: 180,
@@ -79,6 +121,7 @@ onBeforeUnmount(() => {
 })
 const task = useTask()
 const audit = useResource(async (signal) => {
+  const submitted = { filters: { ...applied.value }, page: page.value }
   const result = await props.request<AuditSummaryPage>(
     'GET',
     `${props.apiBase}/audit/summaries?${query()}`,
@@ -101,8 +144,62 @@ const audit = useResource(async (signal) => {
         { signal, silent: true }
       )
     : { items: [], has_more: false }
-  return { ...result, actors: actors.items }
+  return { ...result, actors: actors.items, submitted }
 })
+const syncingQuery = ref(false)
+const queryBusy = computed(() => audit.loading.value || syncingQuery.value)
+/** 地址与导出只采用成功读取的条件，编辑中的输入继续留在表单。 */
+async function saveQuery(values: Record<string, string>, currentPage: number, advanced: boolean) {
+  const query = { ...route.query }
+  for (const key of filterKeys) query[key] = values[key] || undefined
+  query.page = currentPage > 1 ? String(currentPage) : undefined
+  query.advanced = advanced
+    ? '1'
+    : ['action', 'actor_id', 'resource_type', 'trace_id'].some((key) => !!values[key])
+      ? '0'
+      : undefined
+  if (router.resolve({ query }).fullPath === route.fullPath) return true
+  syncingQuery.value = true
+  try {
+    return !(await router.replace({ query }))
+  } finally {
+    syncingQuery.value = false
+  }
+}
+watch(audit.data, async (value) => {
+  if (value) await saveQuery(value.submitted.filters, value.submitted.page, advancedFilters.value)
+})
+watch(audit.error, (error) => {
+  if (error && audit.data.value) {
+    applied.value = audit.data.value.submitted.filters
+    page.value = audit.data.value.submitted.page
+  }
+})
+watch(
+  () => route.query,
+  (query) => {
+    const location = readQuery(query)
+    advancedFilters.value = location.advanced
+    if (
+      location.page === page.value &&
+      filterKeys.every((key) => (location.filters[key] ?? '') === (applied.value[key] ?? ''))
+    )
+      return
+    applied.value = location.filters
+    page.value = location.page
+    restoreFilters(location.filters)
+    if (active.value === 'audit' && can('audit_read')) void audit.reload()
+  }
+)
+async function toggleAdvanced() {
+  const next = !advancedFilters.value
+  const submitted = audit.data.value?.submitted ?? { filters: applied.value, page: page.value }
+  if (await saveQuery(submitted.filters, submitted.page, next)) advancedFilters.value = next
+}
+function changePage(value: number) {
+  page.value = value
+  void audit.reload()
+}
 const auditOptions = useResource((signal) =>
   props.request<AuditOptions>('GET', `${props.apiBase}/audit/options`, undefined, false, {
     signal,
@@ -202,6 +299,7 @@ async function load() {
 }
 /** 验证本地时间并转换带时区的瞬间，非法输入不发请求。 */
 function search() {
+  if (queryBusy.value) return
   validation.value = ''
   const snapshot: Record<string, string> = {}
   for (const [key, value] of Object.entries(filters)) if (value) snapshot[key] = value
@@ -257,9 +355,15 @@ async function exportAudit() {
   const request = props.request
   const apiBase = props.apiBase
   await task.run(async () => {
-    const blob = await request<Blob>('POST', `${apiBase}/audit/export`, applied.value, false, {
-      responseType: 'blob'
-    })
+    const blob = await request<Blob>(
+      'POST',
+      `${apiBase}/audit/export`,
+      audit.data.value?.submitted.filters ?? applied.value,
+      false,
+      {
+        responseType: 'blob'
+      }
+    )
     if (generation !== viewGeneration) return
     saveAuditCsv(blob)
     feedbackType.value = 'success'
@@ -379,7 +483,7 @@ async function releaseHold(id: string, auditId: string) {
 }
 /** 切换界面丢弃迟到请求；身份或权限变化清除旧数据再加载获授权的页面。 */
 watch(
-  () => [props.apiBase, props.request, props.permissions.join(',')],
+  [() => props.apiBase, () => props.request, () => props.permissions.join(',')],
   () => {
     viewGeneration++
     for (const resource of [audit, auditOptions, retention, status]) {
@@ -391,7 +495,11 @@ watch(
     holdBaseline.value = JSON.stringify(holdForm)
     policyBaseline.value = ''
     feedback.value = ''
-    page.value = 1
+    const location = readQuery(route.query)
+    page.value = location.page
+    applied.value = location.filters
+    restoreFilters(location.filters)
+    advancedFilters.value = location.advanced
     if (!tabs.value.some((tab) => tab.name === active.value))
       active.value = tabs.value[0]?.name ?? ''
     void load()
@@ -422,7 +530,7 @@ watch(active, () => {
         :key="tab.name"
         :label="tab.title"
         :name="tab.name"
-        :disabled="task.busy.value"
+        :disabled="task.busy.value || queryBusy"
       />
     </el-tabs>
     <template v-if="active === 'audit' && can('audit_read')">
@@ -489,16 +597,21 @@ watch(active, () => {
         <FieldTip :id="formTipId + '-filters'">
           时间按本地时区填写，包含开始、不包含截止。翻页和导出沿用已检索条件。
         </FieldTip>
-        <el-button native-type="submit" type="primary" :loading="audit.loading.value"
-          >检索</el-button
-        >
-        <el-button @click="advancedFilters = !advancedFilters" :aria-expanded="advancedFilters">{{
+        <el-button native-type="submit" type="primary" :loading="queryBusy">检索</el-button>
+        <el-button @click="toggleAdvanced" :disabled="queryBusy" :aria-expanded="advancedFilters">{{
           advancedFilters ? '收起诊断条件' : '更多条件'
         }}</el-button>
-        <el-button v-if="Object.values(filters).some(Boolean)" @click="resetFilters"
+        <el-button
+          v-if="Object.values(filters).some(Boolean)"
+          :disabled="queryBusy"
+          @click="resetFilters"
           >重置</el-button
         >
-        <el-button v-if="can('audit_export')" :loading="task.busy.value" @click="exportAudit"
+        <el-button
+          v-if="can('audit_export')"
+          :disabled="queryBusy || !audit.data.value"
+          :loading="task.busy.value"
+          @click="exportAudit"
           >导出当前范围</el-button
         >
       </form>
@@ -517,6 +630,9 @@ watch(active, () => {
         type="error"
         :closable="false"
       />
+      <p v-if="audit.error.value && audit.data.value" role="status" class="admin-field-help">
+        未能读取所选条件，当前保留上次成功读取的审计记录；翻页和导出仍使用该范围。
+      </p>
       <el-table
         :data="audit.data.value?.items ?? []"
         v-loading="audit.loading.value"
@@ -577,11 +693,12 @@ watch(active, () => {
         >
       </el-table>
       <el-pagination
-        v-model:current-page="page"
+        :current-page="page"
+        :disabled="queryBusy"
         :page-size="50"
         :total="audit.data.value?.total ?? 0"
         layout="total, prev, pager, next"
-        @current-change="audit.reload()"
+        @current-change="changePage"
       />
     </template>
     <template v-if="active === 'retention' && can('retention_read')">

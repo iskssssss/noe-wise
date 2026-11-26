@@ -79,7 +79,7 @@ const router = createRouter({
         {
           path: 'foundation/operations',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '日志与运维', foundationArea: 'operations' }
+          meta: { title: '日志与运维', foundationArea: 'operations', preserveOnQueryChange: true }
         },
         {
           path: 'chat',

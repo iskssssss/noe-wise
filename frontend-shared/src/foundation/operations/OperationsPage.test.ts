@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import ElementPlus, { ElMessageBox, ElPagination, ElTabs, ElSelect } from 'element-plus'
 import OperationsPage from './OperationsPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
@@ -103,10 +104,15 @@ function read(path: string) {
   }
 }
 async function render(request: OperationsRequest, apiBase = '/tenant/foundation/operations') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: OperationsPage }]
+  })
+  await router.push('/')
   const wrapper = mount(OperationsPage, {
     props: { request, apiBase, permissions },
     attachTo: document.body,
-    global: { plugins: [ElementPlus] }
+    global: { plugins: [ElementPlus, router] }
   })
   wrappers.push(wrapper)
   await flushPromises()
@@ -161,6 +167,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     }
     const wrapper = await render(request)
     await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
     expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
     expect(document.querySelector('.el-message--error')?.textContent).toContain('筛选目录暂不可读')
     fail = false
@@ -217,6 +224,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     }
     const wrapper = await render(request)
     await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
     wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'auth.login')
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
@@ -247,6 +255,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
       expect(wrapper.text()).toContain('成功')
       expect(wrapper.text()).toContain('成员')
       await button(wrapper, '更多条件').trigger('click')
+      await flushPromises()
       expect(wrapper.find('input[placeholder="auth.login"]').exists()).toBe(false)
       expect(wrapper.text()).toContain('操作类型')
       expect(wrapper.text()).toContain('操作者')
@@ -273,6 +282,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     }
     described('form.filters input:not([type="hidden"])', 4)
     await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
     described('form.filters input:not([type="hidden"])', 8)
     wrapper.getComponent(ElTabs).vm.$emit('update:modelValue', 'retention')
     await flushPromises()
@@ -289,6 +299,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     const wrapper = await render(request)
     expect(wrapper.findAll('.el-table__body tbody tr')).toHaveLength(50)
     await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
     wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'permissions.update')
     wrapper.getComponent(ElPagination).vm.$emit('update:currentPage', 3)
     wrapper.getComponent(ElPagination).vm.$emit('current-change', 3)
@@ -320,6 +331,7 @@ describe('复杂安全审计、CAS和冻结清理快照', () => {
     wrapper.getComponent(ElTabs).vm.$emit('update:modelValue', 'audit')
     await flushPromises()
     await button(wrapper, '更多条件').trigger('click')
+    await flushPromises()
     wrapper.findAllComponents(ElSelect)[0]!.vm.$emit('update:modelValue', 'auth.login')
     await wrapper.get('form.filters').trigger('submit')
     await flushPromises()
