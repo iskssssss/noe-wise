@@ -235,7 +235,7 @@ const router = createRouter({
         {
           path: 'governance',
           component: () => import('../views/admin/GovernancePage.vue'),
-          meta: { title: adminZhCN.route.governance }
+          meta: { title: adminZhCN.route.governance, preserveOnQueryChange: true }
         },
         {
           path: 'handoff',

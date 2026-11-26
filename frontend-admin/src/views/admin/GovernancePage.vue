@@ -147,22 +147,30 @@
     <p v-if="webhookPauseOutcome" class="admin-field-help" role="status">
       {{ webhookPauseOutcome }}
     </p>
-    <ElTabs v-if="!embedded" v-model="tab" @tab-change="reload">
+    <ElTabs v-if="!embedded" v-model="tab">
       <ElTabPane
         v-if="identity.allowed('foundation.service_principals.read')"
         name="principals"
         label="服务身份"
+        :disabled="queryBusy"
       />
       <ElTabPane
         v-if="identity.allowed('foundation.webhooks.read')"
         name="webhooks"
         label="Webhook"
+        :disabled="queryBusy"
       />
-      <ElTabPane v-if="identity.allowed('foundation.audit.read')" name="audit" label="审计日志" />
+      <ElTabPane
+        v-if="identity.allowed('foundation.audit.read')"
+        name="audit"
+        label="审计日志"
+        :disabled="queryBusy"
+      />
       <ElTabPane
         v-if="identity.allowed('foundation.knowledge.read')"
         name="proposals"
         label="知识写入审批"
+        :disabled="queryBusy"
       />
     </ElTabs>
     <div class="admin-toolbar admin-card">
@@ -174,20 +182,22 @@
         "
         type="primary"
         @click="openCreate"
-        :disabled="busy || (tab === 'principals' ? credentialUncertain : webhookUncertain)"
+        :disabled="
+          busy || queryBusy || (tab === 'principals' ? credentialUncertain : webhookUncertain)
+        "
         >{{ tab === 'principals' ? '创建服务身份' : '订阅回调' }}</ElButton
       ><ElSelect
         v-if="tab === 'audit'"
         v-model="action"
+        value-on-clear=""
         clearable
         filterable
         placeholder="全部操作类型"
         aria-label="操作类型筛选"
         :loading="auditOptionsLoading"
-        :disabled="auditOptionsLoading || !!auditOptionsError || !auditOptions"
+        :disabled="queryBusy || auditOptionsLoading || !!auditOptionsError || !auditOptions"
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
-        @change="reload"
       >
         <ElOption
           v-for="item in auditOptions?.actions ?? []"
@@ -198,7 +208,7 @@
           <div>{{ item.label }}</div>
         </ElOption>
       </ElSelect>
-      <ElButton @click="reload" :disabled="busy">刷新</ElButton>
+      <ElButton @click="reload" :disabled="busy || queryBusy">刷新</ElButton>
 
       <FieldTip v-if="tab === 'audit'" :id="formTipId + '-group-0'"
         >审计页可按操作类型筛选；留空不限制操作类型。</FieldTip
@@ -225,6 +235,9 @@
               ? '查看最近 100 条匹配操作的审计记录。'
               : '仅展示待审批提案；展开内容后核对事实，再批准或拒绝。'
       }}
+    </p>
+    <p v-if="tab === 'audit' && loadError && loaded?.location.tab === 'audit'" role="status">
+      未能读取所选条件，当前保留上次成功读取的审计记录。
     </p>
     <ElTable
       table-layout="auto"
@@ -584,6 +597,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import type { FormInstance } from 'element-plus'
 import { computed, onMounted, reactive, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import {
   AdminPage,
   EntitySelect,
@@ -631,50 +645,97 @@ async function loadSessions() {
   }))
 }
 const formRef = ref<FormInstance>()
+const route = useRoute(),
+  router = useRouter()
 const auth = useAuthStore(),
   tabPermissions: Record<string, string> = {
     principals: 'foundation.service_principals.read',
     webhooks: 'foundation.webhooks.read',
     audit: 'foundation.audit.read',
     proposals: 'foundation.knowledge.read'
-  },
-  tab = ref(
-    props.embedded
+  }
+function readLocation(query: LocationQuery) {
+  const preferred = typeof query.tab === 'string' ? query.tab : props.initialTab
+  return {
+    tab: props.embedded
       ? 'principals'
-      : props.initialTab && identity.allowed(tabPermissions[props.initialTab] ?? '')
-        ? props.initialTab
+      : preferred && tabPermissions[preferred] && identity.allowed(tabPermissions[preferred]!)
+        ? preferred
         : (Object.keys(tabPermissions).find((key) => identity.allowed(tabPermissions[key]!)) ??
-          'principals')
-  ),
-  action = ref(''),
+          'principals'),
+    action: !props.embedded && typeof query.action === 'string' ? query.action : ''
+  }
+}
+const initialLocation = readLocation(route.query),
+  tab = ref(initialLocation.tab),
+  action = ref(initialLocation.action),
   principals = ref<ServicePrincipal[]>([]),
   webhooks = ref<WebhookSubscription[]>([]),
   audit = ref<AuditLog[]>([]),
   proposals = ref<KnowledgeWriteProposal[]>([])
 const {
+  data: loaded,
   loading,
   error: loadError,
   reload
 } = useResource(async () => {
+  const location = { tab: tab.value, action: action.value }
   if (props.tenantId && props.tenantId !== auth.user?.tenant_id)
     throw Error('执行凭证只能由所属机构维护')
-  if (tab.value === 'principals') {
+  if (location.tab === 'principals') {
     identity.requirePermission('foundation.service_principals.read')
     const value = await api.governance.servicePrincipals.list()
     identity.requirePermission('foundation.service_principals.read')
-    principals.value = value
-  } else if (tab.value === 'webhooks') {
+    return { location, principals: value }
+  } else if (location.tab === 'webhooks') {
     identity.requirePermission('foundation.webhooks.read')
     const value = await api.governance.webhooks.list()
     identity.requirePermission('foundation.webhooks.read')
-    webhooks.value = value
-  } else if (tab.value === 'audit')
-    audit.value = (
-      await api.governance.auditLogs({ action: action.value || undefined, limit: 100 })
-    ).items
-  else proposals.value = await api.governance.knowledgeProposals.pending()
-  return true
+    return { location, webhooks: value }
+  } else if (location.tab === 'audit') {
+    const value = await api.governance.auditLogs({
+      action: location.action || undefined,
+      limit: 100
+    })
+    return { location, audit: value.items }
+  }
+  return { location, proposals: await api.governance.knowledgeProposals.pending() }
 })
+const updatingLocation = ref(false),
+  queryBusy = computed(() => loading.value || updatingLocation.value)
+// 成功读取拥有列表和地址；等待地址同步结束后才允许下一次页面查询。
+watch(loaded, async (result) => {
+  if (!result) return
+  if (result.principals) principals.value = result.principals
+  if (result.webhooks) webhooks.value = result.webhooks
+  if (result.audit) audit.value = result.audit
+  if (result.proposals) proposals.value = result.proposals
+  if (props.embedded) return
+  const current = readLocation(route.query)
+  if (current.tab === result.location.tab && current.action === result.location.action) return
+  updatingLocation.value = true
+  try {
+    await router.replace({
+      query: {
+        ...route.query,
+        tab: result.location.tab,
+        action: result.location.action || undefined
+      }
+    })
+  } finally {
+    updatingLocation.value = false
+  }
+})
+watch(
+  () => route.query,
+  (query) => {
+    if (props.embedded) return
+    const location = readLocation(query)
+    tab.value = location.tab
+    action.value = location.action
+  }
+)
+watch([tab, action], () => void reload())
 const {
   data: auditOptions,
   loading: auditOptionsLoading,
