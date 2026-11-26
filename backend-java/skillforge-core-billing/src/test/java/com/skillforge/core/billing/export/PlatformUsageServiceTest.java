@@ -39,6 +39,19 @@ class PlatformUsageServiceTest {
         assertNotEquals("1000",first.nextCursor());
         verify(management,times(2)).authorizedTenantScope("platform.usage.events.read");
     }
+    @Test void historicalOptionsUseSelectedActionAndRejectOtherTenantsAndUnknownFields() {
+        when(mapper.filterOptions(anySet(),isNull(),any(),any(),any(),any())).thenReturn(List.of());
+        service.optionsPlatform(new PlatformUsageOptionsQuery("agent_id","summary","历史",null,7L));
+        verify(management).authorizedTenantScope("platform.usage.summary.read");
+        verify(mapper).filterOptions(eq(Set.of(7L)),isNull(),any(),eq(PlatformUsageContracts.FilterField.AGENT_ID),eq("历史"),isNull());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN,assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                ()->service.optionsPlatform(new PlatformUsageOptionsQuery("agent_id","summary",null,null,8L))).getStatus());
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST,assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                ()->service.optionsPlatform(new PlatformUsageOptionsQuery("private_column","events",null,null,7L))).getStatus());
+        assertThrows(com.skillforge.core.shared.exception.ApiException.class,
+                ()->service.optionsPlatform(new PlatformUsageOptionsQuery("agent_id","write",null,null,7L)));
+        verify(mapper,times(1)).filterOptions(anySet(),any(),any(),any(),any(),any());
+    }
     @Test void changedAuthorizationOrFilterRequiresExplicitRebuild() {
         var page=service.eventsPlatform(null);when(management.authorizedTenantScope(anyString())).thenReturn(new PlatformManagementService.TenantScope("management:1",2L,Set.of(7L)));
         var denied=assertThrows(com.skillforge.core.shared.exception.ApiException.class,()->service.eventsPlatform(query(page.nextCursor())));

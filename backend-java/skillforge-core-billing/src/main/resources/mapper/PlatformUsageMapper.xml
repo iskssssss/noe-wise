@@ -136,6 +136,56 @@
   </when><otherwise>FALSE</otherwise></choose>
   <if test="integrationId != null">AND integration_id=#{integrationId}</if>
  </sql>
+ <!-- 历史事实决定候选全集；只联接当前可读的名称，不过滤停用或已移出目录的身份。 -->
+ <select id="filterOptions" resultType="com.skillforge.core.billing.export.PlatformUsageContracts$FilterOption">
+ WITH candidates AS (
+   SELECT DISTINCT tenant_id,
+     <choose>
+       <when test="field.name() == 'TENANT_ID'">tenant_id::text</when>
+       <when test="field.name() == 'INTEGRATION_ID'">integration_id</when>
+       <when test="field.name() == 'GROUP_BINDING_ID'">group_binding_id::text</when>
+       <when test="field.name() == 'DEPLOYMENT_ID'">deployment_id::text</when>
+       <when test="field.name() == 'AGENT_ID'">agent_id::text</when>
+       <when test="field.name() == 'SESSION_ID'">session_id</when>
+       <when test="field.name() == 'RUN_ID'">run_id</when>
+       <when test="field.name() == 'BUSINESS_SCOPE_ID'">business_scope_id</when>
+       <when test="field.name() == 'CHANNEL_ID'">channel_id</when>
+       <when test="field.name() == 'END_USER_ID'">end_user_id::text</when>
+       <when test="field.name() == 'AGENT_DEFINITION_VERSION'">agent_definition_version</when>
+     </choose> AS id
+     FROM public.nw_usage_events
+    WHERE <include refid="ownership"/> <include refid="filters"/>
+ ), named AS (
+   SELECT c.id,
+     <choose>
+       <when test="field.name() == 'TENANT_ID'">COALESCE(NULLIF(t.name,''),c.id)</when>
+       <when test="field.name() == 'AGENT_ID'">COALESCE(NULLIF(resource.name,''),c.id)</when>
+       <when test="field.name() == 'END_USER_ID'">COALESCE(NULLIF(resource.display_name,''),c.id)</when>
+       <when test="field.name() == 'CHANNEL_ID'">COALESCE(NULLIF(resource.name,''),resource.channel_type,c.id)</when>
+       <when test="field.name() == 'BUSINESS_SCOPE_ID'">COALESCE(NULLIF(resource.display_name,''),c.id)</when>
+       <when test="field.name() == 'DEPLOYMENT_ID'">COALESCE(NULLIF(resource.external_agent_ref,''),c.id)</when>
+       <when test="field.name() == 'GROUP_BINDING_ID'">COALESCE(NULLIF(resource.external_group_ref,''),c.id)</when>
+       <otherwise>c.id</otherwise>
+     </choose> AS label,
+     COALESCE(t.name,'机构 '||c.tenant_id::text)||' · '||c.id AS description
+     FROM candidates c
+     LEFT JOIN public.nw_tenants t ON t.id=c.tenant_id
+     <choose>
+       <when test="field.name() == 'AGENT_ID'">LEFT JOIN public.nw_agents resource ON resource.tenant_id=c.tenant_id AND resource.id::text=c.id</when>
+       <when test="field.name() == 'END_USER_ID'">LEFT JOIN public.nw_end_users resource ON resource.tenant_id=c.tenant_id AND resource.id::text=c.id</when>
+       <when test="field.name() == 'CHANNEL_ID'">LEFT JOIN public.nw_channels resource ON resource.tenant_id=c.tenant_id AND resource.id::text=c.id</when>
+       <when test="field.name() == 'BUSINESS_SCOPE_ID'">LEFT JOIN public.nw_integration_business_scopes resource ON resource.tenant_id=c.tenant_id AND resource.scope_id=c.id</when>
+       <when test="field.name() == 'DEPLOYMENT_ID'">LEFT JOIN public.nw_agent_deployments resource ON resource.tenant_id=c.tenant_id AND resource.deployment_id::text=c.id</when>
+       <when test="field.name() == 'GROUP_BINDING_ID'">LEFT JOIN public.nw_group_bindings resource ON resource.tenant_id=c.tenant_id AND resource.id::text=c.id</when>
+     </choose>
+    WHERE c.id IS NOT NULL AND c.id&lt;&gt;''
+ )
+ SELECT id,MIN(label) AS label,string_agg(DISTINCT description,'；' ORDER BY description) AS description
+   FROM named
+  WHERE (#{id,jdbcType=VARCHAR} IS NULL OR id=#{id})
+    AND (#{q,jdbcType=VARCHAR} IS NULL OR position(lower(#{q}) in lower(id))&gt;0 OR position(lower(#{q}) in lower(label))&gt;0)
+  GROUP BY id ORDER BY label,id LIMIT 100
+ </select>
  <select id="hasPending" resultType="boolean">
   SELECT EXISTS(SELECT 1 FROM (<include refid="sourceFacts"/>) pending WHERE publication_cursor IS NULL
    AND <include refid="ownership"/> <include refid="filters"/>)

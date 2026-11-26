@@ -163,5 +163,16 @@ describe('平台直管公开传输边界', () => {
     )
     await createUsageApi(http, '/admin/usage').events({ run_id: 'run/1' })
     expect(http.get).toHaveBeenLastCalledWith('/admin/usage/events?run_id=run%2F1', undefined)
+    await api.filterOptions({
+      field: 'agent_id',
+      view: 'events',
+      tenant_id: '9223372036854775807',
+      q: '名称/a',
+      id: '9223372036854775806'
+    })
+    expect(http.get).toHaveBeenLastCalledWith(
+      '/platform/usage/filter-options?field=agent_id&view=events&tenant_id=9223372036854775807&q=%E5%90%8D%E7%A7%B0%2Fa&id=9223372036854775806',
+      undefined
+    )
   })
 })

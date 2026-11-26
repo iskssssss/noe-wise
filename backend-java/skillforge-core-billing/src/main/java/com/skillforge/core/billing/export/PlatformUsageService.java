@@ -75,6 +75,45 @@ public class PlatformUsageService {
     @Transactional
     public Page eventsHeadquarters(PlatformUsageQuery query) { return page(headquarters(HeadquartersUsageActions.EVENTS),checked(query)); }
 
+    /** 候选使用消费者所选视图的独立动作，不把汇总许可扩为事件读取许可。 */
+    @Transactional
+    public List<FilterOption> optionsPlatform(PlatformUsageOptionsQuery query) {
+        String action=switch(query.view()==null?"":query.view()) {
+            case "summary" -> "platform.usage.summary.read";
+            case "details" -> "platform.usage.details.read";
+            case "events" -> "platform.usage.events.read";
+            default -> throw bad("请选择有效的用量视图");
+        };
+        return options(platform(action),query);
+    }
+    /** 本机构候选继续使用可信机构身份与当前用量权限。 */
+    @Transactional
+    public List<FilterOption> optionsTenant(PlatformUsageOptionsQuery query) {
+        return options(tenant(),query);
+    }
+    /** 下级候选只来自该视图独立获准的目标集合。 */
+    @Transactional
+    public List<FilterOption> optionsHeadquarters(PlatformUsageOptionsQuery query) {
+        String action=switch(query.view()==null?"":query.view()) {
+            case "summary" -> HeadquartersUsageActions.SUMMARY;
+            case "details" -> HeadquartersUsageActions.DETAILS;
+            case "events" -> HeadquartersUsageActions.EVENTS;
+            default -> throw bad("请选择有效的用量视图");
+        };
+        return options(headquarters(action),query);
+    }
+    private List<FilterOption> options(Scope scope,PlatformUsageOptionsQuery input) {
+        FilterField field;
+        try { field=FilterField.valueOf(input.field()==null?"":input.field().toUpperCase(java.util.Locale.ROOT)); }
+        catch(IllegalArgumentException invalid) { throw bad("不支持的用量筛选字段"); }
+        if(input.q()!=null&&input.q().length()>512||input.id()!=null&&input.id().length()>512)
+            throw bad("用量候选搜索或标识不能超过512个字符");
+        var query=checked(new PlatformUsageQuery(null,null,input.tenantId(),null,null,null,null,null,null,null,null,null,null,null,null));
+        requireFilters(scope,query);
+        return read(scope,()->mapper.filterOptions(scope.tenants(),scope.integrationId(),query,field,
+                input.q()==null||input.q().isBlank()?null:input.q().trim(),input.id()));
+    }
+
     /** 管理服务同时裁定人员/机器当前动作和目标范围，空集合表示无目标。 */
     private Scope platform(String action) {
         var current=management.authorizedTenantScope(action);

@@ -27,6 +27,11 @@ const identity = computed(() =>
 const allowed = (action: string) => auth.user?.permissions.includes(action) ?? false
 // 固定目标由请求适配器收窄，隐藏筛选和重置也不能扩大到其他下级。
 const scopedApi: UsageApi = {
+  filterOptions: (query, options) =>
+    api.headquartersUsage.filterOptions(
+      { ...query, ...(props.tenantId ? { tenant_id: props.tenantId } : {}) },
+      options
+    ),
   summary: (query, options) =>
     api.headquartersUsage.summary(
       { ...query, ...(props.tenantId ? { tenant_id: props.tenantId } : {}) },

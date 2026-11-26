@@ -1,8 +1,9 @@
 import { HttpClientError } from '../utils/http'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElDatePicker, ElFormItem, ElInput } from 'element-plus'
+import ElementPlus, { ElDatePicker, ElFormItem, ElSelect } from 'element-plus'
 import UsagePanel from './UsagePanel.vue'
+import EntitySelect from '../admin/EntitySelect.vue'
 import type { UsageApi, UsageEvent, UsagePage, UsageSummary } from './usage'
 
 const active: VueWrapper[] = []
@@ -95,6 +96,9 @@ function page(items: UsageEvent[] = [background], hasMore = false): UsagePage {
 }
 function api(details: UsageApi['details'] = async () => page()) {
   return {
+    filterOptions: vi.fn<UsageApi['filterOptions']>(async ({ id }) =>
+      id ? [{ id, label: `历史选项 ${id}` }] : []
+    ),
     summary: vi.fn<UsageApi['summary']>(async () => summary),
     details: vi.fn(details),
     events: vi.fn<UsageApi['events']>(async () => page())
@@ -114,11 +118,9 @@ function button(wrapper: VueWrapper, text: string) {
   return found
 }
 function groupInput(wrapper: VueWrapper) {
-  const field = wrapper
-    .findAllComponents(ElFormItem)
-    .find((item) => item.props('label') === '群标识')
+  const field = wrapper.findAllComponents(ElFormItem).find((item) => item.props('label') === '群')
   if (!field) throw new Error('群标识筛选不存在')
-  return field.getComponent(ElInput).get('input')
+  return field.getComponent(EntitySelect)
 }
 
 describe('共享用量的群与后台来源', () => {
@@ -139,7 +141,7 @@ describe('共享用量的群与后台来源', () => {
     await flushPromises()
     expect(value.details.mock.lastCall?.[0]).toMatchObject({ group_binding_id: '', cursor: '' })
     expect(value.summary).toHaveBeenCalledTimes(1)
-    expect((groupInput(wrapper).element as HTMLInputElement).value).toBe('9007199254740995')
+    expect(groupInput(wrapper).props('modelValue')).toBe('9007199254740995')
     expect(wrapper.text()).toContain('条件已修改，点击查询后生效')
     expect(wrapper.get('[role="status"]').text()).toContain('当前第 1 页')
   })
@@ -266,6 +268,41 @@ describe('共享用量的群与后台来源', () => {
 })
 
 describe('用量查询任务与历史范围', () => {
+  it('历史字段只能选择候选，搜索和精确回显使用当前身份视图与机构', async () => {
+    const value = api()
+    const wrapper = mount(UsagePanel, {
+      props: { api: value, identity: 'member-1', fixedTenantId: 'tenant-1' },
+      global: { plugins: [ElementPlus] }
+    })
+    active.push(wrapper)
+    await flushPromises()
+    ;(wrapper.get('details').element as HTMLDetailsElement).open = true
+    await wrapper.get('details').trigger('toggle')
+    await flushPromises()
+    const group = groupInput(wrapper)
+    expect(group.findComponent(ElSelect).props('allowCreate')).toBe(false)
+    await group.props('load')?.('巡检群')
+    expect(value.filterOptions.mock.lastCall?.[0]).toMatchObject({
+      field: 'group_binding_id',
+      view: 'details',
+      tenant_id: 'tenant-1',
+      q: '巡检群'
+    })
+    await group.setValue('9007199254740995')
+    await flushPromises()
+    expect(
+      value.filterOptions.mock.calls.some(
+        ([query]) => query.id === '9007199254740995' && query.tenant_id === 'tenant-1'
+      )
+    ).toBe(true)
+    await wrapper.setProps({ fixedTenantId: 'tenant-2', identity: 'member-2' })
+    await flushPromises()
+    ;(wrapper.get('details').element as HTMLDetailsElement).open = true
+    await wrapper.get('details').trigger('toggle')
+    await flushPromises()
+    await groupInput(wrapper).props('load')?.('')
+    expect(value.filterOptions.mock.lastCall?.[0].tenant_id).toBe('tenant-2')
+  })
   it('重新进入恢复成功条件、记录视图和完整分页回退位置，不保存未查询输入', async () => {
     const value = api(async () => page([background], true))
     value.events.mockResolvedValue(page([background], true))
@@ -305,7 +342,7 @@ describe('用量查询任务与历史范围', () => {
       cursor: 'opaque-next'
     })
     expect(restored.get('[role="status"]').text()).toContain('第 2 页')
-    expect((groupInput(restored).element as HTMLInputElement).value).toBe('123')
+    expect(groupInput(restored).props('modelValue')).toBe('123')
     await button(restored, '上一页').trigger('click')
     await flushPromises()
     expect(value.events.mock.lastCall?.[0].cursor).toBe('')
@@ -509,7 +546,7 @@ describe('用量查询任务与历史范围', () => {
       cursor: ''
     })
     expect(wrapper.get('[aria-label="已应用查询范围"]').text()).toContain('机构：9007199254740999')
-    expect(wrapper.text()).toContain('范围不受当前资源目录限制')
+    expect(wrapper.text()).toContain('不受当前资源目录限制')
     await button(wrapper, '重置').trigger('click')
     await flushPromises()
     expect(value.details.mock.lastCall?.[0]).toMatchObject({ tenant_id: '9007199254740999' })

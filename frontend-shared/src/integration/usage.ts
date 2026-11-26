@@ -1,4 +1,5 @@
 import type { RequestOptions } from '../utils/http'
+import type { EntityOption } from '../admin/presentation'
 
 /** 精确金额原样展示，供应商成本与客户钱包价格各自归属。 */
 export interface UsageSummary {
@@ -104,6 +105,16 @@ export interface UsageQuery {
 }
 type UsageHttp = { get: <T>(path: string, options?: RequestOptions) => Promise<T> }
 export interface UsageApi {
+  filterOptions: (
+    query: {
+      field: keyof Omit<UsageQuery, 'from' | 'to'>
+      view: 'summary' | 'details' | 'events'
+      tenant_id?: string
+      q?: string
+      id?: string
+    },
+    options?: RequestOptions
+  ) => Promise<EntityOption[]>
   summary: (query: UsageQuery, options?: RequestOptions) => Promise<UsageSummary>
   events: (query: UsageQuery & { cursor?: string }, options?: RequestOptions) => Promise<UsagePage>
   details: (query: UsageQuery & { cursor?: string }, options?: RequestOptions) => Promise<UsagePage>
@@ -116,6 +127,8 @@ export function createUsageApi(http: UsageHttp, base: string): UsageApi {
     return params.size ? `?${params}` : ''
   }
   return {
+    filterOptions: (query, options) =>
+      http.get(`${base}/filter-options${queryString(query)}`, options),
     events: (query, options) => http.get(`${base}/events${queryString(query)}`, options),
     summary: (query, options) => http.get(`${base}/summary${queryString(query)}`, options),
     details: (query, options) => http.get(`${base}/details${queryString(query)}`, options)

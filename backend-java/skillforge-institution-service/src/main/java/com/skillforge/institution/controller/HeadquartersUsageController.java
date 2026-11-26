@@ -34,4 +34,12 @@ public class HeadquartersUsageController {
     public ApiResponse<Page> events(@ModelAttribute PlatformUsageQuery query) {
         return ApiResponses.wrap(usage.eventsHeadquarters(query));
     }
+
+    /** 搜索或精确回显当前用量视图授权范围中的历史身份。 */
+    @GetMapping("/filter-options")
+    @Operation(summary="读取用量历史筛选候选", description="只返回当前视图获准历史记录中的身份；支持名称或标识搜索及精确回显，不扩大当前目录权限")
+    public ApiResponse<java.util.List<com.skillforge.core.billing.export.PlatformUsageContracts.FilterOption>> filterOptions(
+            @ModelAttribute com.skillforge.core.billing.export.PlatformUsageOptionsQuery query) {
+        return ApiResponses.wrap(usage.optionsHeadquarters(query));
+    }
 }

@@ -38,6 +38,7 @@ public final class BillingAuthorizedSqlRule implements AuthorizedSqlRule {
                     && access.parameterEquals("tenantId", access.tenant());
         }
         if (access.window() != Window.HEADQUARTERS_USAGE || !access.query() || access.settings()) return false;
+        if (HeadquartersUsageActions.ALL.contains(access.action()) && access.statementId().equals(MAPPER + "filterOptions")) return true;
         return HeadquartersUsageActions.SUMMARY.equals(access.action())
                 ? access.statementId().equals(MAPPER + "summarize")
                 : access.statementId().equals(MAPPER + "list") || access.statementId().equals(MAPPER + "hasPending")

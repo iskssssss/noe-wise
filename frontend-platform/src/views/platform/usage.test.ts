@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElDatePicker, ElFormItem, ElInput } from 'element-plus'
+import { ElDatePicker, ElFormItem } from 'element-plus'
 import UsagePanel from '@skillforge/shared/integration/UsagePanel.vue'
+import EntitySelect from '@skillforge/shared/admin/EntitySelect.vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 const wrappers: VueWrapper[] = []
 afterEach(() => {
@@ -40,6 +41,7 @@ describe('平台用量查询与游标', () => {
   it('读取权限分项控制请求，未授权明细不发送；权限收窄隔离迟到结果', async () => {
     let complete!: (value: unknown) => void
     const api = {
+      filterOptions: vi.fn().mockResolvedValue([]),
       summary: vi.fn().mockResolvedValue(summary),
       events: vi.fn(),
       details: vi.fn().mockImplementation(
@@ -68,6 +70,7 @@ describe('平台用量查询与游标', () => {
   })
   it('游标授权冲突后必须显式清空，不允许沿用旧游标重试', async () => {
     const api = {
+      filterOptions: vi.fn().mockResolvedValue([]),
       summary: vi.fn().mockResolvedValue(summary),
       events: vi.fn(),
       details: vi
@@ -83,12 +86,13 @@ describe('平台用量查询与游标', () => {
     await flushPromises()
     expect(document.body.textContent).toContain('游标授权已变化')
     expect(wrapper.findAll('button').some((item) => item.text() === '重试明细')).toBe(false)
-    await button(wrapper, '清空游标并重新查询').trigger('click')
+    await button(wrapper, '清空游标并重读当前范围首页').trigger('click')
     await flushPromises()
     expect(api.details.mock.lastCall?.[0]).toMatchObject({ cursor: '' })
   })
   it('清空时间范围后查询省略时间限制，不附带任何应用身份', async () => {
     const api = {
+      filterOptions: vi.fn().mockResolvedValue([]),
       events: vi.fn(),
       summary: vi.fn().mockResolvedValue(summary),
       details: vi.fn().mockResolvedValue({ items: [], next_cursor: '', has_more: false })
@@ -110,6 +114,7 @@ describe('平台用量查询与游标', () => {
   })
   it('金额和大计量原样展示；翻页沿用已提交查询，不采用未查询输入', async () => {
     const api = {
+      filterOptions: vi.fn().mockResolvedValue([]),
       events: vi.fn(),
       summary: vi.fn().mockResolvedValue(summary),
       details: vi.fn().mockResolvedValue({ items: [event], next_cursor: '42', has_more: true })
@@ -120,11 +125,11 @@ describe('平台用量查询与游标', () => {
     wrappers.push(wrapper)
     await flushPromises()
     expect(wrapper.text()).toContain('9223372036854775807.125')
-    expect(wrapper.text()).toContain('9223372036854775807')
+    expect(wrapper.text()).toContain('9,223,372,036,854,775,807')
     const field = wrapper
       .findAllComponents(ElFormItem)
-      .find((item) => item.props('label') === '机构标识')!
-    await field.getComponent(ElInput).get('input').setValue('unsubmitted-tenant')
+      .find((item) => item.props('label') === '机构')!
+    await field.getComponent(EntitySelect).setValue('unsubmitted-tenant')
     await button(wrapper, '下一页').trigger('click')
     await flushPromises()
     expect(api.details.mock.lastCall?.[0]).toMatchObject({
@@ -141,6 +146,7 @@ describe('平台用量查询与游标', () => {
   it('当前身份变化隔离迟到回包，失败区域可以独立重读', async () => {
     let complete!: (value: unknown) => void
     const api = {
+      filterOptions: vi.fn().mockResolvedValue([]),
       events: vi.fn(),
       summary: vi
         .fn()

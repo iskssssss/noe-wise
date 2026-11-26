@@ -96,6 +96,37 @@ const pendingFilters = computed(() =>
 )
 const canReadRecords = computed(() => props.canDetails !== false || props.canEvents !== false)
 const recordView = ref<'details' | 'events'>('details')
+// 名称仅回显，候选和精确回显都重新经过当前用量动作与机构范围授权。
+const historicalOptions = computed(() => {
+  const api = props.api
+  const identity = props.identity
+  const tenant = props.fixedTenantId || (props.showTenant ? filters.tenant_id : '')
+  const view: 'summary' | 'details' | 'events' = canReadRecords.value ? recordView.value : 'summary'
+  const allowed = props.canSummary || canReadRecords.value
+  return Object.fromEntries(
+    (Object.keys(filters) as Array<keyof typeof filters>).map((field) => {
+      const scope = {
+        field,
+        view,
+        tenant_id: field === 'tenant_id' && !props.fixedTenantId ? '' : tenant
+      }
+      return [
+        field,
+        {
+          identity,
+          load:
+            allowed && (advancedOpen.value || field === 'tenant_id')
+              ? (q: string, signal?: AbortSignal) =>
+                  api.filterOptions({ ...scope, q }, { signal, silent: true })
+              : undefined,
+          resolve: allowed
+            ? async (id: string) => (await api.filterOptions({ ...scope, id }, { silent: true }))[0]
+            : undefined
+        }
+      ]
+    })
+  )
+})
 const cursor = ref('')
 const cursors = ref<string[]>([])
 const validation = ref('')
@@ -418,10 +449,13 @@ watch(
           v-described-by="help"
           :aria-describedby="help"
         />
-        <ElInput
+        <EntitySelect
           v-else
           v-model="filters.tenant_id"
-          clearable
+          :load="historicalOptions.tenant_id.load"
+          :resolve="historicalOptions.tenant_id.resolve"
+          placeholder="搜索历史机构"
+          aria-label="机构"
           v-described-by="help"
           :aria-describedby="help"
         />
@@ -432,73 +466,22 @@ watch(
         @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
       >
         <summary>
-          按历史标识定位<span v-if="advancedCount"> · {{ advancedCount }} 项已填写</span
+          按历史记录筛选<span v-if="advancedCount"> · {{ advancedCount }} 项已选择</span
           ><span class="usage-advanced-hint">接入、群、部署、智能体、会话、任务、用户与版本</span>
         </summary>
         <div class="usage-advanced-fields">
-          <ElFormItem label="接入标识"
-            ><ElInput v-model="filters.integration_id" clearable :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="群标识"
-            ><ElInput
-              v-model="filters.group_binding_id"
-              clearable
-              inputmode="numeric"
+          <ElFormItem v-for="field in advancedKeys" :key="field" :label="filterLabels[field]">
+            <EntitySelect
+              v-model="filters[field]"
+              :load="historicalOptions[field].load"
+              :resolve="historicalOptions[field].resolve"
+              :disabled="!canSummary && !canReadRecords"
+              :placeholder="`搜索历史${filterLabels[field]}`"
+              :aria-label="filterLabels[field]"
               v-described-by="help"
               :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="部署标识"
-            ><ElInput v-model="filters.deployment_id" clearable :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="智能体标识"
-            ><ElInput
-              v-model="filters.agent_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="会话标识"
-            ><ElInput
-              v-model="filters.session_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="任务标识"
-            ><ElInput
-              v-model="filters.run_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="业务范围标识"
-            ><ElInput
-              v-model="filters.business_scope_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="渠道标识"
-            ><ElInput
-              v-model="filters.channel_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="用户标识"
-            ><ElInput
-              v-model="filters.end_user_id"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
-          <ElFormItem label="定义版本"
-            ><ElInput
-              v-model="filters.agent_definition_version"
-              clearable
-              v-described-by="help"
-              :aria-describedby="help"
-          /></ElFormItem>
+            />
+          </ElFormItem>
         </div>
       </details>
       <div class="usage-query-actions">
@@ -515,10 +498,10 @@ watch(
           >查询限定于机构
           {{
             fixedTenantId
-          }}，时间和其他历史标识留空表示该机构授权范围内不限制。历史标识用于精确定位既有记录，正常查询无需填写；范围不受当前资源目录限制。</template
+          }}，时间和其他历史标识留空表示该机构授权范围内不限制。候选来自获准历史记录，可按名称或标识搜索并选择；停用或移出目录的历史记录仍可查询。</template
         >
         <template v-else
-          >时间与机构为常规筛选；其他历史标识用于精确定位既有记录，正常查询无需填写，范围不受当前资源目录限制。</template
+          >时间与机构为常规筛选；其他条件从获准历史记录搜索选择，不受当前资源目录限制。</template
         >
       </FieldTip>
     </ElForm>

@@ -9,6 +9,10 @@ import org.apache.ibatis.annotations.Param;
 /** 原子用量与部署级提交后发布流的 SQL 入口；查询必须传当前已授权机构集合。 */
 @Mapper
 public interface PlatformUsageMapper {
+    /** 候选从获准历史用量产生；名称仅作回显，不决定历史记录是否仍可查询。 */
+    List<PlatformUsageContracts.FilterOption> filterOptions(@Param("tenants") Set<Long> tenants,
+            @Param("integrationId") String integrationId, @Param("query") PlatformUsageQuery query,
+            @Param("field") PlatformUsageContracts.FilterField field, @Param("q") String q, @Param("id") String id);
     /** 精确读取技术 Run 的原请求者与群目标，不查询当前群成员或服务Agent。 */
     PlatformUsageExecutionSource executionSource(@Param("tenantId") String tenantId, @Param("runId") String runId);
     /** 系统用途 Run 必须已持久受理，记忆任务需在第一次外调之前绑定该引用。 */

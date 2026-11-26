@@ -10,6 +10,15 @@ import java.util.List;
 public final class PlatformUsageContracts {
     private PlatformUsageContracts() { }
 
+    /** 仅开放实际用量筛选字段，不允许客户端传入任意 SQL 列名。 */
+    public enum FilterField {
+        TENANT_ID, INTEGRATION_ID, GROUP_BINDING_ID, DEPLOYMENT_ID, AGENT_ID, SESSION_ID,
+        RUN_ID, BUSINESS_SCOPE_ID, CHANNEL_ID, END_USER_ID, AGENT_DEFINITION_VERSION
+    }
+
+    /** 候选身份始终为字符串；名称不可读或资源已退出目录时保留历史身份。 */
+    public record FilterOption(String id, String label, String description) { }
+
     /** 原子事实导出；报告是累计修订，确认替代成本，调整只表达成本增减。 */
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     @Schema(name="PlatformUsageEvent")

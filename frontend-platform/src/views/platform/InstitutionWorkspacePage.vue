@@ -123,6 +123,8 @@ const usageIdentity = computed(() => `${auth.identityVersion}:${selectedId.value
 const usageApi = computed<UsageApi>(() => {
   const tenant = selectedId.value
   return {
+    filterOptions: (query, options) =>
+      api.usage.filterOptions({ ...query, tenant_id: tenant }, options),
     summary: (query, options) => api.usage.summary({ ...query, tenant_id: tenant }, options),
     details: (query, options) => api.usage.details({ ...query, tenant_id: tenant }, options),
     events: (query, options) => api.usage.events({ ...query, tenant_id: tenant }, options)
