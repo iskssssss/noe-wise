@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { ElSelect } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -24,7 +25,8 @@ const fixture = vi.hoisted(() => ({
   webhookResult: vi.fn(),
   webhookPause: vi.fn(),
   webhookPauseResult: vi.fn(),
-  audit: vi.fn()
+  audit: vi.fn(),
+  auditOptions: vi.fn()
 }))
 vi.mock('../stores/auth', () => ({ useAuthStore: () => reactive(fixture.auth) }))
 vi.mock('../api', () => ({
@@ -48,7 +50,7 @@ vi.mock('../api', () => ({
         pauseResult: fixture.webhookPauseResult
       },
       auditLogs: fixture.audit,
-      auditOptions: async () => ({ actions: [], actors: [] })
+      auditOptions: fixture.auditOptions
     }
   }
 }))
@@ -71,6 +73,8 @@ beforeEach(() => {
   fixture.auth.identityVersion++
   fixture.auth.user.permissions = ['foundation.service_principals.read']
   fixture.list.mockResolvedValue([])
+  fixture.audit.mockResolvedValue({ items: [] })
+  fixture.auditOptions.mockResolvedValue({ actions: [], actors: [] })
   fixture.confirm.mockResolvedValue(true)
 })
 async function open(tenantId = '10') {
@@ -87,6 +91,76 @@ async function open(tenantId = '10') {
   wrappers.push(wrapper)
   return wrapper
 }
+
+describe('审计筛选读取与恢复', () => {
+  async function openAudit() {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: GovernancePage }]
+    })
+    await router.push('/')
+    const wrapper = mount(GovernancePage, { global: { plugins: [router] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    return wrapper
+  }
+  it('服务身份不预读审计选项；进入审计后才加载，失败禁用并独立重试', async () => {
+    fixture.auth.user.permissions = ['foundation.service_principals.read', 'foundation.audit.read']
+    let fail!: (error: Error) => void
+    fixture.auditOptions.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        fail = reject
+      })
+    )
+    fixture.audit.mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          action: 'auth.login',
+          actor_id: '9007199254740993',
+          message: '保留的记录',
+          created_at: '2026-11-26T00:00:00Z'
+        }
+      ]
+    })
+    const wrapper = await openAudit()
+    expect(fixture.auditOptions).not.toHaveBeenCalled()
+    await wrapper.get('#tab-audit').trigger('click')
+    await flushPromises()
+    expect(fixture.auditOptions).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('正在读取操作类型')
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(true)
+    fail(new Error('选项读取失败'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('尚未取得操作类型')
+    expect(wrapper.text()).toContain('保留的记录')
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(true)
+    fixture.auditOptions.mockResolvedValueOnce({
+      actions: [{ value: 'auth.login', label: '登录' }],
+      actors: [{ value: '9007199254740993', label: '巡检成员' }]
+    })
+    const reads = fixture.audit.mock.calls.length
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '重新读取操作类型')!
+      .trigger('click')
+    await flushPromises()
+    expect(fixture.audit).toHaveBeenCalledTimes(reads)
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(false)
+    expect(wrapper.text()).toContain('巡检成员')
+    wrapper.getComponent(ElSelect).vm.$emit('update:modelValue', 'auth.login')
+    wrapper.getComponent(ElSelect).vm.$emit('change', 'auth.login')
+    await flushPromises()
+    expect(fixture.audit).toHaveBeenLastCalledWith({ action: 'auth.login', limit: 100 })
+  })
+  it('仅审计读取权限的默认入口也会加载选项', async () => {
+    fixture.auth.user.permissions = ['foundation.audit.read']
+    const wrapper = await openAudit()
+    expect(fixture.list).not.toHaveBeenCalled()
+    expect(fixture.auditOptions).toHaveBeenCalledTimes(1)
+    expect(wrapper.getComponent(ElSelect).props('disabled')).toBe(false)
+  })
+})
 describe('工作台内嵌凭证维护', () => {
   it('轮换结果未知后只允许查询事实，不能再次派发轮换', async () => {
     fixture.auth.user.permissions = [

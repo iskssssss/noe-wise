@@ -183,6 +183,8 @@
         filterable
         placeholder="全部操作类型"
         aria-label="操作类型筛选"
+        :loading="auditOptionsLoading"
+        :disabled="auditOptionsLoading || !!auditOptionsError || !auditOptions"
         v-described-by="formTipId + '-group-0'"
         :aria-describedby="formTipId + '-group-0'"
         @change="reload"
@@ -201,6 +203,17 @@
       <FieldTip v-if="tab === 'audit'" :id="formTipId + '-group-0'"
         >审计页可按操作类型筛选；留空不限制操作类型。</FieldTip
       >
+      <div v-if="tab === 'audit' && (auditOptionsLoading || auditOptionsError)" role="status">
+        <span>{{
+          auditOptionsLoading ? '正在读取操作类型…' : '尚未取得操作类型，可重新读取。'
+        }}</span>
+        <ElButton
+          v-if="auditOptionsError"
+          :disabled="auditOptionsLoading"
+          @click="reloadAuditOptions"
+          >重新读取操作类型</ElButton
+        >
+      </div>
     </div>
     <p class="admin-muted" role="status">
       {{
@@ -569,7 +582,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
 import type { FormInstance } from 'element-plus'
-import { computed, onMounted, reactive, ref, useId } from 'vue'
+import { computed, onMounted, reactive, ref, useId, watch } from 'vue'
 import {
   AdminPage,
   EntitySelect,
@@ -663,6 +676,7 @@ const {
 })
 const {
   data: auditOptions,
+  loading: auditOptionsLoading,
   error: auditOptionsError,
   reload: reloadAuditOptions
 } = useResource(() =>
@@ -699,8 +713,15 @@ const traceKind = (value?: string | null) => {
 }
 onMounted(() => {
   void reload()
-  void reloadAuditOptions()
 })
+watch(
+  tab,
+  (value) => {
+    if (value === 'audit' && !auditOptions.value && !auditOptionsLoading.value)
+      void reloadAuditOptions()
+  },
+  { immediate: true }
+)
 const { busy, error, run } = useTask(),
   open = ref(false),
   secretOpen = ref(false),

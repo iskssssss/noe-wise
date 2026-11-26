@@ -83,12 +83,12 @@ public class AuditController {
         long tenant = Long.parseLong(TenantIds.requireTenantId());
         List<AuditFilterOption> actions = distinct(tenant, "action").stream()
                 .map(action -> new AuditFilterOption(action, auditActionLabel(action))).toList();
-        Map<Long, String> names = new LinkedHashMap<>();
+        Map<String, String> names = new LinkedHashMap<>();
         tenantMembers.selectList(new LambdaQueryWrapper<TenantMemberDO>()
                         .eq(TenantMemberDO::getTenantId, tenant))
-                .forEach(member -> names.put(member.getId(), member.getUsername()));
+                .forEach(member -> names.put(member.getId().toString(), member.getUsername()));
         List<AuditFilterOption> actors = distinct(tenant, "actor_id").stream().map(id -> {
-            String label = names.get(Long.parseLong(id));
+            String label = names.get(id);
             return new AuditFilterOption(id, label == null ? "平台或历史操作者" : label);
         }).toList();
         return ApiResponses.wrap(new AuditFilterOptions(
