@@ -73,7 +73,7 @@ export const adminZhCN = {
     apiDocs: '开放 API',
     marketplace: '工作流市场',
     dashboard: '数据看板',
-    billing: '用量流水',
+    billing: '计费记录',
     governance: '治理中心',
     handoff: '人工接管'
   },
@@ -95,7 +95,7 @@ export const adminZhCN = {
     settings: '机构设置',
     dashboard: '仪表盘',
     usage: '机构用量',
-    billing: '用量流水',
+    billing: '计费记录',
     governance: '治理中心',
     handoff: '人工接管',
     marketplace: '工作流市场',

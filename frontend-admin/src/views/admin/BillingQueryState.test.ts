@@ -6,7 +6,12 @@ const mocks = vi.hoisted(() => ({ records: vi.fn(), filterOptions: vi.fn() }))
 vi.mock('../../api', () => ({
   api: { billing: { records: mocks.records, filterOptions: mocks.filterOptions } }
 }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() })
+}))
 let wrapper: ReturnType<typeof mount>
 beforeEach(() => {
   mocks.records.mockReset()

@@ -5,7 +5,7 @@
       :title="error || loadError || filterError"
       :closable="false"
       type="error"
-    /><ElTabs v-model="tab" :before-leave="beforeTabChange" @tab-change="queryRecords"
+    /><ElTabs v-model="tab" :before-leave="beforeTabChange" @tab-change="changeTab"
       ><ElTabPane label="计费事件" name="records" /><ElTabPane
         label="请求汇总"
         name="requests" /><ElTabPane label="模型月账单" name="monthly" /><ElTabPane
@@ -82,106 +82,108 @@
       <p v-if="tab === 'records'" class="admin-field-help">
         用量报告记录调用过程，不代表新增调用；调用次数和费用请查看请求汇总。
       </p>
-      <ElTable
-        table-layout="auto"
-        v-if="tab === 'records'"
-        :data="records"
-        v-loading="loading"
-        empty-text="当前查询没有计费事件，可调整日期、模型或事件类型后查询"
-        ><ElTableColumn min-width="140" label="类型"
-          ><template #default="{ row }">{{
-            eventTypeLabel(row.event_type)
-          }}</template></ElTableColumn
-        ><ElTableColumn width="120" label="事实类型"
-          ><template #default="{ row }">{{
-            usageKindLabel(row.usage_event_kind)
-          }}</template></ElTableColumn
-        ><ElTableColumn
-          min-width="200"
-          show-overflow-tooltip
-          prop="model"
-          label="模型"
-        /><ElTableColumn width="96" prop="quantity" label="数量" /><ElTableColumn
-          width="96"
-          prop="tokens"
-          label="Token 数"
-        /><ElTableColumn width="120" prop="total_amount" label="金额" /><ElTableColumn
-          width="80"
-          prop="currency"
-          label="币种"
-        /><ElTableColumn width="128" label="成本状态"
-          ><template #default="{ row }">{{
-            costStatusLabel(row.amount_status)
-          }}</template></ElTableColumn
-        ><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
-          ><template #default="{ row }">{{
-            formatDateTime(row.created_at)
-          }}</template></ElTableColumn
-        ><ElTableColumn width="100" class-name="admin-table-actions" label="追踪"
-          ><template #default="{ row }"
-            ><ElButton
-              v-if="row.root_input_id"
-              link
-              @click="viewTrace(row.root_input_id)"
-              :disabled="busy"
-              >查看来源</ElButton
-            ></template
-          ></ElTableColumn
-        ></ElTable
-      ><ElTable
-        table-layout="auto"
-        v-else
-        :data="requests"
-        v-loading="loading"
-        empty-text="当前查询没有请求汇总，可调整日期或运行 ID 后查询"
-        ><ElTableColumn
-          min-width="200"
-          show-overflow-tooltip
-          prop="request_id"
-          label="请求"
-        /><ElTableColumn width="120" prop="llm_calls" label="模型调用" /><ElTableColumn
-          width="96"
-          prop="tokens"
-          label="Token 数"
-        /><ElTableColumn width="120" prop="confirmed_cost" label="已确认成本" /><ElTableColumn
-          width="120"
-          prop="missing_cost_count"
-          label="成本缺失数"
-        /><ElTableColumn width="128" label="状态"
-          ><template #default="{ row }">{{
-            requestStatusLabel(row.usage_status)
-          }}</template></ElTableColumn
-        ><ElTableColumn width="80" class-name="admin-table-actions" label="操作"
-          ><template #default="{ row }"
-            ><ElButton link @click="viewRequest(row.request_id)" :disabled="busy"
-              >详情</ElButton
-            ></template
-          ></ElTableColumn
-        ></ElTable
-      ><ElPagination
-        v-described-by="formTipId + '-records-page'"
-        :aria-describedby="formTipId + '-records-page'"
-        :disabled="loading"
-        :current-page="page"
-        :page-size="pageSize"
-        :total="total"
-        :page-sizes="[20, 50, 100]"
-        layout="total,sizes,prev,pager,next"
-        @current-change="
-          ($event) => {
-            page = $event
-            reload()
-          }
-        "
-        @size-change="
-          ($event) => {
-            pageSize = $event
-            page = 1
-            reload()
-          }
-        "
-      /><FieldTip :id="formTipId + '-records-page'"
-        >每页可显示 20、50 或 100 条；更改条数会返回第一页并重新查询，页码按钮读取对应页。</FieldTip
+      <ElButton v-if="filterError" @click="reloadFilterOptions">重新读取筛选选项</ElButton>
+      <template v-if="!currentList">
+        <p role="status">
+          {{ loading ? '正在读取计费记录…' : '尚未取得计费记录，请点击查询重新读取。' }}
+        </p>
+        <ElSkeleton v-if="loading" :rows="6" animated />
+      </template>
+      <template v-else>
+        <p v-if="loadError" class="admin-muted" role="status">
+          当前查询未能刷新，以下保留上次成功读取的结果。
+        </p>
+        <ElTable
+          table-layout="auto"
+          v-if="tab === 'records'"
+          :data="records"
+          v-loading="loading"
+          empty-text="当前查询没有计费事件，可调整日期、模型或事件类型后查询"
+          ><ElTableColumn min-width="140" label="类型"
+            ><template #default="{ row }">{{
+              eventTypeLabel(row.event_type)
+            }}</template></ElTableColumn
+          ><ElTableColumn width="120" label="事实类型"
+            ><template #default="{ row }">{{
+              usageKindLabel(row.usage_event_kind)
+            }}</template></ElTableColumn
+          ><ElTableColumn
+            min-width="200"
+            show-overflow-tooltip
+            prop="model"
+            label="模型"
+          /><ElTableColumn width="96" prop="quantity" label="数量" /><ElTableColumn
+            width="96"
+            prop="tokens"
+            label="Token 数"
+          /><ElTableColumn width="120" prop="total_amount" label="金额" /><ElTableColumn
+            width="80"
+            prop="currency"
+            label="币种"
+          /><ElTableColumn width="128" label="成本状态"
+            ><template #default="{ row }">{{
+              costStatusLabel(row.amount_status)
+            }}</template></ElTableColumn
+          ><ElTableColumn width="190" show-overflow-tooltip prop="created_at" label="时间"
+            ><template #default="{ row }">{{
+              formatDateTime(row.created_at)
+            }}</template></ElTableColumn
+          ><ElTableColumn width="100" class-name="admin-table-actions" label="追踪"
+            ><template #default="{ row }"
+              ><ElButton
+                v-if="row.root_input_id"
+                link
+                @click="viewTrace(row.root_input_id)"
+                :disabled="busy"
+                >查看来源</ElButton
+              ></template
+            ></ElTableColumn
+          ></ElTable
+        ><ElTable
+          table-layout="auto"
+          v-else
+          :data="requests"
+          v-loading="loading"
+          empty-text="当前查询没有请求汇总，可调整日期或运行 ID 后查询"
+          ><ElTableColumn
+            min-width="200"
+            show-overflow-tooltip
+            prop="request_id"
+            label="请求"
+          /><ElTableColumn width="120" prop="llm_calls" label="模型调用" /><ElTableColumn
+            width="96"
+            prop="tokens"
+            label="Token 数"
+          /><ElTableColumn width="120" prop="confirmed_cost" label="已确认成本" /><ElTableColumn
+            width="120"
+            prop="missing_cost_count"
+            label="成本缺失数"
+          /><ElTableColumn width="128" label="状态"
+            ><template #default="{ row }">{{
+              requestStatusLabel(row.usage_status)
+            }}</template></ElTableColumn
+          ><ElTableColumn width="80" class-name="admin-table-actions" label="操作"
+            ><template #default="{ row }"
+              ><ElButton link @click="viewRequest(row.request_id)" :disabled="busy"
+                >详情</ElButton
+              ></template
+            ></ElTableColumn
+          ></ElTable
+        ><ElPagination
+          v-described-by="formTipId + '-records-page'"
+          :aria-describedby="formTipId + '-records-page'"
+          :disabled="loading"
+          :current-page="currentList.page"
+          :page-size="currentList.pageSize"
+          :total="total"
+          :page-sizes="[20, 50, 100]"
+          layout="total,sizes,prev,pager,next"
+          @current-change="changePage"
+          @size-change="changePageSize"
+        /><FieldTip :id="formTipId + '-records-page'"
+          >每页可显示 20、50 或 100
+          条；更改条数会返回第一页并重新查询，页码按钮读取对应页。</FieldTip
+        ></template
       ></template
     >
     <template v-else-if="tab === 'monthly'">
@@ -202,7 +204,7 @@
         />
         <ElButton native-type="submit" :loading="monthly.loading.value">查询模型费用</ElButton>
         <FieldTip :id="formTipId + '-monthly'"
-          >首次进入自动查询当前北京时间月份；修改月份后点击查询。费用来自调用时保存的模型价格。</FieldTip
+          >按当前地址恢复查询月份；未指定时查询当前北京时间月份。修改月份后点击查询，费用来自调用时保存的模型价格。</FieldTip
         >
       </ElForm>
       <p v-if="appliedMonth" class="admin-field-help" role="status">
@@ -235,6 +237,13 @@
         />
       </template>
       <ElEmpty v-else-if="!monthly.error.value" description="选择月份后查看模型费用" />
+    </template>
+    <template v-else-if="loaded?.kind !== 'reconciliation'">
+      <p role="status">
+        {{ loading ? '正在读取对账配置…' : '尚未取得对账配置，请重新读取后编辑。' }}
+      </p>
+      <ElSkeleton v-if="loading" :rows="6" animated />
+      <ElButton v-else @click="reload">重新读取对账配置</ElButton>
     </template>
     <ElForm
       class="admin-card billing-settings"
@@ -402,6 +411,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, reactive, ref, watch, useId } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { AdminPage, useResource, useTask, useUnsavedChanges } from '@skillforge/shared/admin'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
 import ModelBillingDetails from '@skillforge/shared/components/ModelBillingDetails.vue'
@@ -448,16 +458,43 @@ const costStatusLabel = (value?: string | null) =>
   value ? (costStatusLabels[value] ?? value) : '未记录'
 const requestStatusLabel = (value?: string | null) =>
   value ? (requestStatusLabels[value] ?? value) : '未记录'
-const tab = ref('records'),
-  range = ref<[string, string]>(),
-  model = ref(''),
-  eventType = ref(''),
-  runId = ref(''),
-  page = ref(1),
-  pageSize = ref(20),
-  records = ref<BillingRecordItem[]>([]),
-  requests = ref<BillingRequestItem[]>([]),
-  total = ref(0)
+const route = useRoute(),
+  router = useRouter()
+function readLocation(query: LocationQuery) {
+  const text = (key: string) => (typeof query[key] === 'string' ? query[key] : '')
+  const pageNumber = (key: string) => {
+    const value = Number(text(key))
+    return Number.isSafeInteger(value) && value > 0 ? value : 1
+  }
+  const from = text('from'),
+    to = text('to')
+  return {
+    tab:
+      ['records', 'requests', 'monthly', 'reconciliation'].find((value) => value === text('tab')) ??
+      'records',
+    range:
+      /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to
+        ? ([from, to] as [string, string])
+        : undefined,
+    model: text('model'),
+    eventType: text('event_type'),
+    runId: text('run_id'),
+    page: pageNumber('page'),
+    pageSize: [20, 50, 100].find((value) => value === Number(text('page_size'))) ?? 20,
+    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(text('month')) ? text('month') : formatMonth(new Date()),
+    monthlyPage: pageNumber('monthly_page'),
+    monthlyPageSize:
+      [20, 50, 100].find((value) => value === Number(text('monthly_page_size'))) ?? 20
+  }
+}
+const initialLocation = readLocation(route.query)
+const tab = ref(initialLocation.tab),
+  range = ref(initialLocation.range),
+  model = ref(initialLocation.model),
+  eventType = ref(initialLocation.eventType),
+  runId = ref(initialLocation.runId),
+  page = ref(initialLocation.page),
+  pageSize = ref(initialLocation.pageSize)
 const filterSnapshot = () => ({
   range: range.value ? ([...range.value] as [string, string]) : undefined,
   model: model.value,
@@ -468,21 +505,68 @@ const appliedFilters = ref(filterSnapshot())
 const filtersChanged = computed(
   () => JSON.stringify(filterSnapshot()) !== JSON.stringify(appliedFilters.value)
 )
-function queryRecords() {
-  appliedFilters.value = filterSnapshot()
-  page.value = 1
-  monthly.invalidate()
+const month = ref(initialLocation.month)
+const appliedMonth = ref(initialLocation.month)
+const monthlyPage = ref(initialLocation.monthlyPage)
+const monthlyPageSize = ref(initialLocation.monthlyPageSize)
+const currentLocation = () => ({
+  tab: tab.value,
+  ...appliedFilters.value,
+  page: page.value,
+  pageSize: pageSize.value,
+  month: appliedMonth.value,
+  monthlyPage: monthlyPage.value,
+  monthlyPageSize: monthlyPageSize.value
+})
+function rememberLocation() {
+  const [from, to] = appliedFilters.value.range ?? []
+  void router.replace({
+    query: {
+      ...route.query,
+      tab: tab.value,
+      from,
+      to,
+      model: appliedFilters.value.model || undefined,
+      event_type: appliedFilters.value.eventType || undefined,
+      run_id: appliedFilters.value.runId || undefined,
+      page: page.value === 1 ? undefined : String(page.value),
+      page_size: pageSize.value === 20 ? undefined : String(pageSize.value),
+      month: appliedMonth.value,
+      monthly_page: monthlyPage.value === 1 ? undefined : String(monthlyPage.value),
+      monthly_page_size: monthlyPageSize.value === 20 ? undefined : String(monthlyPageSize.value)
+    }
+  })
+}
+function loadCurrentTab() {
   if (tab.value === 'monthly') {
     invalidateRecords()
     loadError.value = ''
-    if (!appliedMonth.value) queryMonthly()
-    else if (!monthly.data.value && !monthly.error.value) void monthly.reload()
-  } else void reload()
+    if (!monthly.data.value || monthly.error.value) void monthly.reload()
+  } else {
+    monthly.invalidate()
+    void reload()
+  }
 }
-const month = ref(formatMonth(new Date()))
-const appliedMonth = ref('')
-const monthlyPage = ref(1)
-const monthlyPageSize = ref(20)
+function changeTab() {
+  page.value = 1
+  loadCurrentTab()
+  rememberLocation()
+}
+function queryRecords() {
+  appliedFilters.value = filterSnapshot()
+  page.value = 1
+  void reload()
+  rememberLocation()
+}
+function changePage(value: number) {
+  page.value = value
+  void reload()
+  rememberLocation()
+}
+function changePageSize(value: number) {
+  pageSize.value = value
+  changePage(1)
+}
 const monthly = useResource((signal) =>
   api.billing.monthly(
     {
@@ -502,11 +586,12 @@ function queryMonthly() {
   appliedMonth.value = month.value
   monthlyPage.value = 1
   void monthly.reload()
+  rememberLocation()
 }
 function changeMonthlyPage(value: number) {
-  if (!appliedMonth.value) return
   monthlyPage.value = value
   void monthly.reload()
+  rememberLocation()
 }
 function changeMonthlySize(value: number) {
   monthlyPageSize.value = value
@@ -542,6 +627,9 @@ const {
   reload,
   invalidate: invalidateRecords
 } = useResource(async () => {
+  // 将结果绑定到发起读取时的页码，失败后保留旧结果时不误标为新页。
+  const requestedPage = page.value,
+    requestedSize = pageSize.value
   // 账单接口按北京自然日查询；日历值原样提交，不转成浏览器时区或绝对时刻。
   const [from, to] = appliedFilters.value.range ?? []
   if (tab.value === 'records') {
@@ -553,7 +641,7 @@ const {
       page: page.value,
       pageSize: pageSize.value
     })
-    return { kind: 'records' as const, value }
+    return { kind: 'records' as const, value, page: requestedPage, pageSize: requestedSize }
   } else if (tab.value === 'requests') {
     const value = await api.billing.requests({
       from,
@@ -562,39 +650,67 @@ const {
       page: page.value,
       pageSize: pageSize.value
     })
-    return { kind: 'requests' as const, value }
+    return { kind: 'requests' as const, value, page: requestedPage, pageSize: requestedSize }
   } else {
     const value = await api.billing.reconciliationProvider.get()
     return { kind: 'reconciliation' as const, value }
   }
 })
+const currentList = computed(() =>
+  loaded.value?.kind === tab.value && loaded.value.kind !== 'reconciliation'
+    ? loaded.value
+    : undefined
+)
+const records = computed<BillingRecordItem[]>(() =>
+  loaded.value?.kind === 'records' ? loaded.value.value.items : []
+)
+const requests = computed<BillingRequestItem[]>(() =>
+  loaded.value?.kind === 'requests' ? loaded.value.value.items : []
+)
+const total = computed(() => currentList.value?.value.total ?? 0)
 watch(loaded, (result) => {
-  if (!result || result.kind !== tab.value) return
-  if (result.kind === 'records') {
-    records.value = result.value.items
-    total.value = result.value.total
-  } else if (result.kind === 'requests') {
-    requests.value = result.value.items
-    total.value = result.value.total
-  } else {
-    Object.assign(provider, {
-      provider: result.value.provider ?? '',
-      endpoint: result.value.endpoint ?? '',
-      api_key: '',
-      api_key_header: result.value.api_key_header ?? '',
-      clear_api_key: false
-    })
-    schemaText.value = JSON.stringify(result.value.response_schema, null, 2)
-    saved.value = snapshot()
-  }
+  if (result?.kind !== 'reconciliation' || tab.value !== 'reconciliation') return
+  Object.assign(provider, {
+    provider: result.value.provider ?? '',
+    endpoint: result.value.endpoint ?? '',
+    api_key: '',
+    api_key_header: result.value.api_key_header ?? '',
+    clear_api_key: false
+  })
+  schemaText.value = JSON.stringify(result.value.response_schema, null, 2)
+  saved.value = snapshot()
 })
+watch(
+  () => route.query,
+  (query) => {
+    const location = readLocation(query)
+    if (JSON.stringify(location) === JSON.stringify(currentLocation())) return
+    invalidateRecords()
+    monthly.invalidate()
+    loaded.value = undefined
+    monthly.data.value = undefined
+    tab.value = location.tab
+    range.value = location.range
+    model.value = location.model
+    eventType.value = location.eventType
+    runId.value = location.runId
+    appliedFilters.value = filterSnapshot()
+    page.value = location.page
+    pageSize.value = location.pageSize
+    month.value = appliedMonth.value = location.month
+    monthlyPage.value = location.monthlyPage
+    monthlyPageSize.value = location.monthlyPageSize
+    open.value = false
+    loadCurrentTab()
+  }
+)
 const {
   data: filterOptions,
   error: filterError,
   reload: reloadFilterOptions
 } = useResource(() => api.billing.filterOptions())
 onMounted(() => {
-  void reload()
+  loadCurrentTab()
   void reloadFilterOptions()
 })
 const { busy, error, run } = useTask()

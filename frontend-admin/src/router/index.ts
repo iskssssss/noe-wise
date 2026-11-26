@@ -230,7 +230,7 @@ const router = createRouter({
         {
           path: 'billing-records',
           component: () => import('../views/admin/BillingRecordsPage.vue'),
-          meta: { title: adminZhCN.route.billing }
+          meta: { title: adminZhCN.route.billing, preserveOnQueryChange: true }
         },
         {
           path: 'governance',

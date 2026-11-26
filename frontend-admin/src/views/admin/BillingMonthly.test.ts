@@ -13,7 +13,12 @@ const mocks = vi.hoisted(() => ({
   reconciliationProvider: { get: vi.fn(), save: vi.fn() }
 }))
 vi.mock('../../api', () => ({ api: { billing: mocks } }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() })
+}))
 const result: ModelBillingMonthly = {
   month: '2026-10',
   currency: 'CNY',

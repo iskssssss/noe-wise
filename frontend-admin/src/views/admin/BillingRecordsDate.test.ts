@@ -10,7 +10,12 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => ({
   confirm: vi.fn(),
   message: { success: vi.fn() }
 }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() })
+}))
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
   vi.resetAllMocks()
