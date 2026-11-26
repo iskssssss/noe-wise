@@ -40,7 +40,8 @@ vi.mock('@skillforge/shared/feedback', async (importOriginal) => {
   }
 })
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: calls.push }),
+  useRouter: () => ({ push: calls.push, replace: vi.fn() }),
+  useRoute: () => ({ query: {} }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
 }))

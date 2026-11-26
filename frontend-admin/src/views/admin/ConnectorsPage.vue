@@ -1,5 +1,5 @@
 <template>
-  <AdminPage title="MCP 连接器" description="通过标准 MCP 服务发现并部署工具。"
+  <AdminPage :title="adminZhCN.route.connectors" description="通过标准 MCP 服务发现并部署工具。"
     ><template #extra
       ><ElButton
         type="primary"
@@ -50,7 +50,7 @@
         aria-label="查找连接器"
       />
       <div class="admin-actions">
-        <span class="admin-muted" role="status">{{ filtered.length }} 个连接器</span
+        <span v-if="data" class="admin-muted" role="status">{{ filtered.length }} 个连接器</span
         ><ElButton :loading="loading" @click="reload">刷新连接器</ElButton>
       </div>
     </div>
@@ -61,7 +61,13 @@
       row-key="id"
       stripe
       :empty-text="
-        query ? '没有匹配的连接器，试试其他关键词' : '尚未接入 MCP 服务，新增连接器后发现工具'
+        !data
+          ? loading
+            ? '正在读取连接器…'
+            : '尚未取得连接器列表，请点击刷新连接器重新读取'
+          : query
+            ? '没有匹配的连接器，清空关键词后查看全部'
+            : '尚未接入 MCP 服务，新增连接器后发现工具'
       "
       ><ElTableColumn min-width="200" show-overflow-tooltip prop="name" label="名称"></ElTableColumn
       ><ElTableColumn
@@ -226,7 +232,7 @@ import { guardFormEnter } from '@skillforge/shared/admin'
 import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, onScopeDispose, ref, reactive, useId, watch } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
 import {
   AdminPage,
@@ -238,7 +244,9 @@ import {
 import { confirm, message } from '@skillforge/shared/feedback'
 import { api, type ConnectorInstanceItem, type ConnectorInstanceDetail } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { adminZhCN } from '../../i18n/zh-CN'
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 type PendingCreate = { requestId: string; name: string; onboard: boolean }
 type PendingUpdate = { requestId: string; instanceId: string; name: string }
@@ -380,7 +388,12 @@ useUnsavedChanges({
     !!pendingDelete.value ||
     !!storageError.value
 })
-const query = ref('')
+const query = computed({
+  get: () => (typeof route.query.q === 'string' ? route.query.q : ''),
+  set: (value: string) => {
+    void router.replace({ query: { ...route.query, q: value || undefined } })
+  }
+})
 const filtered = computed(() =>
   (data.value?.items ?? []).filter((item) =>
     (item.name + ' ' + item.base_url).toLowerCase().includes(query.value.trim().toLowerCase())

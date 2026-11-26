@@ -170,7 +170,7 @@ const router = createRouter({
         {
           path: 'connectors',
           component: () => import('../views/admin/ConnectorsPage.vue'),
-          meta: { title: adminZhCN.route.connectors }
+          meta: { title: adminZhCN.route.connectors, preserveOnQueryChange: true }
         },
         {
           path: 'tool-deployments',
