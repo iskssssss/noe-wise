@@ -1,11 +1,12 @@
 import { HttpClientError } from '../utils/http'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElFormItem, ElInput } from 'element-plus'
+import ElementPlus, { ElDatePicker, ElFormItem, ElInput } from 'element-plus'
 import UsagePanel from './UsagePanel.vue'
 import type { UsageApi, UsageEvent, UsagePage, UsageSummary } from './usage'
 
 const active: VueWrapper[] = []
+beforeEach(() => sessionStorage.clear())
 beforeAll(() => {
   if (!globalThis.ResizeObserver)
     globalThis.ResizeObserver = class {
@@ -265,6 +266,113 @@ describe('共享用量的群与后台来源', () => {
 })
 
 describe('用量查询任务与历史范围', () => {
+  it('重新进入恢复成功条件、记录视图和完整分页回退位置，不保存未查询输入', async () => {
+    const value = api(async () => page([background], true))
+    value.events.mockResolvedValue(page([background], true))
+    const props = {
+      api: value,
+      identity: 'member-1',
+      locationKey: 'institution',
+      fixedTenantId: 'tenant-1'
+    }
+    const first = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(first)
+    await flushPromises()
+    await groupInput(first).setValue('123')
+    first
+      .findComponent(ElDatePicker)
+      .vm.$emit('update:modelValue', ['2026-11-13 00:00:00', '2026-11-14 00:00:00'])
+    await first.get('form').trigger('submit')
+    await flushPromises()
+    await first
+      .findAll('.el-radio-button')
+      .find((item) => item.text() === '稳定事件')!
+      .get('input')
+      .setValue(true)
+    await flushPromises()
+    await button(first, '下一页').trigger('click')
+    await flushPromises()
+    await groupInput(first).setValue('456')
+    first.unmount()
+    const restored = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(restored)
+    await flushPromises()
+    expect(value.events.mock.lastCall?.[0]).toMatchObject({
+      tenant_id: 'tenant-1',
+      group_binding_id: '123',
+      from: '2026-11-13T00:00:00+08:00',
+      to: '2026-11-14T00:00:00+08:00',
+      cursor: 'opaque-next'
+    })
+    expect(restored.get('[role="status"]').text()).toContain('第 2 页')
+    expect((groupInput(restored).element as HTMLInputElement).value).toBe('123')
+    await button(restored, '上一页').trigger('click')
+    await flushPromises()
+    expect(value.events.mock.lastCall?.[0].cursor).toBe('')
+    expect(restored.get('[role="status"]').text()).toContain('第 1 页')
+  })
+
+  it('失败的查询不覆盖成功位置，身份和固定机构变化不继承旧游标', async () => {
+    const value = api(async () => page([background], true))
+    const props = {
+      api: value,
+      identity: 'member-1',
+      locationKey: 'institution',
+      fixedTenantId: 'tenant-1'
+    }
+    const first = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(first)
+    await flushPromises()
+    await button(first, '下一页').trigger('click')
+    await flushPromises()
+    await groupInput(first).setValue('123')
+    value.details.mockRejectedValueOnce(new Error('读取失败'))
+    await first.get('form').trigger('submit')
+    await flushPromises()
+    first.unmount()
+    const restored = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(restored)
+    await flushPromises()
+    expect(value.details.mock.lastCall?.[0]).toMatchObject({
+      group_binding_id: '',
+      cursor: 'opaque-next'
+    })
+    await restored.setProps({ identity: 'member-2' })
+    await flushPromises()
+    expect(value.details.mock.lastCall?.[0]).toMatchObject({ tenant_id: 'tenant-1', cursor: '' })
+    await restored.setProps({ identity: 'member-1', fixedTenantId: 'tenant-2' })
+    await flushPromises()
+    expect(value.details.mock.lastCall?.[0]).toMatchObject({ tenant_id: 'tenant-2', cursor: '' })
+  })
+
+  it('恢复游标被服务端拒绝时保留错误，不自动从首页替换，显式重读后再保存', async () => {
+    const value = api(async () => page([background], true))
+    const props = {
+      api: value,
+      identity: 'member-1',
+      locationKey: 'institution',
+      fixedTenantId: 'tenant-1'
+    }
+    const first = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(first)
+    await flushPromises()
+    await button(first, '下一页').trigger('click')
+    await flushPromises()
+    first.unmount()
+    value.details.mockRejectedValueOnce(
+      new HttpClientError({ status: 409, userMessage: '游标已失效' })
+    )
+    const restored = mount(UsagePanel, { props, global: { plugins: [ElementPlus] } })
+    active.push(restored)
+    await flushPromises()
+    expect(value.details.mock.lastCall?.[0].cursor).toBe('opaque-next')
+    expect(value.details).toHaveBeenCalledTimes(3)
+    expect(button(restored, '清空游标并重读当前范围首页').exists()).toBe(true)
+    await button(restored, '清空游标并重读当前范围首页').trigger('click')
+    await flushPromises()
+    expect(value.details.mock.lastCall?.[0].cursor).toBe('')
+    expect(JSON.parse(sessionStorage.getItem(sessionStorage.key(0)!)!).cursor).toBe('')
+  })
   it('工作台固定机构在查询、翻页、记录切换与重置后始终保留，不提供可编辑机构筛选', async () => {
     const value = api(async () => page([background], true))
     const wrapper = mount(UsagePanel, {

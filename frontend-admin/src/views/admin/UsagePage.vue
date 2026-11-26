@@ -26,6 +26,7 @@ const identity = computed(() =>
       v-if="!tenantId || tenantId === auth.user?.tenant_id"
       :api="api.usage"
       :identity="identity"
+      location-key="institution-usage"
       :fixed-tenant-id="auth.user?.tenant_id"
       scope-label="本机构用量"
     />

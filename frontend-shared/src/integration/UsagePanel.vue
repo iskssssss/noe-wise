@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import FeedbackNotice from '../feedback/FeedbackNotice.vue'
+import { message } from '../feedback'
 import { computed, reactive, ref, useId, watch } from 'vue'
 import { EntitySelect, guardFormEnter, useResource, type EntityOption } from '../admin'
 import { statusLabel } from '../admin/presentation'
@@ -13,6 +14,7 @@ const props = withDefaults(
   defineProps<{
     api: UsageApi
     identity?: string
+    locationKey?: string
     initialTenantId?: string
     fixedTenantId?: string
     showTenant?: boolean
@@ -172,6 +174,9 @@ function query() {
   applied.value = currentQuery()
   cursor.value = ''
   cursors.value = []
+  readRange()
+}
+function readRange() {
   summary.data.value = undefined
   summary.error.value = ''
   details.invalidate()
@@ -250,6 +255,94 @@ function reset() {
   advancedOpen.value = false
   query()
 }
+const locationStorageKey = computed(() =>
+  props.locationKey && props.identity
+    ? `skillforge.usage-query.${JSON.stringify([
+        props.locationKey,
+        props.identity,
+        props.fixedTenantId,
+        props.initialTenantId,
+        props.canSummary,
+        props.canDetails,
+        props.canEvents
+      ])}`
+    : ''
+)
+// 只保留已成功读取的位置；结果和金额始终重新从当前授权接口读取。
+watch(
+  () => [summary.data.value, summary.loading.value, details.data.value, details.loading.value],
+  () => {
+    if (
+      !locationStorageKey.value ||
+      summary.loading.value ||
+      details.loading.value ||
+      summary.error.value ||
+      details.error.value ||
+      (props.canSummary && !summary.data.value) ||
+      (canReadRecords.value && !details.data.value) ||
+      (!props.canSummary && !canReadRecords.value)
+    )
+      return
+    try {
+      sessionStorage.setItem(
+        locationStorageKey.value,
+        JSON.stringify({
+          query: new URLSearchParams(
+            Object.entries(applied.value).filter((entry): entry is [string, string] => !!entry[1])
+          ).toString(),
+          view: recordView.value,
+          cursor: cursor.value,
+          cursors: cursors.value
+        })
+      )
+    } catch {
+      message.warning('无法保存用量查询位置，离开或刷新后需要重新查询。')
+    }
+  }
+)
+function restoreLocation() {
+  for (const key of Object.keys(filters) as Array<keyof typeof filters>) filters[key] = ''
+  dateRange.value = []
+  cursor.value = ''
+  cursors.value = []
+  recordView.value = props.canDetails ? 'details' : 'events'
+  validation.value = ''
+  cursorConflict.value = false
+  if (locationStorageKey.value) {
+    try {
+      const raw = sessionStorage.getItem(locationStorageKey.value)
+      if (raw) {
+        const saved = JSON.parse(raw)
+        if (
+          !saved ||
+          typeof saved.query !== 'string' ||
+          !['details', 'events'].includes(saved.view) ||
+          typeof saved.cursor !== 'string' ||
+          !Array.isArray(saved.cursors) ||
+          !saved.cursors.every((value: unknown) => typeof value === 'string')
+        )
+          throw Error('invalid usage location')
+        const params = new URLSearchParams(saved.query)
+        for (const key of Object.keys(filters) as Array<keyof typeof filters>)
+          filters[key] = params.get(key) ?? ''
+        dateRange.value = ['from', 'to'].map((key) =>
+          (params.get(key) ?? '').replace('T', ' ').replace('+08:00', '')
+        )
+        recordView.value = saved.view
+        cursor.value = saved.cursor
+        cursors.value = saved.cursors
+      }
+    } catch {
+      message.warning('无法恢复上次用量查询位置，请重新设置条件查询。')
+    }
+  }
+  filters.tenant_id =
+    props.fixedTenantId ||
+    (props.showTenant ? filters.tenant_id || props.initialTenantId || '' : '')
+  advancedOpen.value = advancedCount.value > 0
+  applied.value = currentQuery()
+  readRange()
+}
 /** 下一页仅采用已返回的发布游标，不用业务时间构造水位。 */
 function next() {
   const value = details.data.value
@@ -269,6 +362,7 @@ function previous() {
 watch(
   () => [
     props.api,
+    props.locationKey,
     props.identity,
     props.initialTenantId,
     props.fixedTenantId,
@@ -277,7 +371,7 @@ watch(
     props.canDetails,
     props.canEvents
   ],
-  reset,
+  restoreLocation,
   {
     immediate: true
   }

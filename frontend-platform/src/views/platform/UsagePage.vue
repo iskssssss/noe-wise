@@ -30,6 +30,7 @@ onMounted(async () => {
     ><UsagePanel
       :api="api.usage"
       :identity="identity"
+      location-key="platform-usage"
       show-tenant
       :tenant-options="tenantOptions"
       :tenant-label="tenantLabel"
