@@ -245,7 +245,7 @@ const router = createRouter({
         {
           path: 'marketplace',
           component: () => import('../views/admin/MarketplacePage.vue'),
-          meta: { title: adminZhCN.route.marketplace }
+          meta: { title: adminZhCN.route.marketplace, preserveOnQueryChange: true }
         },
         { path: '', redirect: '/admin/home' }
       ]

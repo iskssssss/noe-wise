@@ -4,7 +4,10 @@ import { ElButton, ElInput, ElPagination } from 'element-plus'
 import MarketplacePage from './MarketplacePage.vue'
 const mocks = vi.hoisted(() => ({ search: vi.fn() }))
 vi.mock('../../api', () => ({ api: { marketplace: { search: mocks.search } } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => ({ query: {} })
+}))
 let wrapper: VueWrapper
 const result = (name: string) => ({
   items: [{ workflow_id: name, name, category: '办公' }],
@@ -54,7 +57,9 @@ describe('市场分页状态与已读内容一致', () => {
     mocks.search.mockResolvedValueOnce(result('原条件第三页'))
     pagination.vm.$emit('current-change', 3)
     await flushPromises()
-    expect(mocks.search).toHaveBeenLastCalledWith('', undefined, undefined, 3)
+    expect(mocks.search).toHaveBeenLastCalledWith('', undefined, undefined, 3, {
+      signal: expect.any(AbortSignal)
+    })
     expect(
       wrapper
         .findAllComponents(ElButton)

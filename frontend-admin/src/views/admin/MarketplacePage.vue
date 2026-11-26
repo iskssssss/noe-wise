@@ -42,41 +42,54 @@
     <p v-if="filtersChanged" class="admin-muted" role="status">
       筛选条件已修改，点击搜索后应用；翻页仍使用上次搜索条件。
     </p>
-    <div class="cards" v-loading="loading">
-      <ElCard
-        class="admin-card marketplace-item"
-        v-for="item in data?.items ?? []"
-        :key="item.workflow_id"
-        ><h3>{{ item.name }}</h3>
-        <p class="admin-muted">{{ item.author }} · {{ item.version }}</p>
-        <p>{{ item.description }}</p>
-        <div class="admin-toolbar">
-          <ElTag>{{ item.category }}</ElTag
-          ><span>{{ item.install_count }} 次安装</span>
-        </div>
-        <ElButton @click="router.push('/admin/workflows/' + encodeURIComponent(item.workflow_id))"
-          >查看与安装</ElButton
-        ></ElCard
-      >
-    </div>
-    <ElEmpty
-      v-if="!loading && !error && !data?.items.length"
-      :description="
-        applied.query || applied.category
-          ? '没有匹配的工作流，试试减少筛选条件'
-          : '暂无可安装的工作流'
-      "
-      ><ElButton v-if="query || category || applied.query || applied.category" @click="reset"
-        >清空筛选</ElButton
-      ></ElEmpty
-    ><ElPagination
-      :disabled="loading"
-      :current-page="page"
-      :total="data?.total ?? 0"
-      :page-size="20"
-      layout="total,prev,pager,next"
-      @current-change="changePage"
-  /></AdminPage>
+    <template v-if="!data">
+      <p role="status">
+        {{ loading ? '正在读取工作流市场…' : '尚未取得市场内容，请重新读取后查看。' }}
+      </p>
+      <ElSkeleton v-if="loading" :rows="5" animated />
+      <ElButton v-else @click="reload">重新读取市场</ElButton>
+    </template>
+    <template v-else>
+      <p v-if="error" class="admin-muted" role="status">
+        当前查询未能刷新，以下保留上次成功读取的结果。
+      </p>
+      <div class="cards" v-loading="loading">
+        <ElCard
+          class="admin-card marketplace-item"
+          v-for="item in data?.items ?? []"
+          :key="item.workflow_id"
+          ><h3>{{ item.name }}</h3>
+          <p class="admin-muted">{{ item.author }} · {{ item.version }}</p>
+          <p>{{ item.description }}</p>
+          <div class="admin-toolbar">
+            <ElTag>{{ item.category }}</ElTag
+            ><span>{{ item.install_count }} 次安装</span>
+          </div>
+          <ElButton @click="router.push('/admin/workflows/' + encodeURIComponent(item.workflow_id))"
+            >查看与安装</ElButton
+          ></ElCard
+        >
+      </div>
+      <ElEmpty
+        v-if="!loading && !data.items.length"
+        :description="
+          applied.query || applied.category
+            ? '没有匹配的工作流，试试减少筛选条件'
+            : '市场尚无已发布的平台工作流，可先管理本机构工作流'
+        "
+        ><ElButton v-if="query || category || applied.query || applied.category" @click="reset"
+          >清空筛选</ElButton
+        ><ElButton v-else @click="router.push('/admin/workflows')"
+          >管理本机构工作流</ElButton
+        ></ElEmpty
+      ><ElPagination
+        :disabled="loading"
+        :current-page="data.location.page"
+        :total="data.total"
+        :page-size="20"
+        layout="total,prev,pager,next"
+        @current-change="changePage" /></template
+  ></AdminPage>
 </template>
 <script setup lang="ts">
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
@@ -86,23 +99,36 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
 import { acceptUnhighlightedCreate } from '@skillforge/shared/admin/creatableOption'
-import { computed, onMounted, ref, useId } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { AdminPage, useResource } from '@skillforge/shared/admin'
 import { api } from '../../api'
 const router = useRouter(),
-  query = ref(''),
-  category = ref(''),
-  page = ref(1),
-  applied = ref({ query: '', category: '' }),
-  { data, loading, error, reload } = useResource(() =>
-    api.marketplace.search(
-      applied.value.query,
-      undefined,
-      applied.value.category || undefined,
-      page.value
-    )
+  route = useRoute()
+function readLocation(value: LocationQuery) {
+  const page = Number(value.page)
+  return {
+    query: typeof value.q === 'string' ? value.q : '',
+    category: typeof value.category === 'string' ? value.category : '',
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1
+  }
+}
+const requested = ref(readLocation(route.query)),
+  query = ref(requested.value.query),
+  category = ref(requested.value.category)
+const { data, loading, error, reload, invalidate } = useResource(async (signal) => {
+  const location = { ...requested.value }
+  const result = await api.marketplace.search(
+    location.query,
+    undefined,
+    location.category || undefined,
+    location.page,
+    { signal }
   )
+  return { ...result, location }
+})
+// 页码和已应用条件属于成功结果；失败或迟到响应不能替换它们。
+const applied = computed(() => data.value?.location ?? requested.value)
 const filtersChanged = computed(
   () => query.value !== applied.value.query || category.value !== applied.value.category
 )
@@ -119,22 +145,40 @@ function reset() {
   category.value = ''
   search()
 }
-async function search() {
+function search() {
   if (loading.value) return
-  const previous = { page: page.value, filters: applied.value }
-  applied.value = { query: query.value, category: category.value }
-  page.value = 1
-  if ((await reload()) === undefined) {
-    applied.value = previous.filters
-    page.value = previous.page
+  requested.value = { query: query.value, category: category.value, page: 1 }
+  void reload()
+}
+function changePage(nextPage: number) {
+  if (loading.value || nextPage === applied.value.page) return
+  requested.value = { ...applied.value, page: nextPage }
+  void reload()
+}
+watch(data, (result) => {
+  if (!result) return
+  void router.replace({
+    query: {
+      ...route.query,
+      q: result.location.query || undefined,
+      category: result.location.category || undefined,
+      page: result.location.page === 1 ? undefined : String(result.location.page)
+    }
+  })
+})
+watch(
+  () => route.query,
+  (value) => {
+    const location = readLocation(value)
+    if (JSON.stringify(location) === JSON.stringify(applied.value)) return
+    invalidate()
+    data.value = undefined
+    requested.value = location
+    query.value = location.query
+    category.value = location.category
+    void reload()
   }
-}
-async function changePage(nextPage: number) {
-  if (loading.value || nextPage === page.value) return
-  const previous = page.value
-  page.value = nextPage
-  if ((await reload()) === undefined) page.value = previous
-}
+)
 onMounted(reload)
 
 const formTipId = useId()
