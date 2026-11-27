@@ -2,6 +2,7 @@
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { HttpClientError } from '../../utils/http'
 import { computed, reactive, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import {
   ElAlert,
   ElButton,
@@ -55,6 +56,9 @@ const props = defineProps<{
   identityKey?: string
 }>()
 const allowed = (action: string) => props.permissions.includes(`foundation.messaging.${action}`)
+const route = useRoute()
+const router = useRouter()
+const pagePath = route.path
 const formTipId = useId()
 const tabs = computed(() =>
   [
@@ -69,6 +73,15 @@ const tab = ref('inbox'),
   cursor = ref(''),
   previous = ref<string[]>([]),
   unreadOnly = ref(false)
+/** 地址只保存受权页签、筛选与服务端分页游标，不保存正文或凭据草稿。 */
+async function changeLocation(changes: LocationQueryRaw) {
+  const query = { ...route.query, ...changes }
+  if (router.resolve({ query }).fullPath === route.fullPath) return true
+  return !(await router.replace({ query }))
+}
+function changeTab(value: string | number) {
+  return changeLocation({ tab: String(value), cursor: undefined, previous_cursor: undefined })
+}
 function shortId(value: string) {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
 }
@@ -182,6 +195,7 @@ useUnsavedChanges({
   busy: () => task.busy.value,
   discard: () => {
     mailboxForm.password = ''
+    mailboxBaseline.value = ''
   }
 })
 const recipientPath = computed(
@@ -229,31 +243,55 @@ function reload() {
   void active.value?.reload()
   if (allowed('inbox')) void unread.reload()
 }
-/** 页签变更重新从服务端第一页读取，不复用另一作用域结果。 */
-watch(tab, () => {
-  cursor.value = ''
-  previous.value = []
-  reload()
-})
 /** 后端真实游标分页，页码不由本地估计。 */
 function next() {
   if (!paged.value?.next_cursor || active.value.loading.value) return
-  previous.value.push(cursor.value)
-  cursor.value = paged.value.next_cursor
-  reload()
+  return changeLocation({
+    cursor: paged.value.next_cursor,
+    previous_cursor: [...previous.value, cursor.value]
+  })
 }
 /** 回到已经访问的上一页。 */
 function back() {
   if (!previous.value.length || active.value.loading.value) return
-  cursor.value = previous.value.pop() ?? ''
-  reload()
+  return changeLocation({
+    cursor: previous.value.at(-1) || undefined,
+    previous_cursor: previous.value.slice(0, -1)
+  })
 }
 /** 未读条件变更只读取，不重放写入。 */
-function filterUnread() {
-  cursor.value = ''
-  previous.value = []
+function filterUnread(value: string | number | boolean) {
+  return changeLocation({
+    unread: value === true ? '1' : undefined,
+    cursor: undefined,
+    previous_cursor: undefined
+  })
+}
+/** 刷新与跨页返回从当前地址重读；不可见页签不借地址获得权限。 */
+function restoreLocation() {
+  const requested = route.query.tab
+  tab.value = tabs.value.find((item) => item.name === requested)?.name ?? tabs.value[0]?.name ?? ''
+  const paginated =
+    ['inbox', 'announcements', 'deliveries'].includes(tab.value) &&
+    (requested === undefined || requested === tab.value)
+  cursor.value = paginated && typeof route.query.cursor === 'string' ? route.query.cursor : ''
+  const history = route.query.previous_cursor
+  previous.value = paginated
+    ? (Array.isArray(history) ? history : [history]).filter(
+        (item): item is string => typeof item === 'string'
+      )
+    : []
+  unreadOnly.value = route.query.unread === '1'
+  readerVisible.value = false
+  reading.value = undefined
   reload()
 }
+watch(
+  () => route.fullPath,
+  () => {
+    if (route.path === pagePath) restoreLocation()
+  }
+)
 /** 创建公告时生成稳定幂等键；失败保持该键与输入供安全手动重试。 */
 function newAnnouncement() {
   if (!allowed('publish')) return
@@ -417,7 +455,7 @@ watch(
 )
 /** 身份/权限变化立即取消迟到请求并清空所有正文和密码草稿。 */
 watch(
-  () => [props.basePath, props.identityKey, props.permissions.join('|')],
+  [() => props.basePath, () => props.identityKey, () => props.permissions.join('|')],
   () => {
     identityGeneration++
     task.error.value = ''
@@ -446,8 +484,7 @@ watch(
     })
     Object.assign(announcement, { title: '', body: '', recipient_ids: [] })
     Object.assign(template, { key: '', subject: '', body: '' })
-    if (!tabs.value.some((item) => item.name === tab.value)) tab.value = tabs.value[0]?.name ?? ''
-    reload()
+    restoreLocation()
   },
   { immediate: true }
 )
@@ -479,14 +516,14 @@ watch(
         :title="'未读数量读取失败：' + unread.error.value"
         :closable="false"
       />
-      <ElTabs v-model="tab"
+      <ElTabs :model-value="tab" :before-leave="changeTab"
         ><ElTabPane v-for="item in tabs" :key="item.name" :name="item.name" :label="item.label"
       /></ElTabs>
       <template v-if="tab === 'inbox'">
         <div class="admin-actions">
           <span>未读：{{ unread.data.value ?? '—' }}</span
           ><ElCheckbox
-            v-model="unreadOnly"
+            :model-value="unreadOnly"
             v-described-by="formTipId + '-unread'"
             @change="filterUnread"
             >只看未读</ElCheckbox

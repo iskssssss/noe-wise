@@ -40,7 +40,7 @@ const router = createRouter({
         {
           path: 'foundation/messaging',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '公告与通知', foundationArea: 'messaging' }
+          meta: { title: '公告与通知', foundationArea: 'messaging', preserveOnQueryChange: true }
         },
         {
           path: 'foundation/assets',

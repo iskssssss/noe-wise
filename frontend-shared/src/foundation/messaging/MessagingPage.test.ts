@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElDrawer } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { confirm, message } from '../../feedback'
 import MessagingPage from './MessagingPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
@@ -21,12 +21,17 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-async function mountPage(permissions: string[], request: MessagingRequest, inlineDrawer = false) {
+async function mountPage(
+  permissions: string[],
+  request: MessagingRequest,
+  inlineDrawer = false,
+  initialLocation = '/messaging'
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/messaging', component: MessagingPage }]
   })
-  await router.push('/messaging')
+  await router.push(initialLocation)
   await router.isReady()
   const wrapper = mount(MessagingPage, {
     attachTo: document.body,
@@ -98,6 +103,144 @@ describe('消息页真实状态与账号边界', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
+  })
+  it('从地址恢复公告分页，上一页沿原游标读取，切页签清空分页且只读取一次', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/unread') ? 0 : { items: [], has_more: true, next_cursor: 'page-3' }
+    )
+    const wrapper = await mountPage(
+      ['foundation.messaging.inbox', 'foundation.messaging.read'],
+      request as MessagingRequest,
+      false,
+      '/messaging?tab=announcements&cursor=page-2&previous_cursor='
+    )
+    expect(request.mock.calls.filter((call) => call[1].includes('/announcements'))).toEqual([
+      [
+        'GET',
+        '/tenant/foundation/messaging/announcements?limit=20&cursor=page-2',
+        undefined,
+        expect.anything()
+      ]
+    ])
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '上一页')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.query.cursor).toBeUndefined()
+    expect(request.mock.calls.at(-2)?.[1]).toBe(
+      '/tenant/foundation/messaging/announcements?limit=20'
+    )
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '下一页')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.query).toMatchObject({
+      tab: 'announcements',
+      cursor: 'page-3',
+      previous_cursor: ['']
+    })
+    request.mockClear()
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((item) => item.text() === '我的消息')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.query).toEqual({ tab: 'inbox' })
+    expect(request.mock.calls.filter((call) => call[1].includes('/inbox'))).toHaveLength(1)
+    expect(request.mock.calls.every((call) => call[0] === 'GET')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('未读筛选在重新挂载后恢复，权限不允许的地址回到可用页签且不查询原游标', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/unread') ? 0 : { items: [], has_more: false, next_cursor: null }
+    )
+    const wrapper = await mountPage(['foundation.messaging.inbox'], request as MessagingRequest)
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await flushPromises()
+    const savedLocation = wrapper.vm.$router.currentRoute.value.fullPath
+    expect(savedLocation).toContain('unread=1')
+    wrapper.unmount()
+    const restored = await mountPage(
+      ['foundation.messaging.inbox'],
+      request as MessagingRequest,
+      false,
+      savedLocation
+    )
+    expect((restored.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+    expect(request.mock.calls.at(-2)?.[1]).toContain('inbox?limit=20&unread=true')
+    await restored.setProps({ permissions: ['foundation.messaging.inbox'] })
+    await flushPromises()
+    request.mockClear()
+    await restored.vm.$router.replace(
+      '/messaging?tab=mailbox&cursor=private-page&previous_cursor=old'
+    )
+    await flushPromises()
+    expect(request.mock.calls.filter((call) => call[1].includes('/inbox'))[0]?.[1]).toBe(
+      '/tenant/foundation/messaging/inbox?limit=20&unread=false'
+    )
+    expect(request.mock.calls.some((call) => call[1].includes('/mailbox'))).toBe(false)
+    restored.unmount()
+  })
+
+  it('邮箱草稿取消切页签时地址和表单不变，确认离开后清除密码且不写入配置', async () => {
+    const request = vi.fn(async (_method: string, path: string) =>
+      path.endsWith('/mailbox') ? { ...mailbox } : []
+    )
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: '/messaging',
+          component: MessagingPage,
+          props: {
+            permissions: ['foundation.messaging.configure'],
+            request,
+            basePath: '/tenant/foundation/messaging',
+            identityKey: 'draft-test'
+          }
+        }
+      ]
+    })
+    await router.push('/messaging?tab=mailbox')
+    await router.isReady()
+    const wrapper = mount(RouterView, {
+      attachTo: document.body,
+      global: { plugins: [router, ElementPlus] }
+    })
+    await flushPromises()
+    await wrapper.get('input[type="password"]').setValue('unsubmitted-secret')
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((item) => item.text() === '通知模板')!
+      .trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('mailbox')
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('SMTP 邮箱')
+    expect((wrapper.get('input[type="password"]').element as HTMLInputElement).value).toBe(
+      'unsubmitted-secret'
+    )
+    expect(router.currentRoute.value.fullPath).not.toContain('unsubmitted-secret')
+    vi.mocked(confirm).mockResolvedValueOnce(true)
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((item) => item.text() === '通知模板')!
+      .trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('templates')
+    await wrapper
+      .findAll('[role="tab"]')
+      .find((item) => item.text() === 'SMTP 邮箱')!
+      .trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('mailbox')
+    expect((wrapper.get('input[type="password"]').element as HTMLInputElement).value).toBe('')
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls.every((call) => call[0] === 'GET')).toBe(true)
+    wrapper.unmount()
   })
   it('未读数量读取失败有独立可见提示，不把消息列表成功误当成未读数成功', async () => {
     const request = vi.fn(async (_method: string, path: string) => {
