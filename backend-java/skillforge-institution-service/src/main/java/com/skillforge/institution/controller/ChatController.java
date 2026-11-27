@@ -205,7 +205,11 @@ public class ChatController {
             try {
                 var polling = new ChatSubscriptionPolling(tenantId, sessionId, subject,
                         sessionService, sessionMailboxService, System::nanoTime);
-                polling.authorized(() -> historyRetention.ifPresent(value -> sink.send("history.retired", value)));
+                polling.authorized(() -> {
+                    // 空会话也立即提交订阅响应，不等待首条业务输出或定时心跳。
+                    sink.heartbeat();
+                    historyRetention.ifPresent(value -> sink.send("history.retired", value));
+                });
                 while (!sink.isClosed()) {
                     // 捕获通知版本后才读持久页，提交发生在读页与阻塞之间也不会丢失唤醒。
                     long observedVersion = changes.version();

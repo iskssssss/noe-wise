@@ -187,6 +187,59 @@ class ChatControllerTest {
     }
 
     @Test
+    void idleSubscriptionCommitsTransportBeforeWaitingForBusinessOutputs() throws Exception {
+        var chat = mock(ChatService.class);
+        var mailbox = mock(SessionMailboxService.class);
+        var sessions = mock(SessionService.class);
+        var session = SessionView.builder().sessionId("session-1").tenantId(7L).build();
+        when(sessions.require("7", "session-1")).thenReturn(session);
+        var reading = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var worker = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        when(mailbox.listOutputsAfterSequence("7", "session-1", 0, 100)).thenAnswer(call -> {
+            worker.set(Thread.currentThread());
+            reading.countDown();
+            release.await();
+            throw new IllegalStateException("test subscription finished");
+        });
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .standaloneSetup(controller(chat, mailbox, sessions)).build();
+        TenantContext.setTenantId("7");
+        try {
+            var result = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .get("/api/v1/chat/events").param("session_id", "session-1")
+                    .accept(org.springframework.http.MediaType.TEXT_EVENT_STREAM)).andReturn();
+            org.junit.jupiter.api.Assertions.assertTrue(reading.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(200, result.getResponse().getStatus());
+            org.junit.jupiter.api.Assertions.assertTrue(result.getResponse().isCommitted());
+            assertEquals(":heartbeat\n\n", result.getResponse().getContentAsString());
+            org.mockito.Mockito.verifyNoInteractions(chat);
+        } finally {
+            release.countDown();
+            if (worker.get() != null)
+                org.junit.jupiter.api.Assertions.assertTrue(worker.get().join(java.time.Duration.ofSeconds(5)));
+        }
+    }
+
+    @Test
+    void subscriptionRejectsInvalidCursorBeforeOpeningTransport() {
+        var chat = mock(ChatService.class);
+        var mailbox = mock(SessionMailboxService.class);
+        var sessions = mock(SessionService.class);
+        when(sessions.require("7", "session-1"))
+                .thenReturn(SessionView.builder().sessionId("session-1").tenantId(7L).build());
+        var rejected = new com.skillforge.core.shared.exception.ApiException(HttpStatus.CONFLICT, "cursor expired");
+        when(mailbox.resolveOutputSequence("7", "session-1", "expired")).thenThrow(rejected);
+        var controller = controller(chat, mailbox, sessions);
+        TenantContext.setTenantId("7");
+        org.junit.jupiter.api.Assertions.assertSame(rejected, org.junit.jupiter.api.Assertions.assertThrows(
+                com.skillforge.core.shared.exception.ApiException.class,
+                () -> controller.subscribe("session-1", "expired", null)));
+        verify(mailbox, never()).observeOutputs(any(), any());
+        org.mockito.Mockito.verifyNoInteractions(chat);
+    }
+
+    @Test
     void subscribeDisablesBufferingAndKeepsCursorValidationBeforeStreamingResponse() {
         var mailbox = mock(SessionMailboxService.class);
         var sessions = mock(SessionService.class);
