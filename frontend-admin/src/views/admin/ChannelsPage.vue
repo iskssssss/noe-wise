@@ -8,8 +8,8 @@
         >新增渠道</ElButton
       ></template
     ><FeedbackNotice
-      v-if="error || loadError || (bindingOpen && agentLoadError)"
-      :title="error || loadError || agentLoadError"
+      v-if="error || loadError || optionsError || (bindingOpen && agentLoadError)"
+      :title="error || loadError || optionsError || agentLoadError"
       :closable="false"
       type="error"
     />
@@ -31,8 +31,21 @@
         placeholder="搜索渠道名称"
         aria-label="搜索渠道名称"
         clearable
-      /><ElSelect v-model="type" clearable placeholder="全部类型" aria-label="渠道类型筛选">
+      /><ElSelect
+        v-model="type"
+        clearable
+        placeholder="全部类型"
+        aria-label="渠道类型筛选"
+        :loading="optionsLoading"
+        :disabled="!optionsReady"
+      >
         <ElOption label="全部类型" value="" />
+        <ElOption
+          v-if="type && !channelTypes.some((item) => item.value === type)"
+          :value="type"
+          :label="channelOptions ? '类型不可用，请重新选择' : '类型名称暂不可用'"
+          disabled
+        />
         <ElOption
           v-for="item in channelTypes"
           :key="item.value"
@@ -46,6 +59,14 @@
       <FieldTip :id="formTipId + '-group-0'"
         >按渠道名称和类型组合筛选；清空后可查询全部渠道。</FieldTip
       >
+      <div v-if="!optionsReady" role="status">
+        <span>{{
+          optionsLoading ? '正在读取渠道类型与状态…' : '渠道选项暂不可用，重新读取后可筛选和保存。'
+        }}</span>
+        <ElButton v-if="optionsError" :loading="optionsLoading" @click="loadOptions"
+          >重新读取渠道选项</ElButton
+        >
+      </div>
     </div>
     <ElTable
       table-layout="auto"
@@ -66,7 +87,7 @@
       ><ElTableColumn min-width="100" show-overflow-tooltip label="类型"
         ><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></ElTableColumn
       ><ElTableColumn width="96" show-overflow-tooltip label="状态"
-        ><template #default="{ row }">{{ statusLabel(row.status) }}</template></ElTableColumn
+        ><template #default="{ row }">{{ channelStatusLabel(row.status) }}</template></ElTableColumn
       ><ElTableColumn width="264" class-name="admin-table-actions" prop="actions" label="操作"
         ><template #default="{ row }"
           ><ElButton link @click="edit(row as ChannelItem)" :disabled="busy">编辑</ElButton
@@ -96,6 +117,18 @@
       :show-close="!busy"
       class="admin-drawer"
       ><FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
+      <div v-if="!optionsReady" role="status">
+        <p>
+          {{
+            optionsLoading
+              ? '正在读取渠道类型与状态…'
+              : '渠道选项暂不可用，已保留当前输入，重新读取后可保存。'
+          }}
+        </p>
+        <ElButton v-if="optionsError" :loading="optionsLoading" @click="loadOptions"
+          >重新读取渠道选项</ElButton
+        >
+      </div>
       <div v-if="pendingCreate" role="status">
         <p>渠道创建结果待核对，请求 ID：{{ pendingCreate }}。</p>
         <ElButton v-if="canRead" :loading="busy" @click="checkCreate()">核对创建结果</ElButton>
@@ -126,11 +159,20 @@
             v-described-by="formTipId + '-field-1'"
             :aria-describedby="formTipId + '-field-1'"
             v-model="form.channel_type"
-            :disabled="!!editing"
-            ><ElOption label="网页组件" value="web_widget" /><ElOption
-              label="开放 API"
-              value="openapi"
-          /></ElSelect>
+            :disabled="!!editing || !optionsReady"
+            ><ElOption
+              v-for="item in channelTypes"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+            <ElOption
+              v-if="!channelTypes.some((item) => item.value === form.channel_type)"
+              :value="form.channel_type"
+              label="类型名称暂不可用"
+              disabled
+            />
+          </ElSelect>
           <FieldTip :id="formTipId + '-field-1'"
             >选择渠道接入方式；已创建渠道的类型不可在此修改。</FieldTip
           > </ElFormItem
@@ -139,8 +181,20 @@
             v-described-by="formTipId + '-field-2'"
             :aria-describedby="formTipId + '-field-2'"
             v-model="form.status"
-            ><ElOption label="启用" value="active" /><ElOption label="停用" value="disabled"
-          /></ElSelect>
+            :disabled="!optionsReady"
+            ><ElOption
+              v-for="item in channelStatuses"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+            <ElOption
+              v-if="!channelStatuses.some((item) => item.value === form.status)"
+              :value="form.status"
+              label="状态名称暂不可用"
+              disabled
+            />
+          </ElSelect>
           <FieldTip :id="formTipId + '-field-2'"
             >选择启用或停用，控制该渠道是否可供接入。</FieldTip
           > </ElFormItem
@@ -203,7 +257,7 @@
           v-permission="[editing ? 'foundation.channels.update' : 'foundation.channels.create']"
           type="primary"
           :loading="busy"
-          :disabled="!editing && (!!pendingCreate || !!storageError)"
+          :disabled="!optionsReady || (!editing && (!!pendingCreate || !!storageError))"
           @click="save"
           >保存</ElButton
         ></template
@@ -407,7 +461,6 @@ import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
-import { statusLabel } from '@skillforge/shared/admin'
 import { computed, onMounted, onScopeDispose, reactive, ref, watch, useId } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
@@ -460,8 +513,20 @@ watch(
   { immediate: true, flush: 'sync' }
 )
 const { data, loading, error: loadError, reload } = useResource(() => api.channels.list())
+const {
+  data: channelOptions,
+  loading: optionsLoading,
+  error: optionsError,
+  reload: loadOptions
+} = useResource(() => api.channels.options())
+const channelTypes = computed(() => channelOptions.value?.types ?? [])
+const channelStatuses = computed(() => channelOptions.value?.statuses ?? [])
+const optionsReady = computed(
+  () => !!channelOptions.value && !optionsLoading.value && !optionsError.value
+)
 onMounted(() => {
   void reload()
+  void loadOptions()
   if (pendingCreate.value && canRead.value) void checkCreate(true)
 })
 const { busy, error, run } = useTask(),
@@ -493,10 +558,6 @@ useUnsavedChanges({
       ? '凭据操作结果尚未确认。关闭标签页可能丢失原请求记录，请先核对。'
       : undefined
 })
-const channelTypes = [
-  { value: 'web_widget', label: '网页组件' },
-  { value: 'openapi', label: '开放 API' }
-]
 const query = computed({
   get: () => (typeof route.query.q === 'string' ? route.query.q : ''),
   set: (value: string) => {
@@ -504,17 +565,15 @@ const query = computed({
   }
 })
 const type = computed({
-  get: () =>
-    typeof route.query.type === 'string' &&
-    channelTypes.some((item) => item.value === route.query.type)
-      ? route.query.type
-      : '',
+  get: () => (typeof route.query.type === 'string' ? route.query.type : ''),
   set: (value: string) => {
     void router.replace({ query: { ...route.query, type: value || undefined } })
   }
 })
 const channelTypeLabel = (value: string) =>
-  channelTypes.find((item) => item.value === value)?.label ?? value
+  channelTypes.value.find((item) => item.value === value)?.label ?? '类型名称暂不可用'
+const channelStatusLabel = (value: string) =>
+  channelStatuses.value.find((item) => item.value === value)?.label ?? '状态名称暂不可用'
 const filtered = computed(() =>
   (data.value?.items ?? []).filter(
     (row) =>
@@ -541,6 +600,7 @@ async function edit(row?: ChannelItem) {
   open.value = true
 }
 async function save() {
+  if (!optionsReady.value) return
   await run(async () => {
     if (!(await formRef.value?.validate().catch(() => false))) return
     const body = {

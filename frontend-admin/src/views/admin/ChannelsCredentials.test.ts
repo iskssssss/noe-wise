@@ -1,3 +1,4 @@
+import { channelOptionsFixture } from './channelOptions.fixture'
 import { ref } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -7,6 +8,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import ChannelsPage from './ChannelsPage.vue'
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  options: vi.fn(),
   create: vi.fn(),
   onboard: vi.fn(),
   onboardingResult: vi.fn(),
@@ -81,8 +83,41 @@ async function create() {
   await flushPromises()
   await click('保存', drawer('新增渠道'))
 }
+
+it('选项目录读取中或失败时保留编辑输入并阻止保存，恢复后使用所选状态', async () => {
+  permissions.value.push('foundation.channels.update')
+  let rejectOptions!: (reason: Error) => void
+  mocks.options.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      rejectOptions = reject
+    })
+  )
+  await render()
+  await click('编辑')
+  const editor = drawer('编辑渠道')
+  editor.findComponent(ElInput).vm.$emit('update:modelValue', '保留的渠道名称')
+  await flushPromises()
+  const save = editor.findAllComponents(ElButton).find((button) => button.text() === '保存')!
+  expect(save.props('disabled')).toBe(true)
+  rejectOptions(new Error('选项目录暂不可用'))
+  await flushPromises()
+  expect(document.querySelector('.el-drawer')?.textContent).toContain('已保留当前输入')
+  expect(save.props('disabled')).toBe(true)
+  expect(mocks.update).not.toHaveBeenCalled()
+  await click('重新读取渠道选项', editor)
+  expect(editor.findComponent(ElInput).props('modelValue')).toBe('保留的渠道名称')
+  expect(save.props('disabled')).toBe(false)
+  editor.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', 'disabled')
+  await flushPromises()
+  await click('保存', editor)
+  expect(mocks.update).toHaveBeenCalledWith(
+    channel.id,
+    expect.objectContaining({ name: '保留的渠道名称', status: 'disabled' })
+  )
+})
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.options.mockResolvedValue(channelOptionsFixture)
   sessionStorage.clear()
   permissions.value = ['foundation.channels.read', 'foundation.channels.create']
   subject.value = '8'

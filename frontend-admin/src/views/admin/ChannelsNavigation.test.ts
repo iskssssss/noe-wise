@@ -1,3 +1,4 @@
+import { channelOptionsFixture } from './channelOptions.fixture'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
@@ -7,9 +8,9 @@ import ChannelsPage from './ChannelsPage.vue'
 import Layout from './Layout.vue'
 import applicationRouter from '../../router'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn() }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn() }))
 vi.mock('../../api', () => ({
-  api: { channels: { list: mocks.list } },
+  api: { channels: { list: mocks.list, options: mocks.options } },
   foundationRequest: vi.fn()
 }))
 vi.mock('../../stores/auth', () => ({
@@ -45,6 +46,7 @@ vi.mock('@skillforge/shared/foundation/appearance', async (load) => {
 const wrappers: VueWrapper[] = []
 beforeEach(() => {
   sessionStorage.clear()
+  mocks.options.mockReset().mockResolvedValue(channelOptionsFixture)
   mocks.list.mockReset().mockResolvedValue({
     items: [
       { id: '1', name: '测试渠道', type: 'openapi', status: 'active' },
@@ -166,4 +168,27 @@ it('首次读取和失败不显示空结果，重试成功后刷新失败保留�
     '测试'
   )
   expect(wrapper.findComponent(ElSelect).props('modelValue')).toBe('openapi')
+})
+
+it('目录失败仍保留名称和类型筛选结果，重读后采用服务端标签', async () => {
+  mocks.options.mockRejectedValueOnce(new Error('渠道选项读取失败'))
+  const { wrapper, router } = await render('/admin/channels?q=测试&type=openapi')
+  expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+  expect(wrapper.text()).toContain('测试渠道')
+  expect(wrapper.text()).toContain('类型名称暂不可用')
+  expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(true)
+  mocks.options.mockResolvedValue({
+    types: [{ value: 'openapi', label: '服务端接入名称' }],
+    statuses: [{ value: 'active', label: '服务端状态名称' }]
+  })
+  await wrapper
+    .findAll('button')
+    .find((button) => button.text() === '重新读取渠道选项')!
+    .trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('服务端接入名称')
+  expect(wrapper.text()).toContain('服务端状态名称')
+  expect(wrapper.text()).not.toContain('类型名称暂不可用')
+  expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(false)
+  expect(router.currentRoute.value.query).toEqual({ q: '测试', type: 'openapi' })
 })

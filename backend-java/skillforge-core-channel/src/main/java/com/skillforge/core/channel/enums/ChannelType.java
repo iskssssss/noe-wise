@@ -40,10 +40,10 @@ public enum ChannelType {
     }
 
     /**
-     * 按字符串值解析类型，未知值返回 null。
+     * 按字符串值解析类型，保留未提供时的默认语义，拒绝未知值。
      *
      * @param code 类型字符串值
-     * @return 类型枚举；未匹配时返回 null
+     * @return 类型枚举；未提供时返回 null
      */
     @JsonCreator
     public static ChannelType fromCode(String code) {
@@ -55,6 +55,6 @@ public enum ChannelType {
                 return type;
             }
         }
-        return null;
+        throw new IllegalArgumentException("渠道类型无效");
     }
 }

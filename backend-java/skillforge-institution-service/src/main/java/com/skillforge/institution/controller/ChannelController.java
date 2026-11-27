@@ -2,6 +2,8 @@ package com.skillforge.institution.controller;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.skillforge.core.channel.ChannelService;
+import com.skillforge.core.channel.enums.ChannelType;
+import com.skillforge.core.channel.enums.ChannelStatus;
 import com.skillforge.core.channel.dto.request.ChannelAgentBindingRequest;
 import com.skillforge.core.channel.dto.request.CreateChannelRequest;
 import com.skillforge.core.channel.dto.request.PatchChannelRequest;
@@ -24,6 +26,24 @@ public class ChannelController {
     private final ChannelService channels;
 
     public ChannelController(ChannelService channels) { this.channels = channels; }
+
+    /** 渠道筛选、表单和列表共用领域枚举的展示目录。 */
+    @RequirePermission("foundation.channels.read")
+    @GetMapping("/options")
+    public ApiResponse<ChannelOptions> options() {
+        return ApiResponses.wrap(new ChannelOptions(
+                java.util.Arrays.stream(ChannelType.values()).map(type -> new ChannelOption(type.code(), switch (type) {
+                    case WEB_WIDGET -> "网页组件";
+                    case OPENAPI -> "开放 API";
+                })).toList(),
+                java.util.Arrays.stream(ChannelStatus.values()).map(status -> new ChannelOption(status.code(), switch (status) {
+                    case ACTIVE -> "启用";
+                    case DISABLED -> "停用";
+                })).toList()));
+    }
+
+    public record ChannelOption(String value, String label) { }
+    public record ChannelOptions(List<ChannelOption> types, List<ChannelOption> statuses) { }
 
     @RequirePermission("foundation.channels.read")
     @GetMapping("")

@@ -1404,6 +1404,11 @@ export const api = {
 
   // 渠道
   channels: {
+    options: () =>
+      get<{
+        types: { value: string; label: string }[]
+        statuses: { value: string; label: string }[]
+      }>('/channels/options'),
     list: () => get<{ total: number; items: ChannelItem[] }>('/channels'),
     get: (id: string) =>
       get<ChannelItem & { ui_config?: Record<string, unknown> }>(

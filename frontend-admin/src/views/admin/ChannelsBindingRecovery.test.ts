@@ -1,3 +1,4 @@
+import { channelOptionsFixture } from './channelOptions.fixture'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ElButton, ElDrawer, ElOption, ElSelect } from 'element-plus'
@@ -13,7 +14,12 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => ({
   api: {
-    channels: { list: mocks.list, get: mocks.detail, bindAgents: mocks.bind },
+    channels: {
+      options: async () => channelOptionsFixture,
+      list: mocks.list,
+      get: mocks.detail,
+      bindAgents: mocks.bind
+    },
     agents: { list: mocks.agents }
   }
 }))

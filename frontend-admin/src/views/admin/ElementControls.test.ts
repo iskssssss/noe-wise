@@ -1,3 +1,4 @@
+import { channelOptionsFixture } from './channelOptions.fixture'
 import type { Component } from 'vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { message } from '@skillforge/shared/feedback'
@@ -103,7 +104,11 @@ vi.mock('../../api', () => ({
     chat: { sessions: mocks.sessions },
     conversationTasks: { list: mocks.tasks },
     agents: { list: mocks.agents },
-    channels: { list: mocks.channels, rotateTokenWithReceipt: mocks.rotateToken },
+    channels: {
+      options: async () => channelOptionsFixture,
+      list: mocks.channels,
+      rotateTokenWithReceipt: mocks.rotateToken
+    },
     billing: { usage: mocks.usage },
     health: mocks.health
   },

@@ -1,3 +1,4 @@
+import { channelOptionsFixture } from './channelOptions.fixture'
 import type { Component } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../api', () => ({
   api: {
     channels: {
+      options: async () => channelOptionsFixture,
       list: mocks.listChannels,
       onboard: async (requestId: string, data: unknown) => ({
         request_id: requestId,

@@ -40,10 +40,10 @@ public enum ChannelStatus {
     }
 
     /**
-     * 按字符串值解析状态，未知值返回 null。
+     * 按字符串值解析状态，保留未提供时的不更新语义，拒绝未知值。
      *
      * @param code 状态字符串值
-     * @return 状态枚举；未匹配时返回 null
+     * @return 状态枚举；未提供时返回 null
      */
     @JsonCreator
     public static ChannelStatus fromCode(String code) {
@@ -55,6 +55,6 @@ public enum ChannelStatus {
                 return status;
             }
         }
-        return null;
+        throw new IllegalArgumentException("渠道状态无效");
     }
 }

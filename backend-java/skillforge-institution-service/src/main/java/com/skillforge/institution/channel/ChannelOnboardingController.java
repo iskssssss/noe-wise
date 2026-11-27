@@ -6,6 +6,7 @@ import com.skillforge.core.shared.web.ApiResponses;
 import com.skillforge.institution.common.TenantIds;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -17,6 +18,13 @@ public class ChannelOnboardingController {
     @PostMapping
     public ApiResponse<ChannelOnboardingService.Result> create(@RequestBody ChannelOnboardingService.Command command) {
         return ApiResponses.wrap(service.create(Long.parseLong(TenantIds.requireTenantId()), command));
+    }
+
+    /** 请求尚未进入创建服务，允许修正输入后重新提交，不产生待核对操作。 */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidBody(HttpMessageNotReadableException failure) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure("CHANNEL_ONBOARDING_REJECTED",
+                "渠道参数无效，请检查接入类型等输入后重新保存", false, java.util.Map.of()));
     }
 
     /** 不可见或尚未提交均返回 204，不表示创建失败。 */
