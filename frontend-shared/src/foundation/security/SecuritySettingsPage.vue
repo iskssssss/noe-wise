@@ -19,6 +19,7 @@ import type {
   SecurityStatus
 } from './api'
 const props = defineProps<{
+  platform: boolean
   request: FoundationOptionRequest
   api: SecurityApi
   authApi: SecurityAuthApi
@@ -42,6 +43,7 @@ const status = ref<SecurityStatus>(),
   memberId = ref(''),
   notice = ref('')
 const busy = computed(() => loading.value || saving.value || confirming.value)
+const scopeName = computed(() => (props.platform ? '平台' : '机构'))
 const selectedMember = ref<FoundationOption>()
 const canManagePolicy = computed(() =>
   props.permissions.includes('foundation.security.policy.manage')
@@ -227,10 +229,10 @@ async function savePolicy() {
   const target = all.value
   if (
     !(await ask(
-      '保存机构安全策略',
+      `保存${scopeName.value}安全策略`,
       target
-        ? '开启后，当前机构所有未绑定成员需完成验证器绑定。确认发布该策略？'
-        : '关闭全员强制绑定要求；已经自愿绑定的账号仍需二次验证。确认发布该策略？',
+        ? `开启后，当前${scopeName.value}所有未绑定成员需完成验证器绑定。确认发布该策略？`
+        : `关闭当前${scopeName.value}全员强制绑定要求；已经自愿绑定的账号仍需二次验证。确认发布该策略？`,
       '保存策略'
     ))
   )
@@ -245,7 +247,7 @@ async function savePolicy() {
       }
     },
     false,
-    '机构安全策略已保存'
+    `${scopeName.value}安全策略已保存`
   )
 }
 function cancelPolicy() {
@@ -328,7 +330,7 @@ onScopeDispose(() => {
 onMounted(load)
 </script>
 <template>
-  <AdminPage class="security-settings" title="账号与安全" :aria-busy="busy">
+  <AdminPage class="security-settings" title="账号安全" :aria-busy="busy">
     <template #extra><ElButton :disabled="busy" @click="load">刷新安全状态</ElButton></template>
     <FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
     <FeedbackNotice
@@ -439,7 +441,8 @@ onMounted(load)
       <p v-else>登录设备尚未读取成功。可使用上方“刷新安全状态”重新查询。</p>
     </ElCard>
     <ElCard shadow="never" v-if="canManagePolicy">
-      <h2>机构安全策略</h2>
+      <h2>{{ scopeName }}安全策略</h2>
+      <p>管理当前{{ scopeName }}成员的验证器绑定要求。</p>
       <FeedbackNotice
         v-if="policyError"
         :title="policyError"
@@ -457,10 +460,10 @@ onMounted(load)
           v-described-by="formTipId + '-policy'"
           :disabled="busy"
           :aria-describedby="formTipId + '-policy'"
-          >所有成员必须绑定验证器</ElCheckbox
+          >所有{{ scopeName }}成员必须绑定验证器</ElCheckbox
         >
         <FieldTip :id="formTipId + '-policy'"
-          >保存后要求所有成员绑定；关闭后，已绑定的账号仍保留二次验证。</FieldTip
+          >保存后要求当前{{ scopeName }}所有成员绑定；关闭后，已绑定的账号仍保留二次验证。</FieldTip
         >
         <div class="security-actions">
           <ElButton
@@ -473,7 +476,9 @@ onMounted(load)
           <ElButton :disabled="busy || !policyDirty" @click="cancelPolicy">取消修改</ElButton>
         </div>
       </template>
-      <p v-else>机构安全策略尚未读取成功，当前无法编辑。可使用上方“刷新安全状态”重新查询。</p>
+      <p v-else>
+        {{ scopeName }}安全策略尚未读取成功，当前无法编辑。可使用上方“刷新安全状态”重新查询。
+      </p>
     </ElCard>
     <ElCard
       shadow="never"
@@ -483,7 +488,7 @@ onMounted(load)
         permissions.includes('foundation.security.mfa.manage')
       "
     >
-      <h2>成员安全管理</h2>
+      <h2>{{ scopeName }}成员安全管理</h2>
       <ElForm label-position="top" @submit.prevent>
         <ElFormItem label="成员">
           <FoundationOptionSelect
@@ -498,7 +503,7 @@ onMounted(load)
             @selected="selectedMember = $event"
           />
           <FieldTip :id="formTipId + '-member'"
-            >邀请发至登记邮箱；撤销和重置只影响选中的成员。</FieldTip
+            >可选择当前{{ scopeName }}成员。邀请发至登记邮箱；撤销和重置只影响选中的成员。</FieldTip
           >
         </ElFormItem>
       </ElForm>
@@ -545,6 +550,7 @@ onMounted(load)
 <style scoped>
 .security-settings {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
 }

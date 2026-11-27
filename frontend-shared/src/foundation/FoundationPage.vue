@@ -67,6 +67,7 @@ watch(
   />
   <SecuritySettingsPage
     v-else-if="area === 'security'"
+    :platform="platform"
     :request="localRequest"
     :api="securityApi"
     :auth-api="securityAuthApi"

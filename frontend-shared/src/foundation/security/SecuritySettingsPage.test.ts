@@ -79,7 +79,7 @@ function clients() {
 const mounted: VueWrapper[] = []
 async function mountPage(client = clients(), allowed = permissions, realChallenge = false) {
   const route = defineComponent({
-    setup: () => () => h(SecuritySettingsPage, { ...client, permissions: allowed })
+    setup: () => () => h(SecuritySettingsPage, { ...client, platform: false, permissions: allowed })
   })
   const router = createRouter({
     history: createMemoryHistory(),
