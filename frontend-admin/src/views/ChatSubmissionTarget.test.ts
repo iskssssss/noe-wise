@@ -377,13 +377,29 @@ describe('后台Chat原消息受理恢复', () => {
   it.each(['附件', '图片'])(
     '纯%s结果UNKNOWN仍只用冻结body重试，接受后才清选中资源',
     async (kind) => {
-      mocks.submit.mockRejectedValueOnce(new TypeError('网络结果未知'))
+      let rejectSubmit!: (reason: unknown) => void
+      mocks.submit.mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectSubmit = reject
+        })
+      )
       await start()
       const uploads = wrapper!.findAllComponents(ElUpload)
       await (
         uploads[kind === '附件' ? 0 : 1]!.props('onChange') as (file: unknown) => Promise<void>
       )({ raw: new File(['data'], '资源') })
       await action('发送')
+      expect(wrapper!.text()).toContain('正在确认本次消息受理，请稍候。')
+      expect(wrapper!.text()).not.toContain('受理结果尚未确认')
+      expect(
+        wrapper!
+          .findAll('button')
+          .find((button) => button.text() === '重试原消息')!
+          .attributes('disabled')
+      ).toBeDefined()
+      expect(mocks.submit).toHaveBeenCalledOnce()
+      rejectSubmit(new TypeError('网络结果未知'))
+      await flushPromises()
       const first = mocks.submit.mock.calls[0]![0]
       expect(wrapper!.text()).toContain('受理结果尚未确认')
       expect(wrapper!.text()).toContain(kind === '附件' ? '原文件.txt' : '图片 image-original')
@@ -915,7 +931,12 @@ it.each(['file', 'image'] as const)('先选择%s再补全会话对象时无需�
 
 it.each(['file', 'image'] as const)('%s上传响应中断后仅核对原标识，未查到不重传', async (kind) => {
   const upload = kind === 'file' ? mocks.uploadAttachment : mocks.uploadMedia
-  upload.mockRejectedValueOnce(new Error('响应中断'))
+  let rejectUpload!: (reason: unknown) => void
+  upload.mockReturnValueOnce(
+    new Promise((_resolve, reject) => {
+      rejectUpload = reject
+    })
+  )
   await open()
   await choose('终端用户', '目标回归用户')
   await choose('选择智能体或团队', '已发布智能体')
@@ -923,6 +944,17 @@ it.each(['file', 'image'] as const)('%s上传响应中断后仅核对原标识�
     uid: 789
   }) as UploadRawFile
   wrapper!.findAllComponents(ElUpload)[kind === 'file' ? 0 : 1]!.vm.handleStart(file)
+  await flushPromises()
+  expect(wrapper!.text()).toContain('当前请求处理中，请稍候。')
+  expect(wrapper!.text()).not.toContain('上传结果尚未确认')
+  expect(
+    wrapper!
+      .findAll('button')
+      .find((button) => button.text() === '核对原上传')!
+      .attributes('disabled')
+  ).toBeDefined()
+  expect(upload).toHaveBeenCalledOnce()
+  rejectUpload(new Error('响应中断'))
   await flushPromises()
   const uploadId = upload.mock.calls[0]![1]
   expect(wrapper!.text()).toContain('上传结果尚未确认')

@@ -57,7 +57,10 @@
       <ElButton :disabled="busy" @click="deferredUpload = undefined">移除文件选择</ElButton>
     </div>
     <div v-for="upload in pendingUploads" :key="upload.uploadId" class="admin-card" role="status">
-      文件“{{ upload.name }}”上传结果尚未确认，尚未加入消息；请核对原上传，不要重新上传。
+      <p v-if="busy">当前请求处理中，请稍候。文件“{{ upload.name }}”尚未加入当前消息。</p>
+      <p v-else>
+        文件“{{ upload.name }}”上传结果尚未确认，尚未加入消息；请核对原上传，不要重新上传。
+      </p>
       会话：<code>{{ upload.session }}</code
       >；上传标识：<code>{{ upload.uploadId }}</code
       >。
@@ -77,7 +80,10 @@
       </ElButton>
     </div>
     <div v-if="pendingInput" class="admin-card" role="status">
-      <p>
+      <p v-if="busy">
+        正在确认本次{{ pendingInput.body.hitl_response ? '回复' : '消息' }}受理，请稍候。
+      </p>
+      <p v-else>
         {{
           pendingInput.body.hitl_response
             ? '本次回复受理结果尚未确认，已保留原等待与回复。读取待办后如仍未确认，请重试原回复；确认前不能切换会话或发送新内容。'
