@@ -111,6 +111,31 @@ class StateMachineEngineControlledTest {
     }
 
     @Test
+    void defaultEdgeOnlyRunsAfterAllConditionsFailRegardlessOfPriorityOrDefinitionOrder() {
+        record Case(Number amount, String target) {}
+        for (int fallbackPriority : List.of(0, 50)) {
+            var regular = new WorkflowEdge("branch", "regular", "${state.amount} >= 100", -5, null);
+            var high = new WorkflowEdge("branch", "high", "${state.amount} >= 1000", -1, Map.of("amount", "state.amount"));
+            var fallback = new WorkflowEdge("branch", "fallback", null, fallbackPriority, Map.of("reason", "unmatched"));
+            var workflow = new Workflow("amount-routing", "branch",
+                    List.of(node("branch", "condition"), node("regular", "end"), node("high", "end"), node("fallback", "end")),
+                    List.of(fallback, regular, high));
+            for (var test : List.of(new Case(1500, "high"), new Case(1000, "high"),
+                    new Case(new java.math.BigDecimal("999.5"), "regular"), new Case(100, "regular"),
+                    new Case(new java.math.BigDecimal("99.5"), "fallback"), new Case(0, "fallback"))) {
+                var request = new Request(workflow, Map.of(), "", "session", null, null,
+                        "instance", "7", List.of(), "execution", Map.of("end_user_id", 100L),
+                        new StateMachineEngine.InitialState(Map.of("amount", test.amount()), Map.of()));
+                List<Checkpoint> checkpoints = new ArrayList<>();
+                assertEquals("completed", engine.runControlled(request, hooks(checkpoints)).get("status"));
+                assertEquals(test.target(), checkpoints.getFirst().nextNodeId(), "amount=" + test.amount());
+                var selected = switch (test.target()) { case "high" -> high; case "regular" -> regular; default -> fallback; };
+                assertSame(selected, checkpoints.getFirst().cursor().incomingEdge());
+            }
+        }
+    }
+
+    @Test
     void beforeFailureAndCheckpointFailurePreventNextEffect() {
         Workflow workflow = graph(node("assign", "assign"), node("tool", "tool"));
         Hooks before = new Hooks() {

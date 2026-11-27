@@ -254,11 +254,16 @@ public class StateMachineEngine {
 
     private WorkflowEdge nextEdge(Workflow workflow, WorkflowNode node, Map<String, Object> state,
             Map<String, Object> extracted, Map<String, Object> config, Map<String, Object> extraVars) {
-        return workflow.edges().stream()
+        var outgoing = workflow.edges().stream()
                 .filter(edge -> edge.from().equals(node.id()))
                 .sorted((a, b) -> Integer.compare(b.priority(), a.priority()))
-                .filter(edge -> evalCondition(edge.condition(), state, extracted, config, extraVars))
-                .findFirst().orElse(null);
+                .toList();
+        WorkflowEdge fallback = null;
+        for (var edge : outgoing) {
+            if (edge.condition() == null || edge.condition().isBlank()) fallback = edge;
+            else if (evalCondition(edge.condition(), state, extracted, config, extraVars)) return edge;
+        }
+        return fallback;
     }
 
     private WorkflowNode findNode(Workflow workflow, String id) {
@@ -267,7 +272,6 @@ public class StateMachineEngine {
 
     private boolean evalCondition(String condition, Map<String, Object> state,
             Map<String, Object> extracted, Map<String, Object> config, Map<String, Object> extraVars) {
-        if (condition == null || condition.isBlank()) return true;
         String expression = condition.trim();
         boolean negate = false;
         while (expression.startsWith("!")) {
