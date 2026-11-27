@@ -28,6 +28,7 @@ import {
   observationAvailability,
   observationCoverage,
   observationCostCoverage,
+  observationNodeStatus,
   observationTokenTotal,
   observationTree,
   type ObservationTreeItem
@@ -543,7 +544,7 @@ function nodeLabel(kind: string) {
                   <span class="node-kind">{{ data.kind }}</span>
                   <span class="node-name">{{ data.name || nodeLabel(data.kind) }}</span>
                   <span class="node-status" :class="'is-' + tagType(data.status)"
-                    >{{ statusLabel(data.status) }}
+                    >{{ observationNodeStatus(data.kind, data.status) }}
                   </span>
                   <span class="node-duration">{{
                     formatObservationDuration(data.duration_ms)
@@ -560,9 +561,20 @@ function nodeLabel(kind: string) {
             <template v-if="selected">
               <div class="detail-heading">
                 <h3>{{ selected.name || nodeLabel(selected.kind) }}</h3>
-                <ElTag :type="tagType(selected.status)">{{ statusLabel(selected.status) }}</ElTag>
+                <ElTag :type="tagType(selected.status)">{{
+                  observationNodeStatus(selected.kind, selected.status)
+                }}</ElTag>
               </div>
               <p v-if="selected.summary" class="readable">{{ selected.summary }}</p>
+              <p
+                v-if="
+                  selected.status === 'WAITING' &&
+                  ['STEP', 'TOOL', 'WORKFLOW'].includes(selected.kind)
+                "
+                class="muted"
+              >
+                这里保留本次调用返回等待的记录。后续恢复按输入分别展示，任务当前状态以概览为准。
+              </p>
               <p
                 v-if="selected.parent_node_id && !nodeIndex.has(selected.parent_node_id)"
                 class="muted"
@@ -659,7 +671,7 @@ function nodeLabel(kind: string) {
                     <summary>
                       <span>{{ attempt.model ?? attempt.provider ?? '调用尝试' }}</span>
                       <ElTag size="small" :type="tagType(attempt.status ?? '')">{{
-                        statusLabel(attempt.status)
+                        observationNodeStatus(selected.kind, attempt.status)
                       }}</ElTag>
                       <span>{{ formatObservationDuration(attempt.duration_ms) }}</span>
                     </summary>
@@ -785,7 +797,9 @@ function nodeLabel(kind: string) {
       <section v-if="requestedRef && selected" class="recorded-content" aria-label="节点原始内容">
         <div class="reader-context">
           <h3>{{ selected.name || nodeLabel(selected.kind) }}</h3>
-          <ElTag :type="tagType(selected.status)">{{ statusLabel(selected.status) }}</ElTag>
+          <ElTag :type="tagType(selected.status)">{{
+            observationNodeStatus(selected.kind, selected.status)
+          }}</ElTag>
           <p v-if="readerAttemptIndex >= 0" class="muted">
             第 {{ readerAttemptIndex + 1 }} 次尝试 ·
             {{

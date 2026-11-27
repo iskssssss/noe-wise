@@ -82,6 +82,44 @@ async function render(items: ObservationNode[], extra: Record<string, unknown> =
 }
 
 describe('共享执行树', () => {
+  it.each(['WORKFLOW', 'TOOL'] as const)(
+    '%s挂起记录与续接成功分开显示，入口当前等待状态不被覆盖',
+    async (kind) => {
+      const entry = { ...node('entry'), kind: 'ENTRY' as const, status: 'WAITING' }
+      const step = { ...node('step', 'entry'), kind: 'STEP' as const, status: 'WAITING' }
+      const waiting = {
+        ...node('waiting', 'step'),
+        kind,
+        status: 'WAITING',
+        output: attempt('waiting-attempt').output,
+        attempts: [{ ...attempt('waiting-attempt'), status: 'WAITING' }]
+      }
+      const resumed = { ...node('resumed', 'entry'), kind, input_id: 'resume-input' }
+      const wrapper = await render([entry, step, waiting, resumed], { focusNode: 'waiting' })
+      expect(wrapper.get('[data-node-id="entry"] .node-status').text()).toBe('等待中')
+      expect(wrapper.get('[data-node-id="step"] .node-status').text()).toBe('等待记录')
+      expect(wrapper.get('[data-node-id="waiting"] .node-status').text()).toBe('返回等待')
+      expect(wrapper.get('[data-node-id="resumed"] .node-status').text()).toBe('成功')
+      expect(wrapper.get('.node-detail').text()).toContain('任务当前状态以概览为准')
+      expect(wrapper.get('.node-detail').text()).not.toContain('等待中')
+      await wrapper.setProps({
+        page: page([{ ...entry, status: 'COMPLETED' }, step, waiting, resumed])
+      })
+      expect(wrapper.get('[data-node-id="entry"] .node-status').text()).toBe('已完成')
+      expect(wrapper.get('[data-node-id="waiting"] .node-status').text()).toBe('返回等待')
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === '查看原始输出')!
+        .trigger('click')
+      await wrapper.setProps({
+        content: { content_ref: 'response-waiting-attempt', text: '挂起回执' }
+      })
+      expect(wrapper.get('[aria-label="节点原始内容"]').text()).toContain('返回等待')
+      expect(waiting.status).toBe('WAITING')
+      expect(waiting.attempts[0]!.status).toBe('WAITING')
+    }
+  )
+
   it('默认定位结果未知的步骤，深链和用户选择仍优先', async () => {
     const entry = { ...node('entry'), kind: 'ENTRY' as const, status: 'OUTCOME_UNKNOWN' }
     const step = { ...node('step', 'entry'), kind: 'STEP' as const, status: 'OUTCOME_UNKNOWN' }

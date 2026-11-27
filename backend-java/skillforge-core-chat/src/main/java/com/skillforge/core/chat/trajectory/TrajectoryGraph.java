@@ -255,7 +255,7 @@ final class TrajectoryGraph {
         }
         if (statuses.stream().anyMatch(status -> Set.of("WAITING", "INPUT_REQUIRED", "SUSPENDED").contains(status))) {
             step.status = "WAITING";
-            step.summary = "执行轮子操作正在等待，结束边界未确认";
+            step.summary = "执行轮包含返回等待的子操作；后续恢复按输入分别记录，本轮结束边界未记录";
             return;
         }
         if (statuses.stream().anyMatch(status -> !operationTerminal(status))

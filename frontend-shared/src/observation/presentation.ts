@@ -1,10 +1,20 @@
 import type {
   ObservationContentRef,
+  ObservationKind,
   ObservationNode,
   TokenTotals,
   TrajectoryCostCoverage
 } from './types'
 import { statusLabel } from '../admin/presentation'
+
+/** 调用结果按输入保留；挂起记录不表示整个任务仍在等待。 */
+export function observationNodeStatus(kind: ObservationKind, status?: string | null): string {
+  if (status === 'WAITING') {
+    if (kind === 'STEP') return '等待记录'
+    if (kind === 'WORKFLOW' || kind === 'TOOL') return '返回等待'
+  }
+  return statusLabel(status)
+}
 
 /** 最终回复状态独立于执行结果；失败或取消说明不代表最终答复完成。 */
 export function observationAnswerStatus(value?: string | null): string {

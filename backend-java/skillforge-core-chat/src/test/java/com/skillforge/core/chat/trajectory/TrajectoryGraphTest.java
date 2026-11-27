@@ -49,6 +49,27 @@ class TrajectoryGraphTest {
     }
 
     @Test
+    void completedRunKeepsOriginalWaitingAndResumedWorkflowFactsSeparate() throws Exception {
+        var run = run("main", "session", "input");
+        var waiting = new ExecutionObservation.Fact("workflow", "step:model", ExecutionObservation.Kind.WORKFLOW,
+                "workflow", ExecutionObservation.Status.WAITING, run.runId(), "workflow", "wait-attempt", "step:model", "1",
+                "input", "root", run.traceId(), run.spanId(), null, null, null);
+        var resumed = new ExecutionObservation.Fact("workflow", "step:model", ExecutionObservation.Kind.WORKFLOW,
+                "workflow", ExecutionObservation.Status.SUCCEEDED, run.runId(), "workflow", "resume-attempt", "step:model", "1",
+                "resume-input", "root", null, null, null, null, null);
+        var graph = graph(List.of(run), List.of(), List.of(), List.of(encoded(run, waiting, 1), encoded(run, resumed, 2)));
+        assertEquals("COMPLETED", node(graph, "agent:main").status());
+        assertEquals("WAITING", node(graph, "workflow").status());
+        assertEquals("SUCCEEDED", node(graph, "workflow:input:resume-input").status());
+        var step = node(graph, "step:model");
+        assertEquals("WAITING", step.status());
+        assertTrue(step.summary().contains("返回等待"));
+        assertTrue(step.summary().contains("后续恢复按输入分别记录"));
+        assertNull(step.finishedAt());
+        assertNull(step.durationMs());
+    }
+
+    @Test
     void completedStepIncludesPointGuardrailsWithoutInventingTheirElapsedDuration() throws Exception {
         var run = timedRun("COMPLETED", "FINISHED");
         var events = new java.util.ArrayList<TrajectoryRepository.EventFact>();
