@@ -431,14 +431,6 @@ const usageKinds: Record<string, string> = {
 function usageKindLabel(kind?: string | null) {
   return kind ? (usageKinds[kind] ?? kind) : '未记录'
 }
-const eventTypeLabels: Record<string, string> = {
-  request: '请求',
-  'llm.chat': '对话',
-  'llm.embedding': '向量化',
-  'llm.rerank': '重排',
-  'knowledge.source': '知识来源',
-  'workflow.external': '外部工作流'
-}
 const costStatusLabels: Record<string, string> = {
   unpriced: '未定价',
   unresolved: '待确认',
@@ -453,7 +445,10 @@ const requestStatusLabels: Record<string, string> = {
   missing: '缺失'
 }
 const eventTypeLabel = (value?: string | null) =>
-  value ? (eventTypeLabels[value] ?? value) : '未记录'
+  value
+    ? (filterOptions.value?.eventTypes.find((option) => option.value === value)?.label ??
+      '类型名称暂不可用')
+    : '未记录'
 const costStatusLabel = (value?: string | null) =>
   value ? (costStatusLabels[value] ?? value) : '未记录'
 const requestStatusLabel = (value?: string | null) =>

@@ -8,7 +8,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * <p>分页查询用量事件，支持事件类型、请求归组、关联维度与日期范围过滤；
  * 时间按 北京时间 日界解析（YYYY-MM-DD）。
  *
- * @param eventType 事件类型过滤（request / llm.chat / llm.embedding / llm.rerank / knowledge.source / workflow.external），可空
+ * @param eventType 事件类型过滤，取值来自计费筛选选项接口，可空
  * @param requestId 请求根 ID 过滤（一次请求全链路），可空
  * @param endUserId C 端用户 ID 过滤，可空
  * @param agentId   Agent ID 过滤，可空
@@ -22,7 +22,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param pageSize  每页条数，缺省 20，最大 200
  */
 public record BillingRecordQuery(
-        @Schema(description = "事件类型过滤（request / llm.chat / llm.embedding / llm.rerank / knowledge.source / workflow.external），可空") String eventType,
+        @Schema(description = "事件类型过滤，取值来自 /api/v1/billing/filter-options，可空") String eventType,
         @Schema(description = "请求根 ID 过滤（一次请求全链路），可空") String requestId,
         @Schema(description = "C 端用户 ID 过滤，可空") Long endUserId,
         @Schema(description = "Agent ID 过滤，可空") Long agentId,

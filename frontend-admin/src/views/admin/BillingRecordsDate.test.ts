@@ -43,6 +43,38 @@ async function page(kind: 'records' | 'requests') {
 }
 
 describe('账单自然日期查询契约', () => {
+  it('工具事件筛选与列表复用服务端标签，查询提交原类型值', async () => {
+    mocks.filterOptions.mockResolvedValue({
+      eventTypes: [{ value: 'tool.call', label: '工具调用（服务端目录）' }],
+      models: []
+    })
+    mocks.records.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 'tool-event',
+          event_type: 'tool.call',
+          usage_event_kind: 'usage_report',
+          model: 'tool:platform-update_task'
+        }
+      ]
+    })
+    const wrapper = await page('records')
+    expect(wrapper.get('.el-table__body').text()).toContain('工具调用（服务端目录）')
+    expect(wrapper.get('.el-table__body').text()).not.toContain('tool.call')
+    const eventSelect = wrapper.findAllComponents(ElSelect)[1]!
+    expect(eventSelect.text()).not.toContain('tool.call')
+    eventSelect.vm.$emit('update:modelValue', 'tool.call')
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '查询')!
+      .trigger('click')
+    await flushPromises()
+    expect(mocks.records).toHaveBeenLastCalledWith(
+      expect.objectContaining({ eventType: 'tool.call', page: 1 })
+    )
+  })
+
   it('修改模型或日期但未查询时，翻页保留上次查询条件', async () => {
     const wrapper = await page('records')
     wrapper.getComponent(ElDatePicker).vm.$emit('update:modelValue', ['2026-10-01', '2026-10-12'])

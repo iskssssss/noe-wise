@@ -69,6 +69,22 @@ public class BillingController {
     private static final Set<String> GROUP_BY_DIMENSIONS =
             Set.of("agent", "end_user", "channel", "model", "event_type");
 
+    /** 筛选与列表标签使用当前计费类型；新增枚举时必须补充面向用户的名称。 */
+    private static final List<FilterOption> EVENT_TYPE_OPTIONS = java.util.Arrays.stream(CostType.values())
+            .map(type -> new FilterOption(type.value(), switch (type) {
+                case REQUEST -> "请求";
+                case LLM_CHAT -> "对话";
+                case LLM_EMBEDDING -> "向量化";
+                case LLM_RERANK -> "重排";
+                case MEDIA_IMAGE -> "图片生成与编辑";
+                case MEDIA_VIDEO -> "视频生成";
+                case MEDIA_TRANSCRIPTION -> "语音识别";
+                case MEDIA_SPEECH -> "语音合成";
+                case KNOWLEDGE_SOURCE -> "知识来源";
+                case TOOL_CALL -> "工具调用";
+                case WORKFLOW_EXTERNAL -> "外部工作流";
+            })).toList();
+
     /**
      * 构造计费控制器。
      *
@@ -105,7 +121,7 @@ public class BillingController {
     /**
      * 查询当前租户用量事件流水（分页）。
      *
-     * <p>事件类型：request（请求根事件）/ llm.chat / llm.embedding / llm.rerank / knowledge.source / workflow.external；
+     * <p>事件类型由当前 {@link CostType} 枚举定义，可用选项通过 {@code /filter-options} 返回；
      * 按事件时间倒序。支持事件类型/请求归组/关联维度/日期范围过滤。
      *
      * @param query 流水查询条件
@@ -124,6 +140,9 @@ public class BillingController {
                 .eq(CostEventDO::getTenantId, Long.parseLong(tenantId))
                 .orderByDesc(CostEventDO::getOccurredAt);
         if (query.eventType() != null && !query.eventType().isBlank()) {
+            if (EVENT_TYPE_OPTIONS.stream().noneMatch(option -> option.value().equals(query.eventType()))) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "事件类型无效，请重新选择筛选选项");
+            }
             wrapper.eq(CostEventDO::getEventType, query.eventType());
         }
         if (query.amountStatus() != null && !query.amountStatus().isBlank()) {
@@ -174,13 +193,7 @@ public class BillingController {
                         .ne("model", "")
                         .orderByAsc("model"))
                 .stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
-        return ApiResponses.wrap(new FilterOptions(List.of(
-                new FilterOption("request", "请求"),
-                new FilterOption("llm.chat", "对话"),
-                new FilterOption("llm.embedding", "向量化"),
-                new FilterOption("llm.rerank", "重排"),
-                new FilterOption("knowledge.source", "知识来源"),
-                new FilterOption("workflow.external", "外部工作流")), models));
+        return ApiResponses.wrap(new FilterOptions(EVENT_TYPE_OPTIONS, models));
     }
 
     public record FilterOption(String value, String label) { }

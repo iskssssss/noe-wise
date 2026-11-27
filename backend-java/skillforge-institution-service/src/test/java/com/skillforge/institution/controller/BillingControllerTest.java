@@ -96,6 +96,45 @@ class BillingControllerTest {
         assertThat(result.data().items().getFirst().model()).isEqualTo("gpt-test");
     }
 
+    @Test
+    void currentCostTypesAreSelectableAndFilterTheCurrentTenant() throws Exception {
+        when(events.selectObjs(any())).thenReturn(List.of("model-a"));
+        var options = controller.filterOptions().data();
+        assertThat(options.eventTypes()).extracting(BillingController.FilterOption::value)
+                .containsExactly(java.util.Arrays.stream(CostType.values()).map(CostType::value).toArray(String[]::new));
+        assertThat(options.eventTypes()).contains(new BillingController.FilterOption("tool.call", "工具调用"),
+                new BillingController.FilterOption("media.image", "图片生成与编辑"),
+                new BillingController.FilterOption("media.video", "视频生成"),
+                new BillingController.FilterOption("media.transcription", "语音识别"),
+                new BillingController.FilterOption("media.speech", "语音合成"));
+        assertThat(options.models()).containsExactly("model-a");
+        var captured = new java.util.concurrent.atomic.AtomicReference<LambdaQueryWrapper<CostEventDO>>();
+        when(events.selectPage(any(), any())).thenAnswer(invocation -> {
+            captured.set(invocation.getArgument(1));
+            return new Page<CostEventDO>(1, 20).setRecords(List.of());
+        });
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        for (var option : options.eventTypes()) {
+            mvc.perform(get("/api/v1/billing/records").param("eventType", option.value()))
+                    .andExpect(status().isOk());
+            captured.get().getSqlSegment();
+            assertThat(captured.get().getParamNameValuePairs().values())
+                    .contains(option.value(), Long.parseLong(TENANT));
+        }
+    }
+
+    @Test
+    void unknownEventTypeIsRejectedBeforeReadingTheLedger() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new com.skillforge.institution.exception.GlobalExceptionHandler(new ObjectMapper()))
+                .build();
+        mvc.perform(get("/api/v1/billing/records").param("eventType", "unknown.event"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value("事件类型无效，请重新选择筛选选项"));
+        org.mockito.Mockito.verifyNoInteractions(events);
+    }
+
     /** 前端提交纯日期，真实 MVC/Controller 按北京日界含起点、排除终日次日零点。 */
     @Test
     void recordsAndRequestsAcceptCalendarDatesAtExactBeijingBoundaries() throws Exception {
