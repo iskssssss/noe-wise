@@ -6,7 +6,14 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { clearFeedback, confirm } from '../../feedback'
 import SecuritySettingsPage from './SecuritySettingsPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
-import type { SecurityApi, SecurityAuthApi, SecurityStatus } from './api'
+import { createHttpClient } from '../../utils/http'
+import {
+  createSecurityApi,
+  createSecurityAuthApi,
+  type SecurityApi,
+  type SecurityAuthApi,
+  type SecurityStatus
+} from './api'
 
 vi.mock('../../feedback', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../feedback')>()),
@@ -154,6 +161,7 @@ describe('账号安全页确认、草稿与读取状态', () => {
     vi.mocked(confirm).mockResolvedValue(false)
   })
   afterEach(() => {
+    vi.unstubAllGlobals()
     clearFeedback()
     mounted.splice(0).forEach((wrapper) => wrapper.unmount())
     document.body.innerHTML = ''
@@ -250,6 +258,7 @@ describe('账号安全页确认、草稿与读取状态', () => {
     const page = await mountPage(client)
     expect(document.body.textContent).toContain('设备查询暂不可用')
     expect(document.body.textContent).toContain('策略查询暂不可用')
+    expect(document.querySelectorAll('.el-message')).toHaveLength(1)
     expect(page.wrapper.text()).not.toContain('暂无登录设备')
     expect(page.wrapper.find('input[type="checkbox"]').exists()).toBe(false)
     await button(page.wrapper, '刷新安全状态').trigger('click')
@@ -269,6 +278,7 @@ describe('账号安全页确认、草稿与读取状态', () => {
     client.authApi.status.mockRejectedValueOnce(new Error('安全状态暂不可用'))
     const page = await mountPage(client)
     expect(document.body.textContent).toContain('安全状态暂不可用')
+    expect(page.wrapper.text()).toContain('二次验证状态尚未读取成功')
     expect(page.api.sessions).not.toHaveBeenCalled()
     expect(page.api.policy).not.toHaveBeenCalled()
     await button(page.wrapper, '刷新安全状态').trigger('click')
@@ -279,6 +289,74 @@ describe('账号安全页确认、草稿与读取状态', () => {
         ? [...document.querySelectorAll('.el-message')].map((item) => item.textContent).join('')
         : ''
     ).not.toContain('安全状态暂不可用')
+  })
+
+  it('策略先失败而设备仍在读取时由页面独占反馈，关闭后可重试且成功后无遗留提示', async () => {
+    let finishDevices!: (response: Response) => void
+    const delayedDevices = new Promise<Response>((resolve) => {
+      finishDevices = resolve
+    })
+    let delayDevices = true
+    let failPolicy = true
+    const response = (data: unknown) =>
+      new Response(
+        JSON.stringify({ code: 'OK', message: '', trace_id: 'security-read-test', data }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.endsWith('/sessions'))
+        return delayDevices ? delayedDevices : Promise.resolve(response(sessions))
+      if (path.endsWith('/policy'))
+        return failPolicy
+          ? Promise.reject(new TypeError('test connection failed'))
+          : Promise.resolve(response({ require_all_mfa: false }))
+      return Promise.resolve(response(fullStatus))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const globalError = vi.fn()
+    const http = createHttpClient({
+      base: '/api/v1',
+      accessTokenKey: 'security-feedback-test.access',
+      refreshTokenKey: 'security-feedback-test.refresh',
+      refreshPath: '/auth/refresh',
+      authHeader: () => ({}),
+      isAuthPath: () => false,
+      onError: globalError
+    })
+    const client = clients()
+    const api = createSecurityApi(http.get, http.post, '/security')
+    client.api.sessions.mockImplementation(api.sessions)
+    client.api.policy.mockImplementation(api.policy)
+    client.authApi.status.mockImplementation(
+      createSecurityAuthApi(http.get, http.post, '/auth').status
+    )
+    const page = await mountPage(client)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(globalError).not.toHaveBeenCalled()
+    expect(document.querySelectorAll('.el-message')).toHaveLength(0)
+    delayDevices = false
+    finishDevices(response(sessions))
+    await flushPromises()
+    expect(page.wrapper.findAll('.el-table__row')).toHaveLength(2)
+    expect(document.querySelectorAll('.el-message')).toHaveLength(1)
+    expect(document.body.textContent).toContain('机构安全策略读取失败')
+    ;(document.querySelector('.el-message__closeBtn') as HTMLElement).click()
+    await flushPromises()
+    await button(page.wrapper, '刷新安全状态').trigger('click')
+    await flushPromises()
+    expect(document.querySelectorAll('.el-message')).toHaveLength(1)
+    expect(document.body.textContent).toContain('机构安全策略读取失败')
+    failPolicy = false
+    await button(page.wrapper, '刷新安全状态').trigger('click')
+    await flushPromises()
+    expect(page.wrapper.text()).toContain('已保存策略：已关闭全员验证器要求')
+    expect(document.querySelectorAll('.el-message')).toHaveLength(0)
+    expect(globalError).not.toHaveBeenCalled()
+    writes(page).forEach((write) => expect(write).not.toHaveBeenCalled())
   })
 
   it('写成功后查询失败保留成功与已有数据，刷新只读不会重放撤销', async () => {

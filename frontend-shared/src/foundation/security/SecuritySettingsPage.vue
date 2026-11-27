@@ -44,6 +44,16 @@ const status = ref<SecurityStatus>(),
   notice = ref('')
 const busy = computed(() => loading.value || saving.value || confirming.value)
 const scopeName = computed(() => (props.platform ? '平台' : '机构'))
+const readError = computed(() => {
+  const failures = [
+    { name: '二次验证状态', message: statusError.value },
+    { name: '登录设备', message: devicesError.value },
+    { name: `${scopeName.value}安全策略`, message: policyError.value }
+  ].filter((item) => item.message)
+  return failures.length
+    ? `${failures.map((item) => item.name).join('、')}读取失败。${[...new Set(failures.map((item) => item.message))].join('；')}`
+    : ''
+})
 const selectedMember = ref<FoundationOption>()
 const canManagePolicy = computed(() =>
   props.permissions.includes('foundation.security.policy.manage')
@@ -97,7 +107,7 @@ async function load() {
   devicesError.value = ''
   policyError.value = ''
   try {
-    const current = await props.authApi.status()
+    const current = await props.authApi.status({ silent: true })
     if (disposed || request !== generation) return
     status.value = current
     if (current.mfa_state !== 'full') {
@@ -106,13 +116,9 @@ async function load() {
       return
     }
     const [deviceResult, policyResult] = await Promise.allSettled([
-      props.api.sessions(),
-      canManagePolicy.value ? props.api.policy() : Promise.resolve(undefined)
+      props.api.sessions({ silent: true }),
+      canManagePolicy.value ? props.api.policy({ silent: true }) : Promise.resolve(undefined)
     ])
-    for (const result of [deviceResult, policyResult]) {
-      if (result.status === 'rejected' && result.reason instanceof HttpClientError)
-        result.reason.claimFeedback()
-    }
     if (disposed || request !== generation) return
     if (deviceResult.status === 'fulfilled') devices.value = deviceResult.value
     else devicesError.value = publicError(deviceResult.reason, '登录设备读取失败')
@@ -124,7 +130,6 @@ async function load() {
       } else policyBaseline.value = undefined
     } else policyError.value = publicError(policyResult.reason, '安全策略读取失败')
   } catch (cause) {
-    if (cause instanceof HttpClientError) cause.claimFeedback()
     if (!disposed && request === generation)
       statusError.value = publicError(cause, '安全状态读取失败')
   } finally {
@@ -334,8 +339,8 @@ onMounted(load)
     <template #extra><ElButton :disabled="busy" @click="load">刷新安全状态</ElButton></template>
     <FeedbackNotice v-if="error" :title="error" type="error" :closable="false" role="alert" />
     <FeedbackNotice
-      v-if="statusError"
-      :title="statusError"
+      v-if="readError"
+      :title="readError"
       type="error"
       :closable="false"
       role="alert"
@@ -398,15 +403,12 @@ onMounted(load)
       </template>
     </ElCard>
     <ElCard shadow="never" v-else-if="loading"><ElSkeleton :rows="3" animated /></ElCard>
+    <ElCard shadow="never" v-else>
+      <h2>二次验证</h2>
+      <p>二次验证状态尚未读取成功。可使用上方“刷新安全状态”重新查询。</p>
+    </ElCard>
     <ElCard shadow="never">
       <h2>登录设备</h2>
-      <FeedbackNotice
-        v-if="devicesError"
-        :title="devicesError"
-        type="error"
-        :closable="false"
-        role="alert"
-      />
       <ElTable
         v-if="devices !== undefined"
         :data="devices"
@@ -443,13 +445,6 @@ onMounted(load)
     <ElCard shadow="never" v-if="canManagePolicy">
       <h2>{{ scopeName }}安全策略</h2>
       <p>管理当前{{ scopeName }}成员的验证器绑定要求。</p>
-      <FeedbackNotice
-        v-if="policyError"
-        :title="policyError"
-        type="error"
-        :closable="false"
-        role="alert"
-      />
       <template v-if="policyBaseline !== undefined">
         <p class="policy-status" role="status">
           已保存策略：{{ policyBaseline ? '已开启全员验证器要求' : '已关闭全员验证器要求'

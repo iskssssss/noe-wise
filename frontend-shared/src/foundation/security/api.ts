@@ -48,14 +48,14 @@ export interface SecurityDevice {
   current: boolean
 }
 /** 宿主提供的typed请求函数，不另取token。 */
-export type SecurityGet = <T>(path: string) => Promise<T>
+export type SecurityGet = <T>(path: string, options?: RequestOptions) => Promise<T>
 /** 宿主提供的typed写入函数。 */
 export type SecurityPost = <T>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
 /** 扩展已有auth namespace；prefix由宿主固定，不从用户输入取得。 */
 export function createSecurityAuthApi(get: SecurityGet, post: SecurityPost, prefix: string) {
   return {
     logout: () => post<{ status: string }>(prefix + '/logout'),
-    status: () => get<SecurityStatus>(prefix + '/mfa/status'),
+    status: (options?: RequestOptions) => get<SecurityStatus>(prefix + '/mfa/status', options),
     enroll: () => post<{ secret: string; otpauth_uri: string }>(prefix + '/mfa/enroll'),
     enable: (code: string) => post<SecurityEnabled>(prefix + '/mfa/enable', { code }),
     verify: (code: string) => post<SecurityAuthTokens>(prefix + '/mfa/verify', { code }),
@@ -72,7 +72,7 @@ export function createSecurityAuthApi(get: SecurityGet, post: SecurityPost, pref
 export function createSecurityApi(get: SecurityGet, post: SecurityPost, prefix: string) {
   return {
     status: () => get<SecurityStatus>(prefix + '/status'),
-    sessions: () => get<SecurityDevice[]>(prefix + '/sessions'),
+    sessions: (options?: RequestOptions) => get<SecurityDevice[]>(prefix + '/sessions', options),
     revoke: (session_id: string) =>
       post<{ status: string }>(prefix + '/sessions/revoke', { session_id }),
     resetMemberMfa: (member_id: string) =>
@@ -80,7 +80,8 @@ export function createSecurityApi(get: SecurityGet, post: SecurityPost, prefix: 
     revokeMember: (member_id: string) =>
       post<{ status: string }>(prefix + '/members/revoke', { member_id }),
     regenerateCodes: () => post<string[]>(prefix + '/recovery-codes'),
-    policy: () => get<{ require_all_mfa: boolean }>(prefix + '/policy'),
+    policy: (options?: RequestOptions) =>
+      get<{ require_all_mfa: boolean }>(prefix + '/policy', options),
     setPolicy: (require_all_mfa: boolean) =>
       post<{ require_all_mfa: boolean }>(prefix + '/policy', { require_all_mfa }),
     invite: (member_id: string) => post<{ status: string }>(prefix + '/invitations', { member_id })
