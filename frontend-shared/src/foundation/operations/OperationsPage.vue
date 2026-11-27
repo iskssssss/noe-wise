@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { computed, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
-import { useRoute, useRouter, type LocationQuery } from 'vue-router'
+import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
 import type { FoundationOptionPage } from '../optionTypes'
@@ -150,7 +150,7 @@ const syncingQuery = ref(false)
 const queryBusy = computed(() => audit.loading.value || syncingQuery.value)
 /** 地址与导出只采用成功读取的条件，编辑中的输入继续留在表单。 */
 async function saveQuery(values: Record<string, string>, currentPage: number, advanced: boolean) {
-  const query = { ...route.query }
+  const query: LocationQueryRaw = { ...route.query }
   for (const key of filterKeys) query[key] = values[key] || undefined
   query.page = currentPage > 1 ? String(currentPage) : undefined
   query.advanced = advanced
