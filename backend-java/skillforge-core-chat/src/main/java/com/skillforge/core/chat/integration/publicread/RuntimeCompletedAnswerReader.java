@@ -73,9 +73,11 @@ public final class RuntimeCompletedAnswerReader {
     public static String completionText(String output, String status, String reason) {
         if (!output.isBlank()) return output;
         return switch (status) {
-            case "FAILED" -> "tool_batch_ineligible".equals(reason)
-                    ? "本次请求未能完成：智能体同时发起了不能一起执行的工具操作，这组操作未执行。请将任务拆成单步后重新发送；若仍失败，请联系管理员查看运行过程。"
-                    : "本次请求未能完成。请查看运行过程核对已执行的操作，确认后再决定是否重新发送，或联系管理员处理。";
+            case "FAILED" -> switch (reason) {
+                case "tool_batch_ineligible" -> "本次请求未能完成：智能体同时发起了不能一起执行的工具操作，这组操作未执行。请将任务拆成单步后重新发送；若仍失败，请联系管理员查看运行过程。";
+                case "model_rate_limited" -> "模型服务当前限流，本次任务未完成。请联系管理员核查模型额度或限流状态，恢复后再尝试。重新发送前，请在运行过程中核对已执行的操作。";
+                default -> "本次请求未能完成。请查看运行过程核对已执行的操作，确认后再决定是否重新发送，或联系管理员处理。";
+            };
             case "TERMINATED" -> "本次请求已停止，尚未完成。请查看运行过程核对已执行的操作，再决定是否继续。";
             case "CANCELLED" -> "本次请求已取消。已执行的操作不会自动撤销，可在运行过程中核对。";
             default -> output;

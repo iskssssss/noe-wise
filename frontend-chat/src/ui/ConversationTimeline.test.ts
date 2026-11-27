@@ -314,6 +314,51 @@ describe('正文消息时间', () => {
     wrapper.unmount()
   })
 
+  it('历史限流失败显示处理建议，保留原回答且不发送模型请求', () => {
+    const submit = vi.fn()
+    const wrapper = mount(ConversationTimeline, {
+      props: {
+        history: {
+          ...emptyHistory(),
+          messages: [
+            {
+              message_id: 'failed-message',
+              message_version: 1,
+              role: 'assistant',
+              content: '原失败说明',
+              state: 'failed',
+              metadata: { run_id: 'rate-limited-run' }
+            }
+          ],
+          activities: [
+            {
+              node_id: 'rate-limited-run',
+              node_type: 'agent_runtime',
+              status: 'failed',
+              render: { reason: 'model_rate_limited' }
+            }
+          ]
+        },
+        client: { submit } as unknown as Client,
+        session: 's',
+        locked: false,
+        runStates: { 'rate-limited-run': 'failed' },
+        artifacts: []
+      },
+      global: { stubs: { ArtifactCards: true } }
+    })
+    try {
+      expect(wrapper.text()).toContain('原失败说明')
+      expect(wrapper.text()).toContain('模型服务限流，本次任务未完成')
+      expect(wrapper.text()).toContain('核查模型额度或限流状态')
+      expect(wrapper.text()).toContain('核对已执行的操作')
+      expect(wrapper.text()).not.toContain('model_rate_limited')
+      expect(submit).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('S05真实历史中提问与补充不重复挂载同Run汇总，刷新保留全部过程', async () => {
     const history = {
       ...emptyHistory(),

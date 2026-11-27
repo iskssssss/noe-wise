@@ -59,6 +59,20 @@ class RuntimeCompletedAnswerReaderTest {
         assertFalse(answer.content().contains("tool_batch_ineligible"));
     }
 
+    @Test void rateLimitExplainsTheFailureWithoutExposingDiagnosticsOrReplacingPartialOutput() throws Exception {
+        var saved = event(5, "rate-limited", AgentExecutionProgram.COMPLETED_EVENT, AgentExecutionProgram.COMPLETED_SCHEMA,
+                json.writeValueAsString(Map.of("text", "", "status", "FAILED", "reason", "model_rate_limited", "inputId", "input-1",
+                        "rootInputId", "root-1", "traceId", "trace-1", "spanId", "span-1", "agentId", "9")));
+        var answer = reader.read(List.of(saved), guard).getFirst();
+        assertEquals("failed", answer.state());
+        assertEquals("rate-limited", answer.messageId());
+        assertTrue(answer.content().contains("模型服务当前限流"));
+        assertTrue(answer.content().contains("核查模型额度或限流状态"));
+        assertTrue(answer.content().contains("核对已执行的操作"));
+        assertFalse(answer.content().contains("model_rate_limited"));
+        assertEquals("已核实的局部结果", RuntimeCompletedAnswerReader.completionText("已核实的局部结果", "FAILED", "model_rate_limited"));
+    }
+
     @Test void corruptedCompletionDuplicateSourcesAndCrossTenantBatchFailClosed() throws Exception {
         var done = completed(1, "COMPLETED", "公开答案");
         assertThrows(RuntimeCompletedAnswerReader.FormatException.class, () -> reader.read(List.of(done, done), guard));

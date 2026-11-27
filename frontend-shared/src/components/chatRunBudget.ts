@@ -58,6 +58,8 @@ export function executionStopReason(reason: string) {
     return `${match[1] === 'root' ? '任务根' : '当前运行'}的${resource}额度已耗尽。`
   }
   const known: Record<string, string> = {
+    model_rate_limited:
+      '模型服务限流，本次任务未完成。请联系管理员核查模型额度或限流状态，恢复后再尝试；重新发送前请核对已执行的操作。',
     user_cancelled: '用户已取消本次请求。',
     tool_batch_ineligible:
       '智能体同时发起的工具不能一起执行，这组操作未执行；请拆成单步后重新发送。',
