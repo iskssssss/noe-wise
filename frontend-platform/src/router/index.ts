@@ -16,7 +16,7 @@ const router = createRouter({
         {
           path: 'foundation/jobs',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '导入导出与任务', foundationArea: 'jobs' }
+          meta: { title: '管理任务', foundationArea: 'jobs', preserveOnQueryChange: true }
         },
         {
           path: 'foundation/access',
@@ -45,7 +45,7 @@ const router = createRouter({
         {
           path: 'foundation/assets',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '文件与管理任务', foundationArea: 'assets' }
+          meta: { title: '文件与管理任务', foundationArea: 'assets', preserveOnQueryChange: true }
         },
         {
           path: 'foundation/operations',

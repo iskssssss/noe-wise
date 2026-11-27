@@ -7,6 +7,7 @@ interface LeaveProtection {
   busy?: () => boolean
   discard?: () => void
   leaveMessage?: () => string | undefined
+  preservesDraftOnUpdate?: (to: RouteLocationNormalized, from: RouteLocationNormalized) => boolean
 }
 const protections = new Set<LeaveProtection>()
 let pending: Promise<boolean> | undefined
@@ -50,10 +51,6 @@ export async function confirmPageLeave(): Promise<boolean> {
   return pending
 }
 
-function confirmRouteUpdate(to: RouteLocationNormalized, from: RouteLocationNormalized) {
-  return to.fullPath === from.fullPath ? true : confirmPageLeave()
-}
-
 /** 单页导航的保护集中在活动页面；密码、草稿不持久化到浏览器存储。 */
 export function useUnsavedChanges(protection: LeaveProtection) {
   protections.add(protection)
@@ -64,7 +61,11 @@ export function useUnsavedChanges(protection: LeaveProtection) {
   }
   window.addEventListener('beforeunload', beforeUnload)
   onBeforeRouteLeave(confirmPageLeave)
-  onBeforeRouteUpdate(confirmRouteUpdate)
+  onBeforeRouteUpdate((to, from) =>
+    to.fullPath === from.fullPath || protection.preservesDraftOnUpdate?.(to, from)
+      ? true
+      : confirmPageLeave()
+  )
   onScopeDispose(() => {
     protections.delete(protection)
     window.removeEventListener('beforeunload', beforeUnload)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AdminPage from '../admin/AdminPage.vue'
-import { confirmPageLeave } from '../admin/leave'
 import type { HttpClient, RequestOptions } from '../utils/http'
 import AccessPage from './access/AccessPage.vue'
 import CatalogPage from './catalog/CatalogPage.vue'
@@ -23,9 +23,21 @@ const props = defineProps<{
   onLogout: () => void
 }>()
 const base = computed(() => (props.platform ? '/admin' : '/tenant'))
-const assetTab = ref(
-  props.area !== 'jobs' && props.permissions.includes('foundation.files.read') ? 'files' : 'jobs'
-)
+const route = useRoute()
+const router = useRouter()
+const assetTab = computed(() => {
+  const available = ['files', 'jobs'].filter((tab) =>
+    props.permissions.includes(`foundation.${tab}.read`)
+  )
+  return (
+    available.find((tab) => tab === route.query.tab) ||
+    (props.area === 'jobs' && available.includes('jobs') ? 'jobs' : available[0])
+  )
+})
+/** 路由守卫确认离开后才切页签；取消时保留高亮和原表单。 */
+async function changeAssetTab(value: string | number) {
+  return !(await router.replace({ query: { ...route.query, tab: String(value) } }))
+}
 function localRequest<T>(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
@@ -41,15 +53,6 @@ function messagingRequest<T>(
 ): Promise<T> {
   return props.request<T>(method, path, body, false, options)
 }
-watch(
-  () => [props.area, props.permissions.join(',')],
-  () => {
-    assetTab.value =
-      props.area === 'jobs' || !props.permissions.includes('foundation.files.read')
-        ? 'jobs'
-        : 'files'
-  }
-)
 </script>
 
 <template>
@@ -83,10 +86,10 @@ watch(
   />
   <AdminPage
     v-else-if="area === 'assets' || area === 'jobs'"
-    :title="assetTab === 'files' ? '公共文件' : '管理任务'"
+    :title="area === 'jobs' ? '管理任务' : '文件与管理任务'"
     aria-label="文件和管理任务"
   >
-    <ElTabs v-model="assetTab" :before-leave="confirmPageLeave">
+    <ElTabs :model-value="assetTab" :before-leave="changeAssetTab">
       <ElTabPane v-if="permissions.includes('foundation.files.read')" label="公共文件" name="files"
         ><FoundationFilesPage
           v-if="assetTab === 'files'"

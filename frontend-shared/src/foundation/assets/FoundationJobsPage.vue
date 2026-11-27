@@ -13,6 +13,7 @@ import {
   watch
 } from 'vue'
 import { ElMessageBox } from 'element-plus'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { useResource, useTask } from '../../admin/tasks'
 import { useUnsavedChanges } from '../../admin/leave'
 import { formatDateTime } from '../../utils/datetime'
@@ -37,9 +38,13 @@ const props = defineProps<{
   permissions: string[]
   catalogHref: string
 }>()
+const route = useRoute()
+const router = useRouter()
+const pagePath = route.path
 const page = ref(1)
 const formTipId = useId()
 const pageSize = useFoundationPageSize()
+const defaultPageSize = pageSize.value
 const handlerCode = ref('')
 const operation = ref<'import' | 'export'>('import')
 const optionValues = reactive<Record<string, string>>({})
@@ -87,14 +92,14 @@ const detail = useResource((signal) =>
 )
 watch(
   selectedId,
-  (id) => {
+  () => {
+    selected.value = undefined
     errors.invalidate()
     errors.data.value = undefined
     errors.error.value = ''
     detail.invalidate()
     detail.data.value = undefined
     detail.error.value = ''
-    if (id) void errors.reload()
   },
   { flush: 'sync' }
 )
@@ -146,6 +151,26 @@ function resultExpired(job: FoundationJob) {
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
+let pollVersion = 0
+
+/** 地址仅保存浏览位置，材料、预检和原提交身份仍由当前表单持有。 */
+function readLocation() {
+  const requestedPage = Number(route.query.jobs_page)
+  page.value = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
+  const requestedSize = Number(route.query.jobs_page_size)
+  pageSize.value = [10, 20, 50, 100].includes(requestedSize) ? requestedSize : defaultPageSize
+  selectedId.value = typeof route.query.job_id === 'string' ? route.query.job_id : ''
+}
+async function changeLocation(changes: LocationQueryRaw) {
+  const query = {
+    ...route.query,
+    jobs_page: String(page.value),
+    jobs_page_size: String(pageSize.value),
+    ...changes
+  }
+  if (router.resolve({ query }).fullPath === route.fullPath) return true
+  return !(await router.replace({ query }))
+}
 
 /** 身份变化后丢弃旧写投影与错误，确认框之后不向新身份继续发送旧命令。 */
 function currentAction<T>(
@@ -260,10 +285,8 @@ async function submit() {
     if (!active()) return
     pendingSubmission.value = undefined
     submittedJob.value = result
-    selected.value = result
-    selectedId.value = result.id
     message.value = `任务已受理：${result.id}，处理结果请查看任务详情`
-    void poll(generation)
+    await inspect(result)
   })
 }
 /** 取消只确认停止后续行，已提交行保留；最终结果由工作者确认。 */
@@ -278,18 +301,21 @@ async function cancel(job: FoundationJob) {
     return request<FoundationJob>('POST', `${base}/jobs/cancel`, { job_id: job.id })
   })
   if (result) {
-    selected.value = result
-    selectedId.value = result.id
     message.value = `当前任务状态：${stateLabels[result.state] ?? result.state}。已提交的数据会保留，请在任务详情核对最终结果。`
-    void poll(generation)
+    await inspect(result)
   }
 }
 /** 用户查看详情时定位标题；后台轮询只更新内容，不移动焦点。 */
 async function inspect(job: FoundationJob) {
+  const current = generation
+  const sameSelection = selectedId.value === job.id
+  if (!(await changeLocation({ job_id: job.id }))) return
+  if (disposed || current !== generation) return
   selected.value = job
-  if (selectedId.value === job.id) void errors.reload()
-  selectedId.value = job.id
-  void poll(generation)
+  if (sameSelection) {
+    void errors.reload()
+    void poll(generation)
+  }
   await nextTick()
   detailHeading.value?.focus()
 }
@@ -310,14 +336,19 @@ async function download(job: FoundationJob) {
 /** 轮询只读取状态；页面卸载与作用域改变释放定时器和旧结果写权。 */
 async function poll(current: number) {
   if (disposed || current !== generation) return
+  const version = ++pollVersion
   if (timer) clearTimeout(timer)
   const value = await jobs.reload()
-  if (disposed || current !== generation) return
+  if (disposed || current !== generation || version !== pollVersion) return
   const inspecting = selectedId.value
   if (inspecting) {
     const row = value?.items.find((item) => item.id === inspecting) ?? (await detail.reload())
-    if (disposed || current !== generation) return
-    if (row && selectedId.value === inspecting) selected.value = row
+    if (disposed || current !== generation || version !== pollVersion) return
+    if (row && selectedId.value === inspecting) {
+      selected.value = row
+      // 恢复地址先确认任务可读，避免不存在的任务同时报告详情与错误材料失败。
+      if (!errors.data.value && !errors.loading.value && !errors.error.value) void errors.reload()
+    }
   }
   if (
     value?.items.some((item) => ['queued', 'running', 'cancel_requested'].includes(item.state)) ||
@@ -327,9 +358,7 @@ async function poll(current: number) {
 }
 /** 本页页大小仅控制列表，不修改保存的个人默认。 */
 function resize(value: number) {
-  pageSize.value = value
-  page.value = 1
-  void poll(generation)
+  void changeLocation({ jobs_page_size: String(value), jobs_page: '1' })
 }
 /** 使用当前处理器声明的列生成空白材料，用户无需抄写表头。 */
 function downloadTemplate() {
@@ -349,7 +378,15 @@ watch(handlerCode, () => {
 watch(operation, invalidatePreflight)
 watch(optionValues, invalidatePreflight, { deep: true })
 watch(
-  () => [props.apiBase, props.request, props.permissions.join(',')],
+  [() => route.query.jobs_page, () => route.query.jobs_page_size, () => route.query.job_id],
+  () => {
+    if (route.path !== pagePath || !props.permissions.includes('foundation.jobs.read')) return
+    readLocation()
+    void poll(generation)
+  }
+)
+watch(
+  [() => props.apiBase, () => props.request, () => props.permissions.join(',')],
   () => {
     generation++
     if (timer) clearTimeout(timer)
@@ -373,12 +410,16 @@ watch(
     handlerCode.value = ''
     message.value = ''
     action.error.value = ''
+    if (!props.permissions.includes('foundation.jobs.read')) return
+    readLocation()
     void handlers.reload()
     void poll(generation)
   },
   { immediate: true }
 )
 useUnsavedChanges({
+  // 同页查看历史任务或分页不会卸载表单；切到文件页签仍须确认离开。
+  preservesDraftOnUpdate: (to, from) => to.path === from.path && to.query.tab === from.query.tab,
   dirty: () =>
     Boolean(
       pendingSubmission.value ||
@@ -671,15 +712,17 @@ onScopeDispose(() => {
       :total="jobs.data.value?.total ?? 0"
       :page-sizes="[10, 20, 50, 100]"
       layout="total, sizes, prev, pager, next"
-      @current-change="
-        (value: number) => {
-          page = value
-          poll(generation)
-        }
-      "
+      @current-change="(value: number) => changeLocation({ jobs_page: String(value) })"
       @size-change="resize"
     />
     <FieldTip :id="formTipId + '-pagination'"> 条数仅对当前列表生效。 </FieldTip>
+    <p v-if="selectedId && !selected" class="muted" role="status">
+      {{
+        jobs.loading.value || detail.loading.value
+          ? '正在读取任务详情…'
+          : '任务详情尚未读取成功，请刷新任务后重试。'
+      }}
+    </p>
     <ElDescriptions v-if="selected" :column="1" :label-width="110" border>
       <template #title>
         <h2 ref="detailHeading" class="detail-heading" tabindex="-1">任务详情</h2>
