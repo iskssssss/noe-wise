@@ -110,6 +110,7 @@ function receipt(fields: Partial<WorkflowTestReceipt> = {}): WorkflowTestReceipt
   }
 }
 const wrappers: VueWrapper[] = []
+const scrollIntoView = HTMLElement.prototype.scrollIntoView
 const permissions = ref(['foundation.workflows.create', 'foundation.workflows.update'])
 function render(props: Record<string, unknown> = {}) {
   const wrapper = mount(WorkflowTestPanel, {
@@ -172,6 +173,7 @@ function select(wrapper: VueWrapper, name: string) {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  HTMLElement.prototype.scrollIntoView = vi.fn()
   permissions.value = ['foundation.workflows.create', 'foundation.workflows.update']
   sessionStorage.clear()
   localStorage.setItem('test.auth.session', 'actor')
@@ -220,6 +222,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
   vi.useRealTimers()
+  HTMLElement.prototype.scrollIntoView = scrollIntoView
 })
 
 describe('重新登录后的工作流测试历史', () => {
@@ -1556,7 +1559,9 @@ describe('真实Workflow测试面板边界', () => {
     await dom().get('form').trigger('submit')
     await flushPromises()
     expect(mocks.create).not.toHaveBeenCalled()
-    expect(dom().text()).toContain('JSON 中的测试消息与上方内容不同')
+    await vi.waitFor(() => expect(dom().text()).toContain('JSON 中的测试消息与上方内容不同'))
+    expect(dom().get('.el-form-item__error').text()).toContain('JSON 中的测试消息与上方内容不同')
+    expect(document.activeElement).toBe(dom().get('textarea[aria-label="测试参数 JSON"]').element)
     await dom()
       .get('textarea[aria-label="测试参数 JSON"]')
       .setValue(JSON.stringify({ user_input: '上方消息', count: 0, urgent: false }))
@@ -1578,11 +1583,61 @@ describe('真实Workflow测试面板边界', () => {
     await dom().get('form').trigger('submit')
     await flushPromises()
     expect(mocks.create).not.toHaveBeenCalled()
-    expect(dom().text()).toContain('请填写测试参数：处理数量')
+    await vi.waitFor(() => expect(dom().text()).toContain('请填写测试参数：处理数量'))
+    expect(dom().get('.el-form-item__error').text()).toBe('请填写测试参数：处理数量')
+    expect(dom().find('.el-message').exists()).toBe(false)
     await dom().get('textarea[aria-label="测试参数 JSON"]').setValue('{"count":0,"urgent":false}')
     await dom().get('form').trigger('submit')
     await flushPromises()
     expect(mocks.create.mock.calls[0]![0].parameters).toEqual({ count: 0, urgent: false })
+  })
+  it('测试消息与必填参数的错误定位到字段，编辑后清除且修正前不创建或发送', async () => {
+    const value = options()
+    value.inputSchema.required = ['user_input', 'customer', 'count']
+    mocks.options.mockResolvedValue(value)
+    render()
+    await flushPromises()
+    const message = dom().get('textarea[aria-label="测试消息"]')
+    const customer = dom().get('input[aria-label="客户名称"]')
+    await message.setValue('')
+    await customer.setValue('')
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    await vi.waitFor(() => expect(dom().get('.el-form-item__error').text()).toBe('请填写测试消息'))
+    expect(document.activeElement).toBe(message.element)
+    expect(dom().find('.el-message').exists()).toBe(false)
+    await message.setValue('验证输入')
+    await vi.waitFor(() => expect(dom().find('.el-form-item__error').exists()).toBe(false))
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    await vi.waitFor(() =>
+      expect(dom().get('.el-form-item__error').text()).toBe('请填写测试参数：客户名称')
+    )
+    expect(document.activeElement).toBe(customer.element)
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    await customer.setValue('新客户')
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.create.mock.calls[0]![0]).toMatchObject({
+      userInput: '验证输入',
+      parameters: { customer: '新客户', count: 0, urgent: false }
+    })
+  })
+  it('保存并测试遇到输入错误时先定位字段，不保存草稿；切换来源清除旧错误', async () => {
+    const saveDraft = vi.fn()
+    const wrapper = render({ dirty: true, saveDraft })
+    await flushPromises()
+    await dom().get('textarea[aria-label="测试消息"]').setValue('')
+    await button(wrapper, '保存并测试').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(dom().get('.el-form-item__error').text()).toBe('请填写测试消息'))
+    expect(saveDraft).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+    select(wrapper, '测试目标').vm.$emit('update:modelValue', 'pub:1')
+    await flushPromises()
+    expect(dom().find('.el-form-item__error').exists()).toBe(false)
   })
   it.each([
     ['额外字段', '{"count":0,"extra":"保留"}', 'extra'],
@@ -1598,7 +1653,7 @@ describe('真实Workflow测试面板边界', () => {
     expect(
       dom().get<HTMLTextAreaElement>('textarea[aria-label="测试参数 JSON"]').element.value
     ).toBe(input)
-    expect(dom().text()).toContain(`参数“${field}”无法在表单中表示`)
+    await vi.waitFor(() => expect(dom().text()).toContain(`参数“${field}”无法在表单中表示`))
     expect(mocks.create).not.toHaveBeenCalled()
     await dom().get('textarea[aria-label="测试参数 JSON"]').setValue('{"count":0,"urgent":false}')
     await button(wrapper, '按字段填写').trigger('click')
@@ -1621,7 +1676,7 @@ describe('真实Workflow测试面板边界', () => {
       await dom().get('form').trigger('submit')
       await flushPromises()
       expect(mocks.create).not.toHaveBeenCalled()
-      expect(dom().text()).toContain(warning)
+      await vi.waitFor(() => expect(dom().text()).toContain(warning))
       expect(input.element.value).toContain(String(value))
     }
     await input.setValue('{"count":100,"urgent":false}')

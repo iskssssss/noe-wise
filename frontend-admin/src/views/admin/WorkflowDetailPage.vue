@@ -502,7 +502,6 @@
             <p class="admin-field-help">
               填写执行所需权限，支持逗号分隔或 JSON 字符串数组。
             </p></ElFormItem
-          >
           ></ElForm
         ></ElTabPane
       >

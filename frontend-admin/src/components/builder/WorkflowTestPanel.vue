@@ -3,6 +3,7 @@ import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import { vDescribedBy } from '@skillforge/shared/directives/describedBy'
 import { message } from '@skillforge/shared/feedback'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
+import type { FormInstance } from 'element-plus'
 import { guardFormEnter, useUnsavedChanges } from '@skillforge/shared/admin'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import CodeEditor from '@skillforge/shared/components/CodeEditor.vue'
@@ -65,6 +66,8 @@ const userInput = ref(''),
   jsonMode = ref(false)
 const userInputEdited = ref(false)
 const formRequiresJson = ref(false)
+const testForm = ref<FormInstance>()
+const inputError = ref<{ field: string; message: string }>()
 const config = reactive<Record<string, unknown>>({}),
   selections = reactive<Record<string, string>>({})
 const invalidatedSlots = reactive<Record<string, boolean>>({})
@@ -538,12 +541,40 @@ function toggleJson(value: boolean) {
       Object.keys(parameters).forEach((key) => delete parameters[key])
       Object.assign(parameters, parsed)
     } catch (reason) {
-      error.value = errorText(reason, '无法读取测试参数')
+      rejectInput('json', errorText(reason, '无法读取测试参数'))
       return
     }
   }
   error.value = ''
   jsonMode.value = value
+}
+watch(
+  [
+    userInput,
+    parameters,
+    parameterJson,
+    useJson,
+    sourceKey,
+    () => props.modelValue,
+    () => props.identityVersion
+  ],
+  () => {
+    inputError.value = undefined
+  },
+  { deep: true, flush: 'sync' }
+)
+function rejectInput(field: string, message: string) {
+  inputError.value = { field, message }
+  void nextTick(() => {
+    const item = testForm.value?.$el.querySelector(
+      '[data-test-input-error="true"]'
+    ) as HTMLElement | null
+    item?.scrollIntoView({ block: 'center' })
+    item
+      ?.querySelector<HTMLElement>('input, textarea, [role="textbox"]')
+      ?.focus({ preventScroll: true })
+  })
+  return undefined
 }
 function loadOptions() {
   const promise = readOptions()
@@ -835,14 +866,21 @@ async function startInitial() {
   }
 }
 function buildTestInput() {
+  inputError.value = undefined
   if (!options.value || !source.value || !budget.value) throw Error('测试选项尚未就绪')
-  const parametersValue = useJson.value ? objectInput(parameterJson.value) : { ...parameters }
+  let parametersValue: Record<string, unknown>
+  try {
+    parametersValue = useJson.value ? objectInput(parameterJson.value) : { ...parameters }
+  } catch (reason) {
+    return rejectInput('json', errorText(reason, '无法读取测试参数'))
+  }
   if (Object.hasOwn(parametersValue, 'user_input')) {
     const message = parametersValue.user_input
     if (typeof message !== 'string')
-      throw Error('JSON 中的测试消息必须为文本，请在上方“测试消息”中填写')
+      return rejectInput('json', 'JSON 中的测试消息必须为文本，请在上方“测试消息”中填写')
     if (userInputEdited.value && userInput.value !== message)
-      throw Error(
+      return rejectInput(
+        'json',
         'JSON 中的测试消息与上方内容不同，请统一在“测试消息”中填写，并从 JSON 参数中移除重复消息'
       )
     userInput.value = message
@@ -850,17 +888,18 @@ function buildTestInput() {
     delete parametersValue.user_input
     parameterJson.value = JSON.stringify(parametersValue, null, 2)
   }
-  if (!userInput.value.trim()) throw Error('请填写测试消息')
+  if (!userInput.value.trim()) return rejectInput('message', '请填写测试消息')
   if (optionsKey !== sourceKey.value) throw Error('测试目标已变化，请重新读取测试选项')
   for (const field of inputFields.value ?? []) {
     const value = parametersValue[field.key]
+    const target = useJson.value ? 'json' : 'parameter:' + field.key
     if (field.required && (value === undefined || value === null || value === ''))
-      throw Error('请填写测试参数：' + field.label)
+      return rejectInput(target, '请填写测试参数：' + field.label)
     if (typeof value === 'number') {
       if (field.minimum !== undefined && value < field.minimum)
-        throw Error(`${field.label}不能小于 ${field.minimum}`)
+        return rejectInput(target, `${field.label}不能小于 ${field.minimum}`)
       if (field.maximum !== undefined && value > field.maximum)
-        throw Error(`${field.label}不能大于 ${field.maximum}`)
+        return rejectInput(target, `${field.label}不能大于 ${field.maximum}`)
     }
   }
   for (const field of budgetFields)
@@ -955,7 +994,7 @@ async function saveAndTest() {
   try {
     authSession = localStorage.getItem(authSessionKey)
     authCaptured = true
-    buildTestInput()
+    if (!buildTestInput()) return
     const previousSourceKey = sourceKey.value,
       form = formFingerprint(snapshotForm()),
       { source: _source, ...originalOptions } = options.value,
@@ -1039,7 +1078,9 @@ async function createAndTest() {
     intent === saveIntentEpoch &&
     sameIdentity(identity, authSession, workflow)
   try {
-    const { input, expectedHash } = buildTestInput()
+    const prepared = buildTestInput()
+    if (!prepared) return
+    const { input, expectedHash } = prepared
     submittedForm = { requestId: input.requestId, key: currentForm, snapshot: snapshotForm() }
     try {
       persist({ requestId: input.requestId, initial: 'not_sent', closing: false })
@@ -1676,6 +1717,7 @@ onBeforeUnmount(() => {
       </section>
       <template v-if="!recovery">
         <ElForm
+          ref="testForm"
           label-position="top"
           @submit.prevent="createAndTest"
           @keydown.capture="guardFormEnter"
@@ -1720,7 +1762,12 @@ onBeforeUnmount(() => {
           >
           <template v-if="options">
             <p class="test-target">{{ sourceLabel }}</p>
-            <ElFormItem label="测试消息" required>
+            <ElFormItem
+              label="测试消息"
+              required
+              :error="inputError?.field === 'message' ? inputError.message : undefined"
+              :data-test-input-error="inputError?.field === 'message'"
+            >
               <ElInput
                 :model-value="userInput"
                 @update:model-value="setUserInput"
@@ -1741,14 +1788,19 @@ onBeforeUnmount(() => {
                   >{{ useJson ? '按字段填写' : 'JSON 输入' }}</ElButton
                 >
               </div>
-              <CodeEditor
+              <ElFormItem
                 v-if="useJson"
-                v-model="parameterJson"
-                label="测试参数 JSON"
-                language="json"
-                height="180px"
-                :readonly="locked"
-              />
+                :error="inputError?.field === 'json' ? inputError.message : undefined"
+                :data-test-input-error="inputError?.field === 'json'"
+              >
+                <CodeEditor
+                  v-model="parameterJson"
+                  label="测试参数 JSON"
+                  language="json"
+                  height="180px"
+                  :readonly="locked"
+                />
+              </ElFormItem>
               <template v-else>
                 <p v-if="!inputFields?.length" class="admin-field-help">
                   此版本没有声明输入字段，可直接填写测试消息。
@@ -1758,6 +1810,10 @@ onBeforeUnmount(() => {
                   :key="field.key"
                   :label="field.label"
                   :required="field.required"
+                  :error="
+                    inputError?.field === 'parameter:' + field.key ? inputError.message : undefined
+                  "
+                  :data-test-input-error="inputError?.field === 'parameter:' + field.key"
                 >
                   <ElSelect
                     v-if="field.choices || field.type === 'boolean'"
@@ -2183,6 +2239,11 @@ onBeforeUnmount(() => {
 .workflow-test-panel h3 {
   font-size: 15px;
   margin-block: 12px;
+}
+.workflow-test-panel :deep([data-test-input-error] .el-form-item__error) {
+  position: static;
+  width: 100%;
+  line-height: 1.5;
 }
 .test-history-list {
   list-style: none;
