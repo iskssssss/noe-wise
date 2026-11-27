@@ -785,6 +785,32 @@ it.each([
   })
 })
 
+it('创建请求在途显示等待，成功后发送原草稿一次', async () => {
+  let complete!: (value: { request_id: string; session_id: string }) => void
+  mocks.createSession.mockImplementationOnce(() => new Promise((resolve) => (complete = resolve)))
+  await open()
+  await choose('终端用户', '目标回归用户')
+  await choose('选择智能体或团队', '已发布智能体')
+  await send('等待创建的原草稿')
+  expect(wrapper!.text()).toContain('正在确认会话创建结果，请稍候。')
+  expect(wrapper!.text()).not.toContain('会话创建结果尚未确认')
+  expect(
+    wrapper!
+      .findAll('button')
+      .find((button) => button.text() === '核对创建结果')!
+      .attributes('disabled')
+  ).toBeDefined()
+  expect(mocks.submit).not.toHaveBeenCalled()
+  complete({ request_id: mocks.createSession.mock.calls[0]![0], session_id: 'created-session' })
+  await flushPromises()
+  expect(wrapper!.text()).not.toContain('正在确认会话创建结果')
+  expect(mocks.createSession).toHaveBeenCalledOnce()
+  expect(mocks.submit).toHaveBeenCalledOnce()
+  expect(mocks.submit.mock.calls[0]![0].content).toEqual([
+    { type: 'text', text: '等待创建的原草稿' }
+  ])
+})
+
 it('会话创建响应中断后按原请求核对，未查到时不重复创建或发送', async () => {
   mocks.createSession.mockRejectedValueOnce(new Error('连接中断'))
   await open()
@@ -794,8 +820,18 @@ it('会话创建响应中断后按原请求核对，未查到时不重复创建�
   const requestId = mocks.createSession.mock.calls[0]![0]
   expect(mocks.submit).not.toHaveBeenCalled()
   expect(wrapper!.text()).toContain('会话创建结果尚未确认')
+  expect(wrapper!.text()).not.toContain('正在确认会话创建结果')
   const check = () => wrapper!.findAll('button').find((button) => button.text() === '核对创建结果')!
+  let complete!: (value: null) => void
+  mocks.sessionCreationResult.mockImplementationOnce(
+    () => new Promise((resolve) => (complete = resolve))
+  )
   await check().trigger('click')
+  await flushPromises()
+  expect(wrapper!.text()).toContain('正在确认会话创建结果，请稍候。')
+  expect(wrapper!.text()).not.toContain('会话创建结果尚未确认')
+  expect(check().attributes('disabled')).toBeDefined()
+  complete(null)
   await flushPromises()
   expect(mocks.sessionCreationResult).toHaveBeenCalledWith(requestId)
   expect(mocks.createSession).toHaveBeenCalledOnce()

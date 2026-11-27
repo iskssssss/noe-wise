@@ -34,6 +34,7 @@
     </p>
     <div v-if="pendingSession || sessionStorageError" class="admin-card" role="status">
       <p v-if="sessionStorageError">{{ sessionStorageError }}</p>
+      <p v-else-if="busy">正在确认会话创建结果，请稍候。</p>
       <p v-else>
         会话创建结果尚未确认，请核对原请求；不会自动发送消息。刷新页面后需重新选择未上传的文件。
       </p>
