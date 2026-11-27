@@ -50,7 +50,7 @@ const router = createRouter({
         {
           path: 'foundation/access',
           component: () => import('../views/FoundationPage.vue'),
-          meta: { title: '组织与权限', foundationArea: 'access' }
+          meta: { title: '组织与权限', foundationArea: 'access', preserveOnQueryChange: true }
         },
         {
           path: 'foundation/catalog',

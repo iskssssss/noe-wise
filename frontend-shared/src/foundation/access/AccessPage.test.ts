@@ -1,7 +1,8 @@
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, reactive, type App } from 'vue'
-import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterView, type Router } from 'vue-router'
+import { confirm } from '../../feedback'
 import ElementPlus, { ElMessageBox } from 'element-plus'
 import AccessPage from './AccessPage.vue'
 import type { AccessRequest, Member, MemberPage } from './types'
@@ -47,6 +48,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 let active: App | undefined
+let activeRouter: Router
 beforeEach(() => {
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm')
   vi.stubGlobal(
@@ -76,19 +78,28 @@ afterEach(() => {
 })
 
 /** 使用真实 Vue app、RouterView 与 ElementPlus；DOM 事件不经过测试工具的组件或 Teleport 重写。 */
-async function render(request: AccessRequest) {
-  const props = reactive({ request, permissions: [...permissions], platform: false })
+async function render(
+  request: AccessRequest,
+  start = '/',
+  platform = false,
+  granted = permissions
+) {
+  const props = reactive({ request, permissions: [...granted], platform })
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', component: AccessPage, props: () => ({ ...props }) }]
+    routes: [
+      { path: '/', component: AccessPage, props: () => ({ ...props }) },
+      { path: '/other', component: { template: '<p>其他页面</p>' } }
+    ]
   })
   const host = defineComponent({ render: () => h(RouterView) })
   const container = document.createElement('div')
   document.body.appendChild(container)
   active = createApp(host).use(router).use(ElementPlus)
-  active.mount(container)
-  await router.push('/')
+  activeRouter = router
+  await router.push(start)
   await router.isReady()
+  active.mount(container)
   await flushPromises()
   return props
 }
@@ -120,6 +131,143 @@ function reads(method: string, path: string) {
 }
 
 describe('组织权限真实交互', () => {
+  it('宿主导航刷新相同权限时不会用旧地址重查成员', async () => {
+    const request = vi.fn((method: string, path: string) => Promise.resolve(reads(method, path)))
+    const props = await render(request as AccessRequest)
+    activeRouter.beforeEach(() => {
+      props.permissions = [...props.permissions]
+    })
+    request.mockClear()
+    await input(
+      document.querySelector<HTMLInputElement>('input[placeholder="用户名或显示名称"]')!,
+      'member-a'
+    )
+    await click('查询')
+    expect(activeRouter.currentRoute.value.query.keyword).toBe('member-a')
+    expect(request.mock.calls.filter(([, path]) => path.includes('members?'))).toEqual([
+      ['GET', 'foundation/access/members?page=1&page_size=20&keyword=member-a', undefined]
+    ])
+  })
+
+  it('恢复成员已查条件与分页，输入草稿和失败查询不覆盖已成功地址', async () => {
+    let fail = false
+    const request = vi.fn((method: string, path: string) => {
+      if (path.includes('members?'))
+        return fail
+          ? Promise.reject(new Error('成员读取失败'))
+          : Promise.resolve({ ...page(), total: 120 })
+      return Promise.resolve(reads(method, path))
+    })
+    await render(
+      request as AccessRequest,
+      '/?tab=members&keyword=member-a&page=2&page_size=10&keep=yes'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      'foundation/access/members?page=2&page_size=10&keyword=member-a',
+      undefined
+    )
+    const search = () =>
+      document.querySelector<HTMLInputElement>('input[placeholder="用户名或显示名称"]')!
+    expect(search().value).toBe('member-a')
+    await input(search(), '未查询草稿')
+    document.querySelector<HTMLElement>('#tab-departments')!.click()
+    await flushPromises()
+    expect(activeRouter.currentRoute.value.query).toMatchObject({
+      tab: 'departments',
+      keyword: 'member-a',
+      page: '2',
+      page_size: '10',
+      keep: 'yes'
+    })
+    await activeRouter.push('/other')
+    activeRouter.back()
+    await vi.waitFor(() =>
+      expect(document.querySelector('#tab-departments')?.getAttribute('aria-selected')).toBe('true')
+    )
+    document.querySelector<HTMLElement>('#tab-members')!.click()
+    await flushPromises()
+    expect(search().value).toBe('member-a')
+    fail = true
+    await input(search(), '失败条件')
+    await click('查询')
+    expect(activeRouter.currentRoute.value.query.keyword).toBe('member-a')
+    expect(search().value).toBe('失败条件')
+    expect(document.body.textContent).toContain('成员甲')
+  })
+
+  it('真实无匹配条件可清除且只用已查询条件更新地址', async () => {
+    const request = vi.fn((method: string, path: string) =>
+      Promise.resolve(
+        path.includes('members?') ? { ...page(), items: [], total: 0 } : reads(method, path)
+      )
+    )
+    await render(request as AccessRequest, '/?keyword=missing')
+    expect(document.body.textContent).toContain('没有匹配当前查询的成员')
+    await click('清除查询条件')
+    expect(activeRouter.currentRoute.value.query.keyword).toBeUndefined()
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      'foundation/access/members?page=1&page_size=20&keyword=',
+      undefined
+    )
+    expect(request.mock.calls.every(([method]) => method === 'GET')).toBe(true)
+  })
+
+  it('从地址恢复资源时重读名称与授权；取消离开不丢授权草稿，撤权后不再读取', async () => {
+    const request = vi.fn((method: string, path: string) => {
+      if (path.startsWith('foundation/options/'))
+        return Promise.resolve({
+          items: [{ id: '123', name: '资源甲', code: 'agent_a', status: 'active' }],
+          has_more: false
+        })
+      if (path.startsWith('foundation/access/resource?'))
+        return Promise.resolve({
+          kind: 'agent',
+          resource_id: '123',
+          owner_member_id: '9223372036854775806',
+          department_id: null,
+          grants: [],
+          lock_version: 2
+        })
+      return Promise.resolve(reads(method, path))
+    })
+    const props = await render(
+      request as AccessRequest,
+      '/?tab=resources&resource_kind=agent&resource_id=123',
+      false,
+      [...permissions, 'foundation.access.resource.manage']
+    )
+    expect(document.body.textContent).toContain('资源甲 · 授权版本 2')
+    await click('增加共享目标')
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+    document.querySelector<HTMLElement>('#tab-departments')!.click()
+    await flushPromises()
+    expect(activeRouter.currentRoute.value.query.tab).toBe('resources')
+    expect(document.querySelector('#tab-resources')?.getAttribute('aria-selected')).toBe('true')
+    expect(button('保存授权').disabled).toBe(false)
+    expect(request.mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    const count = request.mock.calls.filter(([, path]) =>
+      path.startsWith('foundation/access/resource?')
+    ).length
+    props.permissions = [...permissions]
+    await flushPromises()
+    expect(document.querySelector('#tab-resources')).toBeNull()
+    expect(
+      request.mock.calls.filter(([, path]) => path.startsWith('foundation/access/resource?'))
+    ).toHaveLength(count)
+  })
+
+  it('平台不能通过地址进入机构资源授权', async () => {
+    const request = vi.fn((method: string, path: string) => Promise.resolve(reads(method, path)))
+    await render(request as AccessRequest, '/?tab=resources&resource_id=123', true)
+    expect(document.querySelector('#tab-members')?.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector('#tab-resources')).toBeNull()
+    expect(
+      request.mock.calls.some(([, path]) => path.startsWith('foundation/access/resource?'))
+    ).toBe(false)
+  })
+
   it.each([
     ['部门', 'department', 'departments'],
     ['岗位', 'position', 'positions']

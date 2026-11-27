@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import FeedbackNotice from '../../feedback/FeedbackNotice.vue'
 import { HttpClientError } from '../../utils/http'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import AdminPage from '../../admin/AdminPage.vue'
 import FoundationOptionSelect from '../FoundationOptionSelect.vue'
-import type { FoundationOption } from '../optionTypes'
+import type { FoundationOption, FoundationOptionPage } from '../optionTypes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUnsavedChanges } from '../../admin/leave'
 import { useFoundationPageSize } from '../appearance'
@@ -28,6 +29,9 @@ const props = defineProps<{
   platform: boolean
   permissions: readonly string[]
 }>()
+const route = useRoute()
+const router = useRouter()
+const pagePath = route.path
 const tab = ref('members')
 const formTipId = useId()
 const loading = ref(false)
@@ -43,8 +47,44 @@ const members = ref<Member[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = useFoundationPageSize()
+const defaultPageSize = pageSize.value
 const keyword = ref('')
 const appliedKeyword = ref('')
+let loadedMemberQuery = { keyword: '', page: 1, pageSize: defaultPageSize }
+const resourceAllowed = computed(() => !props.platform && can('foundation.access.resource.manage'))
+const location = computed(() => {
+  const query = route.query
+  const tabs = ['members', 'departments', 'positions', 'roles']
+  if (resourceAllowed.value) tabs.push('resources')
+  const size = Number(query.page_size)
+  const currentPage = Number(query.page)
+  const kind = query.resource_kind
+  return {
+    tab: typeof query.tab === 'string' && tabs.includes(query.tab) ? query.tab : 'members',
+    keyword: typeof query.keyword === 'string' ? query.keyword.trim() : '',
+    page: Number.isSafeInteger(currentPage) && currentPage > 0 ? currentPage : 1,
+    pageSize: [10, 20, 50, 100].includes(size) ? size : defaultPageSize,
+    resourceKind: (kind === 'workflow' || kind === 'knowledge'
+      ? kind
+      : 'agent') as ResourceAuthorization['kind'],
+    resourceId:
+      resourceAllowed.value &&
+      typeof query.resource_id === 'string' &&
+      /^[1-9][0-9]{0,18}$/.test(query.resource_id)
+        ? query.resource_id
+        : ''
+  }
+})
+
+/** 地址仅保存浏览位置；草稿、授权和凭据不会进入地址。 */
+async function changeLocation(changes: LocationQueryRaw) {
+  const query = { ...route.query, ...changes }
+  if (router.resolve({ query }).fullPath === route.fullPath) return true
+  return !(await router.replace({ query }))
+}
+function changeTab(value: string | number) {
+  return changeLocation({ tab: String(value) })
+}
 const departmentForm = reactive({
   id: '',
   code: '',
@@ -268,6 +308,7 @@ function message(cause: unknown) {
 /** 页内请求以世代绑定，迟到响应不能覆盖新查询或卸载后的状态。 */
 async function load() {
   const version = ++requestVersion
+  const submitted = { keyword: appliedKeyword.value, page: page.value, pageSize: pageSize.value }
   loading.value = true
   try {
     const [departmentRows, positionRows, roleRows, permissionRows, memberRows] = await Promise.all([
@@ -277,7 +318,7 @@ async function load() {
       api<Permission[]>('GET', 'permissions'),
       api<MemberPage>(
         'GET',
-        `members?page=${page.value}&page_size=${pageSize.value}&keyword=${encodeURIComponent(appliedKeyword.value)}`
+        `members?page=${submitted.page}&page_size=${submitted.pageSize}&keyword=${encodeURIComponent(submitted.keyword)}`
       )
     ])
     if (version !== requestVersion) return
@@ -289,9 +330,22 @@ async function load() {
     total.value = memberRows.total
     loaded.value = true
     error.value = ''
+    loadedMemberQuery = submitted
+    await changeLocation({
+      keyword: submitted.keyword || undefined,
+      page: submitted.page > 1 ? String(submitted.page) : undefined,
+      page_size: String(submitted.pageSize)
+    })
   } catch (cause) {
     if (cause instanceof HttpClientError) cause.claimFeedback()
-    if (version === requestVersion) error.value = message(cause)
+    if (version === requestVersion) {
+      error.value = message(cause)
+      if (loaded.value) {
+        appliedKeyword.value = loadedMemberQuery.keyword
+        page.value = loadedMemberQuery.page
+        pageSize.value = loadedMemberQuery.pageSize
+      }
+    }
   } finally {
     if (version === requestVersion) loading.value = false
   }
@@ -301,6 +355,10 @@ function search() {
   appliedKeyword.value = keyword.value.trim()
   page.value = 1
   void load()
+}
+function resetSearch() {
+  keyword.value = ''
+  search()
 }
 /** 每页数量变化后回到第一页，沿用已提交的查询条件读取成员。 */
 function changePageSize() {
@@ -523,31 +581,16 @@ async function invite(member: Member) {
     saving.value = false
   }
 }
-/** 资源读取绑定类型与业务ID；拒绝切换时遗留上个对象的授权表单。 */
-async function confirmResourceSwitch() {
-  if (resourceDirty.value) {
-    try {
-      await ElMessageBox.confirm('放弃当前未保存的资源授权修改？', '切换资源')
-    } catch {
-      return false
-    }
-  }
-  return !saving.value && can('foundation.access.resource.manage')
-}
+/** 资源浏览位置的切换使用已有路由离开保护，确认前不替换草稿。 */
 async function changeResourceKind(kind: ResourceAuthorization['kind']) {
-  if (switchingResource.value || saving.value || kind === resourceKind.value) return
-  switchingResource.value = true
-  try {
-    if (!(await confirmResourceSwitch())) return
-    ++resourceVersion
-    resourceKind.value = kind
-    resourceId.value = ''
-    resourceName.value = ''
-    resource.value = null
-    resourceError.value = ''
-  } finally {
-    switchingResource.value = false
-  }
+  if (
+    switchingResource.value ||
+    saving.value ||
+    kind === resourceKind.value ||
+    !can('foundation.access.resource.manage')
+  )
+    return
+  await changeLocation({ resource_kind: kind, resource_id: undefined })
 }
 async function inspectResource(option: FoundationOption | undefined) {
   if (
@@ -557,23 +600,32 @@ async function inspectResource(option: FoundationOption | undefined) {
     !can('foundation.access.resource.manage')
   )
     return
-  const kind = resourceKind.value
-  const id = option.id
+  await changeLocation({ resource_kind: resourceKind.value, resource_id: option.id })
+}
+/** 刷新与返回按当前权限重新读取授权和名称；不从地址恢复任何授权草稿。 */
+async function readResource() {
+  if (!resourceId.value || props.platform || !can('foundation.access.resource.manage')) return
+  const kind = resourceKind.value,
+    id = resourceId.value
   const version = ++resourceVersion
   switchingResource.value = true
+  resource.value = null
+  resourceName.value = ''
+  resourceError.value = ''
   try {
-    if (!(await confirmResourceSwitch())) return
-    resourceId.value = id
-    resource.value = null
-    resourceError.value = ''
-    loading.value = true
-    const result = await api<ResourceAuthorization>(
-      'GET',
-      `resource?kind=${kind}&resource_id=${encodeURIComponent(id)}`
-    )
+    const [result, options] = await Promise.all([
+      api<ResourceAuthorization>(
+        'GET',
+        `resource?kind=${kind}&resource_id=${encodeURIComponent(id)}`
+      ),
+      props.request<FoundationOptionPage>(
+        'GET',
+        `foundation/options/resources?kind=${kind}&ids=${encodeURIComponent(id)}`
+      )
+    ])
     if (version === resourceVersion) {
       resource.value = result
-      resourceName.value = option.name
+      resourceName.value = options.items.find((option) => option.id === id)?.name || '已选资源'
       resourceBaseline.value = JSON.stringify(result)
     }
   } catch (cause) {
@@ -581,7 +633,6 @@ async function inspectResource(option: FoundationOption | undefined) {
     if (version === resourceVersion) resourceError.value = message(cause)
   } finally {
     if (version === resourceVersion) {
-      loading.value = false
       switchingResource.value = false
     }
   }
@@ -656,9 +707,45 @@ watch(
     memberEmailError.value = ''
   }
 )
-onMounted(() => {
-  void load()
-})
+watch(
+  location,
+  (next) => {
+    if (route.path !== pagePath) return
+    const membersChanged =
+      next.keyword !== appliedKeyword.value ||
+      next.page !== page.value ||
+      next.pageSize !== pageSize.value
+    const resourceChanged =
+      next.resourceKind !== resourceKind.value || next.resourceId !== resourceId.value
+    const tabChanged = next.tab !== tab.value
+    tab.value = next.tab
+    if (membersChanged || !loaded.value) {
+      appliedKeyword.value = next.keyword
+      keyword.value = next.keyword
+      page.value = next.page
+      pageSize.value = next.pageSize
+      void load()
+    }
+    if (resourceChanged) {
+      ++resourceVersion
+      resourceKind.value = next.resourceKind
+      resourceId.value = next.resourceId
+      resource.value = null
+      resourceName.value = ''
+      resourceError.value = ''
+      switchingResource.value = false
+    }
+    if (
+      (resourceChanged || tabChanged) &&
+      next.tab === 'resources' &&
+      next.resourceId &&
+      !resource.value &&
+      !switchingResource.value
+    )
+      void readResource()
+  },
+  { immediate: true }
+)
 onBeforeUnmount(() => {
   ++requestVersion
   ++resourceVersion
@@ -682,7 +769,7 @@ onBeforeUnmount(() => {
     <p v-else-if="loading" class="access-read-status" role="status" aria-live="polite">
       正在刷新，仍显示上次成功读取的数据。
     </p>
-    <el-tabs v-model="tab">
+    <el-tabs :model-value="tab" :before-leave="changeTab">
       <el-tab-pane label="成员" name="members">
         <div class="toolbar">
           <el-input
@@ -705,6 +792,24 @@ onBeforeUnmount(() => {
         </div>
         <FieldTip :id="formTipId + '-keyword'"> 按姓名或账号查询；翻页沿用已查询条件。 </FieldTip>
         <el-table v-if="loaded" :data="members" v-loading="loading" row-key="id"
+          ><template #empty>
+            <p>
+              {{
+                appliedKeyword
+                  ? '没有匹配当前查询的成员，请调整姓名或账号。'
+                  : '当前授权范围内暂无成员。'
+              }}
+            </p>
+            <el-button v-if="appliedKeyword" :disabled="loading || saving" @click="resetSearch"
+              >清除查询条件</el-button
+            >
+            <p v-else>
+              {{
+                can('foundation.access.organization.manage') && can('foundation.access.role.manage')
+                  ? '可使用上方“新增成员”添加成员。'
+                  : '请联系管理员确认成员或可见范围。'
+              }}
+            </p> </template
           ><el-table-column label="成员" min-width="210"
             ><template #default="{ row }"
               ><div>{{ row.display_name }}</div>
@@ -903,6 +1008,10 @@ onBeforeUnmount(() => {
           type="error"
           :closable="false"
         />
+        <p v-if="resourceId && !resource" role="status">
+          {{ switchingResource ? '正在读取资源授权…' : '资源授权尚未读取成功。' }}
+          <el-button v-if="!switchingResource" @click="readResource">重新读取</el-button>
+        </p>
         <el-form
           v-if="resource"
           label-width="120px"
