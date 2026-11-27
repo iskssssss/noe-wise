@@ -1292,7 +1292,7 @@ async function checkReply(operation: ReplyOperation, automatic = false) {
   }
 }
 async function checkPendingReplies() {
-  if (replyReceiptBusy.value) return
+  if (busy.value || replyReceiptBusy.value) return
   for (const operation of recovery.value?.replyOperations ?? []) {
     if (!operation.accepted && !autoCheckedReplies.has(operation.inputId)) {
       autoCheckedReplies.add(operation.inputId)
@@ -2025,10 +2025,11 @@ onBeforeUnmount(() => {
         >
           <p v-if="operation.accepted">原待办回复已受理，后续运行状态请以测试结果为准。</p>
           <template v-else>
-            <p>原待办回复结果尚未确认，请核对原回复；不会重复提交。</p>
+            <p v-if="busy || loading || replyReceiptBusy">正在确认原待办回复，请稍候。</p>
+            <p v-else>原待办回复结果尚未确认，请核对原回复；不会重复提交。</p>
             <ElButton
               :loading="replyReceiptBusy"
-              :disabled="replyReceiptBusy"
+              :disabled="busy || loading || replyReceiptBusy"
               @click="checkReply(operation)"
               >核对原回复</ElButton
             >
@@ -2108,7 +2109,9 @@ onBeforeUnmount(() => {
               {{
                 replyOperation(item)?.accepted
                   ? '原回复已受理，正在更新待办状态；不会重复提交。'
-                  : '此回复结果尚未确认，请核对原回复；不会重复提交。'
+                  : busy || loading || replyReceiptBusy
+                    ? '正在确认原待办回复，请稍候。'
+                    : '此回复结果尚未确认，请核对原回复；不会重复提交。'
               }}
             </p>
             <ToolInputForm

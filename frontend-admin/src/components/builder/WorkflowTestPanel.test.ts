@@ -2091,6 +2091,7 @@ describe('真实Workflow测试面板边界', () => {
   ])(
     '真实Pending收到 $status 时保留原wait，操作文字不改变结构化回复',
     async ({ status, reply }) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       const item = {
         interaction_type: 'workflow_input',
         execution_id: 'run:1',
@@ -2122,12 +2123,29 @@ describe('真实Workflow测试面板边界', () => {
       expect(dom().text()).toContain('补充说明（可选）')
       await dom().get('textarea[aria-label="待办回复 run:1"]').setValue(reply)
       const pendingFailure = new HttpClientError({ status, userMessage: '受理暂未确认' })
-      mocks.submit.mockRejectedValueOnce(pendingFailure)
+      let rejectReply!: (reason: unknown) => void
+      mocks.submit.mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectReply = reject
+        })
+      )
       await button(wrapper, '继续此分支').trigger('click')
       await flushPromises()
+      expect(dom().text()).toContain('正在确认原待办回复，请稍候。')
+      expect(dom().text()).not.toContain('此回复结果尚未确认，请核对原回复')
+      expect(dom().text()).not.toContain('原待办回复结果尚未确认')
+      expect(button(wrapper, '核对原回复').attributes('disabled')).toBeDefined()
+      expect(button(wrapper, '继续此分支').attributes('disabled')).toBeDefined()
+      await vi.advanceTimersByTimeAsync(3000)
+      await flushPromises()
+      expect(mocks.replyReceipt).not.toHaveBeenCalled()
+      rejectReply(pendingFailure)
+      await flushPromises()
+      expect(mocks.replyReceipt).toHaveBeenCalledTimes(1)
       expect(pendingFailure.hasFeedbackOwner).toBe(true)
       expect(dom().findAll('.el-alert--error')).toHaveLength(0)
       expect(dom().text()).toContain('此回复结果尚未确认，请核对原回复')
+      expect(button(wrapper, '核对原回复').attributes('disabled')).toBeUndefined()
       expect(mocks.submit.mock.calls.at(-1)![0]).toMatchObject({
         session_id: 'session:1',
         agent_id: 'agent:1',
