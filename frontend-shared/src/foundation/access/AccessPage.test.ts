@@ -120,6 +120,49 @@ function reads(method: string, path: string) {
 }
 
 describe('组织权限真实交互', () => {
+  it.each([
+    ['部门', 'department', 'departments'],
+    ['岗位', 'position', 'positions']
+  ])('%s 必填和编码错误定位到字段，修正后才提交且新表单不继承错误', async (label, kind, tab) => {
+    const request = vi.fn((method: string, path: string) => Promise.resolve(reads(method, path)))
+    await render(request as AccessRequest)
+    document.querySelector<HTMLElement>(`#tab-${tab}`)!.click()
+    await nextTick()
+    await click(`新增${label}`)
+    const inputs = [...dialog().querySelectorAll<HTMLInputElement>('input')]
+    expect(dialog().querySelector('.el-form-item__error')).toBeNull()
+    await input(inputs[0]!, '   ')
+    await input(inputs[1]!, '   ')
+    await click('保存')
+    await vi.waitFor(() => {
+      expect(dialog().textContent).toContain(`请填写${label}编码`)
+      expect(dialog().textContent).toContain(`请填写${label}名称`)
+    })
+    expect(request.mock.calls.filter(([method]) => method !== 'GET')).toHaveLength(0)
+    await input(inputs[0]!, '1invalid')
+    await input(inputs[1]!, `${label}巡检`)
+    await click('保存')
+    await vi.waitFor(() => {
+      expect(dialog().textContent).toContain('请按上方规则填写编码')
+      expect(dialog().textContent).not.toContain(`请填写${label}名称`)
+    })
+    expect(request.mock.calls.filter(([method]) => method !== 'GET')).toHaveLength(0)
+    await input(inputs[0]!, 'ui_audit_1')
+    await click('保存')
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      `foundation/access/${kind}`,
+      expect.objectContaining({ code: 'ui_audit_1', name: `${label}巡检` })
+    )
+    await click(`新增${label}`)
+    expect(dialog().querySelector('.el-form-item__error')).toBeNull()
+    expect(
+      [...dialog().querySelectorAll<HTMLInputElement>('input')]
+        .slice(0, 2)
+        .map((item) => item.value)
+    ).toEqual(['', ''])
+  })
+
   it('成员关键词和真实每页条数控件关联唯一可见的非空说明', async () => {
     const request: AccessRequest = async <T>(method: string, path: string) =>
       reads(method, path) as T

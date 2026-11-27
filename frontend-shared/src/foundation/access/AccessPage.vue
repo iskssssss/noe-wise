@@ -87,6 +87,24 @@ const resourceError = ref('')
 const permissionFilter = ref('')
 const selectedPermissionsOnly = ref(false)
 const memberEmailError = ref('')
+const organizationValidationRequested = ref(false)
+const organizationErrors = computed(() => {
+  if (!organizationValidationRequested.value || !['department', 'position'].includes(editor.value))
+    return { code: '', name: '' }
+  const form = editor.value === 'department' ? departmentForm : positionForm
+  const label = editor.value === 'department' ? '部门' : '岗位'
+  const code = form.code.trim()
+  return {
+    code: form.id
+      ? ''
+      : !code
+        ? `请填写${label}编码`
+        : /^[a-z][a-z0-9_]{0,63}$/.test(code)
+          ? ''
+          : '请按上方规则填写编码',
+    name: form.name.trim() ? '' : `请填写${label}名称`
+  }
+})
 const editorBaseline = ref('')
 let requestVersion = 0
 let resourceVersion = 0
@@ -222,6 +240,7 @@ function editorSnapshot() {
   )
 }
 function beginEditor(kind: typeof editor.value) {
+  organizationValidationRequested.value = false
   editor.value = kind
   editorBaseline.value = editorSnapshot()
 }
@@ -358,6 +377,10 @@ function openRole(row?: Role) {
 async function submit() {
   if (saving.value || !editorWritable.value) return
   error.value = ''
+  if (editor.value === 'department' || editor.value === 'position') {
+    organizationValidationRequested.value = true
+    if (organizationErrors.value.code || organizationErrors.value.name) return
+  }
   if (editor.value === 'member') {
     const email = memberForm.email.trim()
     memberEmailError.value =
@@ -966,16 +989,17 @@ onBeforeUnmount(() => {
       <FeedbackNotice v-if="error" :title="error" type="error" :closable="false" />
       <el-form label-width="110px" :disabled="saving || !editorWritable" @submit.prevent="submit">
         <template v-if="editor === 'department'"
-          ><el-form-item label="部门编码" required
+          ><el-form-item label="部门编码" required :error="organizationErrors.code"
             ><el-input
               v-model="departmentForm.code"
               :disabled="!!departmentForm.id"
               maxlength="64"
             />
-            <p v-if="departmentForm.id" class="admin-field-help">
-              部门编码创建后不可修改。
+            <p v-if="departmentForm.id" class="admin-field-help">部门编码创建后不可修改。</p>
+            <p v-else class="admin-field-help">
+              以小写字母开头，仅含小写字母、数字和下划线，最多 64 个字符。
             </p></el-form-item
-          ><el-form-item label="部门名称" required
+          ><el-form-item label="部门名称" required :error="organizationErrors.name"
             ><el-input v-model="departmentForm.name" maxlength="128" /></el-form-item
           ><el-form-item label="上级部门"
             ><el-select
@@ -994,12 +1018,13 @@ onBeforeUnmount(() => {
             ><el-switch v-model="departmentForm.enabled" /></el-form-item
         ></template>
         <template v-if="editor === 'position'"
-          ><el-form-item label="岗位编码" required
+          ><el-form-item label="岗位编码" required :error="organizationErrors.code"
             ><el-input v-model="positionForm.code" :disabled="!!positionForm.id" maxlength="64" />
-            <p v-if="positionForm.id" class="admin-field-help">
-              岗位编码创建后不可修改。
+            <p v-if="positionForm.id" class="admin-field-help">岗位编码创建后不可修改。</p>
+            <p v-else class="admin-field-help">
+              以小写字母开头，仅含小写字母、数字和下划线，最多 64 个字符。
             </p></el-form-item
-          ><el-form-item label="岗位名称" required
+          ><el-form-item label="岗位名称" required :error="organizationErrors.name"
             ><el-input v-model="positionForm.name" maxlength="128" /></el-form-item
           ><el-form-item v-if="positionForm.id" label="启用"
             ><el-switch v-model="positionForm.enabled" /></el-form-item
