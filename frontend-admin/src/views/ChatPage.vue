@@ -665,7 +665,7 @@
                 ><ElButton
                   link
                   :disabled="busy || row.status !== 'ready'"
-                  @click="download(row.id, file.file_id)"
+                  @click="download(row.id, file.file_id, file.download_name)"
                   >下载</ElButton
                 ><ElButton
                   link
@@ -2569,13 +2569,16 @@ async function controlGoal(op: 'pause' | 'resume') {
     )
   })
 }
-async function download(revision: string, file: string) {
+async function download(revision: string, file: string, name: string) {
   await run(async () => {
     const ticket = await api.chat.downloadTicket(revision, file)
     const a = document.createElement('a')
     a.href = ticket.url
-    a.rel = 'noopener'
+    a.download = name
+    a.rel = 'noreferrer noopener'
+    a.target = '_blank'
     a.click()
+    message.info('已发起下载，请在浏览器下载列表中查看。')
   })
 }
 const previewOpen = ref(false),
