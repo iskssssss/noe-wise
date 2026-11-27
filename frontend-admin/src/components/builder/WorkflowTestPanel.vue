@@ -727,12 +727,14 @@ async function refresh() {
     if (disposed || version !== epoch || request !== recovery.value?.requestId) return
     const results = await Promise.allSettled([
       ownedRead(api.chat.history(value.sessionId)),
-      ownedRead(
-        api.trajectories.detail(
-          { session_id: value.sessionId, root_input_id: value.initialInputId },
-          { signal: controller.signal, silent: true }
-        )
-      )
+      value.runId
+        ? ownedRead(
+            api.trajectories.detail(
+              { session_id: value.sessionId, root_input_id: value.initialInputId },
+              { signal: controller.signal, silent: true }
+            )
+          )
+        : Promise.resolve(undefined)
     ])
     if (disposed || version !== epoch || request !== recovery.value?.requestId) return
     const messages = results[0],
@@ -756,7 +758,10 @@ async function refresh() {
         }
     } else if (messages.status === 'rejected')
       readError.value = errorText(messages.reason, '无法读取测试消息，请重新查询')
-    if (details.status === 'fulfilled' && details.value.summary.session_id === value.sessionId)
+    if (
+      details.status === 'fulfilled' &&
+      (!details.value || details.value.summary.session_id === value.sessionId)
+    )
       trace.value = details.value
     else if (details.status === 'rejected')
       readError.value = errorText(details.reason, '无法读取测试用量，请重新查询')
@@ -1999,12 +2004,13 @@ onBeforeUnmount(() => {
         </p>
         <ElAlert
           v-if="!receipt || initialUnknown"
-          title="结果尚未确认"
-          type="warning"
+          :title="busy ? '正在准备测试' : loading ? '正在查询测试状态' : '结果尚未确认'"
+          :type="busy || loading ? 'info' : 'warning'"
           :closable="false"
         >
-          <p v-if="readError || error">{{ readError || error }}</p>
-          <p>请查询原测试状态。系统会保留原请求，不会重新创建测试或重复发送初始输入。</p>
+          <p v-if="!busy && !loading && (readError || error)">{{ readError || error }}</p>
+          <p v-if="busy || loading">请等待当前请求完成。系统会保留原请求，不会重复提交。</p>
+          <p v-else>请查询原测试状态。系统会保留原请求，不会重新创建测试或重复发送初始输入。</p>
         </ElAlert>
         <p v-if="receipt?.blockingReason" class="test-warning" role="status">
           {{ receipt.blockingReason }}
@@ -2047,11 +2053,13 @@ onBeforeUnmount(() => {
         <p v-if="recovery.closing && !closed" class="test-warning" role="status">
           已请求关闭，正在确认运行是否结束；确认前不会接受新的输入。
         </p>
-        <p v-if="receipt && !closed" class="admin-field-help">
+        <p v-if="receipt && !closed && !recovery.closing" class="admin-field-help">
           {{
             runFinished
               ? '本次执行已结束。关闭测试后仍保留消息与执行记录，并可开始新测试。'
-              : '关闭面板后测试仍会继续。可重新打开查询，或选择“取消并关闭测试”。'
+              : canStartExisting
+                ? '测试资源已创建，尚未提交初始输入。可开始已创建的测试，或关闭并保留记录。'
+                : '关闭面板后测试仍会继续。可重新打开查询，或选择“取消并关闭测试”。'
           }}
         </p>
         <template v-if="receipt">
@@ -2071,6 +2079,7 @@ onBeforeUnmount(() => {
             }}</ElDescriptionsItem>
           </ElDescriptions>
           <RouterLink
+            v-if="receipt.runId"
             class="test-trace-link"
             :to="{
               path: '/admin/chat/sessions/' + encodeURIComponent(receipt.sessionId) + '/trace',

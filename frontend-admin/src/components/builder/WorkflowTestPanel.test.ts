@@ -281,6 +281,8 @@ describe('重新登录后的工作流测试历史', () => {
     await flushPromises()
     expect(dom().text()).toContain('结果尚未确认')
     expect(dom().text()).not.toContain('开始已创建的测试')
+    expect(mocks.trace).not.toHaveBeenCalled()
+    expect(dom().find('.test-trace-link').exists()).toBe(false)
     expect(mocks.submit).not.toHaveBeenCalled()
   })
   it('历史读取失败不伪装为空态，重试可恢复', async () => {
@@ -1692,6 +1694,45 @@ describe('真实Workflow测试面板边界', () => {
     expect(dom().find('textarea[aria-label="测试消息"]').exists()).toBe(false)
     expect(mocks.create).not.toHaveBeenCalled()
   })
+  it('创建在途显示等待，响应失败后保留UNKNOWN且查询在途不要求再次查询', async () => {
+    let rejectCreate!: (reason: Error) => void
+    let rejectRead!: (reason: Error) => void
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectCreate = reject
+        })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(dom().text()).toContain('正在准备测试')
+    expect(dom().text()).not.toContain('结果尚未确认')
+    expect(button(wrapper, '查询测试状态').props('disabled')).toBe(true)
+    expect(mocks.submit).not.toHaveBeenCalled()
+    rejectCreate(new Error('创建响应断开'))
+    await flushPromises()
+    expect(dom().text()).toContain('结果尚未确认')
+    mocks.byRequest.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRead = reject
+        })
+    )
+    await button(wrapper, '查询测试状态').trigger('click')
+    await flushPromises()
+    expect(dom().text()).toContain('正在查询测试状态')
+    expect(dom().text()).not.toContain('结果尚未确认')
+    expect(dom().text()).not.toContain('创建响应断开')
+    rejectRead(new Error('查询响应断开'))
+    await flushPromises()
+    expect(dom().text()).toContain('结果尚未确认')
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.byRequest).toHaveBeenCalledOnce()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+
   it('创建UNKNOWN关闭重开只查询原请求，回执确认前不重新POST或发chat', async () => {
     const failure = new HttpClientError({ status: 503, userMessage: '服务暂不可用，请查询状态' })
     mocks.create.mockRejectedValueOnce(failure)
@@ -1708,6 +1749,9 @@ describe('真实Workflow测试面板边界', () => {
     await flushPromises()
     expect(mocks.byRequest.mock.calls.at(-1)![0]).toBe('request-fixed')
     expect(mocks.create).toHaveBeenCalledOnce()
+    expect(dom().text()).toContain('尚未提交初始输入')
+    expect(mocks.trace).not.toHaveBeenCalled()
+    expect(dom().find('.test-trace-link').exists()).toBe(false)
     await button(wrapper, '开始已创建的测试').trigger('click')
     await flushPromises()
     expect(mocks.submit).toHaveBeenCalledOnce()
