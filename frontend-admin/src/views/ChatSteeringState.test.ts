@@ -10,7 +10,10 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 import ChatPage from './ChatPage.vue'
 vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({
+    identityVersion: 1,
     user: {
+      tenant_id: '1',
+      sub: 'member-1',
       permissions: [
         'foundation.sessions.read',
         'foundation.sessions.create',
@@ -109,6 +112,7 @@ async function setup(text = '原运行补充') {
   await flushPromises()
 }
 beforeEach(() => {
+  sessionStorage.clear()
   vi.resetAllMocks()
   events = {}
   mocks.history.mockImplementation(async (id: string) => ({
@@ -135,11 +139,39 @@ beforeEach(() => {
 })
 afterEach(() => {
   wrapper?.unmount()
+  sessionStorage.clear()
   clearFeedback()
   document.body.innerHTML = ''
 })
 
 describe('机构运行补充的原命令身份', () => {
+  it('读取停用Agent后禁止重试原补充，仍可核对且重新发布后保留原命令', async () => {
+    mocks.steer.mockRejectedValueOnce(failure(408, 'TIMEOUT'))
+    await setup()
+    await button('提交补充').trigger('click')
+    await flushPromises()
+    const original = [...mocks.steer.mock.calls[0]!]
+    const detail = {
+      session: { session_id: 'A' },
+      end_user_id: '42',
+      target_agent_id: '101',
+      closed: false
+    }
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'disabled' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(button('重试原补充').props('disabled')).toBe(true)
+    expect(button('核对补充状态').props('disabled')).toBe(false)
+    expect(mocks.steer).toHaveBeenCalledOnce()
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'published' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(button('重试原补充').props('disabled')).toBe(false)
+    expect(mocks.steer).toHaveBeenCalledOnce()
+    await button('重试原补充').trigger('click')
+    await flushPromises()
+    expect(mocks.steer.mock.calls[1]).toEqual(original)
+  })
   it('UNKNOWN后再次点击不能生成第二补充，只能核对或按原四参数显式重试', async () => {
     mocks.steer.mockRejectedValueOnce(failure(408, 'TIMEOUT'))
     await setup()

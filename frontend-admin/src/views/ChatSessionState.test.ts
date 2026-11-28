@@ -24,6 +24,7 @@ import { HttpClientError } from '@skillforge/shared/utils/http'
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   close: vi.fn(),
+  cancelRun: vi.fn(),
   sessions: vi.fn(),
   history: vi.fn(),
   observe: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../api', () => ({
       sessions: mocks.sessions,
       sessionDetail: mocks.detail,
       closeSession: mocks.close,
+      cancelRun: mocks.cancelRun,
       history: mocks.history,
       observeSession: mocks.observe,
       submit: mocks.submit,
@@ -822,6 +824,117 @@ describe('聊天会话原子切换', () => {
 
 describe('历史会话绑定与关闭', () => {
   const button = (label: string) => wrapper.findAll('button').find((item) => item.text() === label)!
+  it('Agent停用仍能停止原有活动运行，输入与发送保持禁用', async () => {
+    mocks.detail.mockResolvedValue({
+      session: { session_id: 'A' },
+      end_user_id: '42',
+      target_agent_id: '101',
+      closed: false,
+      agent: { id: 101, status: 'disabled' }
+    })
+    mocks.history.mockResolvedValue({
+      ...history('A'),
+      activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'running' }]
+    })
+    const { input } = await setup()
+    expect(input.find('textarea').attributes('disabled')).toBeDefined()
+    expect(button('发送').attributes('disabled')).toBeDefined()
+    expect(button('停止运行').attributes('disabled')).toBeUndefined()
+    await button('停止运行').trigger('click')
+    await flushPromises()
+    expect(mocks.cancelRun).toHaveBeenCalledExactlyOnceWith('A', 'run:A')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it.each(['disabled', 'draft', 'archived'])(
+    '历史Agent状态%s阻止执行并保留历史与关闭入口',
+    async (status) => {
+      mocks.detail.mockResolvedValue({
+        session: { session_id: 'A' },
+        end_user_id: '42',
+        target_agent_id: '101',
+        closed: false,
+        agent: { id: 101, name: '验收助手', status }
+      })
+      await setup()
+      expect(wrapper.text()).toContain('当前会话绑定的智能体不可执行')
+      expect(wrapper.text()).toContain('读取会话状态')
+      expect(wrapper.text()).toContain('A消息')
+      expect(button('发送').attributes('disabled')).toBeDefined()
+      expect(button('附加文件').attributes('disabled')).toBeDefined()
+      expect(button('关闭会话').attributes('disabled')).toBeUndefined()
+      await button('新会话').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('当前会话绑定的智能体不可执行')
+      expect(mocks.submit).not.toHaveBeenCalled()
+    }
+  )
+  it('读取Agent停用状态后保留草稿，读取失败不解锁，重新发布后重读恢复编辑', async () => {
+    const { input } = await setup()
+    const detail = {
+      session: { session_id: 'A' },
+      end_user_id: '42',
+      target_agent_id: '101',
+      closed: false
+    }
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'disabled' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('当前会话绑定的智能体不可执行（已停用）')
+    expect(button('发送').attributes('disabled')).toBeDefined()
+    expect(input.props('modelValue')).toBe('未发送草稿')
+    mocks.detail.mockRejectedValueOnce(new Error('读取暂时失败'))
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(button('发送').attributes('disabled')).toBeDefined()
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'published' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('当前会话绑定的智能体不可执行')
+    expect(button('发送').attributes('disabled')).toBeUndefined()
+    expect(input.props('modelValue')).toBe('未发送草稿')
+    expect(wrapper.text()).toContain('A消息')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('团队会话不以详情中的Agent状态推断整个团队不可执行', async () => {
+    mocks.detail.mockResolvedValue({
+      session: { session_id: 'A', team_id: 'team-A' },
+      end_user_id: '42',
+      target_agent_id: null,
+      closed: false,
+      agent: { id: 101, status: 'disabled' }
+    })
+    await setup()
+    expect(wrapper.text()).not.toContain('当前会话绑定的智能体不可执行')
+    expect(button('发送').attributes('disabled')).toBeUndefined()
+  })
+  it('原消息结果未知时停用状态阻止重发但保留只读核对，恢复后仍是原请求', async () => {
+    await setup()
+    mocks.submit.mockRejectedValueOnce(new Error('连接中断'))
+    await button('发送').trigger('click')
+    await flushPromises()
+    const original = mocks.submit.mock.calls[0]![0]
+    const detail = {
+      session: { session_id: 'A' },
+      end_user_id: '42',
+      target_agent_id: '101',
+      closed: false
+    }
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'disabled' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(button('重试原消息').attributes('disabled')).toBeDefined()
+    expect(button('核对原消息受理').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('本次消息受理结果尚未确认')
+    mocks.detail.mockResolvedValue({ ...detail, agent: { id: 101, status: 'published' } })
+    await button('读取会话状态').trigger('click')
+    await flushPromises()
+    expect(button('重试原消息').attributes('disabled')).toBeUndefined()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    mocks.submit.mockRejectedValueOnce(new Error('连接仍中断'))
+    await button('重试原消息').trigger('click')
+    await flushPromises()
+    expect(mocks.submit.mock.calls[1]![0]).toEqual(original)
+  })
   it('历史切换恢复服务端字符串用户和Agent绑定，再发送使用原绑定', async () => {
     mocks.detail.mockResolvedValue({
       session: { session_id: 'A' },

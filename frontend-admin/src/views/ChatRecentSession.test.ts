@@ -95,6 +95,17 @@ const selected = () =>
   wrapper.findAllComponents(ElSelect).find((item) => item.props('placeholder') === '历史会话')!
 
 describe('最近会话只读恢复', () => {
+  it('重建页面恢复停用Agent会话时保留历史并禁止执行', async () => {
+    sessionStorage.setItem(key, 'A')
+    mocks.detail.mockResolvedValue({ ...detail('A'), agent: { id: 101, status: 'disabled' } })
+    await setup()
+    expect(selected().props('modelValue')).toBe('A')
+    expect(wrapper.text()).toContain('A历史')
+    expect(wrapper.text()).toContain('当前会话绑定的智能体不可执行（已停用）')
+    const send = wrapper.findAll('button').find((item) => item.text() === '发送')!
+    expect(send.attributes('disabled')).toBeDefined()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
   it('重建页面时恢复原会话及身份，不发送消息；新会话清除记录', async () => {
     sessionStorage.setItem(key, 'A')
     await setup()

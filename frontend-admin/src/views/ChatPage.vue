@@ -93,7 +93,7 @@
       <ElButton :disabled="busy" @click="inspectInput">{{
         pendingInput.body.hitl_response ? '核对原回复受理' : '核对原消息受理'
       }}</ElButton>
-      <ElButton :disabled="busy || !canRun" @click="retryInput">{{
+      <ElButton :disabled="busy || !canRun || sessionAgentUnavailable" @click="retryInput">{{
         pendingInput.body.hitl_response ? '重试原回复' : '重试原消息'
       }}</ElButton>
     </div>
@@ -131,6 +131,12 @@
     <ElAlert
       v-else-if="closeUnconfirmed"
       title="关闭结果尚待核对。请读取会话状态，确认前不会再次关闭或提交新输入。"
+      type="warning"
+      :closable="false"
+    />
+    <ElAlert
+      v-else-if="sessionAgentUnavailable"
+      :title="`当前会话绑定的智能体不可执行（${statusLabel(sessionAgentStatus)}）。历史与未发送内容已保留；请在智能体配置页重新发布，再点击“读取会话状态”恢复操作。`"
       type="warning"
       :closable="false"
     />
@@ -556,7 +562,9 @@
             <p>补充结果尚未确认。请保留原补充，核对状态或按原内容重试。</p>
             <p>绑定提交时的运行</p>
             <ElButton :disabled="busy" @click="querySteering">核对补充状态</ElButton>
-            <ElButton :disabled="busy || !canRun" @click="steer(true)">重试原补充</ElButton>
+            <ElButton :disabled="busy || !canRun || sessionAgentUnavailable" @click="steer(true)"
+              >重试原补充</ElButton
+            >
           </div>
           <div v-if="confirmedSteering" role="status">
             <p>补充状态：{{ steeringLabels[confirmedSteering.item.status] }}</p>
@@ -990,6 +998,10 @@ onScopeDispose(() => {
   pageDisposed = true
 })
 const sessionClosed = ref(false)
+const sessionAgentStatus = ref<string>()
+const sessionAgentUnavailable = computed(
+  () => !!sessionAgentStatus.value && sessionAgentStatus.value !== 'published'
+)
 const pendingCloses = ref(new Set<string>())
 const closeUnconfirmed = computed(() => pendingCloses.value.has(sessionId.value))
 const sessionScope = ref('all')
@@ -1025,7 +1037,9 @@ const sessionReadOnly = computed(
     !!pendingSession.value ||
     !!sessionStorageError.value
 )
-const readOnly = computed(() => !canRun.value || sessionReadOnly.value)
+const readOnly = computed(
+  () => !canRun.value || sessionReadOnly.value || sessionAgentUnavailable.value
+)
 const { busy, error, run } = useTask(),
   readError = ref(''),
   endUsers = ref<ChatEndUserItem[]>([]),
@@ -1740,7 +1754,7 @@ async function send() {
   })
 }
 async function retryInput() {
-  if (!canRun.value) return
+  if (!canRun.value || sessionAgentUnavailable.value) return
   const sent = pendingInput.value
   if (sent) await run(() => dispatchInput(sent))
 }
@@ -1790,6 +1804,7 @@ function clearSessionView() {
   readEpoch++
   runId.value = ''
   sessionClosed.value = false
+  sessionAgentStatus.value = undefined
   messages.value = []
   history.value = undefined
   pendingItems.value = []
@@ -1867,6 +1882,7 @@ async function loadSession(target: string) {
         ? `agent:${detail.target_agent_id}`
         : ''
     sessionClosed.value = detail.closed
+    sessionAgentStatus.value = detail.session.team_id ? undefined : detail.agent?.status
     applyHistory(value)
     observe()
   })
@@ -1933,6 +1949,7 @@ async function restoreRecentSession() {
         ? `agent:${detail.target_agent_id}`
         : ''
     sessionClosed.value = detail.closed
+    sessionAgentStatus.value = detail.session.team_id ? undefined : detail.agent?.status
     applyHistory(value)
     observe()
   } catch (cause) {
@@ -1962,10 +1979,15 @@ async function refreshSessions(scope: string = sessionScope.value) {
   })
 }
 async function readSessionState() {
+  const target = sessionId.value,
+    identity = auth.identityVersion
   await run(async () => {
-    const detail = await api.chat.sessionDetail(sessionId.value)
+    const detail = await api.chat.sessionDetail(target)
+    if (pageDisposed || target !== sessionId.value || identity !== auth.identityVersion) return
+    if (detail.session.session_id !== target) throw Error('会话读取结果不匹配')
     sessionClosed.value = detail.closed
-    if (detail.closed) pendingCloses.value.delete(sessionId.value)
+    sessionAgentStatus.value = detail.session.team_id ? undefined : detail.agent?.status
+    if (detail.closed) pendingCloses.value.delete(target)
   })
 }
 async function closeSession() {
@@ -2358,6 +2380,7 @@ function applySteering(value: ChatSteeringState, sent: FrozenSteering) {
 async function steer(retry = false) {
   if (
     !canRun.value ||
+    sessionAgentUnavailable.value ||
     busy.value ||
     (!retry && (readOnly.value || !runId.value || !steerText.value.trim()))
   )
