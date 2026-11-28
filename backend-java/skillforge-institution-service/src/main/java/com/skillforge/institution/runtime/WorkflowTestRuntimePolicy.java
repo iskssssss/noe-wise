@@ -8,6 +8,7 @@ import com.skillforge.core.chat.ChatRuntimeGateway.Submission;
 import com.skillforge.core.chat.contract.ChatContent;
 import com.skillforge.core.workflow.WorkflowInstallationBindings;
 import com.skillforge.core.shared.exception.ApiException;
+import com.skillforge.institution.workflowtest.WorkflowTestTools;
 import com.skillforge.runtime.api.*;
 import com.skillforge.runtime.api.port.*;
 import com.skillforge.runtime.api.port.WorkflowPortal.FrozenWorkflowTarget;
@@ -127,15 +128,18 @@ public final class WorkflowTestRuntimePolicy {
     /** 实际Provider发送前再读当前用途和精确部署；READ_ONLY只是供应商声明，绝不宣称物理沙箱。 */
     public void tool(ExecutionStore.Run run,AgentExecutionCodec.ToolRequest request) {
         var test=session(run.identity().owner().sessionRef());if(test.isEmpty())return;var value=test.orElseThrow();isolation.requireLive(value);
-        if(!AgentRuntimeWorkflowNodeExecutions.owns(run)||request.binding().providerType()!=ToolPortal.ToolBinding.ProviderType.MCP
-                ||request.target().effect()!=ToolEffect.READ_ONLY||request.target().confirmation()!=ToolPortal.ToolConfirmationPolicy.NEVER)
+        if(!AgentRuntimeWorkflowNodeExecutions.owns(run)
+                ||request.binding().providerType()!=ToolPortal.ToolBinding.ProviderType.MCP
+                    &&!(request.binding().providerType()==ToolPortal.ToolBinding.ProviderType.PLATFORM
+                        &&WorkflowTestTools.allowsPlatform(request.binding().toolName(),request.binding().providerRef()))
+                ||request.target().effect()!=ToolEffect.READ_ONLY||request.target().confirmation()!=ToolPortal.ToolConfirmationPolicy.NEVER||!request.target().modelInvocable())
             throw denied("workflow_test_tool_effect_rejected");
         var target=request.target();var matches=mapper.bindings(value.getTenantId(),value.getId()).stream().filter(binding->"TOOL".equals(binding.capabilityType())
                 &&Long.toString(binding.capabilityDefinitionId()).equals(target.capability().capabilityId())&&Long.toString(binding.capabilityVersionId()).equals(target.capability().versionId())
                 &&Objects.equals(binding.toolDeploymentKey(),target.deploymentId())&&Objects.equals(binding.toolDeploymentRevision(),target.deploymentRevision())).toList();
         if(matches.isEmpty())throw denied("workflow_test_tool_target_rejected");
         var deployment=registry.findToolDeployment(value.getTenantId(),target.deploymentId()).orElseThrow(()->denied("workflow_test_tool_target_rejected"));
-        if(!deployment.active()||deployment.environment()!=ToolDeployment.Environment.TEST||deployment.providerType()!=ToolDeployment.ProviderType.MCP
+        if(!deployment.active()||deployment.environment()!=ToolDeployment.Environment.TEST||!deployment.providerType().name().equals(request.binding().providerType().name())
                 ||deployment.revision()!=target.deploymentRevision()||!deployment.toolVersion().capabilityId().equals(target.capability().capabilityId())
                 ||!deployment.toolVersion().versionId().equals(target.capability().versionId())||!deployment.providerRef().equals(request.binding().providerRef()))
             throw denied("workflow_test_tool_target_rejected");

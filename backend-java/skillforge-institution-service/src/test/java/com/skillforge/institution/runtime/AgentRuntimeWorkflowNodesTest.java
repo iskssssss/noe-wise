@@ -10,6 +10,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.core.workflow.execution.node.NodeCallIdentity;
 import com.skillforge.core.workflow.execution.node.NodeExecutionContext;
 import com.skillforge.core.workflow.execution.node.WorkflowNodeFailure;
+import com.skillforge.core.workflow.execution.ControlledWorkflowExecution;
+import com.skillforge.core.workflow.execution.StateMachineEngine;
+import com.skillforge.core.workflow.execution.WorkflowModels;
+import com.skillforge.core.workflow.execution.WorkflowParser;
 import com.skillforge.core.workflow.runtime.SdkWorkflowPortal;
 import com.skillforge.core.workflow.runtime.WorkflowNodeSource;
 import com.skillforge.runtime.api.*;
@@ -17,16 +21,109 @@ import com.skillforge.runtime.api.port.*;
 import com.skillforge.runtime.api.port.ExecutionLedgerPort.ExecutionRecord;
 import com.skillforge.runtime.codec.spi.PortalOutcomeCodec;
 import com.skillforge.runtime.session.AgentExecutionCodec;
+import com.skillforge.runtime.session.SessionRuntimePayloads;
+import com.skillforge.runtime.core.CoreRuntime;
+import com.skillforge.runtime.json.CodecLimits;
 import com.skillforge.runtime.session.spi.ExecutionStore;
 import java.util.Optional;
 import java.util.Set;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.Map;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.ObjectProvider;
 
 class AgentRuntimeWorkflowNodesTest {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings={"fail","message","goto:recover"})
+    void toolBusinessFailureHonorsConfiguredPolicyWithoutAdoptingFailedOutput(String policy) throws Exception {
+        var fixture=toolFixture("{\"content\":[],\"isError\":true,\"resultType\":\"complete\",\"structuredContent\":{\"success\":false,\"error\":\"private-provider-error\"}}");
+        var visited=new ArrayList<String>();var checkpoints=new ArrayList<ControlledWorkflowExecution.Checkpoint>();
+        var workflow=toolGraph(policy);var request=new ControlledWorkflowExecution.Request(workflow,Map.of(),"","session",null,null,"instance","1",List.of(),"execution",Map.of("end_user_id",1L),null);
+        var hooks=new ControlledWorkflowExecution.Hooks() {
+            public void beforeNode(String id) {visited.add(id);}
+            public void checkpoint(ControlledWorkflowExecution.Checkpoint value) {checkpoints.add(value);}
+            public com.skillforge.core.workflow.execution.node.NodeOutcome executeExternalNode(NodeExecutionContext node) {
+                return fixture.subject().apply(node,fixture.run());
+            }
+        };
+        if(policy==null||policy.equals("fail")) {
+            var failure=assertThrows(WorkflowNodeFailure.class,()->new StateMachineEngine().runControlled(request,hooks));
+            assertEquals("workflow_tool_business_failed",failure.reason());
+            assertEquals(List.of("calculate"),visited);
+            assertTrue(checkpoints.stream().noneMatch(value->value.boundary()==ControlledWorkflowExecution.Boundary.COMPLETED));
+        } else {
+            var result=new StateMachineEngine().runControlled(request,hooks);
+            assertEquals("completed",result.get("status"));
+            assertEquals(policy.equals("message")?List.of("calculate"):List.of("calculate","recover","end"),visited);
+            var state=(Map<?,?>)result.get("state");assertFalse(state.containsKey("tool_result"));
+            assertEquals(Map.of("node_id","calculate","reason","workflow_tool_business_failed"),state.get("last_error"));
+            var messages=(List<?>)result.get("messages");assertEquals(1,messages.size());
+            assertEquals(policy.equals("message")?"节点执行失败，请检查输入或查看执行记录。":"workflow_tool_business_failed",((Map<?,?>)messages.getFirst()).get("content"));
+            assertFalse(new ObjectMapper().writeValueAsString(result).contains("private-provider-error"));
+            assertEquals(ControlledWorkflowExecution.Boundary.COMPLETED,checkpoints.getLast().boundary());
+        }
+        assertEquals(fixture.original(),fixture.store().material(new TenantId("1"),new ResultRef("result")).orElseThrow().content());
+    }
+
+    @Test void toolSuccessPreservesFullEnvelopeAndDoesNotInferFailureFromBusinessKeys() throws Exception {
+        for(var envelope:List.of(
+                "{\"content\":[],\"isError\":false,\"resultType\":\"complete\",\"structuredContent\":{\"success\":true,\"value\":\"888\"}}",
+                "{\"content\":[],\"isError\":false,\"structuredContent\":{\"success\":false,\"value\":\"888\"}}",
+                "{\"content\":[],\"structuredContent\":{\"success\":false,\"value\":\"888\"}}")) {
+            var fixture=toolFixture(envelope);var visited=new ArrayList<String>();
+            var workflow=toolGraph("fail");
+            var request=new ControlledWorkflowExecution.Request(workflow,Map.of(),"","session",null,null,"instance","1",List.of(),"execution",Map.of("end_user_id",1L),null);
+            var result=new StateMachineEngine().runControlled(request,new ControlledWorkflowExecution.Hooks() {
+                public void beforeNode(String id) {visited.add(id);}
+                public void checkpoint(ControlledWorkflowExecution.Checkpoint value) { }
+                public com.skillforge.core.workflow.execution.node.NodeOutcome executeExternalNode(NodeExecutionContext node) {
+                    return fixture.subject().apply(node,fixture.run());
+                }
+            });
+            assertEquals("completed",result.get("status"));assertEquals(List.of("calculate","success","end"),visited);
+            assertEquals(new ObjectMapper().readValue(envelope,Map.class),((Map<?,?>)result.get("state")).get("tool_result"));
+            assertEquals("计算结果 888",((Map<?,?>)((List<?>)result.get("messages")).getFirst()).get("content"));
+            assertFalse(((Map<?,?>)result.get("state")).containsKey("last_error"));
+        }
+    }
+
+    private static WorkflowModels.Workflow toolGraph(String policy) {
+        var tool=new LinkedHashMap<String,Object>(Map.of("id","calculate","type","tool","tool","calculate_expression","args",Map.of("expression","1/0"),"result_to","state.tool_result"));
+        if(policy!=null)tool.put("on_error",policy);
+        return new WorkflowParser().parse("business-error",Map.of("entry","calculate",
+                "meta",Map.of("capability_requirements",List.of(Map.of("slot","calculator","type","tool","capability_id","calculate_expression","version_constraint","*","required",true)),
+                        "tools",List.of(Map.of("name","calculate_expression","requirement","calculator"))),"nodes",List.of(tool,
+                Map.of("id","success","type","output","message","计算结果 ${state.tool_result.structuredContent.value}"),
+                Map.of("id","recover","type","output","message","${state.last_error.reason}"),Map.of("id","end","type","end")),
+                "edges",List.of(Map.of("from","calculate","to","success"),Map.of("from","success","to","end"),Map.of("from","recover","to","end"))));
+    }
+
+    private static ToolFixture toolFixture(String envelope) {
+        var store=mock(ExecutionStore.class);var limits=new CodecLimits(100_000,10_000,100);var payloads=new SessionRuntimePayloads();
+        var outcomes=new CoreRuntime(limits,payloads).portalResults(payloads,payloads,payloads);var codec=new AgentExecutionCodec(limits);
+        @SuppressWarnings("unchecked") ObjectProvider<AgentRuntimeExecutionWorker> workers=mock(ObjectProvider.class);
+        var subject=new AgentRuntimeWorkflowNodes(mock(AgentRuntimeWorkflowNodeExecutions.class),store,workers,outcomes,codec,new ObjectMapper(),
+                mock(AgentRuntimeWorkflowScripts.class),mock(AgentRuntimeExecutionSources.class),mock(WorkflowTestRuntimePolicy.class));
+        var tenant=new TenantId("1");var runRef=new RunRef(tenant,"node-run");var identity=mock(RunIdentity.class);when(identity.runRef()).thenReturn(runRef);
+        var run=mock(ExecutionStore.Run.class);when(run.phase()).thenReturn(ExecutionStore.Phase.FINISHED);when(run.status()).thenReturn(RunStatus.COMPLETED);when(run.identity()).thenReturn(identity);
+        var action=mock(ExecutionStore.Action.class);when(action.selectedAttempt()).thenReturn(Optional.of("attempt"));
+        var attempt=mock(ExecutionStore.Attempt.class);var result=new ResultRef("result");when(attempt.result()).thenReturn(Optional.of(result));
+        when(store.actions(runRef,0,2)).thenReturn(List.of(action));when(store.attempt(runRef,"attempt")).thenReturn(Optional.of(attempt));
+        var original=codec.encodeOutcome(outcomes.encodeTool(PortalCallKind.TOOL_INVOKE,
+                new ToolPortal.ToolOutcome.Succeeded(new TypedPayload(SessionRuntimePayloads.TOOL_RESULT_SCHEMA,envelope),new ResultRef("provider-result"),List.of())));
+        when(store.material(tenant,result)).thenReturn(Optional.of(new ExecutionStore.Material(result,original)));
+        return new ToolFixture(subject,store,run,original);
+    }
+
+    private record ToolFixture(AgentRuntimeWorkflowNodes subject,ExecutionStore store,ExecutionStore.Run run,TypedPayload original) { }
+
     @Test void modelNodeStopsOnKnownIncompleteOutputAndAcceptsCompleteOutput() {
         for (var finish : List.of("length", "content_filter", "stop")) {
             var store=mock(ExecutionStore.class);var outcomes=mock(PortalOutcomeCodec.class);var codec=mock(AgentExecutionCodec.class);

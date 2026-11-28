@@ -106,7 +106,9 @@ describe('工作流测试资源公开API', () => {
         }
       ],
       budget: { recommended: budget, maximum: { ...budget, max_total_tokens: 64000 } },
-      restrictions: ['仅 TEST + READ_ONLY MCP 工具'],
+      restrictions: [
+        '仅 TEST 环境的只读 MCP 工具及基础平台工具（时间、计算、日期转换、JSON、文本模板）；禁止脚本、异步任务、嵌套和 Agent 委派'
+      ],
       cost_notice: '真实调用按实际用量计费'
     })
     const client = createWorkflowTestsApi({ get, post: vi.fn() })

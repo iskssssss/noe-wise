@@ -15,6 +15,7 @@ import com.skillforge.runtime.api.port.ModelPort.ModelResult;
 import com.skillforge.runtime.api.port.ToolPortal.ToolOutcome;
 import com.skillforge.runtime.codec.spi.PortalOutcomeCodec;
 import com.skillforge.runtime.session.AgentExecutionCodec;
+import com.skillforge.runtime.session.SessionRuntimePayloads;
 import com.skillforge.runtime.session.spi.ExecutionStore;
 import java.util.*;
 import org.springframework.beans.factory.ObjectProvider;
@@ -110,11 +111,15 @@ public final class AgentRuntimeWorkflowNodes implements SdkWorkflowPortal.Extern
             if("content_filter".equals(model.finishReasonCode()))return failure(node,"model_content_filtered");
             write(node,object(model.output().canonicalJson()));return NodeOutcome.continueFlow();
         }
+        if(outcome.callKind()==PortalCallKind.TOOL_INVOKE) {
+            var actual=((ToolOutcome.Succeeded)outcomes.decodeTool(outcome,outcome.callKind())).observation();
+            var value=object(actual.canonicalJson());
+            if(SessionRuntimePayloads.TOOL_RESULT_SCHEMA.equals(actual.schemaId())&&value instanceof Map<?,?> result&&Boolean.TRUE.equals(result.get("isError")))
+                return failure(node,"workflow_tool_business_failed");
+            write(node,"script".equals(node.node().type())?object(store.material(run.identity().runRef().tenantId(),attempt.feedback().orElseThrow()).orElseThrow().content().canonicalJson()):value);
+            return NodeOutcome.continueFlow();
+        }
         Object value=switch(outcome.callKind()) {
-            case TOOL_INVOKE -> {
-                var actual=((ToolOutcome.Succeeded)outcomes.decodeTool(outcome,outcome.callKind())).observation();
-                yield "script".equals(node.node().type())?object(store.material(run.identity().runRef().tenantId(),attempt.feedback().orElseThrow()).orElseThrow().content().canonicalJson()):object(actual.canonicalJson());
-            }
             case KNOWLEDGE_EXECUTE -> json.convertValue(((KnowledgePortal.KnowledgeOutcome.Retrieved)outcomes.decodeKnowledge(outcome,outcome.callKind())).bundle(),Map.class);
             default -> throw rejected();
         };write(node,value);return NodeOutcome.continueFlow();
@@ -140,7 +145,11 @@ public final class AgentRuntimeWorkflowNodes implements SdkWorkflowPortal.Extern
     private static NodeOutcome failure(NodeExecutionContext node,String reason) {
         node.state().put("last_error",Map.of("node_id",node.node().id(),"reason",reason));String policy=node.node().onError();
         if(policy!=null&&policy.startsWith("goto:"))return NodeOutcome.jump(policy.substring(5));
-        if("message".equals(policy))node.messages().add(Map.of("role","assistant","content",reason,"node_id",node.node().id()));throw new WorkflowNodeFailure(reason);
+        if("message".equals(policy)) {
+            node.messages().add(Map.of("role","assistant","content","节点执行失败，请检查输入或查看执行记录。","node_id",node.node().id()));
+            return NodeOutcome.completeFlow();
+        }
+        throw new WorkflowNodeFailure(reason);
     }
     private static IllegalArgumentException rejected(){return new IllegalArgumentException("workflow_node_execution_rejected");}
 }

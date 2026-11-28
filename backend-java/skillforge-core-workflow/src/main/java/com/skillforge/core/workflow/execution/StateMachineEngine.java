@@ -172,7 +172,10 @@ public class StateMachineEngine {
                 }
             }
 
-            if (outcome != null && outcome.gotoNode() != null) {
+            if (outcome != null && outcome.completed()) {
+                incomingEdge = null;
+                current = null;
+            } else if (outcome != null && outcome.gotoNode() != null) {
                 incomingEdge = null;
                 current = outcome.gotoNode();
             } else {

@@ -32,6 +32,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.apache.ibatis.session.SqlSession;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** 验证真实发送前的用途策略；端口目录受控，不替代数据库、普通IAM或真实MCP验收。 */
 class WorkflowTestRuntimePolicyTest {
@@ -39,6 +41,53 @@ class WorkflowTestRuntimePolicyTest {
         var f = new Fixture();
         assertDoesNotThrow(() -> f.policy.tool(f.nodeRun(), f.tool(f.toolTarget, ToolBinding.ProviderType.MCP)));
         verify(f.registry).findToolDeployment(7L, "test-mcp");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings={"get_current_time","calculate_expression","convert_datetime","json_query","json_schema_validate","template_render"})
+    void exactReadOnlyTestPlatformUtilityPassesTheProviderGuard(String name) {
+        var f=new Fixture();
+        when(f.registry.findToolDeployment(7L,"test-mcp")).thenReturn(Optional.of(
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.PLATFORM,"221",3,name,true)));
+        var request=f.platformTool(name,ToolEffect.READ_ONLY,ToolConfirmationPolicy.NEVER,true);
+        assertDoesNotThrow(()->f.policy.tool(f.nodeRun(),request));
+        assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.rootRun(),request));
+        for(var state:List.of("closing","closed","expired")) {
+            f.state(state);
+            assertDenied("workflow_test_not_live",()->f.policy.tool(f.nodeRun(),request));
+        }
+    }
+
+    @Test void platformUtilityStillRequiresExactTestDeploymentAndFrozenProviderIdentity() {
+        var f=new Fixture();var request=f.platformTool("calculate_expression",ToolEffect.READ_ONLY,ToolConfirmationPolicy.NEVER,true);
+        for(var changed:List.of(
+                f.deployment(ToolDeployment.Environment.PRODUCTION,ToolDeployment.ProviderType.PLATFORM,"221",3,"calculate_expression",true),
+                f.deployment(ToolDeployment.Environment.DEVELOPMENT,ToolDeployment.ProviderType.PLATFORM,"221",3,"calculate_expression",true),
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.MCP,"221",3,"calculate_expression",true),
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.PLATFORM,"222",3,"calculate_expression",true),
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.PLATFORM,"221",4,"calculate_expression",true),
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.PLATFORM,"221",3,"json_query",true),
+                f.deployment(ToolDeployment.Environment.TEST,ToolDeployment.ProviderType.PLATFORM,"221",3,"calculate_expression",false))) {
+            when(f.registry.findToolDeployment(7L,"test-mcp")).thenReturn(Optional.of(changed));
+            assertDenied("workflow_test_tool_target_rejected",()->f.policy.tool(f.nodeRun(),request));
+        }
+        when(f.testRegistry.bindings(7,41)).thenReturn(List.of());
+        assertDenied("workflow_test_tool_target_rejected",()->f.policy.tool(f.nodeRun(),request));
+    }
+
+    @Test void platformUtilityNamesNeverGrantWritesConfirmationOrOtherSessionResources() {
+        var f=new Fixture();
+        for(var name:List.of("search_memory","search_tasks","read_task","read_image","list_artifacts","browser_tasks","workspace_files","http_request","unknown_tool"))
+            assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.nodeRun(),f.platformTool(name,ToolEffect.READ_ONLY,ToolConfirmationPolicy.NEVER,true)));
+        for(var effect:List.of(ToolEffect.IDEMPOTENT_WRITE,ToolEffect.NON_IDEMPOTENT_WRITE,ToolEffect.DESTRUCTIVE))
+            assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.nodeRun(),f.platformTool("calculate_expression",effect,ToolConfirmationPolicy.NEVER,true)));
+        assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.nodeRun(),f.platformTool("calculate_expression",ToolEffect.READ_ONLY,ToolConfirmationPolicy.POLICY,true)));
+        assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.nodeRun(),f.platformTool("calculate_expression",ToolEffect.READ_ONLY,ToolConfirmationPolicy.NEVER,false)));
+        var original=f.platformTool("calculate_expression",ToolEffect.READ_ONLY,ToolConfirmationPolicy.NEVER,true);
+        var renamed=new AgentExecutionCodec.ToolRequest(original.target(),new ToolBinding(ToolBinding.ProviderType.PLATFORM,"calculate_expression","search_memory"),
+                original.arguments(),original.callId(),original.wireName());
+        assertDenied("workflow_test_tool_effect_rejected",()->f.policy.tool(f.nodeRun(),renamed));
+        verifyNoInteractions(f.registry);
     }
 
     @Test void twoInstalledSlotsMayReferenceTheSameExactLegalToolTarget() {
@@ -51,7 +100,7 @@ class WorkflowTestRuntimePolicyTest {
         assertDoesNotThrow(() -> f.policy.tool(f.nodeRun(), f.tool(f.toolTarget, ToolBinding.ProviderType.MCP)));
     }
 
-    @Test void writeEffectsNonMcpBindingsAndOrdinaryAgentRunsCannotSendTestTools() {
+    @Test void writeEffectsUnsupportedToolBindingsAndOrdinaryAgentRunsCannotSendTestTools() {
         var f = new Fixture();
         for (var effect : List.of(ToolEffect.IDEMPOTENT_WRITE, ToolEffect.NON_IDEMPOTENT_WRITE, ToolEffect.DESTRUCTIVE))
             assertDenied("workflow_test_tool_effect_rejected", () -> f.policy.tool(f.nodeRun(),
@@ -62,7 +111,7 @@ class WorkflowTestRuntimePolicyTest {
         verifyNoInteractions(f.registry);
     }
 
-    @Test void currentDeploymentMustRemainActiveTestMcpWithTheSameVersionRevisionAndProvider() {
+    @Test void currentDeploymentMustRemainActiveTestWithTheSameVersionRevisionAndProvider() {
         var f = new Fixture();
         var request = f.tool(f.toolTarget, ToolBinding.ProviderType.MCP);
         var changed = List.of(
@@ -235,6 +284,13 @@ class WorkflowTestRuntimePolicyTest {
         private AgentExecutionCodec.ToolRequest tool(FrozenToolTarget target, ToolBinding.ProviderType provider) {
             return new AgentExecutionCodec.ToolRequest(target, new ToolBinding(provider, "test-server", "lookup"),
                     new TypedPayload("application/json", "{}"), "call:test", "lookup");
+        }
+
+        private AgentExecutionCodec.ToolRequest platformTool(String name,ToolEffect effect,ToolConfirmationPolicy confirmation,boolean modelInvocable) {
+            var target=new FrozenToolTarget(toolTarget.handle(),toolTarget.capability(),toolTarget.deploymentId(),toolTarget.deploymentRevision(),
+                    toolTarget.inputSchema(),toolTarget.outputSchema(),effect,true,toolTarget.timeout(),modelInvocable,confirmation,Set.of(),Set.of("platform_handler:"+name),true);
+            return new AgentExecutionCodec.ToolRequest(target,new ToolBinding(ToolBinding.ProviderType.PLATFORM,name,name),
+                    new TypedPayload("application/json","{}"),"call:test",name);
         }
 
         private SessionExecutionWorkflows.Dispatch dispatch(SessionExecutionWorkflows.InvocationOrigin source, TypedPayload input) {

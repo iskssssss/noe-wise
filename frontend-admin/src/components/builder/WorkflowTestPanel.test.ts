@@ -86,7 +86,9 @@ function options(
     configSchema: [{ key: 'enabled', type: 'boolean', label: '启用', default: false }],
     capabilitySlots: [],
     budget: { recommended, maximum: { ...recommended, maxTotalTokens: 64000 } },
-    restrictions: ['仅允许 TEST 环境的 READ_ONLY MCP 工具'],
+    restrictions: [
+      '仅 TEST 环境的只读 MCP 工具及基础平台工具（时间、计算、日期转换、JSON、文本模板）；禁止脚本、异步任务、嵌套和 Agent 委派'
+    ],
     costNotice: '模型和知识调用按实际用量计费。工具声明只读不构成物理沙箱。'
   }
 }

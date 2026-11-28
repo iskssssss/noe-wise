@@ -96,7 +96,9 @@ public class WorkflowTestSessionService {
                 if(descriptor instanceof ToolVersion tool && tool.policy().effect().name().equals("READ_ONLY")
                         && tool.policy().confirmation().name().equals("NEVER") && tool.metadata().invocationPolicy().modelInvocable()) {
                     for(var deployment:catalog.listDeployments(CapabilityCatalogScope.tenant(tenant),"ACTIVE")) {
-                        if(!deployment.toolVersionId().equals(version.id())||deployment.providerType()!=ToolDeployment.ProviderType.MCP
+                        if(!deployment.toolVersionId().equals(version.id())
+                                ||deployment.providerType()!=ToolDeployment.ProviderType.MCP&&!(deployment.providerType()==ToolDeployment.ProviderType.PLATFORM
+                                    &&WorkflowTestTools.allowsPlatform(tool.definition().name(),deployment.providerRef()))
                                 ||deployment.environment()!=ToolDeployment.Environment.TEST)continue;
                         try { targets.requireProvider(tenant,registry.findToolDeployment(tenant,deployment.deploymentKey()).orElseThrow()); }
                         catch(ApiException denied) { if(Set.of(HttpStatus.FORBIDDEN,HttpStatus.NOT_FOUND).contains(denied.getStatus()))continue;throw denied; }
@@ -114,7 +116,7 @@ public class WorkflowTestSessionService {
         var capability=WorkflowDefinitionContract.object(meta.get("capability"),"meta.capability");
         return new Options(sourceReceipt(selected),WorkflowDefinitionContract.object(capability.get("input_schema"),"input_schema"),
                 meta.getOrDefault("config_schema",List.of()),List.copyOf(slots),new BudgetOptions(RECOMMENDED,MAXIMUM),
-                List.of("仅允许唯一目标工作流；后续仅可回复原 Pending","仅 TEST 环境的 MCP READ_ONLY 工具；禁止脚本、异步任务、嵌套和 Agent 委派",
+                List.of("仅允许唯一目标工作流；后续仅可回复原 Pending","仅 TEST 环境的只读 MCP 工具及基础平台工具（时间、计算、日期转换、JSON、文本模板）；禁止脚本、异步任务、嵌套和 Agent 委派",
                         "禁止记忆读写与自动提取、成果发布、工作区和渠道外发","测试资源保留30分钟，关闭需等待真实执行和取消收敛"),
                 "模型和知识查询按实际用量计费。READ_ONLY 是供应商声明，TEST 环境不保证外部物理沙箱，请确认真实供应商数据和副作用边界。");
     }
@@ -300,10 +302,12 @@ public class WorkflowTestSessionService {
             var descriptor=registry.find(tenant,binding.capability()).orElseThrow(()->invalid("workflow_test_binding_rejected","精确能力版本不可用"));
             if(descriptor instanceof ToolVersion tool) {
                 var deployment=registry.findToolDeployment(tenant,binding.toolDeploymentId()).orElseThrow(()->invalid("workflow_test_binding_rejected","精确部署不可用"));
-                if(deployment.environment()!=ToolDeployment.Environment.TEST||deployment.providerType()!=ToolDeployment.ProviderType.MCP||!deployment.active()
+                if(deployment.environment()!=ToolDeployment.Environment.TEST||!deployment.active()
+                        ||deployment.providerType()!=ToolDeployment.ProviderType.MCP&&!(deployment.providerType()==ToolDeployment.ProviderType.PLATFORM
+                            &&WorkflowTestTools.allowsPlatform(tool.definition().name(),deployment.providerRef()))
                         ||!tool.policy().effect().name().equals("READ_ONLY")||!tool.policy().confirmation().name().equals("NEVER")||!tool.metadata().invocationPolicy().modelInvocable()
                         ||!deployment.toolVersion().equals(binding.capability())||!Objects.equals(deployment.revision(),binding.toolDeploymentRevision()))
-                    throw invalid("workflow_test_binding_rejected","仅允许精确 TEST MCP READ_ONLY 且无需确认的工具部署");
+                    throw invalid("workflow_test_binding_rejected","仅允许精确 TEST 环境的只读 MCP 或基础平台工具，且必须无需确认");
             } else if(!(descriptor instanceof KnowledgeSourceDescriptor))throw invalid("workflow_test_binding_rejected","测试仅允许工具与知识能力槽");
         }
     }
