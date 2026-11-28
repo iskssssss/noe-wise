@@ -23,6 +23,11 @@ public class WorkflowTestSessionController {
     @RequirePermission("foundation.workflows.update")
     @PostMapping
     public ApiResponse<Receipt> create(@RequestBody Create command) {return ApiResponses.wrap(service.create(command));}
+    @ExceptionHandler(WorkflowTestSessionService.InputRejected.class)
+    public ResponseEntity<ApiResponse<Void>> inputRejected(WorkflowTestSessionService.InputRejected failure) {
+        return ResponseEntity.unprocessableEntity().body(ApiResponse.failure(failure.getCode(),failure.getMessage(),false,
+                java.util.Map.of("parameters",failure.getMessage())));
+    }
     @RequirePermission("foundation.workflows.read")
     @GetMapping("/history")
     public ApiResponse<HistoryPage> history(@RequestParam("workflowId") String workflowId,

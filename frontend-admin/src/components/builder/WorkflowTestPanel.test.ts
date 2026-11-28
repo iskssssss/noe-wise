@@ -1575,6 +1575,53 @@ describe('真实Workflow测试面板边界', () => {
     })
     expect(mocks.create.mock.calls[0]![0].parameters).not.toHaveProperty('user_input')
   })
+  it.each(['JSON', '字段'])(
+    '服务端参数拒绝在%s输入处保留诊断与草稿，纠正后才提交新测试',
+    async (mode) => {
+      vi.mocked(crypto.randomUUID).mockReturnValueOnce(
+        'request-rejected' as ReturnType<typeof crypto.randomUUID>
+      )
+      const wrapper = render()
+      await flushPromises()
+      if (mode === 'JSON') {
+        await button(wrapper, 'JSON 输入').trigger('click')
+        await dom()
+          .get('textarea[aria-label="测试参数 JSON"]')
+          .setValue('{"count":"private-value","urgent":false}')
+      }
+      const diagnostic = '测试参数路径 /count：类型不符合定义，请核对数字、文本、布尔值或对象类型'
+      mocks.create.mockRejectedValueOnce(
+        new HttpClientError({
+          status: 422,
+          code: 'workflow_test_input_invalid',
+          userMessage: '提交内容未通过校验',
+          fieldErrors: { parameters: diagnostic }
+        })
+      )
+      await dom().get('form').trigger('submit')
+      await flushPromises()
+      await vi.waitFor(() => expect(dom().get('[role="alert"]').text()).toBe(diagnostic))
+      expect(dom().find('.el-message').exists()).toBe(false)
+      expect(mocks.submit).not.toHaveBeenCalled()
+      expect(mocks.byRequest).not.toHaveBeenCalled()
+      expect(dom().text()).not.toContain('创建结果尚未确认')
+      const originalRequest = mocks.create.mock.calls[0]![0].requestId
+      if (mode === 'JSON') {
+        const json = dom().get<HTMLTextAreaElement>('textarea[aria-label="测试参数 JSON"]')
+        expect(json.element.value).toContain('private-value')
+        expect(document.activeElement).toBe(json.element)
+        await json.setValue('{"count":0,"urgent":false}')
+      } else {
+        await dom().get('input[aria-label="客户名称"]').setValue('纠正后的客户')
+      }
+      await vi.waitFor(() => expect(dom().find('[role="alert"]').exists()).toBe(false))
+      await dom().get('form').trigger('submit')
+      await flushPromises()
+      expect(mocks.create).toHaveBeenCalledTimes(2)
+      expect(mocks.create.mock.calls[1]![0].requestId).not.toBe(originalRequest)
+      expect(mocks.submit).toHaveBeenCalledOnce()
+    }
+  )
   it('JSON 中必填参数为 null 时不创建测试，修正为零后可继续', async () => {
     const wrapper = render()
     await flushPromises()

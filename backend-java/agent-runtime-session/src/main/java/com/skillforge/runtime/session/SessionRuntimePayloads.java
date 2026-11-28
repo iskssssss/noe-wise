@@ -36,6 +36,11 @@ public final class SessionRuntimePayloads implements PayloadValidator {
         public void validate(TypedPayload schema, TypedPayload payload) {
             validateAgainstSchema(schema, payload, limits);
         }
+
+        /** 复用同一配额提供拒绝定位；诊断不替代 validate 的接受与拒绝判定。 */
+        public java.util.Optional<SchemaViolation> violation(TypedPayload schema, TypedPayload payload) {
+            return inputSchemaViolation(schema, payload, limits);
+        }
     }
 
     /** 用冻结 schema 校验参数；schema 描述与 application/json 实例不是同一种 payload。 */

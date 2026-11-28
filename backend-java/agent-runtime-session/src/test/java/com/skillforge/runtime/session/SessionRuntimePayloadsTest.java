@@ -145,6 +145,10 @@ class SessionRuntimePayloadsTest {
         var value = new TypedPayload("application/json", "{\"groups\":[[{\"count\":1},{\"count\":\"secret-value\"}]]}");
         assertEquals(new SessionRuntimePayloads.SchemaViolation("/groups/0/1/count", "type"),
                 SessionRuntimePayloads.inputSchemaViolation(schema, value, LIMITS).orElseThrow());
+        var validator = new SessionRuntimePayloads.InputValidator(16_384, 1_024, 64);
+        assertThrows(IllegalArgumentException.class, () -> validator.validate(schema, value));
+        assertEquals(new SessionRuntimePayloads.SchemaViolation("/groups/0/1/count", "type"),
+                validator.violation(schema, value).orElseThrow());
     }
 
     @Test void schemaDiagnosticHidesUnsafeDynamicNamesAndBoundsDeepPaths() {

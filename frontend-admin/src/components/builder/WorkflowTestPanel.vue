@@ -1110,6 +1110,14 @@ async function createAndTest() {
         error.value = '测试创建已明确拒绝，但无法清除本地记录，请恢复浏览器存储后核对。'
         return
       }
+      if (
+        reason instanceof HttpClientError &&
+        reason.code === 'workflow_test_input_invalid' &&
+        reason.fieldErrors.parameters
+      ) {
+        rejectInput(useJson.value ? 'json' : 'parameters', reason.fieldErrors.parameters)
+        return
+      }
     }
     error.value = errorText(
       reason,
@@ -1782,7 +1790,17 @@ onBeforeUnmount(() => {
                 placeholder="填写希望此工作流处理的测试消息"
               />
             </ElFormItem>
-            <section aria-label="测试参数">
+            <section
+              aria-label="测试参数"
+              :data-test-input-error="inputError?.field === 'parameters'"
+            >
+              <p
+                v-if="inputError?.field === 'parameters'"
+                class="workflow-test-input-error"
+                role="alert"
+              >
+                {{ inputError.message }}
+              </p>
               <div class="test-section-heading">
                 <h3>测试参数</h3>
                 <ElButton
@@ -2252,6 +2270,11 @@ onBeforeUnmount(() => {
   font-size: 15px;
   margin-block: 12px;
 }
+.workflow-test-input-error {
+  color: var(--el-color-danger);
+  overflow-wrap: anywhere;
+}
+.workflow-test-input-error,
 .workflow-test-panel :deep([data-test-input-error] .el-form-item__error) {
   position: static;
   width: 100%;

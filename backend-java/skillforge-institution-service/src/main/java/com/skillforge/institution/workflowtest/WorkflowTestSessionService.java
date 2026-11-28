@@ -149,8 +149,25 @@ public class WorkflowTestSessionService {
                 ||!Boolean.FALSE.equals(schema.get("additionalProperties")))parameters.put("user_input",userInput);
         String parameterJson=encode(parameters);
         if(parameterJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>262144)throw invalid("workflow_test_input_invalid","测试输入不能超过256KiB");
-        try { inputs.validate(new TypedPayload("json-schema",encode(schema)),new TypedPayload("application/json",parameterJson)); }
-        catch(IllegalArgumentException rejected) {throw invalid("workflow_test_input_invalid","测试输入不符合当前工作流 input_schema");}
+        var inputSchema=new TypedPayload("json-schema",encode(schema));
+        var inputPayload=new TypedPayload("application/json",parameterJson);
+        try { inputs.validate(inputSchema,inputPayload); }
+        catch(IllegalArgumentException rejected) {
+            String message=inputs.violation(inputSchema,inputPayload).map(violation -> {
+                String problem=switch(violation.keyword()) {
+                    case "required" -> "缺少必填字段，请补充后再测试";
+                    case "type" -> "类型不符合定义，请核对数字、文本、布尔值或对象类型";
+                    case "additionalProperties" -> "未在输入定义中声明，请移除多余字段";
+                    case "enum" -> "不在允许的选项中，请按输入定义选择";
+                    case "minimum", "maximum" -> "超出允许的数值范围，请按输入定义调整";
+                    case "minLength", "maxLength" -> "文本长度不符合定义，请调整后再测试";
+                    case "oneOf", "anyOf" -> "不符合允许的输入结构，请核对各字段的组合";
+                    default -> throw new IllegalStateException("未知输入约束");
+                };
+                return (violation.path().isEmpty()?"测试参数":"测试参数路径 "+violation.path())+"："+problem;
+            }).orElse("测试参数不符合输入定义，请检查字段类型、必填项和输入规模");
+            throw new InputRejected(message);
+        }
         var copy=definitions.createCopy(tenant,privateWorkflow,selected,request.config()==null?Map.of():request.config(),chosen);
         var capability=catalog.getVersion(CapabilityCatalogScope.tenant(tenant),copy.capabilityVersionId());
         var agent=agents.create(tenant,id,new CapabilityRef(CapabilityType.WORKFLOW,capability.definitionId().toString(),capability.id().toString()),
@@ -304,6 +321,12 @@ public class WorkflowTestSessionService {
         return new SourceReceipt(value.kind(),value.workflowId(),value.draftRevision(),value.definitionVersionId(),value.hash());
     }
     private static ApiException missing() {return new ApiException(HttpStatus.NOT_FOUND,"workflow_test_not_found","测试 Session 或源版本不存在",false);}
+    /** 仅承载安全的参数诊断；原值与底层异常不进入字段反馈。 */
+    public static final class InputRejected extends ApiException {
+        public InputRejected(String message) {
+            super(HttpStatus.UNPROCESSABLE_ENTITY,"workflow_test_input_invalid",message,false);
+        }
+    }
     private static ApiException invalid(String code,String message) {return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,code,message,false);}
     private static ApiException conflict(String code,String message) {return new ApiException(HttpStatus.CONFLICT,code,message,false);}
 }
