@@ -105,13 +105,15 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
             var version=admin("GET","/api/v1/capabilities/versions/detail?versionId="+published.path("capability_version_id").asText(),null,null,200);
             String agent=admin("POST","/api/v1/agents",Map.of("agent_key",marker,"name","明确WorkflowHTTP",
                     "system_prompt","执行当前正式配置。","config",Map.of()),null,200).path("id").asText();
-            var mounted=admin("POST","/api/v1/agents/capability-mounts",Map.of("agent_id",agent,"payload",Map.of(
+            var mounted=admin("POST","/api/v1/agents/capability-mounts",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agent,"payload",Map.of(
                     "capability_type","WORKFLOW","capability_definition_id",version.path("definition_id").asText(),
                     "capability_version_id",published.path("capability_version_id").asText(),"priority",100,
                     "workflow_config",Map.of("workflow_instance_id",matches.getFirst().path("id").asText(),
                             "workflow_instance_revision",published.path("definition_version_id").asText()))),null,201);
-            assertEquals(1,mounted.path("mounts").size());
-            String mount=mounted.path("mounts").get(0).path("mount_id").asText();
+            var current=admin("GET","/api/v1/agents/capability-mounts?agentId="+agent,null,null,200);
+            assertEquals(1,current.path("mounts").size());
+            assertEquals(mounted.path("mount_id"),current.path("mounts").get(0).path("mount_id"));
+            String mount=mounted.path("mount_id").asText();
             assertFalse(mount.isBlank(),mounted.toString());
             admin("POST","/api/v1/agents/publish",Map.of("agent_id",agent),null,200);
             String user=machine(owner,"/api/v1/open-platform/end-users/ensure",Map.of("external_user_ref",marker,"display_name","HTTP用户"),null,false,200).path("end_user_id").asText();
@@ -221,12 +223,12 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
             var version=admin("GET","/api/v1/capabilities/versions/detail?versionId="+published.path("capability_version_id").asText(),null,null,200);
             String agent=admin("POST","/api/v1/agents",Map.of("agent_key",marker,"name","Workflow LLM",
                     "system_prompt","执行当前正式配置。","config",Map.of()),null,200).path("id").asText();
-            var mounted=admin("POST","/api/v1/agents/capability-mounts",Map.of("agent_id",agent,"payload",Map.of(
+            var mounted=admin("POST","/api/v1/agents/capability-mounts",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agent,"payload",Map.of(
                     "capability_type","WORKFLOW","capability_definition_id",version.path("definition_id").asText(),
                     "capability_version_id",published.path("capability_version_id").asText(),"priority",100,
                     "workflow_config",Map.of("workflow_instance_id",instance.path("id").asText(),
                             "workflow_instance_revision",published.path("definition_version_id").asText()))),null,201);
-            String mount=mounted.path("mounts").get(0).path("mount_id").asText();
+            String mount=mounted.path("mount_id").asText();
             admin("POST","/api/v1/agents/publish",Map.of("agent_id",agent),null,200);
             String user=machine(owner,"/api/v1/open-platform/end-users/ensure",Map.of("external_user_ref",marker,"display_name","HTTP用户"),null,false,200).path("end_user_id").asText();
             for(var testCase:List.of(new String[]{"length","fixture-result"},new String[]{"content_filter","fixture-result"},

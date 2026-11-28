@@ -5,6 +5,7 @@ import re
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 from workflow_live_acceptance import Acceptance
 from workflow_test_session_acceptance import (
@@ -144,6 +145,37 @@ class LogicTest(unittest.TestCase):
                 acceptance.step('original-write', api, 'POST', '/owned', {'request_id': 'original'})
         self.assertEqual(api.calls, 1)
         self.assertEqual(acceptance.state['steps']['original-write']['status'], 'FAILED_OR_UNKNOWN_NO_RETRY')
+
+    def test_mount_creation_step_keeps_original_receipt_on_resume(self):
+        acceptance = object.__new__(Acceptance)
+        acceptance.state = {'steps': {}}
+        acceptance.persist = Mock()
+        command = {'request_id': '39b6ea47-7c50-4c13-a97e-eb2736322838', 'agent_id': '7', 'payload': {}}
+        result = {'request_id': command['request_id'], 'agent_id': '7', 'mount_id': '9007199254740993'}
+        api = Mock()
+        api.call.return_value = result
+        for _ in range(2):
+            self.assertEqual(result, acceptance.step('agent-mount', api, 'POST', '/agents/capability-mounts', command))
+        api.call.assert_called_once()
+        self.assertEqual(command, acceptance.state['steps']['agent-mount']['body'])
+        self.assertEqual('COMMITTED', acceptance.state['steps']['agent-mount']['status'])
+
+    def test_mount_creation_step_cannot_confirm_another_request_or_replay_unknown(self):
+        command = {'request_id': '39b6ea47-7c50-4c13-a97e-eb2736322838', 'agent_id': '7', 'payload': {}}
+        for outcome in (TimeoutError('response lost'), {'request_id': 'other', 'agent_id': '7', 'mount_id': '8'}):
+            with self.subTest(outcome=type(outcome).__name__):
+                acceptance = object.__new__(Acceptance)
+                acceptance.state = {'steps': {}}
+                acceptance.persist = Mock()
+                api = Mock()
+                api.call.side_effect = [outcome]
+                with self.assertRaises((TimeoutError, SafeFailure)):
+                    acceptance.step('agent-mount', api, 'POST', '/agents/capability-mounts', command)
+                with self.assertRaises(SafeFailure):
+                    acceptance.step('agent-mount', api, 'POST', '/agents/capability-mounts', command)
+                api.call.assert_called_once()
+                self.assertEqual(command, acceptance.state['steps']['agent-mount']['body'])
+                self.assertEqual('FAILED_OR_UNKNOWN_NO_RETRY', acceptance.state['steps']['agent-mount']['status'])
 
     def test_unknown_rejection_probe_is_not_an_expected_rejection_or_replayed(self):
         acceptance = object.__new__(TestSessionAcceptance)

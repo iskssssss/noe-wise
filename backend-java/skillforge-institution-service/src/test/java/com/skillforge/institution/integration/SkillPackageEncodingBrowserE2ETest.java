@@ -108,11 +108,11 @@ class SkillPackageEncodingBrowserE2ETest extends ChatExecutionChainE2ETest {
             assertEquals(3, publishedFiles.size());
             var revised = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
             assertEquals(200, revised.statusCode(), revised.body()); agentId = successData(revised).path("id").asText();
-            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                     "capability_type", "SKILL", "capability_definition_id", definition, "capability_version_id", version,
                     "skill_config", Map.of("activation_mode", "ALWAYS", "token_budget", 8000), "priority", 0, "status", "ACTIVE")), accessToken);
             Files.writeString(evidence.resolve("mount.json"), mounted.body()); assertEquals(201, mounted.statusCode(), mounted.body());
-            String handle = "skill:" + successData(mounted).path("mounts").get(0).path("mount_id").asText();
+            String handle = "skill:" + successData(mounted).path("mount_id").asText();
             try (var model = new ResourceModel(handle, definition, version, marker)) {
                 TenantContext.runWithTenant(tenantId, () -> configureTenantModel(model.endpoint()));
                 var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);

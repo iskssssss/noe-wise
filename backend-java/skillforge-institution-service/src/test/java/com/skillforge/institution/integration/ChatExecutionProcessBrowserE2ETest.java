@@ -430,7 +430,7 @@ class ChatExecutionProcessBrowserE2ETest extends ChatRuntimeChannelE2ETest {
         var deployment=send("/api/v1/capabilities/deployments","POST",Map.of("deployment_key",key,"tool_version_id",version,"provider_type","PLATFORM","provider_ref","http_request","environment","DEVELOPMENT","status","ACTIVE"),accessToken);
         assertEquals(201,deployment.statusCode(),deployment.body());
         long revision=successData(deployment).path("revision").asLong();
-        var mount=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of("capability_type","TOOL","capability_definition_id",definition,"capability_version_id",version,"priority",0,"tool_config",Map.of("tool_deployment_id",key,"tool_deployment_revision",revision))),accessToken);
+        var mount=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of("capability_type","TOOL","capability_definition_id",definition,"capability_version_id",version,"priority",0,"tool_config",Map.of("tool_deployment_id",key,"tool_deployment_revision",revision))),accessToken);
         assertEquals(201,mount.statusCode(),mount.body());
         assertEquals(200,send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken).statusCode());
         httpErrorModel=new HttpErrorModel(objectMapper); httpErrorModel.start();

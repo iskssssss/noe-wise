@@ -73,7 +73,7 @@ class ChatContextCompactionLiveE2ETest extends ChatExecutionChainE2ETest {
                 "tool_version_id", version, "provider_type", "PLATFORM", "provider_ref", "read_context_reference",
                 "status", "ACTIVE", "environment", "TEST"), accessToken);
         assertEquals(201, deployment.statusCode(), deployment.body());
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                 "capability_type", "TOOL", "capability_definition_id", Long.toString(definition), "capability_version_id", Long.toString(version),
                 "tool_config", Map.of("tool_deployment_id", deploymentKey, "tool_deployment_revision", successData(deployment).path("revision").asLong()), "priority", 0)), accessToken);
         assertEquals(201, mounted.statusCode(), mounted.body());

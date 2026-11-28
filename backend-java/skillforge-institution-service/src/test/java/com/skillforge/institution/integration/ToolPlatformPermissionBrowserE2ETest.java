@@ -70,7 +70,7 @@ class ToolPlatformPermissionBrowserE2ETest extends ChatExecutionChainE2ETest {
         var deployment = get("/api/v1/capabilities/deployments/detail?deploymentKey=" + key);
         assertEquals(200, deployment.statusCode(), deployment.body()); long revision = successData(deployment).path("revision").asLong();
         assertEquals(1, countRuntime("SELECT count(*) FROM nw_tool_deployments WHERE tenant_id=CAST(? AS bigint) AND deployment_key=?", tenantId, key));
-        var mount = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "TOOL",
+        var mount = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "TOOL",
                 "capability_definition_id", definition, "capability_version_id", version,
                 "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", revision), "priority", 0)), accessToken);
         assertEquals(201, mount.statusCode(), mount.body());

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import uuid
 from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
@@ -90,6 +91,7 @@ class FakeApi:
         self.missing_definition = missing_definition
         self.mismatched_output_budget = mismatched_output_budget
         self.next_mount = 0
+        self.mounts = {}
         self.published_agent_ids = set()
         self.delegation_targets = []
         self.output_budgets = {}
@@ -135,15 +137,20 @@ class FakeApi:
         if path == "/capabilities/definitions/versions?definitionId=304&status=PUBLISHED":
             return [{"id": 302}]
         if path == "/agents/capability-mounts":
+            uuid.UUID(body["request_id"])
             self.next_mount += 1
             payload = body["payload"]
             for field in ("capability_definition_id", "capability_version_id"):
                 if not isinstance(payload[field], str):
                     raise AssertionError(f"{field} must be a decimal string")
-            return {"mounts": [{"mount_id": f"mount-{self.next_mount}", "revision": 1,
+            mount = {"mount_id": f"mount-{self.next_mount}", "revision": 1,
                 "capability_type": payload["capability_type"],
                 "capability_definition_id": payload["capability_definition_id"],
-                "capability_version_id": payload["capability_version_id"]}]}
+                "capability_version_id": payload["capability_version_id"]}
+            self.mounts.setdefault(body["agent_id"], []).append(mount)
+            return {"request_id": body["request_id"], "agent_id": body["agent_id"], "mount_id": mount["mount_id"]}
+        if path.startswith("/agents/capability-mounts?agentId="):
+            return {"mounts": self.mounts[path.split("=", 1)[1]]}
         if path == "/agents/publish":
             self.published_agent_ids.add(str(body["agent_id"]))
             return {"agent_id": body["agent_id"]}

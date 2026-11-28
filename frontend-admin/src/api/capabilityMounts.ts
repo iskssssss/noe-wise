@@ -101,6 +101,19 @@ export interface CapabilityMountSet {
   mounts: CapabilityMount[]
 }
 
+export interface CapabilityMountCreationReceipt {
+  request_id: string
+  agent_id: string
+  mount_id: string
+}
+
+export class CapabilityMountRequestError extends Error {
+  constructor(cause: unknown) {
+    super('挂载参数无效，请检查优先级、预算及所选能力后重新提交。', { cause })
+    this.name = 'CapabilityMountRequestError'
+  }
+}
+
 /** 类型化创建/更新命令；所选类型必须且只能提供一个配置。 */
 export type CapabilityMountRequest = {
   capabilityType: CapabilityType
@@ -687,8 +700,13 @@ function mapValidation(wire: CapabilityValidationWire): CapabilityValidation {
 }
 
 function requestToWire(request: CapabilityMountRequest): Record<string, unknown> {
-  if (request.priority !== undefined && !Number.isSafeInteger(request.priority)) {
-    return fail('priority must be an integer')
+  if (
+    request.priority !== undefined &&
+    (!Number.isInteger(request.priority) ||
+      request.priority < -2147483648 ||
+      request.priority > 2147483647)
+  ) {
+    return fail('priority must be a 32-bit signed integer')
   }
   if (request.status !== undefined && !MOUNT_STATUSES.includes(request.status)) {
     return fail('status is invalid')
@@ -787,6 +805,13 @@ function requestToWire(request: CapabilityMountRequest): Record<string, unknown>
 }
 
 export function createCapabilityMountApi(http: CapabilityMountHttp) {
+  const creationReceipt = (
+    value: CapabilityMountCreationReceipt
+  ): CapabilityMountCreationReceipt => ({
+    request_id: textValue(value.request_id, 'request_id'),
+    agent_id: catalogDecimalIdentity(value.agent_id, 'agent_id'),
+    mount_id: catalogDecimalIdentity(value.mount_id, 'mount_id')
+  })
   return {
     workflowOptions: () =>
       http
@@ -818,13 +843,27 @@ export function createCapabilityMountApi(http: CapabilityMountHttp) {
           `/agents/capability-mounts?agentId=${encodeURIComponent(agentId)}`
         )
         .then(mapCapabilityMountSet),
-    create: (agentId: string, request: CapabilityMountRequest) =>
-      http
-        .post<CapabilityMountSetWire>(`/agents/capability-mounts`, {
+    create: (requestId: string, agentId: string, request: CapabilityMountRequest) => {
+      let payload: Record<string, unknown>
+      try {
+        payload = requestToWire(request)
+      } catch (cause) {
+        throw new CapabilityMountRequestError(cause)
+      }
+      return http
+        .post<CapabilityMountCreationReceipt>(`/agents/capability-mounts`, {
+          request_id: requestId,
           agent_id: agentId,
-          payload: requestToWire(request)
+          payload
         })
-        .then(mapCapabilityMountSet),
+        .then(creationReceipt)
+    },
+    creationResult: (agentId: string, requestId: string) =>
+      http
+        .get<CapabilityMountCreationReceipt | undefined>(
+          `/agents/capability-mounts/result?agent_id=${encodeURIComponent(agentId)}&request_id=${encodeURIComponent(requestId)}`
+        )
+        .then((value) => (value ? creationReceipt(value) : undefined)),
     update: (
       agentId: string,
       mountId: string,

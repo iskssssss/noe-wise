@@ -140,8 +140,10 @@ class SkillLifecycleHttpIntegrationTest extends AbstractIntegrationTest {
         String version1 = v1.path("version_id").asText();
         String agentId = call(owner.token(), "POST", "/api/v1/agents", Map.of("agent_key", "skill-http-" + owner.suffix(),
                 "name", "技能冻结验收", "system_prompt", "根据已挂载技能读取材料，完成后简洁回答。"), null, 200).path("id").asText();
-        var mounted = call(owner.token(), "POST", MOUNTS, Map.of("agent_id", agentId,
-                "payload", mountPayload(definitionId, version1, "ACTIVE")), null, 201).path("mounts").get(0);
+        var receipt = call(owner.token(), "POST", MOUNTS, Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId,
+                "payload", mountPayload(definitionId, version1, "ACTIVE")), null, 201);
+        var mounted = mount(owner, agentId);
+        assertEquals(receipt.path("mount_id"), mounted.path("mount_id"));
         if (SANDBOX) mountCodeExecution(owner, agentId);
         publishAgent(owner, agentId);
         String handle = "skill:" + mounted.path("mount_id").asText();
@@ -260,7 +262,7 @@ class SkillLifecycleHttpIntegrationTest extends AbstractIntegrationTest {
             String version = publish(owner, definitionId, draft).path("version_id").asText();
             String agent = call(owner.token(), "POST", "/api/v1/agents", Map.of("agent_key", "summary-" + owner.suffix(),
                     "name", "销售汇总", "system_prompt", "使用已挂载的销售汇总技能完成用户任务，遵守技能参考和真实工具回执。"), null, 200).path("id").asText();
-            call(owner.token(), "POST", MOUNTS, Map.of("agent_id", agent, "payload", mountPayload(definitionId, version, "ACTIVE")), null, 201);
+            call(owner.token(), "POST", MOUNTS, Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", mountPayload(definitionId, version, "ACTIVE")), null, 201);
             mountPlatformTool(owner, agent, "code_execute");
             mountPlatformTool(owner, agent, "finalize_task_outputs");
             publishAgent(owner, agent);
@@ -457,7 +459,7 @@ class SkillLifecycleHttpIntegrationTest extends AbstractIntegrationTest {
         var deployment = call(owner.token(), "POST", "/api/v1/capabilities/deployments", Map.of("deployment_key", deploymentKey,
                 "tool_version_id", version.path("id").asText(), "provider_type", "PLATFORM", "provider_ref", tool,
                 "environment", "TEST", "status", "ACTIVE"), null, 201);
-        call(owner.token(), "POST", MOUNTS, Map.of("agent_id", agent, "payload", Map.of("capability_type", "TOOL",
+        call(owner.token(), "POST", MOUNTS, Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of("capability_type", "TOOL",
                 "capability_definition_id", definition.path("id").asText(), "capability_version_id", version.path("id").asText(),
                 "tool_config", Map.of("tool_deployment_id", deploymentKey, "tool_deployment_revision", deployment.path("revision").asLong()),
                 "priority", 0)), null, 201);

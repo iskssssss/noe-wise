@@ -22,8 +22,10 @@ import ToolsPage from './ToolsPage.vue'
 import AgentsPage from './AgentsPage.vue'
 import { HttpClientError } from '@skillforge/shared/utils/http'
 import { EntitySelect } from '@skillforge/shared/admin'
+import { CapabilityMountRequestError, createCapabilityMountApi } from '../../api/capabilityMounts'
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
+  creationResult: vi.fn(),
   mountUpdate: vi.fn(),
   mountDelete: vi.fn(),
   get: vi.fn(),
@@ -68,7 +70,8 @@ const mocks = vi.hoisted(() => ({
   ],
   push: vi.fn(),
   browserSession: 'knowledge-session',
-  authSession: 'knowledge-identity'
+  authSession: 'knowledge-identity',
+  agentId: 'agent-1'
 }))
 vi.mock('../../api/workflowOnboarding', () => ({
   workflowOnboardingApi: { result: mocks.workflowResult, submit: mocks.workflowSubmit }
@@ -80,7 +83,9 @@ vi.mock('../../api/tools', () => ({
     onboarding: mocks.onboarding
   }
 }))
-vi.mock('../../api', () => ({
+vi.mock('../../api', async () => ({
+  CapabilityMountRequestError: (await import('../../api/capabilityMounts'))
+    .CapabilityMountRequestError,
   getSessionId: () => mocks.browserSession,
   api: {
     connectors: { instances: mocks.connectors, mcpTools: mocks.discover },
@@ -99,6 +104,7 @@ vi.mock('../../api', () => ({
       installTemplate: mocks.installTemplate,
       capabilityMounts: {
         create: mocks.create,
+        creationResult: mocks.creationResult,
         update: mocks.mountUpdate,
         delete: mocks.mountDelete,
         workflowOptions: mocks.workflowOptions
@@ -136,7 +142,7 @@ vi.mock('../../stores/auth', () => ({
   })
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'agent-1' }, query: {} }),
+  useRoute: () => ({ params: { id: mocks.agentId }, query: {} }),
   useRouter: () => ({ push: mocks.push }),
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn()
@@ -208,6 +214,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.browserSession = 'knowledge-session'
   mocks.authSession = 'knowledge-identity'
+  mocks.agentId = 'agent-1'
   mocks.requirementOptions.mockImplementation(async (type: string) =>
     type === 'SKILL' || type === 'WORKFLOW'
       ? [{ id: '10', name: '服务流程', versionId: '21', versionKey: '2' }]
@@ -302,7 +309,11 @@ beforeEach(() => {
       { id: 'revision-2', revision: 2, status: 'published', capability_version_id: '21' }
     ]
   })
-  mocks.create.mockResolvedValue({})
+  mocks.create.mockImplementation(async (request_id: string, agent_id: string) => ({
+    request_id,
+    agent_id,
+    mount_id: '900'
+  }))
   mocks.update.mockResolvedValue({ id: 'agent-1' })
   mocks.publications.mockResolvedValue({ items: [] })
   mocks.templates.mockResolvedValue({
@@ -1091,6 +1102,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
@@ -1499,7 +1511,7 @@ describe('按挂载类型加载实际关联', () => {
     await flushPromises()
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
-    expect(mocks.create).toHaveBeenCalledWith('agent-1', {
+    expect(mocks.create).toHaveBeenCalledWith(expect.any(String), 'agent-1', {
       capabilityDefinitionId: '30',
       capabilityType: 'TOOL',
       priority: 0,
@@ -1526,6 +1538,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '30',
@@ -1579,7 +1592,7 @@ describe('按挂载类型加载实际关联', () => {
     )
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
-    expect(mocks.create).toHaveBeenCalledWith('agent-1', {
+    expect(mocks.create).toHaveBeenCalledWith(expect.any(String), 'agent-1', {
       capabilityDefinitionId: '30',
       capabilityType: 'TOOL',
       priority: 0,
@@ -1632,6 +1645,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ toolConfig: { toolDeploymentId: 'service-two' } })
     )
@@ -1663,6 +1677,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ toolConfig: { toolDeploymentId: 'service-two' } })
     )
@@ -1694,6 +1709,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityType: 'SKILL', capabilityDefinitionId: '10' })
     )
@@ -1706,6 +1722,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityType: 'SKILL', capabilityDefinitionId: '10' })
     )
@@ -1728,6 +1745,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityDefinitionId: '10', capabilityType: 'SKILL' })
     )
@@ -1864,6 +1882,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ skillConfig: { tokenBudget: 31 } })
     )
@@ -1894,6 +1913,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
@@ -2093,6 +2113,7 @@ describe('按挂载类型加载实际关联', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityDefinitionId: '11' })
     )
@@ -2710,6 +2731,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '11',
@@ -2745,6 +2767,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
@@ -2794,6 +2817,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
@@ -2831,13 +2855,14 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
         workflowConfig: { workflowInstanceId: '9223372036854775807' }
       })
     )
-    const request = mocks.create.mock.calls[0]![1]
+    const request = mocks.create.mock.calls[0]![2]
     expect(request).not.toHaveProperty('capabilityVersionId')
     expect(request.workflowConfig).not.toHaveProperty('workflowInstanceRevision')
   })
@@ -3754,13 +3779,14 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '10',
         knowledgeConfig: { mode: 'FOLLOW_ACTIVE', pinnedRevisionId: null }
       })
     )
-    expect(mocks.create.mock.calls[0]![1]).not.toHaveProperty('capabilityVersionId')
+    expect(mocks.create.mock.calls[0]![2]).not.toHaveProperty('capabilityVersionId')
   })
   it('已有知识库时刷新候选保留当前选择和发布状态', async () => {
     mocks.permissions.push('foundation.knowledge.read')
@@ -3795,6 +3821,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityDefinitionId: '10' })
     )
@@ -3826,6 +3853,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({
         capabilityDefinitionId: '11',
@@ -3867,6 +3895,7 @@ describe('能力挂载关联一致性', () => {
       await button(drawer, '添加能力').trigger('click')
       await flushPromises()
       expect(mocks.create).toHaveBeenCalledWith(
+        expect.any(String),
         'agent-1',
         expect.objectContaining({ capabilityDefinitionId: '11' })
       )
@@ -3935,6 +3964,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityDefinitionId: '10' })
     )
@@ -3972,6 +4002,7 @@ describe('能力挂载关联一致性', () => {
     await button(drawer, '添加能力').trigger('click')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
       'agent-1',
       expect.objectContaining({ capabilityDefinitionId: '10' })
     )
@@ -4139,4 +4170,222 @@ it('发布后当前详情刷新失败仍要求重新读取，不能因跳过历�
   await flushPromises()
   expect(button(wrapper, '试用当前发布版本').props('disabled')).toBe(false)
   expect(mocks.publishWithReceipt).toHaveBeenCalledTimes(1)
+})
+
+describe('能力添加原请求恢复', () => {
+  beforeEach(() => {
+    mocks.permissions.push('foundation.agents.read', 'foundation.agents.create')
+    mocks.workflowOptions.mockResolvedValue([
+      {
+        id: '42',
+        instanceId: 'one',
+        workflowId: 'workflow',
+        definitionId: '10',
+        installationRevision: '100'
+      }
+    ])
+  })
+
+  it('响应丢失后锁定创建，空回执不解锁，原回执恢复只读取且保留主表单草稿', async () => {
+    mocks.create.mockRejectedValueOnce(new Error('连接中断'))
+    const { wrapper, drawer } = await open('WORKFLOW')
+    const prompt = wrapper
+      .findAllComponents(ElInput)
+      .find((input) => input.props('modelValue') === '按机构规则协助客户')!
+    prompt.vm.$emit('update:modelValue', '未保存的工作方式')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    const [requestId, agentId, command] = mocks.create.mock.calls[0]!
+    expect(command.workflowConfig.workflowInstanceId).toBe('42')
+    expect(drawer.props('modelValue')).toBe(false)
+    expect(wrapper.text()).toContain('添加能力结果尚未确认')
+    expect(button(wrapper, '添加能力').props('disabled')).toBe(true)
+    expect(button(wrapper, '发布').props('disabled')).toBe(true)
+    mocks.creationResult.mockResolvedValueOnce(undefined)
+    await button(wrapper, '核对原挂载').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('添加能力结果尚未确认')
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    mocks.creationResult.mockResolvedValueOnce({
+      request_id: requestId,
+      agent_id: agentId,
+      mount_id: '900'
+    })
+    await button(wrapper, '核对原挂载').trigger('click')
+    await flushPromises()
+    expect(mocks.creationResult).toHaveBeenLastCalledWith(agentId, requestId)
+    expect(wrapper.text()).not.toContain('添加能力结果尚未确认')
+    expect(
+      wrapper
+        .findAllComponents(ElInput)
+        .some((input) => input.props('modelValue') === '未保存的工作方式')
+    ).toBe(true)
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.publishWithReceipt).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('刷新恢复原命令后继续使用相同请求号和内容，不另建挂载', async () => {
+    mocks.create.mockRejectedValueOnce(new Error('连接中断'))
+    const { wrapper, drawer } = await open('WORKFLOW')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    const original = mocks.create.mock.calls[0]!
+    wrapper.unmount()
+    wrappers.splice(wrappers.indexOf(wrapper), 1)
+    const recovered = mount(AgentManagePage, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } }
+    })
+    wrappers.push(recovered)
+    await flushPromises()
+    expect(recovered.text()).toContain(original[0])
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    await button(recovered, '继续原挂载').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.create.mock.calls[1]).toEqual(original)
+    expect(recovered.text()).not.toContain('添加能力结果尚未确认')
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('继续原请求收到拒绝或不匹配回执仍保留未知结果', async () => {
+    mocks.create.mockRejectedValueOnce(new Error('连接中断')).mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'AGENT_MOUNT_CREATE_REJECTED',
+        userMessage: '拒绝'
+      })
+    )
+    const { wrapper, drawer } = await open('WORKFLOW')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    await button(wrapper, '继续原挂载').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('添加能力结果尚未确认')
+    mocks.creationResult.mockResolvedValueOnce({
+      request_id: 'other',
+      agent_id: 'agent-1',
+      mount_id: '900'
+    })
+    await button(wrapper, '核对原挂载').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('添加能力结果尚未确认')
+    expect(sessionStorage.length).toBe(1)
+  })
+
+  it('首次明确拒绝清除待核对身份但保留原挂载选择', async () => {
+    mocks.create.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 422,
+        code: 'AGENT_MOUNT_CREATE_REJECTED',
+        userMessage: '工作流不可用'
+      })
+    )
+    const { wrapper, drawer } = await open('WORKFLOW')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('添加能力结果尚未确认')
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(drawer.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe('10')
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('超出32位的优先级在首次编码时拒绝且不发送 POST，修正后可提交', async () => {
+    mocks.agentId = '7'
+    mocks.get.mockResolvedValue({
+      id: '7',
+      name: '客服',
+      model_config_id: 'model-1',
+      system_prompt: '按机构规则协助客户',
+      status: 'published',
+      published_revision: 2,
+      has_draft_changes: true,
+      mountSetGeneration: 1,
+      mounts: [],
+      execution_config: {},
+      delegation_config: { enabled: false, target_agent_ids: [] }
+    })
+    const post = vi.fn().mockImplementation(async (_path: string, body?: unknown) => {
+      const command = body as { request_id: string; agent_id: string }
+      return { request_id: command.request_id, agent_id: command.agent_id, mount_id: '900' }
+    })
+    const boundary = createCapabilityMountApi({ get: vi.fn(), post, put: vi.fn(), del: vi.fn() })
+    mocks.create.mockImplementation(boundary.create)
+    const { wrapper, drawer } = await open('SKILL')
+    const input = drawer
+      .findAllComponents(ElInputNumber)
+      .find((item) => item.props('modelValue') === 0)!
+    input.vm.$emit('update:modelValue', 2147483648)
+    await flushPromises()
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(post).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+    expect(wrapper.text()).not.toContain('添加能力结果尚未确认')
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(input.props('modelValue')).toBe(2147483648)
+    expect(drawer.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe('10')
+    input.vm.$emit('update:modelValue', 4)
+    await flushPromises()
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.create.mock.calls[1]![2].priority).toBe(4)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0]![1]).toMatchObject({ payload: { priority: 4 } })
+    expect(drawer.props('modelValue')).toBe(false)
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('原提交未知后本地编码拒绝不能清除原请求记录', async () => {
+    mocks.create.mockRejectedValueOnce(new Error('连接中断')).mockImplementationOnce(() => {
+      throw new CapabilityMountRequestError(new Error('priority must be an integer'))
+    })
+    const { wrapper, drawer } = await open('WORKFLOW')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    const original = mocks.create.mock.calls[0]!
+    const stored = sessionStorage.getItem(sessionStorage.key(0)!)
+    await button(wrapper, '继续原挂载').trigger('click')
+    await flushPromises()
+    expect(mocks.create.mock.calls[1]).toEqual(original)
+    expect(wrapper.text()).toContain('添加能力结果尚未确认')
+    expect(drawer.props('modelValue')).toBe(false)
+    expect(sessionStorage.length).toBe(1)
+    expect(sessionStorage.getItem(sessionStorage.key(0)!)).toBe(stored)
+  })
+
+  it('在途期间核对按钮禁用，迟到的另一身份结果不清除原恢复记录', async () => {
+    let finish!: (value: unknown) => void
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const { wrapper, drawer } = await open('WORKFLOW')
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在提交原挂载，请等待结果')
+    expect(button(wrapper, '核对原挂载').props('disabled')).toBe(true)
+    const [requestId, agentId] = mocks.create.mock.calls[0]!
+    mocks.authSession = 'different-user-session'
+    finish({ request_id: requestId, agent_id: agentId, mount_id: '900' })
+    await flushPromises()
+    expect(sessionStorage.length).toBe(1)
+    expect(mocks.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('无法保存恢复身份时不发出创建请求', async () => {
+    const { wrapper, drawer } = await open('WORKFLOW')
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw Error('storage')
+    })
+    await button(drawer, '添加能力').trigger('click')
+    await flushPromises()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('尚未发送请求')
+    storage.mockRestore()
+  })
 })

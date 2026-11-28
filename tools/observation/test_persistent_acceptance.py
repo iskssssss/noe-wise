@@ -148,6 +148,38 @@ class PersistentAcceptanceTest(unittest.TestCase):
         send.assert_called_once(); wait.assert_not_called()
         self.assertEqual("UNCONFIRMED", journal.value["operations"][0]["state"])
 
+    def test_mount_creation_journal_retains_original_identity_and_receipt(self):
+        journal = self.journal()
+        host = live.Host("http://127.0.0.1:8000/api/v1", journal)
+        command = {"request_id": "39b6ea47-7c50-4c13-a97e-eb2736322838", "agent_id": "7", "payload": {}}
+        receipt = {"request_id": command["request_id"], "agent_id": "7", "mount_id": "9007199254740993"}
+        success = io.BytesIO(json.dumps({"code": "OK", "data": receipt}).encode())
+        with patch.object(live.urllib.request.OpenerDirector, "open", return_value=success):
+            self.assertEqual(receipt, host.request("POST", "/agents/capability-mounts", command))
+        operation = journal.value["operations"][0]
+        self.assertEqual(command["request_id"], operation["request_id"])
+        self.assertEqual("7", operation["agent_id"])
+        self.assertEqual(receipt, operation["receipt"])
+        self.assertEqual("CONFIRMED", operation["state"])
+
+    def test_mount_creation_loss_or_mismatched_receipt_stays_unconfirmed(self):
+        command = {"request_id": "39b6ea47-7c50-4c13-a97e-eb2736322838", "agent_id": "7", "payload": {}}
+        for outcome in (TimeoutError("response lost"),
+                        {"request_id": "other", "agent_id": "7", "mount_id": "8"}):
+            with self.subTest(outcome=type(outcome).__name__):
+                journal = self.journal()
+                host = live.Host("http://127.0.0.1:8000/api/v1", journal)
+                response = outcome if isinstance(outcome, Exception) else io.BytesIO(
+                    json.dumps({"code": "OK", "data": outcome}).encode())
+                with patch.object(live.urllib.request.OpenerDirector, "open", side_effect=[response]) as send:
+                    with self.assertRaises(live.Stopped):
+                        host.request("POST", "/agents/capability-mounts", command)
+                send.assert_called_once()
+                operation = journal.value["operations"][0]
+                self.assertEqual("UNCONFIRMED", operation["state"])
+                self.assertEqual(command["request_id"], operation["request_id"])
+                self.assertEqual(command["agent_id"], operation["agent_id"])
+
     def test_get_429_retries_once_and_never_creates_a_write_intent(self):
         host = live.Host("http://127.0.0.1:8000/api/v1", self.journal())
         host.guard = SimpleNamespace(remaining=lambda: 100, check=Mock())

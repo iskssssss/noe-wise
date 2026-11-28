@@ -450,9 +450,13 @@ class ChatReactKnowledgeE2ETest extends AbstractIntegrationTest {
         mount.put("capability_version_id", Long.toString(knowledgeCapabilityVersionId));
         mount.put("knowledge_config", mountConfig);
         mount.put("priority", 0);
-        HttpResponse<String> mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", mount));
+        HttpResponse<String> mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", mount));
         assertEquals(201, mounted.statusCode(), mounted.body());
-        JsonNode mountResponse = successData(mounted);
+        JsonNode receipt = successData(mounted);
+        var current = send("/api/v1/agents/capability-mounts?agentId=" + agentId, "GET", null);
+        assertEquals(200, current.statusCode(), current.body());
+        JsonNode mountResponse = successData(current);
+        assertEquals(receipt.path("mount_id"), mountResponse.path("mounts").path(0).path("mount_id"));
         assertTrue(mountResponse.path("mounts").isArray(), mounted.body());
         assertFalse(mountResponse.path("mounts").path(0).path("mount_id").asText().isBlank(),
                 mounted.body());

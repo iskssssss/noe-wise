@@ -60,7 +60,7 @@ class JsonSchemaPropertiesBrowserE2ETest extends ChatExecutionChainE2ETest {
                 var revised = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
                 api.add(Map.of("path", "/api/v1/agents/revise", "request", Map.of("agent_id", agentId), "status", revised.statusCode(), "response", revised.body()));
                 assertEquals(200, revised.statusCode(), revised.body());
-                Map<String, Object> mountBody = Map.of("agent_id", agentId, "payload", Map.of("capability_type", "TOOL",
+                Map<String, Object> mountBody = Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "TOOL",
                         "capability_definition_id", definition, "capability_version_id", version, "priority", 0,
                         "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", successData(deployment).path("revision").asLong())));
                 var mounted = send("/api/v1/agents/capability-mounts", "POST", mountBody, accessToken);

@@ -144,12 +144,14 @@ class RuntimeCallbackHttpIntegrationTest extends AbstractIntegrationTest {
         JsonNode agent = admin("POST", "/api/v1/agents", Map.of("agent_key", namespace + "-agent", "name", "签名回调HTTP",
                 "system_prompt", "调用已挂载工作流，使用异步结果完成最终回答。", "config", Map.of()), null, 200);
         agentId = required(agent, "id");
-        JsonNode mounted = admin("POST", "/api/v1/agents/capability-mounts", Map.of("agent_id", agentId,
+        JsonNode mounted = admin("POST", "/api/v1/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId,
                 "payload", Map.of("capability_type", "WORKFLOW", "capability_definition_id", required(version, "definition_id"),
                         "capability_version_id", required(published, "capability_version_id"), "priority", 100,
                         "workflow_config", Map.of("workflow_instance_id", required(instance, "id"),
                                 "workflow_instance_revision", required(published, "definition_version_id")))), null, 201);
-        assertEquals(1, mounted.path("mounts").size());
+        var current = admin("GET", "/api/v1/agents/capability-mounts?agentId=" + agentId, null, null, 200);
+        assertEquals(1, current.path("mounts").size());
+        assertEquals(mounted.path("mount_id"), current.path("mounts").get(0).path("mount_id"));
         admin("POST", "/api/v1/agents/publish", Map.of("agent_id", agentId), null, 200);
         JsonNode user = service("POST", "/api/v1/open-platform/end-users/ensure",
                 Map.of("external_user_ref", namespace + "-user", "display_name", "签名回调用户"), null, 200);

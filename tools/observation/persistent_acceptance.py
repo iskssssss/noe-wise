@@ -118,6 +118,8 @@ class Journal:
     def intent(self, method, path, body):
         item = {"number": len(self.value["operations"]) + 1, "method": method,
                 "path": path.split("?", 1)[0], "requestHash": digest(intent_identity(body)), "state": "DISPATCHING"}
+        if method == "POST" and path == "/agents/capability-mounts":
+            item.update(request_id=body["request_id"], agent_id=body["agent_id"])
         self.value["operations"].append(item); self.flush()
         return item
 
@@ -152,10 +154,15 @@ class Host:
                         envelope = json.loads(raw)
                         require(envelope.get("code") == "OK", "API_ENVELOPE_REJECTED")
                         value = envelope["data"]
+                        if method == "POST" and path == "/agents/capability-mounts":
+                            require(value.get("request_id") == body["request_id"]
+                                    and value.get("agent_id") == body["agent_id"]
+                                    and isinstance(value.get("mount_id"), str) and value["mount_id"],
+                                    "MOUNT_CREATION_RECEIPT_MISMATCH")
                         if item:
                             item["state"] = "CONFIRMED"
                             if isinstance(value, dict):
-                                item["receipt"] = {key: value[key] for key in ("id", "session_id", "execution_id", "instance_id", "revision", "published_revision")
+                                item["receipt"] = {key: value[key] for key in ("id", "session_id", "execution_id", "instance_id", "revision", "published_revision", "request_id", "agent_id", "mount_id")
                                                    if key in value and isinstance(value[key], (str, int))}
                             self.journal.flush()
                         return value
@@ -394,7 +401,8 @@ class Acceptance:
             payload["delegation_config"] = {"enabled": True, "target_agent_ids": [delegate]}
         self.institution.request("PATCH", "/agents/update", {"agent_id": agent, "payload": payload})
         if mount:
-            self.institution.request("POST", "/agents/capability-mounts", {"agent_id": agent, "payload": self.mount})
+            self.institution.request("POST", "/agents/capability-mounts", {
+                "request_id": str(uuid.uuid4()), "agent_id": agent, "payload": self.mount})
         frozen = self.institution.request("GET", query("/agents/detail", agentId=agent))
         require(frozen["model_config_id"] == self.model and all(frozen["execution_config"].get(key) == value
                 for key, value in payload["execution_config"].items()), "AGENT_BUDGET_SOURCE_MISMATCH")

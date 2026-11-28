@@ -43,7 +43,7 @@ class ToolProgressE2ETest extends ChatExecutionWaitingE2ETest {
         var published = send(drafts + "/publish", "POST", Map.of("draft_id", draft.path("id").asText(), "revision", draft.path("revision").asLong(),
                 "definition_revision", definitionView.path("revision").asLong()), accessToken);
         var version = successData(published).path("version_id").asText(); assertFalse(version.isBlank(), published.body());
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "SKILL",
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "SKILL",
                 "capability_definition_id", definition, "capability_version_id", version,
                 "skill_config", Map.of("activation_mode", "ALWAYS", "token_budget", 8000), "priority", 1, "status", "ACTIVE")), accessToken);
         assertEquals(201, mounted.statusCode(), mounted.body());

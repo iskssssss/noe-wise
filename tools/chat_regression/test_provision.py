@@ -1,7 +1,9 @@
 """provision 的离线契约检查，不调用真实 HTTP 服务。"""
 
+import json
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from provision import ProvisionError, ProvisionUnknownOutcome, provision, _mcp_descriptor, _validate_profiles, _mount_from_response
@@ -12,6 +14,7 @@ class FakeApi:
         self.calls = []
         self.next_id = 100
         self.fail_first_write = fail_first_write
+        self.mounts = {}
 
     def request(self, method, path, body=None, headers=None):
         self.calls.append((method, path, body, headers))
@@ -54,14 +57,19 @@ class FakeApi:
         if path == "/agents":
             return {"id": self._id()}
         if path == "/agents/capability-mounts":
+            uuid.UUID(body["request_id"])
             payload = body["payload"]
             for field in ("capability_definition_id", "capability_version_id"):
                 if not isinstance(payload[field], str):
                     raise AssertionError(f"{field} must be a decimal string")
-            return {"mounts": [{"mount_id": str(self._id()), "revision": 1,
-                                "capability_type": payload["capability_type"],
-                                "capability_definition_id": payload["capability_definition_id"],
-                                "capability_version_id": payload["capability_version_id"]}]}
+            mount = {"mount_id": str(self._id()), "revision": 1,
+                     "capability_type": payload["capability_type"],
+                     "capability_definition_id": payload["capability_definition_id"],
+                     "capability_version_id": payload["capability_version_id"]}
+            self.mounts.setdefault(body["agent_id"], []).append(mount)
+            return {"request_id": body["request_id"], "agent_id": body["agent_id"], "mount_id": mount["mount_id"]}
+        if path.startswith("/agents/capability-mounts?agentId="):
+            return {"mounts": self.mounts[path.split("=", 1)[1]]}
         if path == "/agents/publish":
             return {"agent_id": body["agent_id"]}
         raise AssertionError(f"unexpected request {method} {path}")
@@ -194,11 +202,11 @@ class ProvisionTest(unittest.TestCase):
                  "capability_definition_id": "9007199254740993",
                  "capability_version_id": "9223372036854775807"}
         self.assertEqual({"mount_id": "70", "revision": 1}, _mount_from_response(
-            {"mounts": [mount]}, capability, "SKILL", "fixture"))
+            {"mounts": [mount]}, capability, "SKILL", "fixture", "70"))
         for field in ("capability_definition_id", "capability_version_id"):
             numeric = {**mount, field: int(mount[field])}
             with self.subTest(field=field), self.assertRaises(ProvisionUnknownOutcome):
-                _mount_from_response({"mounts": [numeric]}, capability, "SKILL", "fixture")
+                _mount_from_response({"mounts": [numeric]}, capability, "SKILL", "fixture", "70")
 
     def test_unresolved_write_intent_blocks_second_prepare(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -210,6 +218,46 @@ class ProvisionTest(unittest.TestCase):
             with self.assertRaises(ProvisionUnknownOutcome):
                 provision(api, api, root, profiles(), "chatreg-test", "7", "http://fixture/mcp")
             self.assertEqual(writes, sum(method == "POST" for method, *_ in api.calls))
+
+    def test_unknown_mount_preserves_original_identity_without_second_write(self):
+        class LostMountResponse(FakeApi):
+            def request(self, method, path, body=None, headers=None):
+                response = super().request(method, path, body, headers)
+                if method == "POST" and path == "/agents/capability-mounts":
+                    raise TimeoutError("mount committed; response lost")
+                return response
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = LostMountResponse()
+            args = (api, api, root, profiles()[:1], "lost-mount", "7", "http://fixture/mcp")
+            with self.assertRaises(ProvisionUnknownOutcome):
+                provision(*args, user_count=1)
+            pending = json.loads((root / "resources.json").read_text(encoding="utf-8"))["pending_operations"]
+            command = next(body for method, path, body, _ in api.calls
+                           if method == "POST" and path == "/agents/capability-mounts")
+            self.assertEqual(command["request_id"], pending[0]["request_id"])
+            self.assertEqual(command["agent_id"], pending[0]["agent_id"])
+            with self.assertRaises(ProvisionUnknownOutcome):
+                provision(*args, user_count=1)
+            self.assertEqual(pending, json.loads((root / "resources.json").read_text(encoding="utf-8"))["pending_operations"])
+            self.assertEqual(1, sum(len(mounts) for mounts in api.mounts.values()))
+
+    def test_mount_receipt_must_identify_original_request_and_readback_mount(self):
+        class WrongMountResponse(FakeApi):
+            def request(self, method, path, body=None, headers=None):
+                response = super().request(method, path, body, headers)
+                if method == "POST" and path == "/agents/capability-mounts":
+                    response[field] = wrong_value
+                return response
+
+        for field, wrong_value in (("request_id", str(uuid.uuid4())), ("agent_id", "wrong-agent"),
+                                   ("mount_id", "wrong-mount")):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                api = WrongMountResponse()
+                with self.assertRaises(ProvisionUnknownOutcome):
+                    provision(api, api, Path(directory), profiles()[:1], "wrong-receipt", "7",
+                              "http://fixture/mcp", user_count=1)
 
 
 if __name__ == "__main__":

@@ -101,11 +101,11 @@ class EconomicalKnowledgeRebuildBrowserE2ETest extends ChatExecutionChainE2ETest
                     "activeRevisionId",original.revisionId(),"sourceVersion",original.sourceVersion(),"capabilityVersionId",original.capabilityVersionId())));
             var published=original;
             long definition=published.definitionId(),version=published.capabilityVersionId();
-            var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of(
+            var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of(
                     "capability_type","KNOWLEDGE_SOURCE","capability_definition_id",Long.toString(definition),
                     "capability_version_id",Long.toString(version),"knowledge_config",Map.of("mode","FOLLOW_ACTIVE"),"priority",0)),accessToken);
             assertEquals(201,mounted.statusCode(),mounted.body());
-            var mounts=successData(mounted).path("mounts");String mountId=mounts.get(0).path("mount_id").asText();assertFalse(mountId.isBlank());
+            String mountId=successData(mounted).path("mount_id").asText();assertFalse(mountId.isBlank());
             var script=model.register("knowledge-"+SnowflakeIds.nextId(),RuntimeExecutionWorkloadProvider.Workload.KNOWLEDGE);
             script.requireKnowledge("knowledge:"+mountId,published.kbId(),published.sourceVersion(),sentinel);
             var agentPublication=send("/api/v1/agents/publish","POST",Map.of("agent_id",agentId),accessToken);assertEquals(200,agentPublication.statusCode(),agentPublication.body());

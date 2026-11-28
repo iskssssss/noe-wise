@@ -271,7 +271,7 @@ class OpenPlatformMediaDeliverableHttpIntegrationTest extends AbstractIntegratio
         String key = "media-" + name.replace('_', '-') + "-" + marker;
         JsonNode deployment = member("POST", "/capabilities/deployments", Map.of("deployment_key", key, "tool_version_id", version.path("id").asText(),
                 "provider_type", "PLATFORM", "provider_ref", name, "environment", "TEST", "status", "ACTIVE"), token, 201);
-        member("POST", "/agents/capability-mounts", Map.of("agent_id", agent, "payload", Map.of("capability_type", "TOOL",
+        member("POST", "/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of("capability_type", "TOOL",
                 "capability_definition_id", definition.path("id").asText(), "capability_version_id", version.path("id").asText(),
                 "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", deployment.path("revision").asLong()), "priority", 0)), token, 201);
     }

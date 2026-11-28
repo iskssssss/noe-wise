@@ -64,12 +64,14 @@ import {
   type CapabilityMount,
   type CapabilityMountSetWire
 } from './capabilityMounts'
+export { CapabilityMountRequestError } from './capabilityMounts'
 export type {
   CapabilityDefinition,
   CapabilityDeployment,
   CapabilityStatus,
   CapabilityMount,
   CapabilityMountRequest,
+  CapabilityMountCreationReceipt,
   CapabilityMountSet,
   CapabilityVersion,
   SkillVersionSummary,

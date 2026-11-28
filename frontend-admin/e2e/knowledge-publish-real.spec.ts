@@ -146,10 +146,19 @@ test('上传响应中断后核对原回执，再确认范围并发布', async ({
       response.request().method() === 'POST'
   )
   await addMount.click()
-  expect((await mounted).status()).toBe(201)
+  const mountResponse = await mounted
+  expect(mountResponse.status()).toBe(201)
+  const mountCommand = mountResponse.request().postDataJSON()
+  const mountReceipt = (await mountResponse.json()).data
+  expect(mountCommand.request_id).toEqual(expect.any(String))
+  expect(mountReceipt).toEqual({
+    request_id: mountCommand.request_id,
+    agent_id: createdAgent,
+    mount_id: expect.any(String)
+  })
   await writeFile(
     join(required('E2E_ARTIFACT_DIR'), 'knowledge-agent-mount.json'),
-    JSON.stringify({ agentId: createdAgent })
+    JSON.stringify({ agentId: createdAgent, receipt: mountReceipt })
   )
   await expect(page.getByText(/知识发布已确认：修订/)).toBeVisible()
   await page.getByRole('tab', { name: '文档维护' }).click()

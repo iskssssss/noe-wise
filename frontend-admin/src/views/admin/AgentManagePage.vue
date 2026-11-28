@@ -8,6 +8,8 @@
         :loading="loading"
         :disabled="
           busy ||
+          !!mountCreation ||
+          !!mountCreationStorageError ||
           mountRemovalNeedsCheck ||
           !!publicationOperation ||
           !!restoreOperation ||
@@ -19,6 +21,8 @@
         v-permission="['foundation.sessions.read']"
         :disabled="
           busy ||
+          !!mountCreation ||
+          !!mountCreationStorageError ||
           !!publicationOperation ||
           !!publicationStorageError ||
           !!restoreOperation ||
@@ -75,6 +79,40 @@
       <span>{{ agent.mounts.length }} 项能力</span>
       <span>{{ form.model_config_id ? '使用指定模型' : '继承机构默认模型' }}</span>
     </div>
+    <section
+      v-if="mountCreation || mountCreationStorageError"
+      class="admin-card"
+      aria-label="能力添加结果核对"
+    >
+      <p v-if="mountCreation" role="status">
+        {{
+          mountCreationAction === 'submit'
+            ? '正在提交原挂载，请等待结果。'
+            : mountCreationAction === 'check'
+              ? '正在核对原挂载，请等待结果。'
+              : '添加能力结果尚未确认，请核对原挂载。'
+        }}
+        能力：{{ mountCreation.name }} · 请求号：{{ mountCreation.requestId }}
+      </p>
+      <p v-if="mountCreation" class="admin-field-help">
+        核对只读取原回执；继续使用相同请求号和挂载配置，不会重复添加。确认后仍需发布智能体才会生效。
+      </p>
+      <p v-if="mountCreationStorageError" role="status">{{ mountCreationStorageError }}</p>
+      <ElButton
+        v-if="mountCreation && can('foundation.agents.read')"
+        :disabled="busy"
+        @click="checkMountCreation"
+      >
+        核对原挂载
+      </ElButton>
+      <ElButton
+        v-if="mountCreation && can('foundation.agents.create')"
+        :disabled="busy || !!mountCreationStorageError"
+        @click="continueMountCreation"
+      >
+        继续原挂载
+      </ElButton>
+    </section>
     <section
       v-if="mountRemovalPending || mountRemovalNotice || mountRemovalStorageError"
       class="admin-card"
@@ -1011,6 +1049,7 @@ import { confirm, message } from '@skillforge/shared/feedback'
 import {
   api,
   getSessionId,
+  CapabilityMountRequestError,
   type AgentDetail,
   type AgentSaveAndPublishCommand,
   type AgentSaveAndPublishReceipt,
@@ -1024,6 +1063,7 @@ import {
   type CapabilityDefinition,
   type CapabilityMount,
   type CapabilityMountRequest,
+  type CapabilityMountCreationReceipt,
   type CapabilityDeployment,
   type WorkflowMountOption
 } from '../../api'
@@ -1290,6 +1330,126 @@ type PendingMountRemoval = {
   revision: number
   generation: number
 }
+type PendingMountCreation = {
+  requestId: string
+  agentId: string
+  name: string
+  command: CapabilityMountRequest
+}
+const mountCreation = shallowRef<PendingMountCreation>()
+const mountCreationAction = ref<'submit' | 'check'>()
+const mountCreationStorageError = ref('')
+const mountCreationKey = () =>
+  auth.user?.tenant_id && auth.user?.sub
+    ? `skillforge.agent-mount-create:${encodeURIComponent(JSON.stringify([auth.user.tenant_id, auth.user.sub, id.value]))}`
+    : ''
+function loadMountCreation() {
+  mountCreation.value = undefined
+  mountCreationAction.value = undefined
+  mountCreationStorageError.value = ''
+  const key = mountCreationKey()
+  if (!key) return
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return
+    const value = JSON.parse(raw) as PendingMountCreation
+    if (
+      value.agentId !== id.value ||
+      !value.name ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId) ||
+      !value.command?.capabilityDefinitionId ||
+      !['SKILL', 'TOOL', 'WORKFLOW', 'KNOWLEDGE_SOURCE'].includes(value.command.capabilityType)
+    )
+      throw Error('invalid')
+    mountCreation.value = value
+  } catch {
+    mountCreationStorageError.value = '无法读取原挂载创建记录，请恢复浏览器存储后重新进入。'
+  }
+}
+function clearMountCreation() {
+  try {
+    const key = mountCreationKey()
+    if (!key) throw Error('identity')
+    sessionStorage.removeItem(key)
+  } catch {
+    mountCreationStorageError.value = '无法清除原挂载创建记录，请恢复浏览器存储后重新核对。'
+    return false
+  }
+  mountCreation.value = undefined
+  mountCreationStorageError.value = ''
+  return true
+}
+async function recoverMountCreation(action: 'submit' | 'check', firstSubmission = false) {
+  const operation = mountCreation.value
+  if (!operation) return
+  const owner = publicationOwner.value,
+    session = auth.sessionIdentity
+  const current = () =>
+    !publicationDisposed &&
+    owner === publicationOwner.value &&
+    session === auth.sessionIdentity &&
+    mountCreation.value === operation
+  mountCreationAction.value = action
+  try {
+    const receipt: CapabilityMountCreationReceipt | undefined =
+      action === 'check'
+        ? await api.agents.capabilityMounts.creationResult(operation.agentId, operation.requestId)
+        : await api.agents.capabilityMounts.create(
+            operation.requestId,
+            operation.agentId,
+            operation.command
+          )
+    if (!current()) return
+    if (!receipt) {
+      message.warning('尚未查到原挂载回执，结果仍待核对；可继续原挂载，不要另建请求。')
+      return
+    }
+    if (
+      receipt.request_id !== operation.requestId ||
+      receipt.agent_id !== operation.agentId ||
+      !receipt.mount_id
+    )
+      throw Error('挂载回执与原请求不一致，请继续核对原挂载')
+    mountOpen.value = false
+    if (!clearMountCreation()) return
+    refreshRequired.value = true
+    message.success('能力添加已确认，请核对当前挂载并发布智能体后使用')
+    publicationReadGuard = () =>
+      !publicationDisposed && owner === publicationOwner.value && session === auth.sessionIdentity
+    if ((await reload()) && owner === publicationOwner.value && session === auth.sessionIdentity) {
+      refreshRequired.value = false
+      void loadMountNames()
+    }
+  } catch (cause) {
+    if (!current()) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      throw 'cancel'
+    }
+    if (
+      firstSubmission &&
+      (cause instanceof CapabilityMountRequestError ||
+        (cause instanceof HttpClientError && cause.code === 'AGENT_MOUNT_CREATE_REJECTED'))
+    ) {
+      if (!clearMountCreation()) mountOpen.value = false
+    } else mountOpen.value = false
+    throw cause
+  } finally {
+    if (
+      !publicationDisposed &&
+      owner === publicationOwner.value &&
+      session === auth.sessionIdentity
+    )
+      mountCreationAction.value = undefined
+  }
+}
+async function checkMountCreation() {
+  if (busy.value || !can('foundation.agents.read')) return
+  await run(() => recoverMountCreation('check'))
+}
+async function continueMountCreation() {
+  if (busy.value || mountCreationStorageError.value || !can('foundation.agents.create')) return
+  await run(() => recoverMountCreation('submit'))
+}
 const mountRemovalPending = ref<PendingMountRemoval>()
 const mountRemovalNotice = ref('')
 const mountRemovalStorageError = ref('')
@@ -1342,6 +1502,8 @@ function clearMountRemoval() {
 const editingBlocked = computed(
   () =>
     busy.value ||
+    !!mountCreation.value ||
+    !!mountCreationStorageError.value ||
     mountRemovalNeedsCheck.value ||
     !!publicationOperation.value ||
     !!publicationStorageError.value ||
@@ -1441,6 +1603,7 @@ useUnsavedChanges({
     dirty.value ||
     !!publicationOperation.value ||
     !!restoreOperation.value ||
+    !!mountCreation.value ||
     mountRemovalNeedsCheck.value,
   busy: () => busy.value,
   leaveMessage: () =>
@@ -1452,6 +1615,7 @@ watch(
   publicationOwner,
   () => {
     invalidateAgent()
+    loadMountCreation()
     loadMountRemoval()
     skillBudgetOpen.value = false
     skillBudgetMount.value = undefined
@@ -2663,6 +2827,8 @@ async function toggleWorkflowOnboarding() {
 }
 async function openMount() {
   if (
+    mountCreation.value ||
+    mountCreationStorageError.value ||
     refreshRequired.value ||
     publicationOperation.value ||
     publicationStorageError.value ||
@@ -2706,6 +2872,7 @@ async function openMount() {
   openingSkillNotice = undefined
 }
 async function addMount() {
+  if (mountCreation.value || mountCreationStorageError.value || busy.value) return
   await run(async () => {
     if (mountType.value === 'SKILL' && skillSelectionStale.value)
       throw Error('所选技能的当前发布版本已变化，请先确认')
@@ -2774,14 +2941,23 @@ async function addMount() {
         knowledgeConfig: { mode: 'FOLLOW_ACTIVE', pinnedRevisionId: null }
       }
     }
-    await api.agents.capabilityMounts.create(id.value, request)
-    mountVersionNames.value[version.id] = version.versionKey
-      ? `${version.name} / ${version.versionKey}`
-      : version.name
-    mountOpen.value = false
-    refreshRequired.value = true
-    message.success('能力已挂载')
-    if (await reload()) refreshRequired.value = false
+    const operation: PendingMountCreation = {
+      requestId: crypto.randomUUID(),
+      agentId: id.value,
+      name: version.name,
+      command: structuredClone(request)
+    }
+    try {
+      const key = mountCreationKey()
+      if (!key) throw Error('identity')
+      sessionStorage.setItem(key, JSON.stringify(operation))
+    } catch {
+      mountCreationStorageError.value = '无法保存原挂载创建记录，尚未发送请求。'
+      mountOpen.value = false
+      return
+    }
+    mountCreation.value = operation
+    await recoverMountCreation('submit', true)
   })
 }
 async function checkMountRemoval() {

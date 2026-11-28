@@ -3,6 +3,7 @@ import { createHttpClient } from '@skillforge/shared/utils/http'
 import {
   createCapabilityCatalogApi,
   createCapabilityMountApi,
+  CapabilityMountRequestError,
   type CapabilityMountSetWire
 } from './capabilityMounts'
 import { api } from './index'
@@ -121,10 +122,12 @@ describe('CapabilityMount API wire contract', () => {
 
   it('serializes a typed create request with the backend snake_case contract', async () => {
     localStorage.setItem('mounts.access', 'token')
-    const fetchMock = vi.fn().mockResolvedValue(response(skillSet))
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(response({ request_id: 'request-1', agent_id: '7', mount_id: '800' }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await createCapabilityMountApi(client()).create('agent-7', {
+    await createCapabilityMountApi(client()).create('request-1', '7', {
       capabilityType: 'TOOL',
       capabilityDefinitionId: '200',
       priority: 2,
@@ -134,7 +137,8 @@ describe('CapabilityMount API wire contract', () => {
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(path).toBe('/api/v1/agents/capability-mounts')
     expect(JSON.parse(String(init.body))).toEqual({
-      agent_id: 'agent-7',
+      request_id: 'request-1',
+      agent_id: '7',
       payload: {
         capability_type: 'TOOL',
         capability_definition_id: '200',
@@ -143,6 +147,82 @@ describe('CapabilityMount API wire contract', () => {
       }
     })
   })
+
+  it.each(['priority', 'tokenBudget'] as const)(
+    'rejects invalid %s before dispatch and retains the encoding cause',
+    (field) => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      const create = () =>
+        createCapabilityMountApi(client()).create('request-1', '7', {
+          capabilityType: 'SKILL',
+          capabilityDefinitionId: '100',
+          priority: field === 'priority' ? Number.MAX_SAFE_INTEGER + 1 : 0,
+          skillConfig: { tokenBudget: field === 'tokenBudget' ? Number.MAX_SAFE_INTEGER + 1 : 2000 }
+        })
+      expect(create).toThrow(CapabilityMountRequestError)
+      expect(create).toThrow(
+        expect.objectContaining({
+          cause: expect.objectContaining({ message: expect.stringContaining(field) })
+        })
+      )
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([-2147483648, 2147483647])(
+    'accepts the backend priority boundary %s',
+    async (priority) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(response({ request_id: 'request-1', agent_id: '7', mount_id: '800' }))
+      vi.stubGlobal('fetch', fetchMock)
+      await createCapabilityMountApi(client()).create('request-1', '7', {
+        capabilityType: 'SKILL',
+        capabilityDefinitionId: '100',
+        priority,
+        skillConfig: { tokenBudget: 2000 }
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(fetchMock.mock.calls[0]![1].body)).payload.priority).toBe(priority)
+    }
+  )
+
+  it.each([-2147483649, 2147483648])('rejects priority %s before sending POST', (priority) => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(() =>
+      createCapabilityMountApi(client()).create('request-1', '7', {
+        capabilityType: 'SKILL',
+        capabilityDefinitionId: '100',
+        priority,
+        skillConfig: { tokenBudget: 2000 }
+      })
+    ).toThrow(CapabilityMountRequestError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['transport', 'receipt'] as const)(
+    'does not classify a %s failure after dispatch as request rejection',
+    async (failure) => {
+      const fetchMock = vi.fn()
+      if (failure === 'transport') fetchMock.mockRejectedValue(new Error('connection lost'))
+      else
+        fetchMock.mockResolvedValue(
+          response({ request_id: 'request-1', agent_id: '7', mount_id: 800 })
+        )
+      vi.stubGlobal('fetch', fetchMock)
+      const result = createCapabilityMountApi(client()).create('request-1', '7', {
+        capabilityType: 'SKILL',
+        capabilityDefinitionId: '100',
+        skillConfig: { tokenBudget: 2000 }
+      })
+      await expect(result).rejects.toBeInstanceOf(Error)
+      await expect(result).rejects.not.toBeInstanceOf(CapabilityMountRequestError)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: 'POST' })
+    }
+  )
 
   it('uses If-Match for CAS update and maps typed knowledge config', async () => {
     localStorage.setItem('mounts.access', 'token')
@@ -814,4 +894,20 @@ describe('工作流挂载选项', () => {
     ])
     await expect(mounts.workflowOptions()).rejects.toThrow()
   })
+})
+
+it('queries the original mount creation receipt and preserves an absent result', async () => {
+  localStorage.setItem('mounts.access', 'token')
+  const receipt = { request_id: 'request-1', agent_id: '7', mount_id: '9007199254740993' }
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(response(receipt))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const api = createCapabilityMountApi(client())
+  await expect(api.creationResult('7', 'request-1')).resolves.toEqual(receipt)
+  await expect(api.creationResult('7', 'request-1')).resolves.toBeUndefined()
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    '/api/v1/agents/capability-mounts/result?agent_id=7&request_id=request-1'
+  )
 })

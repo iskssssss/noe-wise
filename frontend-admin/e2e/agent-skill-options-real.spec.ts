@@ -186,11 +186,25 @@ test('技能挂载只读取完整发布摘要', async ({ page }) => {
       JSON.stringify({ status: response.status(), command, body }, null, 2)
     )
     expect(response.status()).toBe(201)
+    expect(command.request_id).toEqual(expect.any(String))
+    expect(body.data).toEqual({
+      request_id: command.request_id,
+      agent_id: agent,
+      mount_id: expect.any(String)
+    })
     expect(String(command.payload.capability_definition_id)).toBe(definition)
-    mount = body.data.mounts.find(
+    const currentMounts = await page.evaluate(async (agentId) => {
+      const result = await fetch(`/api/v1/agents/capability-mounts?agentId=${agentId}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+      })
+      return { status: result.status, body: await result.json() }
+    }, agent)
+    expect(currentMounts.status).toBe(200)
+    mount = currentMounts.body.data.mounts.find(
       (item: { capability_definition_id: string }) =>
         String(item.capability_definition_id) === definition
     )
+    expect((mount as { mount_id: string }).mount_id).toBe(body.data.mount_id)
     expect(String((mount as { capability_version_id: string }).capability_version_id)).toBe(version)
     expect(mountPosts).toBe(1)
   }

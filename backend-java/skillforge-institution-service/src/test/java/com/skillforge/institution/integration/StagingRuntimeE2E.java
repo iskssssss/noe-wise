@@ -461,8 +461,10 @@ class StagingRuntimeE2E {
                 "mode", "PINNED_REVISION",
                 "pinned_revision_id", Long.toString(revisionId)));
         mount.put("priority", 0);
-        JsonNode mounted = callJson(baseUrl, token, alias, "/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", mount));
-        JsonNode mountResponse = mounted.path("mounts").path(0);
+        JsonNode mounted = callJson(baseUrl, token, alias, "/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", mount));
+        JsonNode current = callJson(baseUrl, token, alias, "/api/v1/agents/capability-mounts?agentId=" + agentId, "GET", null);
+        JsonNode mountResponse = current.path("mounts").path(0);
+        assertEquals(mounted.path("mount_id"), mountResponse.path("mount_id"));
         String mountId = mountResponse.path("mount_id").asText();
         long mountRevision = mountResponse.path("revision").asLong();
         assertFalse(mountId.isBlank(), profileMessage(alias, "mount_id"));

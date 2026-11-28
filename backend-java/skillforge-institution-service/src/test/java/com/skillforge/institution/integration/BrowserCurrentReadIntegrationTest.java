@@ -81,7 +81,7 @@ class BrowserCurrentReadIntegrationTest extends BrowserConnectionIntegrationSupp
             String deployment = "browser-current-read-" + com.skillforge.core.shared.config.SnowflakeIds.nextId();
             var deployed = api(initial.token(), "/api/v1/capabilities/deployments", Map.of("deployment_key", deployment, "tool_version_id", version,
                     "provider_type", "PLATFORM", "provider_ref", tool, "environment", "TEST", "status", "ACTIVE"), 201);
-            api(initial.token(), "/api/v1/agents/capability-mounts", Map.of("agent_id", agent, "payload", Map.of("capability_type", "TOOL",
+            api(initial.token(), "/api/v1/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of("capability_type", "TOOL",
                     "capability_definition_id", Long.toString(definitionId), "capability_version_id", Long.toString(version), "tool_config", Map.of("tool_deployment_id", deployment,
                     "tool_deployment_revision", deployed.path("revision").asLong()), "priority", 0)), 201);
             api(initial.token(), "/api/v1/agents/publish", Map.of("agent_id", agent), 200);

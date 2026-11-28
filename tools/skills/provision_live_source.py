@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import time
+import uuid
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'tools/chat_regression'))
@@ -44,6 +45,9 @@ def main():
 
     def write(api, key, route, body):
         operations = journal['operations']
+        if route == '/agents/capability-mounts':
+            request_id = operations[key]['request']['request_id'] if key in operations else str(uuid.uuid4())
+            body = {**body, 'request_id': request_id}
         if key in operations:
             entry = operations[key]
             if entry['route'] != route or entry['request'] != body:
@@ -55,6 +59,10 @@ def main():
         operations[key] = entry
         save(journal_path, journal)
         response = api.request('POST', route, body, _rate_retry=True)
+        if route == '/agents/capability-mounts' and (
+                response.get('request_id') != body['request_id'] or response.get('agent_id') != body['agent_id']
+                or not isinstance(response.get('mount_id'), str) or not response['mount_id']):
+            raise RuntimeError('MOUNT_CREATION_RECEIPT_MISMATCH')
         entry.update(status='observed', response=response)
         save(journal_path, journal)
         return response

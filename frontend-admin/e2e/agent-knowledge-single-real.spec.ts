@@ -94,17 +94,31 @@ test('唯一已发布知识库由用户确认挂载', async ({ page }) => {
   expect(response.status()).toBe(201)
   const command = response.request().postDataJSON()
   const receipt = (await response.json()).data
+  expect(command.request_id).toEqual(expect.any(String))
+  expect(receipt).toEqual({
+    request_id: command.request_id,
+    agent_id: agent,
+    mount_id: expect.any(String)
+  })
   expect(String(command.agent_id)).toBe(agent)
   expect(command.payload.capability_type).toBe('KNOWLEDGE_SOURCE')
   expect(String(command.payload.capability_definition_id)).toBe(
     required('E2E_KNOWLEDGE_DEFINITION')
   )
-  const matches = receipt.mounts.filter(
+  const currentMounts = await page.evaluate(async (agentId) => {
+    const result = await fetch(`/api/v1/agents/capability-mounts?agentId=${agentId}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+    })
+    return { status: result.status, body: await result.json() }
+  }, agent)
+  expect(currentMounts.status).toBe(200)
+  const matches = currentMounts.body.data.mounts.filter(
     (mount: { capability_definition_id: string }) =>
       String(mount.capability_definition_id) === required('E2E_KNOWLEDGE_DEFINITION')
   )
   expect(matches).toHaveLength(1)
   const mount = matches[0]
+  expect(mount.mount_id).toBe(receipt.mount_id)
   expect(String(mount.capability_version_id)).toBe(required('E2E_KNOWLEDGE_VERSION'))
   expect(mount.knowledge_config.mode).toBe('FOLLOW_ACTIVE')
   expect(mountPosts).toBe(1)

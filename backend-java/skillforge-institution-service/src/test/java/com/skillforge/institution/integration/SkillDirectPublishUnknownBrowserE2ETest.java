@@ -79,9 +79,9 @@ class SkillDirectPublishUnknownBrowserE2ETest extends ChatExecutionChainE2ETest 
         var versionResponse=get(drafts+"/version?versionId="+version);Files.writeString(evidence.resolve("version-after.json"),versionResponse.body());assertEquals(200,versionResponse.statusCode());
         assertEquals(1,countRuntime("SELECT count(*) FROM nw_capability_versions WHERE tenant_id=CAST(? AS bigint) AND definition_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND status='PUBLISHED'",tenantId,definition,version));
         var revised=send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken);assertEquals(200,revised.statusCode(),revised.body());agentId=successData(revised).path("id").asText();
-        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of("capability_type","SKILL","capability_definition_id",definition,"capability_version_id",version,"skill_config",Map.of("token_budget",8000),"priority",0)),accessToken);
+        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of("capability_type","SKILL","capability_definition_id",definition,"capability_version_id",version,"skill_config",Map.of("token_budget",8000),"priority",0)),accessToken);
         Files.writeString(evidence.resolve("mount.json"),mounted.body());assertEquals(201,mounted.statusCode(),mounted.body());
-        String mount=successData(mounted).path("mounts").get(0).path("mount_id").asText();
+        String mount=successData(mounted).path("mount_id").asText();
         assertFalse(mount.isBlank());
         assertEquals(1, countRuntime("SELECT count(*) FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND capability_definition_id=CAST(? AS bigint) AND capability_version_id=CAST(? AS bigint) AND activation_mode='ALWAYS'", tenantId, agentId, mount, definition, version));
         var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);

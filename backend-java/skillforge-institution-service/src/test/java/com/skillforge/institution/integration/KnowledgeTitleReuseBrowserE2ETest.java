@@ -129,11 +129,11 @@ class KnowledgeTitleReuseBrowserE2ETest extends ChatExecutionChainE2ETest {
                 assertEquals(content, exact.path("content").asText());
             }
             agentId = observed(evidence, "agent-revise", "/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), 200).path("id").asText();
-            var mount = observed(evidence, "mount", "/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+            var mount = observed(evidence, "mount", "/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                     "capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", Long.toString(knowledge.definitionId()),
                     "capability_version_id", publication.path("capability_version_id").asText(), "priority", 0,
                     "knowledge_config", Map.of("mode", "PINNED_REVISION", "pinned_revision_id", publication.path("id").asText()))), 201);
-            String handle = "knowledge:" + mount.path("mounts").get(0).path("mount_id").asText();
+            String handle = "knowledge:" + mount.path("mount_id").asText();
             try (var model = new RuntimeExecutionWorkloadProvider(objectMapper)) {
                 model.start();
                 TenantContext.runWithTenant(tenantId, () -> configureTenantModel(model.endpoint()));

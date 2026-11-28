@@ -50,12 +50,12 @@ class SessionCitationBrowserE2ETest extends ChatExecutionChainE2ETest {
             var revised = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
             assertEquals(200, revised.statusCode(), revised.body());
             agentId = successData(revised).path("id").asText();
-            var mount = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+            var mount = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                     "capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", Long.toString(knowledge.definitionId()),
                     "priority", 0, "knowledge_config", Map.of("mode", "FOLLOW_ACTIVE"))), accessToken);
             Files.writeString(evidence.resolve("mount.json"), mount.body());
             assertEquals(201, mount.statusCode(), mount.body());
-            String handle = "knowledge:" + successData(mount).path("mounts").get(0).path("mount_id").asText();
+            String handle = "knowledge:" + successData(mount).path("mount_id").asText();
             var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);
             Files.writeString(evidence.resolve("agent-publication.json"), publication.body());
             assertEquals(200, publication.statusCode(), publication.body());

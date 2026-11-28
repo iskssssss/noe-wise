@@ -33,7 +33,7 @@ class CapabilityMountManagementContractTest {
                         || method.isAnnotationPresent(DeleteMapping.class))
                 .map(this::path)
                 .toList())
-                .containsExactlyInAnyOrder("GET ", "POST ", "PUT /update",
+                .containsExactlyInAnyOrder("GET ", "GET /result", "POST ", "PUT /update",
                         "DELETE /delete");
     }
 

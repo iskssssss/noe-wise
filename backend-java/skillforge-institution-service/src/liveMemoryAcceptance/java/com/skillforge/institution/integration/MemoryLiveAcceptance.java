@@ -824,9 +824,11 @@ class MemoryLiveAcceptance {
         long revision = request(fixture, "/api/v1/capabilities/deployments", "POST", Map.of("deployment_key", deployment, "tool_version_id", version,
                 "provider_type", "PLATFORM", "provider_ref", name, "environment", "TEST", "status", "ACTIVE"), 201).path("revision").asLong();
         fixtureStage("TOOL_MOUNT_CREATE");
-        JsonNode mountSet = request(fixture, "/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agent, "payload", Map.of("capability_type", "TOOL",
+        JsonNode receipt = request(fixture, "/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of("capability_type", "TOOL",
                 "capability_definition_id", Long.toString(definition), "capability_version_id", Long.toString(version), "priority", 0,
                 "tool_config", Map.of("tool_deployment_id", deployment, "tool_deployment_revision", revision))), 201);
+        JsonNode mountSet = request(fixture, "/api/v1/agents/capability-mounts?agentId=" + agent, "GET", null, 200);
+        check(receipt.path("mount_id").equals(mountSet.path("mounts").path(0).path("mount_id")), "LIVE_MEMORY_MOUNT_RECEIPT_MISMATCH");
         check(mountSet.path("mounts").isArray() && mountSet.path("mounts").size() == 1
                 && mountSet.path("generation").asLong() > 0, "LIVE_MEMORY_MOUNT_SET_INVALID");
         JsonNode mount = mountSet.path("mounts").get(0);

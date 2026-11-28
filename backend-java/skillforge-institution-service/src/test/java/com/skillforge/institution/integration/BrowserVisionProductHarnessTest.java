@@ -195,7 +195,7 @@ class BrowserVisionProductHarnessTest extends AbstractIntegrationTest {
         long version=element(api(token,"GET","/api/v1/capabilities/definitions/versions?status=PUBLISHED&definitionId="+id,null,200),"version_key",key).path("id").asLong();
         String deployment="vision-"+tool.replace('_','-')+"-"+SnowflakeIds.nextId();
         var created=api(token,"POST","/api/v1/capabilities/deployments",Map.of("deployment_key",deployment,"tool_version_id",version,"provider_type","PLATFORM","provider_ref",tool,"environment","TEST","status","ACTIVE"),201);
-        api(token,"POST","/api/v1/agents/capability-mounts",Map.of("agent_id",agent,"payload",Map.of("capability_type","TOOL","capability_definition_id",Long.toString(id),"capability_version_id",Long.toString(version),
+        api(token,"POST","/api/v1/agents/capability-mounts",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agent,"payload",Map.of("capability_type","TOOL","capability_definition_id",Long.toString(id),"capability_version_id",Long.toString(version),
                 "tool_config",Map.of("tool_deployment_id",deployment,"tool_deployment_revision",created.path("revision").asLong()),"priority",0)),201);
     }
 
@@ -217,10 +217,12 @@ class BrowserVisionProductHarnessTest extends AbstractIntegrationTest {
             var persisted=drafts.version(scope,version).files();assertEquals(files.keySet(),persisted.keySet());
             for(var file:files.entrySet())assertArrayEquals(file.getValue(),Base64.getDecoder().decode(persisted.get(file.getKey())),file.getKey());
         }finally{TenantContext.clear();}
-        var mounted=api(token,"POST","/api/v1/agents/capability-mounts",Map.of("agent_id",agent,"payload",Map.of("capability_type","SKILL","capability_definition_id",Long.toString(definition),"capability_version_id",Long.toString(version),
+        var mounted=api(token,"POST","/api/v1/agents/capability-mounts",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agent,"payload",Map.of("capability_type","SKILL","capability_definition_id",Long.toString(definition),"capability_version_id",Long.toString(version),
                 "skill_config",Map.of("activation_mode","ON_DEMAND","token_budget",12000),"priority",0)),201);
-        var exact=element(mounted.path("mounts"),"capability_definition_id",Long.toString(definition));assertEquals(Long.toString(version),exact.path("capability_version_id").asText());
-        assertEquals(mounted,api(token,"GET","/api/v1/agents/capability-mounts?agentId="+agent,null,200));
+        var current=api(token,"GET","/api/v1/agents/capability-mounts?agentId="+agent,null,200);
+        var exact=element(current.path("mounts"),"capability_definition_id",Long.toString(definition));assertEquals(Long.toString(version),exact.path("capability_version_id").asText());
+        assertEquals(mounted.path("mount_id"),exact.path("mount_id"));
+        assertEquals(current,api(token,"GET","/api/v1/agents/capability-mounts?agentId="+agent,null,200));
         return new SkillIdentity(definition,version,versionKey,exact.path("mount_id").asText(),sha,files.size());
     }
 

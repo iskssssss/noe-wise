@@ -460,6 +460,13 @@ test('按用途选择同名技能并挂载正确能力', async ({ page }) => {
   await drawer.getByRole('button', { name: '添加能力', exact: true }).click()
   const response = await created
   expect(response.status()).toBe(201)
+  const mountCommand = response.request().postDataJSON()
+  expect(mountCommand.request_id).toEqual(expect.any(String))
+  expect((await response.json()).data).toEqual({
+    request_id: mountCommand.request_id,
+    agent_id: agent,
+    mount_id: expect.any(String)
+  })
   expect(response.request().postDataJSON().payload.capability_definition_id).toBe(
     required('E2E_SKILL_DEFINITION_ID')
   )

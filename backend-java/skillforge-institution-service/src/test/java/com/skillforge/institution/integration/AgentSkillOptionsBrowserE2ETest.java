@@ -56,9 +56,9 @@ class AgentSkillOptionsBrowserE2ETest extends ChatExecutionChainE2ETest {
         assertFalse(definition.isBlank()); assertFalse(version.isBlank());
         String mount;
         if ("baseline".equals(mode)) {
-            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "SKILL", "capability_definition_id", definition, "capability_version_id", version, "skill_config", Map.of("token_budget", 8000), "priority", 0)), accessToken);
+            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "SKILL", "capability_definition_id", definition, "capability_version_id", version, "skill_config", Map.of("token_budget", 8000), "priority", 0)), accessToken);
             Files.writeString(evidence.resolve("api-control-mount.json"), mounted.body()); assertEquals(201, mounted.statusCode(), mounted.body());
-            mount = successData(mounted).path("mounts").get(0).path("mount_id").asText();
+            mount = successData(mounted).path("mount_id").asText();
         } else mount = facts.path("mount").path("mount_id").asText();
         assertFalse(mount.isBlank());
         assertEquals(1, countRuntime("SELECT count(*) FROM nw_agent_capability_mounts WHERE tenant_id=CAST(? AS bigint) AND agent_id=CAST(? AS bigint) AND id=CAST(? AS bigint) AND capability_definition_id=CAST(? AS bigint) AND capability_version_id=CAST(? AS bigint) AND activation_mode='ALWAYS'", tenantId, agentId, mount, definition, version));

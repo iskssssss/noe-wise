@@ -255,7 +255,7 @@ def _mount_product_capability(
     agent = resources["agents"][profile]
     if mount_key in agent["mounts"]:
         return
-    response = _write(api, "POST", "agents/capability-mounts", {
+    receipt = _write(api, "POST", "agents/capability-mounts", {
         "agent_id": agent["id"], "payload": {
             "capability_type": capability_type,
             "capability_definition_id": str(definition_id),
@@ -263,9 +263,10 @@ def _mount_product_capability(
             config_key: config,
             "priority": priority,
         }}, f"agent {agent['id']} {mount_key}")
+    response = _read(api, "GET", f"agents/capability-mounts?agentId={agent['id']}", mount_key)
     agent["mounts"][mount_key] = _mount_from_response(
         response, {"definition_id": definition_id, "version_id": version_id},
-        capability_type, mount_key)
+        capability_type, mount_key, receipt["mount_id"])
     _save_resources(path, resources)
 
 

@@ -115,10 +115,14 @@ def setup(d, expected_names=None, extra_tools=()):
         operation='mount:'+payload['capability_definition_id']
         if operation in receipt.get('operations',{}):
             raise RuntimeError('UNKNOWN_MOUNT_CREATION_REQUIRES_RECONCILIATION')
-        receipt.setdefault('operations',{})[operation]='unknown'
+        command = {'request_id': str(uuid.uuid4()), 'agent_id': aid, 'payload': payload}
+        receipt.setdefault('operations',{})[operation]={'status': 'unknown', 'request': command}
         support.save(receipt_file,receipt)
-        d.api('institution','/agents/capability-mounts','POST',{'agent_id':aid,'payload':payload})
-        receipt['operations'][operation]='done'
+        created = d.api('institution','/agents/capability-mounts','POST',command)
+        if (created.get('request_id') != command['request_id'] or created.get('agent_id') != aid
+                or not isinstance(created.get('mount_id'), str) or not created['mount_id']):
+            raise RuntimeError('MOUNT_CREATION_RECEIPT_MISMATCH')
+        receipt['operations'][operation].update(status='done', response=created)
         support.save(receipt_file,receipt)
     if current['status']!='published':
         if 'publish' in receipt.get('operations',{}):

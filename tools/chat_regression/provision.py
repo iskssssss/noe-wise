@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import uuid
 from typing import Any, Protocol
 
 
@@ -696,7 +697,7 @@ def _mount_skill(
 ) -> None:
     if mount_key in agent["mounts"]:
         return
-    response = _write(api, "POST", "agents/capability-mounts", {
+    receipt = _write(api, "POST", "agents/capability-mounts", {
         "agent_id": agent["id"],
         "payload": {
             "capability_type": "SKILL",
@@ -706,7 +707,8 @@ def _mount_skill(
             "priority": 0,
         },
     }, f"agent {agent['id']} {mount_key}")
-    agent["mounts"][mount_key] = _mount_from_response(response, capability, "SKILL", mount_key)
+    response = _read(api, "GET", f"agents/capability-mounts?agentId={agent['id']}", mount_key)
+    agent["mounts"][mount_key] = _mount_from_response(response, capability, "SKILL", mount_key, receipt["mount_id"])
     _save_resources(path, resources)
 
 
@@ -720,7 +722,7 @@ def _mount_tool(
 ) -> None:
     if mount_key in agent["mounts"]:
         return
-    response = _write(api, "POST", "agents/capability-mounts", {
+    receipt = _write(api, "POST", "agents/capability-mounts", {
         "agent_id": agent["id"],
         "payload": {
             "capability_type": "TOOL",
@@ -733,17 +735,19 @@ def _mount_tool(
             "priority": 0,
         },
     }, f"agent {agent['id']} {mount_key}")
-    agent["mounts"][mount_key] = _mount_from_response(response, capability, "TOOL", mount_key)
+    response = _read(api, "GET", f"agents/capability-mounts?agentId={agent['id']}", mount_key)
+    agent["mounts"][mount_key] = _mount_from_response(response, capability, "TOOL", mount_key, receipt["mount_id"])
     _save_resources(path, resources)
 
 
 def _mount_from_response(
-    response: Any, capability: dict[str, Any], capability_type: str, label: str
+    response: Any, capability: dict[str, Any], capability_type: str, label: str, mount_id: str
 ) -> dict[str, Any]:
     if not isinstance(response, dict):
         raise ProvisionUnknownOutcome(f"{label} mount returned a non-object response")
     mounts = _list_response(response.get("mounts"), f"{label} mount response")
     matching = [mount for mount in mounts if isinstance(mount, dict)
+                and mount.get("mount_id") == mount_id
                 and mount.get("capability_type") == capability_type
                 and mount.get("capability_definition_id") == str(capability["definition_id"])
                 and mount.get("capability_version_id") == str(capability["version_id"])]
@@ -851,12 +855,16 @@ def _write(
         raise ProvisionUnknownOutcome(
             "a previous write intent is unresolved; do not issue another write request")
     request_path = _api_path(path)
+    if method == "POST" and request_path == "/agents/capability-mounts":
+        body = {**body, "request_id": str(uuid.uuid4()), "agent_id": str(body["agent_id"])}
     resources["pending_operations"] = [{
         "label": label,
         "method": method,
         "path": request_path,
         "body_sha256": _digest(body),
     }]
+    if method == "POST" and request_path == "/agents/capability-mounts":
+        resources["pending_operations"][0].update(request_id=body["request_id"], agent_id=body["agent_id"])
     _save_resources(resources_path, resources, clear_pending=False)
     try:
         response = api.request(method, request_path, body=body, headers=headers)
@@ -865,6 +873,10 @@ def _write(
             f"{label} write request failed; do not retry until resources.json is reconciled: {error}") from error
     if not isinstance(response, dict):
         raise ProvisionUnknownOutcome(f"{label} write returned a non-object response")
+    if method == "POST" and request_path == "/agents/capability-mounts":
+        if response.get("request_id") != body["request_id"] or response.get("agent_id") != body["agent_id"]:
+            raise ProvisionUnknownOutcome(f"{label} mount receipt does not match its original request")
+        _text(response, "mount_id", label)
     return response
 
 

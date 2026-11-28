@@ -757,10 +757,9 @@ class ChatPublicDefaultModelLiveAcceptance extends AbstractIntegrationTest {
             var deployment = request("/api/v1/capabilities/deployments", "POST", new DeploymentCreate(key, version,
                     "PLATFORM", name, "TEST", "ACTIVE"), HTTP_CREATED);
             long revision = deployment.path("revision").asLong();
-            var response = request("/api/v1/agents/capability-mounts", "POST", new MountCreate(agent,
+            var response = request("/api/v1/agents/capability-mounts", "POST", new MountCreate(java.util.UUID.randomUUID().toString(), agent,
                     new MountPayload("TOOL", definition, version, new ToolConfig(key, revision), 0)), HTTP_CREATED);
-            String mount = element(response.path("mounts"), "capability_definition_id", String.valueOf(definition))
-                    .path("mount_id").asText();
+            String mount = response.path("mount_id").asText();
             require(!mount.isBlank(), "TOOL_MOUNT_MISSING");
             mounted.add(new MountedTool(name, "tool:" + mount,
                     new ToolEvidence(name, catalog.publishedVersionKey(), catalog.contentHash())));
@@ -978,7 +977,7 @@ class ChatPublicDefaultModelLiveAcceptance extends AbstractIntegrationTest {
                             String environment, String status) { }
     record ToolConfig(String toolDeploymentId, long toolDeploymentRevision) { }
     record MountPayload(String capabilityType, long capabilityDefinitionId, long capabilityVersionId, ToolConfig toolConfig, int priority) { }
-    record MountCreate(String agentId, MountPayload payload) { }
+    record MountCreate(String requestId, String agentId, MountPayload payload) { }
     record ClosePayload(String reason) { }
     record SessionClose(String sessionId, ClosePayload payload) { }
     record MountedTool(String name, String handle, ToolEvidence evidence) { }

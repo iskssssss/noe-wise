@@ -59,7 +59,7 @@ class ToolDeploymentDirectoryBrowserE2ETest extends ChatExecutionChainE2ETest {
             deployments.put(tool, successData(created));
             if ("get_current_time".equals(tool)) {
                 assertEquals(200, send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken).statusCode());
-                var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+                var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                         "capability_type", "TOOL", "capability_definition_id", definition, "capability_version_id", version,
                         "priority", 0, "tool_config", Map.of("tool_deployment_id", key,
                                 "tool_deployment_revision", successData(created).path("revision").asLong()))), accessToken);

@@ -157,7 +157,7 @@ class ChatExecutionCompositionE2ETest extends ChatExecutionChainE2ETest {
         JsonNode actual=null;for(var item:successData(get("/api/v1/builder/workflows/instances")).path("items"))if(instance.equals(item.path("instance_id").asText()))actual=item;
         assertNotNull(actual);assertTrue(actual.path("id").asLong()>0);
         var detail=successData(get("/api/v1/capabilities/versions/detail?versionId="+capabilityVersion));
-        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of("capability_type","WORKFLOW","capability_definition_id",detail.path("definition_id").asText(),"capability_version_id",Long.toString(capabilityVersion),
+        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of("capability_type","WORKFLOW","capability_definition_id",detail.path("definition_id").asText(),"capability_version_id",Long.toString(capabilityVersion),
                 "workflow_config",Map.of("workflow_instance_id",actual.path("id").asText(),"workflow_instance_revision",publication.path("definition_version_id").asLong()),"priority",0)),accessToken);
         assertEquals(201,mounted.statusCode(),mounted.body());publishSession();report.put("workflow",publication);report.put("installation",actual);report.put("deployment",successData(created));
     }

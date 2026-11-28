@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from workflow_live_environment import REPO, load_env, save
 
@@ -139,6 +140,10 @@ class Acceptance:
         self.persist()
         try:
             result = api.call(method, path, body, headers)
+            if method == 'POST' and path == '/agents/capability-mounts':
+                require(result.get('request_id') == body['request_id'] and result.get('agent_id') == body['agent_id']
+                        and isinstance(result.get('mount_id'), str) and result['mount_id'],
+                        'mount_creation_receipt_mismatch')
         except Exception:
             self.state['steps'][name]['status'] = 'FAILED_OR_UNKNOWN_NO_RETRY'
             self.persist()
@@ -250,7 +255,9 @@ class Acceptance:
         self.step('agent-budget', self.admin, 'PATCH', '/agents/update', {'agent_id': str(agent['id']),
             'payload': {'execution_config': {'max_business_model_calls': 6, 'max_tool_calls': 6,
                                            'max_total_tokens': 100000, 'max_wall_time_seconds': 300}}})
-        mount_body = {'agent_id': str(agent['id']),
+        prior_mount = self.state['steps'].get('agent-mount')
+        mount_body = {'request_id': prior_mount['body']['request_id'] if prior_mount else str(uuid.uuid4()),
+            'agent_id': str(agent['id']),
             'payload': {'capability_type': 'WORKFLOW', 'capability_definition_id': str(version['definition_id']),
                         'workflow_config': {'workflow_instance_id': str(matched[0]['id'])}, 'priority': 0}}
         if reconcile_rejected_mount:

@@ -136,7 +136,7 @@ class WorkflowToolOptionsBrowserE2ETest extends ChatExecutionChainE2ETest {
         assertNotNull(actual);String version=publication.path("capability_version_id").asText();
         var detail=successData(get("/api/v1/capabilities/versions/detail?versionId="+version));
         assertEquals(200,send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken).statusCode());
-        var mount=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of("capability_type","WORKFLOW","capability_definition_id",detail.path("definition_id").asText(),"capability_version_id",version,
+        var mount=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of("capability_type","WORKFLOW","capability_definition_id",detail.path("definition_id").asText(),"capability_version_id",version,
                 "workflow_config",Map.of("workflow_instance_id",actual.path("id").asText(),"workflow_instance_revision",publication.path("definition_version_id").asText()),"priority",0)),accessToken);
         Files.writeString(evidence.resolve("mount.json"),mount.body());assertEquals(201,mount.statusCode(),mount.body());
         try(var model=new WorkflowModel()) {

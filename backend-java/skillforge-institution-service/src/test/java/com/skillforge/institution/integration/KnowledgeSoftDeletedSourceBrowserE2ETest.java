@@ -60,8 +60,8 @@ class KnowledgeSoftDeletedSourceBrowserE2ETest extends ChatExecutionChainE2ETest
         var published = send("/api/v1/knowledge/bases/revisions/publish", "POST", Map.of("kb_id", target.kbId(), "revision", number), accessToken);
         assertEquals(200, published.statusCode(), published.body()); var publication = successData(published);
         agentId = successData(send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken)).path("id").asText();
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", Long.toString(target.definitionId()), "capability_version_id", publication.path("capability_version_id").asText(), "priority", 0, "knowledge_config", Map.of("mode", "PINNED_REVISION", "pinned_revision_id", publication.path("id").asText()))), accessToken);
-        assertEquals(201, mounted.statusCode(), mounted.body()); String handle = "knowledge:" + successData(mounted).path("mounts").get(0).path("mount_id").asText();
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", Long.toString(target.definitionId()), "capability_version_id", publication.path("capability_version_id").asText(), "priority", 0, "knowledge_config", Map.of("mode", "PINNED_REVISION", "pinned_revision_id", publication.path("id").asText()))), accessToken);
+        assertEquals(201, mounted.statusCode(), mounted.body()); String handle = "knowledge:" + successData(mounted).path("mount_id").asText();
         try (var model = new RuntimeExecutionWorkloadProvider(objectMapper)) {
             model.start(); TenantContext.runWithTenant(tenantId, () -> configureTenantModel(model.endpoint()));
             var agentPublication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken); assertEquals(200, agentPublication.statusCode(), agentPublication.body());

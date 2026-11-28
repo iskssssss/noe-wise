@@ -126,13 +126,15 @@ class BrowserConnectionLiveHarnessTest extends BrowserConnectionIntegrationSuppo
             for(var entry:files.entrySet())assertArrayEquals(entry.getValue(),java.util.Base64.getDecoder().decode(savedFiles.get(entry.getKey())),entry.getKey());
         }finally{com.skillforge.common.context.TenantContext.clear();}
         String agent=api(fixture.token(),"/api/v1/agents/revise",Map.of("agent_id",fixture.agent()),200).path("id").asText();
-        var mounted=api(fixture.token(),"/api/v1/agents/capability-mounts",Map.of("agent_id",agent,"payload",Map.of("capability_type","SKILL",
+        var mounted=api(fixture.token(),"/api/v1/agents/capability-mounts",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agent,"payload",Map.of("capability_type","SKILL",
                 "capability_definition_id",Long.toString(definition),"capability_version_id",Long.toString(version),
                 "skill_config",Map.of("activation_mode","ON_DEMAND","token_budget",4000),"priority",0)),201);
-        var mount=element(mounted.path("mounts"),"capability_definition_id",Long.toString(definition));
+        var current=get(fixture.token(),"/api/v1/agents/capability-mounts?agentId="+agent);
+        var mount=element(current.path("mounts"),"capability_definition_id",Long.toString(definition));
+        assertEquals(mounted.path("mount_id"),mount.path("mount_id"));
         assertEquals(Long.toString(version),mount.path("capability_version_id").asText());
         var read=get(fixture.token(),"/api/v1/agents/capability-mounts?agentId="+agent);
-        assertEquals(mounted,read);api(fixture.token(),"/api/v1/agents/publish",Map.of("agent_id",agent),200);
+        assertEquals(current,read);api(fixture.token(),"/api/v1/agents/publish",Map.of("agent_id",agent),200);
         report.put("skillDefinitionId",definition);report.put("skillVersionId",version);report.put("skillVersionKey",versionKey);
         report.put("skillArchiveSha256",sha);report.put("skillFileCount",files.size());report.put("skillMountId",mount.path("mount_id").asText());
         return new Fixture(fixture.tenant(),fixture.token(),agent,fixture.user());

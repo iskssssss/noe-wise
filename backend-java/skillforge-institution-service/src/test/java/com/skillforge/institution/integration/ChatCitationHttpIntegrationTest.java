@@ -118,11 +118,11 @@ class ChatCitationHttpIntegrationTest extends ChatExecutionChainE2ETest {
         var published = successData(send("/api/v1/knowledge/bases/revisions/publish", "POST", Map.of("kb_id", kb, "revision", revision), accessToken));
         var capability = successData(send("/api/v1/capabilities/versions/detail?versionId=" + published.path("capability_version_id").asText(), "GET", null, accessToken));
         agentId = successData(send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken)).path("id").asText();
-        var mount = successData(send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+        var mount = successData(send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                 "capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", capability.path("definition_id").asText(),
                 "capability_version_id", published.path("capability_version_id").asText(), "priority", 0,
                 "knowledge_config", Map.of("mode", "PINNED_REVISION", "pinned_revision_id", published.path("id").asText()))), accessToken));
-        String handle = "knowledge:" + mount.path("mounts").get(0).path("mount_id").asText();
+        String handle = "knowledge:" + mount.path("mount_id").asText();
         successData(send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken));
         sessionId = successData(send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken)).path("session_id").asText();
         return new KnowledgeFixture(kb, doc, version, handle);

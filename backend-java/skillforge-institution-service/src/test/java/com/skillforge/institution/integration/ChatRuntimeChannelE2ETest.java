@@ -958,7 +958,7 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         var deployment = send("/api/v1/capabilities/deployments", "POST", Map.of("deployment_key", key, "tool_version_id", version,
                 "provider_type", "PLATFORM", "provider_ref", "template_render", "status", "ACTIVE", "environment", "TEST"), accessToken);
         assertEquals(201, deployment.statusCode(), deployment.body());
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                 "capability_type", "TOOL", "capability_definition_id", Long.toString(definition), "capability_version_id", Long.toString(version),
                 "tool_config", Map.of("tool_deployment_id", key, "tool_deployment_revision", successData(deployment).path("revision").asLong()), "priority", 0)), accessToken);
         assertEquals(201, mounted.statusCode(), mounted.body());
@@ -1164,13 +1164,16 @@ class ChatRuntimeChannelE2ETest extends AbstractIntegrationTest {
         assertEquals("ACTIVE", deploymentData.path("status").asText(), deploymentData.toString());
         long deploymentRevision = deploymentData.path("revision").asLong();
         assertTrue(deploymentRevision > 0, deploymentData.toString());
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId,
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId,
                 "payload", Map.of("capability_type", "TOOL", "capability_definition_id", Long.toString(definition),
                         "capability_version_id", Long.toString(version), "tool_config", Map.of(
                                 "tool_deployment_id", connector, "tool_deployment_revision", deploymentRevision),
                         "priority", 0)), accessToken);
         assertEquals(201, mounted.statusCode(), "live mount preflight: deployment=" + deploymentData + "; response=" + mounted.body());
-        var mountSet = successData(mounted);
+        var current = send("/api/v1/agents/capability-mounts?agentId=" + agentId, "GET", null, accessToken);
+        assertEquals(200, current.statusCode(), current.body());
+        var mountSet = successData(current);
+        assertEquals(successData(mounted).path("mount_id"), mountSet.path("mounts").get(0).path("mount_id"));
         assertEquals(1, mountSet.path("mounts").size(), mountSet.toString());
         assertTrue(mountSet.path("generation").asLong() > 0, mountSet.toString());
         var mount = mountSet.path("mounts").get(0);

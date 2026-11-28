@@ -119,11 +119,14 @@ class ChatExecutionKnowledgeE2ETest extends ChatExecutionChainE2ETest {
     private String mountKnowledge(RuntimeExecutionKnowledgeFixture.Published published) throws Exception {
         var revise = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
         assertEquals(200, revise.statusCode(), revise.body()); agentId = successData(revise).path("id").asText();
-        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of("capability_type", "KNOWLEDGE_SOURCE",
+        var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of("capability_type", "KNOWLEDGE_SOURCE",
                 "capability_definition_id", Long.toString(published.definitionId()), "capability_version_id", Long.toString(published.capabilityVersionId()), "priority", 0,
                 "knowledge_config", Map.of("mode", "PINNED_REVISION", "pinned_revision_id", Long.toString(published.revisionId())))), accessToken);
         assertEquals(201, mounted.statusCode(), mounted.body());
-        var mountSet = successData(mounted); assertEquals(1, mountSet.path("mounts").size());
+        var current = send("/api/v1/agents/capability-mounts?agentId=" + agentId, "GET", null, accessToken);
+        assertEquals(200, current.statusCode(), current.body());
+        var mountSet = successData(current); assertEquals(1, mountSet.path("mounts").size());
+        assertEquals(successData(mounted).path("mount_id"), mountSet.path("mounts").get(0).path("mount_id"));
         String mount = mountSet.path("mounts").get(0).path("mount_id").asText(); assertFalse(mount.isBlank());
         assertEquals(200, send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken).statusCode());
         var session = send("/api/v1/chat/sessions", "POST", Map.of("agent_id", agentId, "end_user_id", endUserId), accessToken);

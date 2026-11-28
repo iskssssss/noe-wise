@@ -5725,6 +5725,24 @@
   ],
   "tables": [
     {
+      "source": "nw_agent_mount_create_receipts",
+      "target": "nw_agent_mount_create_receipts",
+      "owner": "platform",
+      "engines": ["postgresql"],
+      "state": "current",
+      "physical_state": "present",
+      "definitions": [
+        "backend-java/skillforge-migration/src/main/resources/db/migration/V385__agent_mount_create_receipts.sql"
+      ],
+      "reason": "机构 Agent 能力挂载创建原请求回执，归宿主管理，不属于 Runtime 执行状态",
+      "reference_candidates": [
+        "backend-java/skillforge-institution-service/src/main/resources/mapper/AgentMountCreateReceiptMapper.xml"
+      ],
+      "confirmed_owner_sources": [
+        "backend-java/skillforge-institution-service/src/main/resources/mapper/AgentMountCreateReceiptMapper.xml"
+      ]
+    },
+    {
       "source": "agent_capability_mount_sets",
       "target": "nw_agent_capability_mount_sets",
       "owner": "platform",

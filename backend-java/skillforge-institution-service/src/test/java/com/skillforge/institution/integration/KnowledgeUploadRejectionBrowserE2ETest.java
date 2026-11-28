@@ -63,11 +63,11 @@ class KnowledgeUploadRejectionBrowserE2ETest extends ChatExecutionChainE2ETest {
             var target = models.publish(targetDraft.id(), targetDraft.revision(), "upload-rejection");
             var revised = send("/api/v1/agents/revise", "POST", Map.of("agent_id", agentId), accessToken);
             assertEquals(200, revised.statusCode(), revised.body()); agentId = successData(revised).path("id").asText();
-            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+            var mounted = send("/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                     "capability_type", "KNOWLEDGE_SOURCE", "capability_definition_id", Long.toString(original.definitionId()),
                     "capability_version_id", Long.toString(original.capabilityVersionId()), "knowledge_config", Map.of("mode", "FOLLOW_ACTIVE"), "priority", 0)), accessToken);
             assertEquals(201, mounted.statusCode(), mounted.body());
-            String mountId = successData(mounted).path("mounts").get(0).path("mount_id").asText();
+            String mountId = successData(mounted).path("mount_id").asText();
             var publication = send("/api/v1/agents/publish", "POST", Map.of("agent_id", agentId), accessToken);
             assertEquals(200, publication.statusCode(), publication.body());
             exerciseSource(model, kb, original.sourceVersion(), original.definitionId(), original.capabilityVersionId(), mountId, initialMarker, evidence, "original");

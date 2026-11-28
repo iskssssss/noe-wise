@@ -415,7 +415,7 @@ class ClosingOutputHttpIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(version); String deployment = "closing-" + name.replace('_', '-') + "-" + marker;
         var created = request("POST", "/capabilities/deployments", token, Map.of("deployment_key", deployment,
                 "tool_version_id", Long.valueOf(version), "provider_type", "PLATFORM", "provider_ref", name, "environment", "TEST", "status", "ACTIVE"), 201);
-        request("POST", "/agents/capability-mounts", token, Map.of("agent_id", agent, "payload", Map.of("capability_type", "TOOL",
+        request("POST", "/agents/capability-mounts", token, Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of("capability_type", "TOOL",
                 "capability_definition_id", definitionId, "capability_version_id", version, "priority", 0,
                 "tool_config", Map.of("tool_deployment_id", deployment, "tool_deployment_revision", created.path("revision").asLong()))), 201);
     }

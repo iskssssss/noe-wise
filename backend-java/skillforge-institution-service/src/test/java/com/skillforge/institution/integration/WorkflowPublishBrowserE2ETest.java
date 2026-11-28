@@ -103,7 +103,7 @@ class WorkflowPublishBrowserE2ETest extends ChatExecutionChainE2ETest {
         var revise=send("/api/v1/agents/revise","POST",Map.of("agent_id",agentId),accessToken);
         assertEquals(200,revise.statusCode(),revise.body());agentId=successData(revise).path("id").asText();
         var detail=successData(get("/api/v1/capabilities/versions/detail?versionId="+capabilityVersion));
-        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("agent_id",agentId,"payload",Map.of(
+        var mounted=send("/api/v1/agents/capability-mounts","POST",Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id",agentId,"payload",Map.of(
                 "capability_type","WORKFLOW","capability_definition_id",detail.path("definition_id").asText(),
                 "capability_version_id",Long.toString(capabilityVersion),"workflow_config",Map.of(
                         "workflow_instance_id",instanceId,"workflow_instance_revision",definitionVersion),"priority",0)),accessToken);

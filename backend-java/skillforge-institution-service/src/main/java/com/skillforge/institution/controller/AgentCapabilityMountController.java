@@ -11,9 +11,12 @@ import com.skillforge.core.foundation.access.RequirePermission;
 import com.skillforge.core.shared.exception.ApiException;
 import com.skillforge.institution.common.TenantIds;
 import com.skillforge.institution.service.CapabilityMountManagementService;
+import com.skillforge.institution.service.AgentMountCreationService;
 import jakarta.validation.Valid;
 import java.util.Objects;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,9 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentCapabilityMountController {
 
     private final CapabilityMountManagementService service;
+    private final AgentMountCreationService creation;
 
-    public AgentCapabilityMountController(CapabilityMountManagementService service) {
+    public AgentCapabilityMountController(CapabilityMountManagementService service, AgentMountCreationService creation) {
         this.service = Objects.requireNonNull(service, "service");
+        this.creation = Objects.requireNonNull(creation, "creation");
     }
 
     /** 读取 mount-set generation 与全部类型化 mount。 */
@@ -47,14 +52,23 @@ public class AgentCapabilityMountController {
     @RequirePermission("foundation.agents.create")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<CapabilityMountSetResponse> createEndpoint(
+    public ApiResponse<AgentMountCreationService.Result> createEndpoint(
             @Valid @RequestBody CreateCommand command) {
-        return ApiResponses.wrap(create(command.agentId(), command.payload()));
+        try {
+            return ApiResponses.wrap(creation.create(command.requestId(), parseAgentId(command.agentId()), command.payload()));
+        } catch (ApiException failure) {
+            if (!failure.getStatus().is4xxClientError() || failure.getStatus().value() == 408
+                    || "AGENT_MOUNT_CREATE_IDENTITY_CONFLICT".equals(failure.getCode())) throw failure;
+            throw new ApiException(failure.getStatus(), "AGENT_MOUNT_CREATE_REJECTED", String.valueOf(failure.getDetail()), false);
+        }
     }
 
-    public CapabilityMountSetResponse create(String agentId, @Valid CapabilityMountRequest request) {
-        return CapabilityMountSetResponse.from(
-                service.create(tenantId(), parseAgentId(agentId), request));
+    @RequirePermission("foundation.agents.read")
+    @GetMapping("/result")
+    public ResponseEntity<ApiResponse<AgentMountCreationService.Result>> creationResult(
+            @RequestParam("agent_id") String agentId, @RequestParam("request_id") UUID requestId) {
+        var result = creation.result(requestId, parseAgentId(agentId));
+        return result == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(ApiResponses.wrap(result));
     }
 
     /** 以 mount revision CAS 更新一个类型化 CapabilityMount。 */
@@ -135,6 +149,7 @@ public class AgentCapabilityMountController {
 
     /** HTTP 写操作请求：标识与业务数据统一由请求体承载。 */
     public record CreateCommand(
+            @JsonProperty("request_id") @NotNull UUID requestId,
             @JsonProperty("agent_id") @NotNull String agentId,
             @JsonProperty("payload") @NotNull @Valid CapabilityMountRequest payload) {}
 

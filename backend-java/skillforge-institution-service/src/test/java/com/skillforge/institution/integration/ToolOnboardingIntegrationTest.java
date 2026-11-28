@@ -573,7 +573,7 @@ class ToolOnboardingIntegrationTest extends AbstractIntegrationTest {
         var item = onboard(List.of("_search"), token).path("items").get(0);
         var agent = ok("POST", "/api/v1/agents", Map.of("agent_key", "onboard-agent-" + SnowflakeIds.nextId(),
                 "name", "接入挂载验收", "system_prompt", "使用已挂载工具", "config", Map.of()), token).path("id").asText();
-        ok("POST", "/api/v1/agents/capability-mounts", Map.of("agent_id", agent, "payload", Map.of(
+        ok("POST", "/api/v1/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agent, "payload", Map.of(
                 "capability_type", "TOOL", "capability_definition_id", item.path("definition_id").asText(),
                 "tool_config", Map.of("tool_deployment_id", item.path("deployment_key").asText()), "priority", 0)), token);
         var resolved = scoped(() -> {

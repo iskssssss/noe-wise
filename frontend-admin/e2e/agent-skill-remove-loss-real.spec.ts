@@ -185,7 +185,21 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   const response = await mounted
   expect(response.status()).toBe(201)
   const command = response.request().postDataJSON()
-  const mount = (await response.json()).data.mounts.find(
+  const mountReceipt = (await response.json()).data
+  expect(command.request_id).toEqual(expect.any(String))
+  expect(mountReceipt).toEqual({
+    request_id: command.request_id,
+    agent_id: agent,
+    mount_id: expect.any(String)
+  })
+  const currentMounts = await page.evaluate(async (agentId) => {
+    const result = await fetch(`/api/v1/agents/capability-mounts?agentId=${agentId}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('skillforge.access_token')}` }
+    })
+    return { status: result.status, body: await result.json() }
+  }, agent)
+  expect(currentMounts.status).toBe(200)
+  const mount = currentMounts.body.data.mounts.find(
     (value: { capability_definition_id: string }) =>
       String(value.capability_definition_id) === definition
   )
@@ -194,6 +208,7 @@ test('技能跨标签发布后原挂载抽屉更新', async ({ page }) => {
   expect(String(command.payload.capability_definition_id)).toBe(definition)
   expect(command.payload.skill_config).not.toHaveProperty('activation_mode')
   expect(mount).toBeTruthy()
+  expect(mount.mount_id).toBe(mountReceipt.mount_id)
   expect(String(mount.capability_version_id)).toBe(version)
   expect(mountPosts).toBe(1)
   await expect(drawer).toBeHidden()

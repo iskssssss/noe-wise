@@ -978,7 +978,7 @@ class CodeExecutionChatIntegrationTest extends AbstractIntegrationTest {
     private String mountTool(
             String accessToken, String agentId, PlatformTool tool, Deployment deployment)
             throws Exception {
-        JsonNode mounted = json(send(accessToken, "/api/v1/agents/capability-mounts", "POST", Map.of("agent_id", agentId, "payload", Map.of(
+        JsonNode mounted = json(send(accessToken, "/api/v1/agents/capability-mounts", "POST", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId, "payload", Map.of(
                         "capability_type", "TOOL",
                         "capability_definition_id", Long.toString(tool.definitionId()),
                         "capability_version_id", Long.toString(tool.versionId()),
@@ -986,10 +986,12 @@ class CodeExecutionChatIntegrationTest extends AbstractIntegrationTest {
                                 "tool_deployment_id", deployment.key(),
                                 "tool_deployment_revision", deployment.revision()),
                         "priority", 0))), 201);
-        assertTrue(mounted.path("mounts").isArray(), mounted.toString());
-        JsonNode selected = element(mounted.path("mounts"), "capability_definition_id", Long.toString(tool.definitionId()));
+        JsonNode current = json(send(accessToken, "/api/v1/agents/capability-mounts?agentId=" + agentId, "GET", null), 200);
+        assertTrue(current.path("mounts").isArray(), current.toString());
+        JsonNode selected = element(current.path("mounts"), "capability_definition_id", Long.toString(tool.definitionId()));
         assertEquals("TOOL", selected
                 .path("capability_type").asText(), mounted.toString());
+        assertEquals(mounted.path("mount_id"), selected.path("mount_id"));
         String mountId = selected.path("mount_id").asText();
         assertFalse(mountId.isBlank(),
                 mounted.toString());

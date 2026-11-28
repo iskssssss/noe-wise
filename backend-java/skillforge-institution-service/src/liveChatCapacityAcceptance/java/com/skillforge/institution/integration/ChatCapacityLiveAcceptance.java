@@ -413,7 +413,7 @@ class ChatCapacityLiveAcceptance extends AbstractIntegrationTest {
             long version = element(versions, "version_key", entry.publishedVersionKey()).path("id").asLong();
             String key = "live-capacity-" + name + "-" + UUID.randomUUID();
             long revision = request("/api/v1/capabilities/deployments", "POST", new DeploymentCreate(key, version, "PLATFORM", name, "TEST", "ACTIVE"), HTTP_CREATED).path("revision").asLong();
-            request("/api/v1/agents/capability-mounts", "POST", new MountCreate(agent, new MountPayload("TOOL", definition, version, new ToolConfig(key, revision), 0)), HTTP_CREATED);
+            request("/api/v1/agents/capability-mounts", "POST", new MountCreate(java.util.UUID.randomUUID().toString(), agent, new MountPayload("TOOL", definition, version, new ToolConfig(key, revision), 0)), HTTP_CREATED);
             tools.add(new ToolEvidence(name, entry.publishedVersionKey(), entry.contentHash()));
         }
     }
@@ -566,7 +566,7 @@ class ChatCapacityLiveAcceptance extends AbstractIntegrationTest {
     record DeploymentCreate(String deploymentKey, long toolVersionId, String providerType, String providerRef, String environment, String status) { }
     record ToolConfig(String toolDeploymentId, long toolDeploymentRevision) { }
     record MountPayload(String capabilityType, long capabilityDefinitionId, long capabilityVersionId, ToolConfig toolConfig, int priority) { }
-    record MountCreate(String agentId, MountPayload payload) { }
+    record MountCreate(String requestId, String agentId, MountPayload payload) { }
     record FileCommand(String id, String fileId) { }
     record ClosePayload(String reason) { }
     record SessionClose(String sessionId, ClosePayload payload) { }
