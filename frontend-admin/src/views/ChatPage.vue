@@ -361,7 +361,7 @@
             >停止此等待任务</ElButton
           >
         </ElCard>
-        <div class="debug-messages">
+        <div ref="messageViewport" class="debug-messages" @scroll="trackMessageScroll">
           <ElButton v-if="history?.has_more" :disabled="busy" @click="older">加载较早消息</ElButton
           ><ElCard v-for="message in messages" :key="message.message_id" class="debug-message"
             ><div class="message-heading">
@@ -397,6 +397,9 @@
                 : '选择终端用户和智能体或团队，发送第一条消息'
             "
           />
+        </div>
+        <div v-if="!followingMessages && messages.length" class="message-latest">
+          <ElButton @click="showLatestMessages">查看最新消息</ElButton>
         </div>
         <ElForm
           class="debug-composer"
@@ -889,7 +892,7 @@ import FieldTip from '@skillforge/shared/components/FieldTip.vue'
 
 import { guardFormEnter } from '@skillforge/shared/admin'
 import type { UploadFile, UploadInstance } from 'element-plus'
-import { computed, onMounted, onScopeDispose, ref, shallowRef, useId, watch } from 'vue'
+import { computed, nextTick, onMounted, onScopeDispose, ref, shallowRef, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import {
@@ -1734,6 +1737,7 @@ async function send() {
     const text = input.value.trim()
     if (!text && !attachments.value.length && !mediaIds.value.length) return
     await ensureSession()
+    showLatestMessages()
     await dispatchInput({
       unknown: false,
       draft: input.value,
@@ -1799,6 +1803,7 @@ async function confirmSessionSwitch() {
   )
 }
 function clearSessionView() {
+  followingMessages.value = true
   citationSelection.value = undefined
   controller?.abort()
   readEpoch++
@@ -2027,6 +2032,10 @@ async function older() {
     if (!current) return
     const previous = await api.chat.history(sessionId.value, current.next_before_message_id)
     if (history.value?.session_id !== previous.session_id) return
+    const viewport = messageViewport.value,
+      height = viewport?.scrollHeight ?? 0,
+      top = viewport?.scrollTop ?? 0
+    followingMessages.value = false
     messages.value = mergeHistoryMessages(messages.value, previous.messages, true)
     history.value = {
       ...history.value,
@@ -2034,6 +2043,8 @@ async function older() {
       has_more: previous.has_more,
       next_before_message_id: previous.next_before_message_id
     }
+    await nextTick()
+    if (viewport) viewport.scrollTop = top + viewport.scrollHeight - height
   })
 }
 async function stop(targetRun?: string) {
@@ -2444,6 +2455,26 @@ const objective = ref(''),
   goal = ref<ChatGoalStatus>(),
   devices = ref<BrowserDevices>()
 const activePanel = ref('0')
+const messageViewport = ref<HTMLElement>(),
+  followingMessages = ref(true)
+function showLatestMessages() {
+  followingMessages.value = true
+  const viewport = messageViewport.value
+  if (viewport) viewport.scrollTop = viewport.scrollHeight
+}
+function trackMessageScroll() {
+  const viewport = messageViewport.value
+  if (viewport)
+    followingMessages.value =
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 24
+}
+watch(
+  [messages, activePanel],
+  () => {
+    if (followingMessages.value && activePanel.value === '0') showLatestMessages()
+  },
+  { deep: true, flush: 'post' }
+)
 const {
   data: artifacts,
   loading: artifactsLoading,
@@ -2794,6 +2825,10 @@ const formTipId = useId()
 }
 .debug-message {
   margin: 10px 0;
+}
+.message-latest {
+  margin-top: 8px;
+  text-align: right;
 }
 .debug-composer {
   margin-top: 14px;

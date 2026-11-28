@@ -1121,6 +1121,95 @@ describe('已加载历史分页与最新消息合并', () => {
   }
   const contents = () => wrapper.findAll('.debug-message').map((card) => card.text())
 
+  function scrollArea() {
+    const area = wrapper.get('.debug-messages')
+    const element = area.element as HTMLElement
+    let top = 0
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, get: () => 200 },
+      scrollHeight: {
+        configurable: true,
+        get: () => 200 + element.querySelectorAll('.debug-message').length * 150
+      },
+      scrollTop: {
+        configurable: true,
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, element.scrollHeight - element.clientHeight))
+        }
+      }
+    })
+    return { area, element }
+  }
+
+  it('追加消息和流式正文更新时跟随底部', async () => {
+    await setup()
+    const { area, element } = scrollArea()
+    observer().onHistory('A', page('A', [message('new', 1, '新回复')], false))
+    await flushPromises()
+    expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight)
+    await area.trigger('scroll')
+    Object.defineProperty(element, 'scrollHeight', { configurable: true, get: () => 900 })
+    observer().onEvent({
+      event: 'message.delta',
+      data: message('new', 2, '继续增长的回复正文')
+    })
+    await flushPromises()
+    expect(element.scrollTop).toBe(700)
+  })
+
+  it('上翻阅读时保持位置，点击查看最新消息后恢复跟随', async () => {
+    await setup()
+    const { area, element } = scrollArea()
+    element.scrollTop = 20
+    await area.trigger('scroll')
+    observer().onHistory('A', page('A', [message('new', 1, '新回复')], false))
+    await flushPromises()
+    expect(element.scrollTop).toBe(20)
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '查看最新消息')!
+      .trigger('click')
+    await flushPromises()
+    expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight)
+    observer().onEvent({ event: 'message.delta', data: message('next', 1, '下一条回复') })
+    await flushPromises()
+    expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight)
+  })
+
+  it('手动滚到底部恢复跟随，切换会话后定位最新消息', async () => {
+    await setup()
+    const { area, element } = scrollArea()
+    await area.trigger('scroll')
+    element.scrollTop = element.scrollHeight
+    await area.trigger('scroll')
+    observer().onEvent({ event: 'message.delta', data: message('new', 1, '新回复') })
+    await flushPromises()
+    expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight)
+    element.scrollTop = 0
+    await area.trigger('scroll')
+    wrapper
+      .findAllComponents(ElSelect)
+      .find((field) => field.props('placeholder') === '历史会话')!
+      .vm.$emit('change', 'B')
+    await flushPromises()
+    expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight)
+  })
+
+  it('加载较早消息保留原阅读位置，后续新消息不抢走视野', async () => {
+    mocks.history.mockResolvedValueOnce(page('A', [message('tail', 1, '尾页')], true, 'tail'))
+    await setup()
+    const { area, element } = scrollArea()
+    element.scrollTop = 20
+    await area.trigger('scroll')
+    mocks.history.mockResolvedValueOnce(page('A', [message('head', 1, '较早正文')], false))
+    await older()
+    expect(element.scrollTop).toBe(170)
+    observer().onEvent({ event: 'message.delta', data: message('new', 1, '新回复') })
+    await flushPromises()
+    expect(element.scrollTop).toBe(170)
+  })
+
   it('最新观察和运行后刷新保留早页，同身份消息只采用最高版本', async () => {
     mocks.history.mockResolvedValueOnce(
       page('A', [message('shared', 2, '当前版本2')], true, 'shared')
