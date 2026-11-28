@@ -92,6 +92,32 @@ class WorkflowExpressionContractTest {
         assertNull(WorkflowExpressions.resolve("user.email", Map.of(), Map.of(), Map.of(), vars));
     }
 
+    /** 只填提示语或只配置卡片外观时，实际等待仍包含要用户回答的问题。 */
+    @Test void humanPromptReachesPendingCardWithoutExplicitBody() {
+        for (boolean decorated : List.of(false, true)) {
+            var node = displayNode("human_input", decorated ? Map.of("title", "数量修改") : null);
+            when(node.prompt()).thenReturn("当前数量 ${state.quantity}，请输入 ${config.brand.name} 的新数量。");
+            var context = context(node, installedConfig(), new LinkedHashMap<>(Map.of("quantity", 3)));
+            var outcome = new HumanInputNodeExecutor().doExecute(context);
+            String question = "当前数量 3，请输入 灵知 的新数量。";
+            assertTrue(outcome.pending());
+            assertEquals(question, outcome.card().get("body"));
+            assertEquals(question, context.messages().getFirst().get("content"));
+            assertEquals(outcome.card(), context.messages().getFirst().get("card"));
+        }
+    }
+
+    /** 显式正文（包括空正文）继续拥有卡片内容，不被独立消息提示覆盖。 */
+    @Test void humanExplicitBodyKeepsPrecedenceOverPrompt() {
+        for (String body : List.of("", "请确认 ${config.brand.name} 数量")) {
+            var node = displayNode("human_input", Map.of("body", body));
+            var context = context(node, installedConfig(), new LinkedHashMap<>());
+            var outcome = new HumanInputNodeExecutor().doExecute(context);
+            assertEquals(body.isEmpty() ? "" : "请确认 灵知 数量", outcome.card().get("body"));
+            assertEquals("灵知", context.messages().getFirst().get("content"));
+        }
+    }
+
     /** 人工交互卡的标题、正文、字段、选项、动作和元数据共用实际安装配置。 */
     @Test void humanCardUsesInstalledConfigThroughoutNestedValuesAndKeepsStyleRaw() {
         var template = cardTemplate();

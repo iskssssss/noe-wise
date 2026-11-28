@@ -157,7 +157,7 @@ public final class WorkflowExpressions {
      * 构造人工确认卡片。
      *
      * <p>卡片内容读工作流节点 card 配置（通用渲染，平台不内嵌业务文案）；
-     * 未配置时使用通用默认确认卡。
+     * 未配置正文时采用节点提示语，使等待投影保留实际问题。
      *
      * @param node      节点
      * @param config    实例安装配置
@@ -182,7 +182,7 @@ public final class WorkflowExpressions {
             card.put("title", interpolate(String.valueOf(cardConfig.get("title")),
                     config, state, extracted, extraVars));
         }
-        card.put("body", interpolate(String.valueOf(cardConfig.getOrDefault("body", "")),
+        card.put("body", interpolate(String.valueOf(cardConfig.getOrDefault("body", node.prompt() == null ? "" : node.prompt())),
                 config, state, extracted, extraVars));
         // style 受控样式透传（渲染端白名单应用，禁 HTML 注入）
         Object style = cardConfig.get("style");
