@@ -76,6 +76,7 @@ public final class RuntimeCompletedAnswerReader {
             case "FAILED" -> switch (reason) {
                 case "tool_batch_ineligible" -> "本次请求未能完成：智能体同时发起了不能一起执行的工具操作，这组操作未执行。请将任务拆成单步后重新发送；若仍失败，请联系管理员查看运行过程。";
                 case "model_rate_limited" -> "模型服务当前限流，本次任务未完成。请联系管理员核查模型额度或限流状态，恢复后再尝试。重新发送前，请在运行过程中核对已执行的操作。";
+                case "workflow_output_schema_rejected" -> "工作流输出与声明的格式不一致，本次任务未完成。请联系工作流维护者检查输出 Schema、导出字段及节点输出；修正后，先核对已执行的操作，再决定是否重新运行。";
                 default -> "本次请求未能完成。请查看运行过程核对已执行的操作，确认后再决定是否重新发送，或联系管理员处理。";
             };
             case "TERMINATED" -> "本次请求已停止，尚未完成。请查看运行过程核对已执行的操作，再决定是否继续。";

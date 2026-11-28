@@ -85,6 +85,29 @@ class RuntimeCompletedAnswerReaderTest {
         assertThrows(RuntimeCompletedAnswerReader.FormatException.class, () -> reader.read(List.of(active), guard));
     }
 
+    @Test void workflowOutputSchemaFailureExplainsCorrectionWithoutReplacingPartialOutputOrSourceFacts() throws Exception {
+        String notice = "工作流输出与声明的格式不一致，本次任务未完成。请联系工作流维护者检查输出 Schema、导出字段及节点输出；修正后，先核对已执行的操作，再决定是否重新运行。";
+        for (String output : List.of("", "已核实的局部结果")) {
+            String source = json.writeValueAsString(Map.of("text", output, "status", "FAILED", "reason", "workflow_output_schema_rejected",
+                    "inputId", "input-1", "rootInputId", "root-1", "traceId", "trace-1", "spanId", "span-1", "agentId", "9"));
+            var saved = event(6, "workflow-schema-rejected", AgentExecutionProgram.COMPLETED_EVENT,
+                    AgentExecutionProgram.COMPLETED_SCHEMA, source);
+            var answer = reader.read(List.of(saved), guard).getFirst();
+            assertEquals(output.isEmpty() ? notice : output, answer.content());
+            assertEquals("failed", answer.state());
+            assertEquals("workflow-schema-rejected", answer.messageId());
+            assertEquals("run-1", answer.runId());
+            assertEquals("root-1", answer.rootInputId());
+            assertEquals(6, answer.sequence());
+            assertEquals(saved.occurredAt(), answer.createdAt());
+            assertEquals(source, saved.event().data().canonicalJson());
+            assertEquals("FAILED", json.readTree(source).path("status").asText());
+            assertEquals("workflow_output_schema_rejected", json.readTree(source).path("reason").asText());
+            assertFalse(answer.content().contains("workflow_output_schema_rejected"));
+            assertEquals(answer, reader.read(List.of(saved), guard).getFirst());
+        }
+    }
+
     private ExecutionStore.SavedEvent completed(long sequence, String status, String output) throws Exception {
         return event(sequence, "run-done", AgentExecutionProgram.COMPLETED_EVENT, AgentExecutionProgram.COMPLETED_SCHEMA,
                 json.writeValueAsString(Map.of("text", output, "status", status, "reason", "reason", "inputId", "input-1",

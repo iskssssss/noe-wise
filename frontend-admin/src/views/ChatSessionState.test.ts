@@ -344,6 +344,7 @@ describe('聊天会话原子切换', () => {
   it.each([
     ['model_rate_limited', '模型服务限流，本次任务未完成'],
     ['tool_output_invalid', '工具已执行，但返回内容未通过格式校验'],
+    ['workflow_output_schema_rejected', '工作流输出与声明的格式不一致'],
     ['tool_outcome_unknown', '工具执行结果尚未确认'],
     ['execution_output_closing_budget_insufficient', '无法为任务收尾预留足够额度']
   ])('运行过程解释正式原因 %s', async (reason, explanation) => {

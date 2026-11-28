@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { ElAlert } from 'element-plus'
 import type { BudgetFailure, TrajectoryTermination } from './types'
 import { formatObservationTokens } from './presentation'
+import { executionStopReason } from '../components/chatRunBudget'
 
 const props = defineProps<{ termination: TrajectoryTermination | null }>()
 const title = computed(() =>
@@ -11,6 +12,12 @@ const title = computed(() =>
     : '执行已终止'
 )
 const failure = computed(() => props.termination?.budget_failure)
+const description = computed(() => {
+  const reason = props.termination?.reason_code
+  if (!reason) return ''
+  const explanation = executionStopReason(reason)
+  return explanation === reason ? '' : explanation
+})
 const phases = { BUSINESS: '业务阶段', CLOSING: '收尾阶段' }
 const dimensions: Record<BudgetFailure['shortfalls'][number]['dimension'], string> = {
   ACTIVE_MILLIS: '执行时间',
@@ -37,7 +44,7 @@ function amount(value: string | null | undefined, unit: 'ms' | 'count' | 'tokens
 
 <template>
   <section v-if="termination" class="termination-notice" aria-label="执行终止原因">
-    <ElAlert :title="title" type="warning" :closable="false" show-icon />
+    <ElAlert :title="title" :description="description" type="warning" :closable="false" show-icon />
     <dl class="attempt-counts">
       <div>
         <dt>已登记主模型尝试</dt>

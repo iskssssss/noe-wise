@@ -16,6 +16,7 @@ import {
   type RuntimePendingInteraction
 } from '../../api'
 import type { TrajectoryDetail } from '@skillforge/shared/observation/types'
+import BudgetTerminationNotice from '@skillforge/shared/observation/BudgetTerminationNotice.vue'
 import {
   formatObservationCosts,
   observationCostCoverage
@@ -2103,6 +2104,7 @@ onBeforeUnmount(() => {
           }}
         </p>
         <template v-if="receipt">
+          <BudgetTerminationNotice :termination="trace?.termination ?? null" />
           <ElDescriptions v-if="trace" :column="2" border>
             <ElDescriptionsItem label="模型调用">{{
               trace.usage_summary.calls

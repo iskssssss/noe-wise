@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillforge.core.chat.integration.publicread.PublicOutputGuard;
+import com.skillforge.core.chat.integration.publicread.RuntimeCompletedAnswerReader;
 import com.skillforge.core.chat.session.SessionMailboxService;
 import com.skillforge.core.chat.session.SessionOutboxOutput;
 import com.skillforge.core.chat.session.SessionOutboxProjectionBatch;
@@ -682,6 +683,43 @@ class AgentRuntimeExecutionProjectionTest {
             assertEquals("failed", fixture.data("message.delta").get("state"));
             assertEquals(PublicOutputGuard.SAFE_MESSAGE, fixture.data("message.delta").get("content"));
             assertEquals("failed", fixture.data("execution.completed").get("status"));
+        }
+    }
+
+    @Test void workflowOutputSchemaFailureSharesSafeNoticeAndOriginalFactsAcrossProjectionAndHistory() throws Exception {
+        String notice = "工作流输出与声明的格式不一致，本次任务未完成。请联系工作流维护者检查输出 Schema、导出字段及节点输出；修正后，先核对已执行的操作，再决定是否重新运行。";
+        for (String output : List.of("", "已核实的局部结果")) {
+            var fixture = new Fixture(); var body = fixture.base();
+            body.put("text", output); body.put("status", "FAILED"); body.put("reason", "workflow_output_schema_rejected");
+            fixture.events(AgentExecutionProgram.COMPLETED_EVENT, AgentExecutionProgram.COMPLETED_SCHEMA, body);
+            var saved = fixture.store.events(fixture.session, 0, 100);
+            String original = saved.getFirst().event().data().canonicalJson();
+            fixture.projection.reconcile(fixture.session);
+            assertEquals(List.of("message.delta", "execution.completed"), fixture.types());
+            var message = fixture.data("message.delta");
+            assertEquals(output.isEmpty() ? notice : output, message.get("content"));
+            assertEquals("failed", message.get("state"));
+            assertEquals("event-1", message.get("message_id"));
+            assertEquals("run-1", message.get("run_id"));
+            assertEquals("root-1", message.get("root_input_id"));
+            var completion = fixture.data("execution.completed");
+            assertEquals("failed", completion.get("status"));
+            assertEquals("workflow_output_schema_rejected", completion.get("reason"));
+            assertEquals("run-1", completion.get("run_id"));
+            var owner = com.skillforge.runtime.api.port.SessionOwner.user(fixture.session,
+                    new com.skillforge.runtime.api.AgentId("agent-1"), new com.skillforge.runtime.api.EndUserId(9));
+            var history = fixture.projection.project(owner, saved);
+            assertEquals(1, history.messages().size());
+            assertEquals(message.get("content"), history.messages().getFirst().content());
+            assertEquals("failed", history.messages().getFirst().metadata().get("state"));
+            var answer = new RuntimeCompletedAnswerReader(fixture.json).read(saved, new PublicOutputGuard(fixture.privatePath).capture()).getFirst();
+            assertEquals(message.get("content"), answer.content());
+            assertEquals(message.get("message_id"), answer.messageId());
+            assertEquals(message.get("run_id"), answer.runId());
+            assertEquals(message.get("root_input_id"), answer.rootInputId());
+            assertEquals("failed", answer.state());
+            assertEquals(original, saved.getFirst().event().data().canonicalJson());
+            assertFalse(answer.content().contains("workflow_output_schema_rejected"));
         }
     }
 

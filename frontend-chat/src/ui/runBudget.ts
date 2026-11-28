@@ -62,6 +62,8 @@ export function executionStopReason(reason: string) {
       '模型服务限流，本次任务未完成。请联系管理员核查模型额度或限流状态，恢复后再尝试；重新发送前请核对已执行的操作。',
     user_cancelled: '已按用户请求停止本次执行。',
     tool_output_invalid: '工具已执行，但返回内容未通过格式校验；请核对结果后再决定是否重试。',
+    workflow_output_schema_rejected:
+      '工作流输出与声明的格式不一致，本次任务未完成。请联系工作流维护者检查输出 Schema、导出字段及节点输出；修正后，先核对已执行的操作，再决定是否重新运行。',
     tool_outcome_unknown: '工具执行结果尚未确认，请先核对原操作，避免重复执行。',
     tool_progress_stopped:
       '工具调用和结果反复相同，本次执行已停止。请查看执行轨迹并调整请求后再试。',

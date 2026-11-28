@@ -314,7 +314,14 @@ describe('正文消息时间', () => {
     wrapper.unmount()
   })
 
-  it('历史限流失败显示处理建议，保留原回答且不发送模型请求', () => {
+  it.each([
+    ['model_rate_limited', '模型服务限流，本次任务未完成', '核查模型额度或限流状态'],
+    [
+      'workflow_output_schema_rejected',
+      '工作流输出与声明的格式不一致',
+      '输出 Schema、导出字段及节点输出'
+    ]
+  ])('历史失败 %s 显示处理建议，保留原回答且不发送模型请求', (reason, explanation, advice) => {
     const submit = vi.fn()
     const wrapper = mount(ConversationTimeline, {
       props: {
@@ -335,7 +342,7 @@ describe('正文消息时间', () => {
               node_id: 'rate-limited-run',
               node_type: 'agent_runtime',
               status: 'failed',
-              render: { reason: 'model_rate_limited' }
+              render: { reason }
             }
           ]
         },
@@ -349,10 +356,10 @@ describe('正文消息时间', () => {
     })
     try {
       expect(wrapper.text()).toContain('原失败说明')
-      expect(wrapper.text()).toContain('模型服务限流，本次任务未完成')
-      expect(wrapper.text()).toContain('核查模型额度或限流状态')
+      expect(wrapper.text()).toContain(explanation)
+      expect(wrapper.text()).toContain(advice)
       expect(wrapper.text()).toContain('核对已执行的操作')
-      expect(wrapper.text()).not.toContain('model_rate_limited')
+      expect(wrapper.text()).not.toContain(reason)
       expect(submit).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()

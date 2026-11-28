@@ -39,6 +39,28 @@ function termination(): TrajectoryTermination {
 }
 
 describe('持久化预算终止说明', () => {
+  it('工作流输出校验失败显示纠正建议，并保留原原因与已执行次数', async () => {
+    const value = {
+      ...termination(),
+      reason_code: 'workflow_output_schema_rejected',
+      tool_attempts: '4',
+      budget_failure: null
+    }
+    const wrapper = mount(BudgetTerminationNotice, { props: { termination: value } })
+    expect(wrapper.get('[role="alert"]').text()).toContain('工作流输出与声明的格式不一致')
+    expect(wrapper.get('[role="alert"]').text()).toContain('输出 Schema、导出字段及节点输出')
+    expect(wrapper.get('[role="alert"]').text()).toContain('先核对已执行的操作')
+    expect(wrapper.get('[role="alert"]').text()).not.toContain(value.reason_code)
+    expect(wrapper.get('.termination-source').text()).toContain(value.reason_code)
+    expect(wrapper.findAll('.attempt-counts dd')[1].text()).toBe('4 次')
+    expect(wrapper.find('.budget-values').exists()).toBe(false)
+    await wrapper.setProps({ termination: { ...value, reason_code: 'unrecognized_reason' } })
+    expect(wrapper.get('[role="alert"]').text()).not.toContain('输出 Schema')
+    expect(wrapper.get('[role="alert"]').text()).not.toContain('unrecognized_reason')
+    expect(wrapper.get('.termination-source').text()).toContain('unrecognized_reason')
+    wrapper.unmount()
+  })
+
   it('逐项显示总需求、总额度、不足与未来收尾时间，不把两次调用误乘为两个窗口', () => {
     const wrapper = mount(BudgetTerminationNotice, { props: { termination: termination() } })
     expect(wrapper.text()).toContain('模型准备时无法预留收尾预算')

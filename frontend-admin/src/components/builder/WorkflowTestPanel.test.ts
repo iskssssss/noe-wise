@@ -287,6 +287,47 @@ describe('重新登录后的工作流测试历史', () => {
     expect(dom().find('.test-trace-link').exists()).toBe(false)
     expect(mocks.submit).not.toHaveBeenCalled()
   })
+  it('已关闭失败测试显示权威终止原因，保留已投递正文且不重放', async () => {
+    mocks.testHistory.mockResolvedValue({ items: [item], nextBeforeId: null })
+    mocks.get.mockResolvedValue(
+      receipt({ status: 'closed', closeStatus: 'closed', runId: 'run:1', runStatus: 'failed' })
+    )
+    mocks.history.mockResolvedValue({
+      session_id: 'session:1',
+      messages: [{ message_id: 'failed:1', role: 'assistant', content: '原通用失败说明' }],
+      pending_interactions: []
+    })
+    const originalTrace = await mocks.trace()
+    mocks.trace.mockResolvedValue({
+      ...originalTrace,
+      termination: {
+        run_id: 'run:1',
+        reason_code: 'workflow_output_schema_rejected',
+        business_model_attempts: '0',
+        tool_attempts: '4',
+        auxiliary_model_attempts: '0',
+        budget_failure: null
+      }
+    })
+    const wrapper = render()
+    await flushPromises()
+    await button(wrapper, '测试历史').trigger('click')
+    await flushPromises()
+    await dom().get('[aria-label="查看测试：原测试消息"]').trigger('click')
+    await flushPromises()
+    const notice = dom().get('[aria-label="执行终止原因"]')
+    expect(notice.text()).toContain('工作流输出与声明的格式不一致')
+    expect(notice.text()).toContain('输出 Schema、导出字段及节点输出')
+    expect(notice.text()).toContain('先核对已执行的操作')
+    expect(dom().text()).toContain('原通用失败说明')
+    expect(dom().text()).toContain('已关闭')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    expect(mocks.close).not.toHaveBeenCalled()
+    await button(wrapper, '开始新测试').trigger('click')
+    await flushPromises()
+    expect(dom().find('[aria-label="执行终止原因"]').exists()).toBe(false)
+  })
   it('历史读取失败不伪装为空态，重试可恢复', async () => {
     mocks.testHistory.mockRejectedValueOnce(new Error('历史读取失败'))
     const wrapper = render()

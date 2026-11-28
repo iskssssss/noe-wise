@@ -64,6 +64,8 @@ export function executionStopReason(reason: string) {
     tool_batch_ineligible:
       '智能体同时发起的工具不能一起执行，这组操作未执行；请拆成单步后重新发送。',
     tool_output_invalid: '工具已执行，但返回内容未通过格式校验；请核对结果后再决定是否重试。',
+    workflow_output_schema_rejected:
+      '工作流输出与声明的格式不一致，本次任务未完成。请联系工作流维护者检查输出 Schema、导出字段及节点输出；修正后，先核对已执行的操作，再决定是否重新运行。',
     tool_outcome_unknown: '工具执行结果尚未确认，请先核对原操作，避免重复执行。',
     execution_output_closing_budget_insufficient:
       '无法为任务收尾预留足够额度，请联系管理员检查运行额度。',
