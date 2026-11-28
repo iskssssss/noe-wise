@@ -602,32 +602,63 @@ describe('网页预览加载与重试', () => {
 })
 
 describe('成果操作反馈生命周期', () => {
-  it('预览读取失败只说明读取问题，不将任意HTTP错误当作链接过期', async () => {
-    const fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
-    vi.stubGlobal('fetch', fetch)
-    const json = vi.fn().mockResolvedValue({ url: 'https://preview.example/report', kind: 'text' })
-    const item = result('v1', 'root')
-    item.files[0]!.format = 'txt'
-    const wrapper = mount(ArtifactPanel, {
-      props: {
-        modelValue: true,
-        client: { json, base: 'https://chat.example' } as unknown as Client,
-        session: 's',
-        artifacts: [item],
-        selectedId: 'v1'
+  it.each(['http', 'network', 'body'])(
+    '预览%s失败说明恢复入口，手动重读原版本后恢复正文',
+    async (failure) => {
+      const rawFailure = new TypeError('Failed to fetch https://preview.example/?ticket=private')
+      const fetch = vi.fn()
+      if (failure === 'network') fetch.mockRejectedValueOnce(rawFailure)
+      else if (failure === 'body')
+        fetch.mockResolvedValueOnce({ ok: true, text: vi.fn().mockRejectedValue(rawFailure) })
+      else fetch.mockResolvedValueOnce({ ok: false, status: 503 })
+      fetch.mockResolvedValueOnce({ ok: true, text: async () => '已发布成果正文' })
+      vi.stubGlobal('fetch', fetch)
+      const json = vi
+        .fn()
+        .mockResolvedValue({ url: 'https://preview.example/report', kind: 'text' })
+      const item = result('v1', 'root')
+      item.files[0]!.format = 'txt'
+      const wrapper = mount(ArtifactPanel, {
+        props: {
+          modelValue: true,
+          client: { json, base: 'https://chat.example' } as unknown as Client,
+          session: 's',
+          artifacts: [item],
+          selectedId: 'v1'
+        }
+      })
+      try {
+        await flushPromises()
+        expect(fetch).toHaveBeenCalledOnce()
+        expect(document.querySelector('.chat-toast')?.textContent).toContain('未能读取文件预览')
+        expect(document.querySelector('.chat-toast')?.textContent).toContain(
+          '再次点击“预览”获取链接'
+        )
+        expect(document.querySelector('.chat-toast')?.textContent).not.toContain('private')
+        expect(wrapper.text()).not.toContain('已失效')
+        expect(json).toHaveBeenCalledOnce()
+        await wrapper
+          .findAll('button')
+          .find((button) => button.text() === '预览')!
+          .trigger('click')
+        await flushPromises()
+        expect(wrapper.text()).toContain('已发布成果正文')
+        expect(document.querySelector('.chat-toast')).toBeNull()
+        expect(json).toHaveBeenCalledTimes(2)
+        expect(json.mock.calls[0]).toEqual(json.mock.calls[1])
+        expect(json).toHaveBeenCalledWith(
+          '/chat/deliverables/preview-ticket',
+          'POST',
+          { id: 'v1', file_id: 'file-v1' },
+          expect.any(AbortSignal)
+        )
+        expect(fetch).toHaveBeenCalledTimes(2)
+      } finally {
+        wrapper.unmount()
+        vi.unstubAllGlobals()
       }
-    })
-    try {
-      await flushPromises()
-      expect(fetch).toHaveBeenCalledOnce()
-      expect(document.querySelector('.chat-toast')?.textContent).toContain('未能读取文件预览')
-      expect(document.querySelector('.chat-toast')?.textContent).toContain('再次点击“预览”获取链接')
-      expect(wrapper.text()).not.toContain('已失效')
-    } finally {
-      wrapper.unmount()
-      vi.unstubAllGlobals()
     }
-  })
+  )
 
   for (const state of ['success', 'error'] as const) {
     for (const transition of ['session', 'close', 'removed'] as const) {

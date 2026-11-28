@@ -2601,9 +2601,13 @@ async function preview(revision: string, file: string) {
         throw Error('HTML 预览需配置独立预览域名，请先使用下载。')
       previewUrl.value = ticket.url
     } else {
-      const response = await fetch(ticket.url, { credentials: 'omit' })
-      if (!response.ok) throw Error('无法读取预览内容')
-      previewText.value = await response.text()
+      try {
+        const response = await fetch(ticket.url, { credentials: 'omit' })
+        if (!response.ok) throw Error(`预览内容 HTTP ${response.status}`)
+        previewText.value = await response.text()
+      } catch (cause) {
+        throw new Error('未能读取文件预览，请再次点击“预览”获取链接，或下载后查看。', { cause })
+      }
     }
     previewOpen.value = true
   })

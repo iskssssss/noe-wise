@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   budget: vi.fn(),
   artifacts: vi.fn(),
+  previewTicket: vi.fn(),
   goals: vi.fn(),
   collaboration: vi.fn(),
   createGoal: vi.fn()
@@ -49,6 +50,7 @@ vi.mock('../api', () => ({
       createGoal: mocks.createGoal,
       goals: mocks.goals,
       artifacts: mocks.artifacts,
+      previewTicket: mocks.previewTicket,
       collaboration: mocks.collaboration
     },
     agents: { list: async () => ({ items: [] }) },
@@ -128,6 +130,54 @@ describe('聊天会话原子切换', () => {
       .trigger('click')
     await flushPromises()
   }
+  it.each(['network', 'body', 'http'])(
+    '预览内容%s失败说明恢复入口，手动重读原成果后恢复正文而不重发任务',
+    async (failure) => {
+      const rawFailure = new TypeError('Failed to fetch https://preview.example/?ticket=private')
+      const fetch = vi.fn()
+      if (failure === 'network') fetch.mockRejectedValueOnce(rawFailure)
+      else if (failure === 'body')
+        fetch.mockResolvedValueOnce({ ok: true, text: vi.fn().mockRejectedValue(rawFailure) })
+      else fetch.mockResolvedValueOnce({ ok: false, status: 503 })
+      fetch.mockResolvedValueOnce({ ok: true, text: async () => '已发布成果正文' })
+      vi.stubGlobal('fetch', fetch)
+      mocks.previewTicket.mockResolvedValue({ url: 'https://preview.example/report', kind: 'text' })
+      try {
+        await setup()
+        mocks.artifacts.mockResolvedValue([artifact('A成果')])
+        await openArtifacts()
+        const preview = artifactPanel()
+          .findAll('button')
+          .find((button) => button.text() === '预览')!
+        await preview.trigger('click')
+        await flushPromises()
+        expect(document.querySelector('.el-message')?.textContent).toContain('未能读取文件预览')
+        expect(document.querySelector('.el-message')?.textContent).toContain(
+          '再次点击“预览”获取链接'
+        )
+        expect(document.querySelector('.el-message')?.textContent).not.toContain('private')
+        expect(document.querySelector('.el-message')?.textContent).not.toContain('已过期')
+        expect(mocks.previewTicket).toHaveBeenCalledOnce()
+        expect(fetch).toHaveBeenCalledOnce()
+        await preview.trigger('click')
+        await flushPromises()
+        expect(document.body.textContent).toContain('已发布成果正文')
+        await vi.waitFor(() =>
+          expect(document.querySelector('.el-message')?.textContent ?? '').not.toContain(
+            '未能读取文件预览'
+          )
+        )
+        expect(mocks.previewTicket.mock.calls).toEqual([
+          ['A成果', 'A成果:file'],
+          ['A成果', 'A成果:file']
+        ])
+        expect(fetch).toHaveBeenCalledTimes(2)
+        expect(mocks.submit).not.toHaveBeenCalled()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+  )
   it('未选择会话时说明前置条件，选择会话后自动读取当前成果', async () => {
     wrapper = mount(ChatPage, { attachTo: document.body })
     await flushPromises()

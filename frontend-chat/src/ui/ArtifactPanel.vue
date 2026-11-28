@@ -318,20 +318,23 @@ async function fileAction(file: Deliverable['files'][number], action: 'preview' 
       }
     } else {
       if (file.size > 2_000_000) throw new Error('文件较大，请下载后查看。')
-      const response = await fetch(url, { signal, credentials: 'omit', redirect: 'error' })
-      if (!response.ok)
-        throw new Error('未能读取文件预览，请再次点击“预览”获取链接，或下载后查看。')
-      const text = await response.text()
-      if (current())
-        preview.value = {
-          url,
-          kind: ticket.kind,
-          text,
-          name: file.download_name,
-          artifactId: chosen.id,
-          fileId: file.file_id,
-          loadId: ++previewSequence
-        }
+      try {
+        const response = await fetch(url, { signal, credentials: 'omit', redirect: 'error' })
+        if (!response.ok) throw Error(`预览内容 HTTP ${response.status}`)
+        const text = await response.text()
+        if (current())
+          preview.value = {
+            url,
+            kind: ticket.kind,
+            text,
+            name: file.download_name,
+            artifactId: chosen.id,
+            fileId: file.file_id,
+            loadId: ++previewSequence
+          }
+      } catch (cause) {
+        throw new Error('未能读取文件预览，请再次点击“预览”获取链接，或下载后查看。', { cause })
+      }
     }
   })
 }
