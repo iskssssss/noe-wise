@@ -13,12 +13,16 @@ import com.skillforge.core.foundation.application.ServicePrincipalService;
 import com.skillforge.core.foundation.application.ServicePrincipalService.IssuedPrincipal;
 import com.skillforge.core.model.PlatformModelCatalogService;
 import com.skillforge.core.shared.config.SnowflakeIds;
+import com.skillforge.core.workflow.integration.runtime.workflow.JdbcWorkflowBindings;
 import com.skillforge.institution.runtime.AgentRuntimeHostProvisioner;
 import com.skillforge.institution.security.HmacSignatureVerifier;
 import com.skillforge.runtime.api.RunRef;
 import com.skillforge.runtime.api.RunStatus;
 import com.skillforge.runtime.api.TenantId;
+import com.skillforge.runtime.api.port.WorkflowPortal.FrozenWorkflowTarget;
 import com.skillforge.runtime.session.AgentExecutionCodec;
+import com.skillforge.runtime.session.AgentExecutionProgram;
+import com.skillforge.runtime.session.SessionExecutionWorkflows;
 import com.skillforge.runtime.session.spi.ExecutionStore;
 import com.skillforge.runtime.starter.AgentRuntimeProperties;
 import com.skillforge.runtime.adapter.model.provider.ModelProvider;
@@ -74,7 +78,7 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
     }
 
     @Test @Timeout(180)
-    void signedExplicitInvocationValidatesFormalMountAndSchemaThenCompletesWithoutModelRequest() throws Exception {
+    void signedExplicitInvocationValidatesAndFreezesVersionsAcrossPublicationInstallationAndReplay() throws Exception {
         var modelCalls=new AtomicInteger();
         var provider=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         provider.createContext("/",exchange->{modelCalls.incrementAndGet();try(exchange){exchange.getRequestBody().readAllBytes();exchange.sendResponseHeaders(500,-1);}});
@@ -95,9 +99,10 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
                     .path("access_token").asText();
             assertFalse(token.isBlank());
             String workflow=marker+"-formal";
-            var draft=admin("POST","/api/v1/builder/workflows",Map.of("workflow_id",workflow,"definition",definition()),null,200);
+            var draft=admin("POST","/api/v1/builder/workflows",Map.of("workflow_id",workflow,"definition",definition("v1")),null,200);
             var published=admin("POST","/api/v1/builder/workflows/publish",Map.of("workflow_id",workflow),draft.path("revision").asText(),200);
-            var installed=admin("POST","/api/v1/builder/workflows/install",Map.of("workflow_id",workflow,"payload",Map.of("config",Map.of())),null,200);
+            var installed=admin("POST","/api/v1/builder/workflows/install",Map.of("workflow_id",workflow,"payload",Map.of("config",Map.of("marker","install-1"))),null,200);
+            assertEquals(1L,installed.path("installation_revision").asLong());
             var instances=admin("GET","/api/v1/builder/workflows/instances",null,null,200);
             var matches=new ArrayList<JsonNode>();
             for(var item:instances.path("items"))if(installed.path("instance_id").asText().equals(item.path("instance_id").asText()))matches.add(item);
@@ -157,31 +162,83 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
             body.put("mount_id",mount);body.put("version_id",Long.toString(SnowflakeIds.nextId()));
             machine(owner,PATH,body,"wrong-version",false,403);assertEquals(0L,runCount(tenant,session));
             body.put("version_id",published.path("capability_version_id").asText());
-            var receipt=machine(owner,PATH,body,"success",false,200);
-            var ref=new RunRef(new TenantId(tenant),receipt.path("run_id").asText());
-            assertFalse(receipt.path("replayed").asBoolean());
-            await().atMost(Duration.ofSeconds(45)).until(()->TenantContext.callWithTenant(tenant,()->store.load(ref)
-                    .filter(run->Set.of(RunStatus.COMPLETED,RunStatus.FAILED,RunStatus.CANCELLED,RunStatus.TERMINATED).contains(run.status())).isPresent()));
-            TenantContext.runWithTenant(tenant,()->{
-                assertEquals(RunStatus.COMPLETED,store.load(ref).orElseThrow().status());
-                var actions=store.actions(ref,0,100);assertFalse(actions.isEmpty());
-                assertTrue(actions.stream().anyMatch(action->action.kind()==ExecutionStore.Kind.WORKFLOW));
-                var workflowAction=actions.stream().filter(action->action.kind()==ExecutionStore.Kind.WORKFLOW).findFirst().orElseThrow();
-                var protocol=new com.skillforge.runtime.session.SessionExecutionWorkflows(new com.skillforge.runtime.json.CodecLimits(
-                        properties.getMaxPayloadCodeUnits(),properties.getMaxPayloadNodes(),properties.getMaxPayloadDepth()));
-                var dispatch=assertInstanceOf(com.skillforge.runtime.session.SessionExecutionWorkflows.Dispatch.class,
-                        protocol.decode(store.material(ref.tenantId(),workflowAction.request()).orElseThrow().content()));
+            var originalBody=Map.copyOf(body);
+            var currentPublished=published;
+            JsonNode originalReceipt=null;
+            FrozenWorkflowTarget originalTarget=null;
+            JdbcWorkflowBindings.Binding originalBinding=null;
+            var workflowBindings=application.getBean(JdbcWorkflowBindings.class);
+            var protocol=new SessionExecutionWorkflows(new com.skillforge.runtime.json.CodecLimits(
+                    properties.getMaxPayloadCodeUnits(),properties.getMaxPayloadNodes(),properties.getMaxPayloadDepth()));
+            var runIds=new java.util.HashSet<String>();
+            for(int stage=0;stage<4;stage++) {
+                if(stage==1) {
+                    var forked=admin("POST","/api/v1/builder/workflows/draft/fork",Map.of("workflow_id",workflow),draft.path("revision").asText(),200);
+                    var changed=admin("PUT","/api/v1/builder/workflows/draft",Map.of("workflow_id",workflow,"payload",Map.of("definition",definition("v2"))),forked.path("revision").asText(),200);
+                    currentPublished=admin("POST","/api/v1/builder/workflows/publish",Map.of("workflow_id",workflow),changed.path("revision").asText(),200);
+                    assertNotEquals(published.path("definition_version_id"),currentPublished.path("definition_version_id"));
+                    assertNotEquals(published.path("capability_version_id"),currentPublished.path("capability_version_id"));
+                    var rejected=machineEnvelope(owner,PATH,body,"stale-version-after-publish",false,403);
+                    assertEquals("workflow_invocation_not_authorized",rejected.path("code").asText());
+                    assertEquals(1L,runCount(tenant,session));
+                    body.put("version_id",currentPublished.path("capability_version_id").asText());
+                } else if(stage==2) {
+                    var upgraded=admin("POST","/api/v1/builder/workflows/install",Map.of("workflow_id",workflow,"payload",Map.of("config",Map.of("marker","install-2"))),null,200);
+                    assertEquals(installed.path("instance_id"),upgraded.path("instance_id"));
+                    assertEquals(2L,upgraded.path("installation_revision").asLong());
+                } else if(stage==3) {
+                    body=new LinkedHashMap<>(originalBody);
+                }
+                boolean replay=stage==3;
+                var expectedPublished=replay?published:currentPublished;
+                long expectedInstallation=stage==2?2:1;
+                String expectedDefinition=stage==1||stage==2?"v2":"v1";
+                String expectedConfig="install-"+expectedInstallation;
+                String expectedOutput="formal-workflow-http-completed:"+expectedDefinition+":"+expectedConfig;
+                var receipt=machine(owner,PATH,body,stage==0||replay?"success":"success-"+stage,false,200);
+                var ref=new RunRef(new TenantId(tenant),receipt.path("run_id").asText());
+                assertEquals(replay,receipt.path("replayed").asBoolean());
+                if(replay) assertEquals(originalReceipt.path("run_id"),receipt.path("run_id"));
+                else assertTrue(runIds.add(ref.runId()));
+                await().atMost(Duration.ofSeconds(45)).until(()->TenantContext.callWithTenant(tenant,()->store.load(ref)
+                        .filter(run->Set.of(RunStatus.COMPLETED,RunStatus.FAILED,RunStatus.CANCELLED,RunStatus.TERMINATED).contains(run.status())).isPresent()));
+                var dispatch=TenantContext.callWithTenant(tenant,()->{
+                    assertEquals(RunStatus.COMPLETED,store.load(ref).orElseThrow().status());
+                    var actions=store.actions(ref,0,100);assertFalse(actions.isEmpty());
+                    var workflowActions=actions.stream().filter(action->action.kind()==ExecutionStore.Kind.WORKFLOW).toList();
+                    assertEquals(1,workflowActions.size());
+                    assertTrue(actions.stream().noneMatch(action->action.kind()==ExecutionStore.Kind.MODEL));
+                    assertTrue(actions.stream().noneMatch(action->AgentExecutionCodec.MODEL_REQUEST_SCHEMA.equals(store.material(ref.tenantId(),action.request()).orElseThrow().content().schemaId())));
+                    return assertInstanceOf(SessionExecutionWorkflows.Dispatch.class,
+                            protocol.decode(store.material(ref.tenantId(),workflowActions.getFirst().request()).orElseThrow().content()));
+                });
                 assertEquals("{\"count\":0}",dispatch.parameters().canonicalJson());
-                assertEquals(published.path("capability_version_id").asText(),dispatch.target().capability().versionId());
-                assertTrue(store.events(new com.skillforge.runtime.api.SessionRef(ref.tenantId(),session),0,100).stream()
-                        .filter(event->event.run().equals(ref)).anyMatch(event->event.event().data().canonicalJson().contains("formal-workflow-http-completed")));
-                assertTrue(actions.stream().noneMatch(action->action.kind()==ExecutionStore.Kind.MODEL));
-                assertTrue(actions.stream().noneMatch(action->AgentExecutionCodec.MODEL_REQUEST_SCHEMA.equals(store.material(ref.tenantId(),action.request()).orElseThrow().content().schemaId())));
-            });
-            var replay=machine(owner,PATH,body,"success",false,200);
-            assertTrue(replay.path("replayed").asBoolean());assertEquals(receipt.path("run_id"),replay.path("run_id"));
+                var target=dispatch.target();
+                assertEquals(matches.getFirst().path("id").asText(),target.instanceId());
+                assertEquals(expectedPublished.path("definition_version_id").asLong(),target.instanceRevision());
+                assertEquals(expectedPublished.path("capability_version_id").asText(),target.capability().versionId());
+                assertEquals(expectedInstallation,target.installationRevision());
+                var binding=workflowBindings.find(ref.tenantId(),target).orElseThrow();
+                assertEquals(expectedConfig,json.readTree(binding.configJson()).path("marker").asText());
+                var results=TenantContext.callWithTenant(tenant,()->store.events(new com.skillforge.runtime.api.SessionRef(ref.tenantId(),session),0,100).stream()
+                        .filter(event->event.run().equals(ref)&&AgentExecutionProgram.WORKFLOW_RESULT_EVENT.equals(event.event().type())).toList());
+                assertEquals(1,results.size());
+                var result=json.readTree(results.getFirst().event().data().canonicalJson());
+                assertEquals("COMPLETED",result.path("status").asText());
+                assertTrue(result.path("outputAccepted").asBoolean());
+                var output=json.readTree(result.path("output").path("canonicalJson").asText());
+                assertEquals(expectedOutput,output.path("messages").get(0).path("content").asText());
+                if(stage==0) {originalReceipt=receipt;originalTarget=target;originalBinding=binding;}
+                if(replay) {assertEquals(originalTarget,target);assertEquals(originalBinding,binding);}
+                assertEquals(Math.min(stage+1,3),runCount(tenant,session));
+                assertEquals(0,modelCalls.get());
+                System.out.println("workflow-version-evidence "+json.writeValueAsString(Map.of(
+                        "run",ref.runId(),"replayed",replay,"definition",target.instanceRevision(),"version",target.capability().versionId(),
+                        "installation",target.installationRevision(),"config",json.readTree(binding.configJson()),"output",output)));
+            }
             body.put("parameters",Map.of("count",1));machine(owner,PATH,body,"success",false,409);
-            assertEquals(1L,runCount(tenant,session));assertEquals(0,modelCalls.get());
+            assertEquals(3L,runCount(tenant,session));assertEquals(0,modelCalls.get());
+            assertEquals(1L,queryCount(jdbc,tenant,"select count(*) from nw_agent_publications where tenant_id=? and agent_id=?",Long.parseLong(tenant),Long.parseLong(agent)));
         } finally {provider.stop(0);TenantContext.clear();}
     }
 
@@ -339,12 +396,13 @@ class OpenPlatformWorkflowInvocationHttpIntegrationTest extends AbstractIntegrat
                 "edges",List.of(Map.of("from","start","to","llm"),Map.of("from","llm","to","done"),Map.of("from","done","to","end")));
     }
 
-    private static Map<String,Object> definition() {
+    private static Map<String,Object> definition(String version) {
         return Map.of("version","1.0","entry","start","meta",Map.of("display_name","明确调用HTTP",
+                "config_schema",List.of(Map.of("key","marker","type","string","required",true)),
                 "capability",Map.of("model_invocable",false,"user_invocable",true,"input_schema",Map.of("type","object",
                         "properties",Map.of("count",Map.of("type","integer","minimum",0,"maximum",3)),"required",List.of("count"),"additionalProperties",false),
                         "output_schema",Map.of(),"supports_hitl",false,"export_fields",List.of("messages"),"timeout_ms",300000,"concurrency_safe",true)),
-                "nodes",List.of(Map.of("id","start","type","start","name","开始"),Map.of("id","done","type","output","name","完成","message","formal-workflow-http-completed"),Map.of("id","end","type","end","name","结束")),
+                "nodes",List.of(Map.of("id","start","type","start","name","开始"),Map.of("id","done","type","output","name","完成","message","formal-workflow-http-completed:"+version+":${config.marker}"),Map.of("id","end","type","end","name","结束")),
                 "edges",List.of(Map.of("from","start","to","done"),Map.of("from","done","to","end")));
     }
 }
