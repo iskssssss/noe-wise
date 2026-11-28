@@ -444,7 +444,7 @@
                 readOnly ||
                 !!deferredUpload ||
                 (!sessionId && !canCreate) ||
-                (!input.trim() && !attachments.length && !mediaIds.length)
+                (!input.trim() && !attachments.length && !mediaIds.length && !references.length)
               "
               >发送</ElButton
             ><ElButton :disabled="!runId || busy || !canCancel" @click="stop()">停止运行</ElButton
@@ -488,6 +488,12 @@
               :closable="!busy && !readOnly"
               @close="attachments = attachments.filter((a) => a.id !== attachment.id)"
               >{{ attachment.name }}</ElTag
+            ><ElTag
+              v-for="(reference, index) in references"
+              :key="JSON.stringify(reference.source)"
+              :closable="!busy && !readOnly"
+              @close="references.splice(index, 1)"
+              >{{ reference.label }}</ElTag
             ><ElTag
               v-for="media in mediaIds"
               :key="media"
@@ -664,6 +670,7 @@
       >
       <ElTabPane label="成果文件" name="artifacts">
         <FeedbackNotice v-if="artifactsError" :title="artifactsError" type="error" />
+        <FeedbackNotice v-if="referenceError" :title="referenceError" type="error" />
         <div class="toolbar">
           <ElButton :disabled="!sessionId" :loading="artifactsLoading" @click="loadArtifacts">
             {{ artifactsError ? '重新读取成果' : '刷新成果' }}
@@ -672,6 +679,7 @@
           <span v-else-if="artifactsError && artifacts?.length" role="status">
             刷新未完成，以下保留上次读取的成果。
           </span>
+          <span v-if="referenceLoading" role="status">正在核对所选成果版本…</span>
         </div>
         <ElTable
           v-loading="artifactsLoading"
@@ -700,6 +708,15 @@
                 {{ artifactStatusLabels[row.status as ChatArtifact['status']] }}
               </ElTag>
             </template></ElTableColumn
+          ><ElTableColumn min-width="160" label="后续处理"
+            ><template #default="{ row }">
+              <ElButton
+                link
+                :disabled="busy || readOnly || referenceLoading || row.status !== 'ready'"
+                @click="referenceRevision(row)"
+                >引用并继续修改</ElButton
+              >
+            </template></ElTableColumn
           ><ElTableColumn min-width="360" label="文件"
             ><template #default="{ row }"
               ><div v-for="file in row.files" :key="file.file_id" class="toolbar">
@@ -714,6 +731,11 @@
                   :disabled="busy || row.status !== 'ready'"
                   @click="preview(row.id, file.file_id)"
                   >预览</ElButton
+                ><ElButton
+                  link
+                  :disabled="busy || readOnly || referenceLoading || row.status !== 'ready'"
+                  @click="referenceFile(row, file)"
+                  >引用文件</ElButton
                 >
               </div>
               <p v-if="row.status !== 'ready'" class="muted">
@@ -965,6 +987,8 @@ import {
 } from '@skillforge/shared/components/chatGoal'
 import type { BrowserDevices, BrowserTask } from '@skillforge/shared/components/chatBrowser'
 import type { ChatHitlResponse } from '@skillforge/shared/types/chatCollaboration'
+import type { ChatReferenceView } from '@skillforge/shared/components/chatReferences'
+import { DEFAULT_CHAT_LIMITS } from '@skillforge/shared/components/chatLimits'
 const route = useRoute()
 const citationSelection = ref<{ session: string; message: string; citation: string }>()
 const trialAgentId = typeof route.query.agent_id === 'string' ? route.query.agent_id : ''
@@ -1038,6 +1062,7 @@ type FrozenMessage = {
   unknown: boolean
   replyDraftKey?: string
   draft: string
+  referenceDraft?: ChatReferenceView[]
   body: ChatStreamRequest & { session_id: string; client_message_id: string }
 }
 const pendingInput = shallowRef<FrozenMessage>()
@@ -1089,6 +1114,7 @@ const { busy, error, run } = useTask(),
   pendingSelection = ref(''),
   pendingDrafts = ref<Record<string, string>>({}),
   attachments = ref<SessionAttachment[]>([]),
+  references = ref<ChatReferenceView[]>([]),
   mediaIds = ref<string[]>([])
 const restoreSessionError = ref(false),
   restoringSession = ref(false)
@@ -1131,6 +1157,7 @@ watch(
   () => auth.identityVersion,
   () => {
     pendingInput.value = undefined
+    references.value = []
     pendingSession.value = undefined
     pendingUploads.value = []
     deferredUpload.value = undefined
@@ -1156,7 +1183,10 @@ watch(
         targetKey.value = sent.body.team_id
           ? `team:${sent.body.team_id}`
           : `agent:${sent.body.agent_id}`
-        if (!sent.body.hitl_response) input.value = sent.draft
+        if (!sent.body.hitl_response) {
+          input.value = sent.draft
+          references.value = sent.referenceDraft ?? []
+        }
       }
       const upload = sessionStorage.getItem(uploadKey(creationActor.value))
       if (upload) {
@@ -1314,6 +1344,7 @@ const hasSessionDraft = () =>
     Object.values(pendingDrafts.value).some(Boolean) ||
     toolInputForms.value.some((form) => form.dirty) ||
     attachments.value.length ||
+    references.value.length ||
     mediaIds.value.length
   )
 useUnsavedChanges({
@@ -1630,7 +1661,7 @@ function onEvent(event: StreamEvent) {
     const value: ChatHistoryMessage = {
       message_id: id,
       message_version: version,
-      references: [],
+      references: (data.references as ChatReferenceView[] | undefined) ?? current?.references ?? [],
       role: String(data.role ?? 'assistant') as ChatHistoryMessage['role'],
       content: String(data.content ?? ''),
       created_at: String(data.created_at ?? new Date().toISOString()),
@@ -1795,6 +1826,8 @@ function acceptInput(sent: FrozenMessage) {
     return
   }
   if (input.value === sent.draft) input.value = ''
+  const selected = new Set((sent.body.references ?? []).map((source) => JSON.stringify(source)))
+  references.value = references.value.filter((item) => !selected.has(JSON.stringify(item.source)))
   const files = new Set(sent.body.context?.attachment_ids ?? [])
   attachments.value = attachments.value.filter((file) => !files.has(file.id))
   const images = new Set(
@@ -1851,12 +1884,15 @@ async function send() {
   if (pendingInput.value || deferredUpload.value) return
   await run(async () => {
     const text = input.value.trim()
-    if (!text && !attachments.value.length && !mediaIds.value.length) return
+    if (!text && !attachments.value.length && !mediaIds.value.length && !references.value.length)
+      return
     await ensureSession()
     showLatestMessages()
+    const referenceDraft: ChatReferenceView[] = JSON.parse(JSON.stringify(references.value))
     await dispatchInput({
       unknown: false,
       draft: input.value,
+      referenceDraft,
       body: {
         session_id: sessionId.value,
         ...selectedTarget(),
@@ -1865,6 +1901,7 @@ async function send() {
           ...mediaIds.value.map((media_id) => ({ type: 'image' as const, media_id }))
         ],
         client_message_id: crypto.randomUUID(),
+        ...(referenceDraft.length ? { references: referenceDraft.map((item) => item.source) } : {}),
         context: {
           end_user_id: endUserId.value,
           attachment_ids: attachments.value.map((file) => file.id)
@@ -1912,7 +1949,7 @@ async function confirmSessionSwitch() {
     !hasSessionDraft() ||
     (await confirm({
       title: '切换会话',
-      content: '当前有未发送的消息、回复、补充或附件，切换会话将丢弃这些内容。',
+      content: '当前有未发送的消息、回复、补充、附件或引用，切换会话将丢弃这些内容。',
       confirmText: '丢弃并切换',
       cancelText: '继续编辑'
     }))
@@ -1937,6 +1974,7 @@ function clearSessionView() {
   input.value = ''
   deferredUpload.value = undefined
   attachments.value = []
+  references.value = []
   mediaIds.value = []
   readError.value = ''
   connection.value = '未连接'
@@ -2745,6 +2783,64 @@ async function controlGoal(op: 'pause' | 'resume') {
       goal.value.goal.revision
     )
   })
+}
+const referenceTarget = shallowRef<ChatArtifact>()
+const {
+  loading: referenceLoading,
+  error: referenceError,
+  reload: loadReference,
+  invalidate: invalidateReference
+} = useResource((signal) =>
+  api.chat.recoveryInputs({ revision_id: referenceTarget.value!.id }, signal)
+)
+watch([sessionId, () => auth.identityVersion], () => {
+  invalidateReference()
+  referenceError.value = ''
+  referenceTarget.value = undefined
+})
+function addReferences(items: ChatReferenceView[]) {
+  if (readOnly.value || busy.value) return
+  const sources = new Set(references.value.map((item) => JSON.stringify(item.source)))
+  const added = items.filter((item) => {
+    const key = JSON.stringify(item.source)
+    if (sources.has(key)) return false
+    sources.add(key)
+    return true
+  })
+  if (references.value.length + added.length > DEFAULT_CHAT_LIMITS.references.max_items) {
+    message.warning('引用数量已达上限，请移除部分引用后再添加。')
+    return
+  }
+  references.value.push(...added)
+  activePanel.value = '0'
+  message.info(
+    added.length ? '已加入下一条消息的引用，请补充要求后发送。' : '该内容已在引用列表中。'
+  )
+  void nextTick(() =>
+    document.querySelector<HTMLTextAreaElement>('.debug-composer textarea')?.focus()
+  )
+}
+function referenceFile(artifact: ChatArtifact, file: ChatArtifact['files'][number]) {
+  if (artifact.status !== 'ready' || referenceLoading.value) return
+  addReferences([
+    {
+      label: `${artifact.name} · v${artifact.revision} / ${file.download_name}`,
+      source: {
+        kind: 'artifact_files',
+        files: [{ artifact_id: file.artifact_id, path: file.path }]
+      }
+    }
+  ])
+}
+async function referenceRevision(artifact: ChatArtifact) {
+  if (artifact.status !== 'ready' || readOnly.value || busy.value || referenceLoading.value) return
+  const session = sessionId.value,
+    identity = auth.identityVersion
+  referenceTarget.value = artifact
+  const result = await loadReference()
+  if (!result || pageDisposed || session !== sessionId.value || identity !== auth.identityVersion)
+    return
+  addReferences(result.references)
 }
 async function download(revision: string, file: string, name: string) {
   await run(async () => {

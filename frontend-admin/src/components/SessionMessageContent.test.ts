@@ -88,6 +88,74 @@ it('智能体回复保持公开正文，不将其他元数据解释成用户图�
   wrapper.unmount()
 })
 
+it('仅有引用的消息显示服务端名称，不暴露内部选择器或提供执行动作', async () => {
+  const wrapper = shallowMount(SessionMessageContent, {
+    props: {
+      session: 'session-1',
+      message: {
+        ...message,
+        content: '',
+        references: [
+          {
+            label: '预约报表版本 3',
+            source: {
+              kind: 'deliverable_revision',
+              revision_id: 'internal-revision-3',
+              purpose: 'revision_base'
+            }
+          }
+        ]
+      }
+    },
+    global: { stubs }
+  })
+  const references = wrapper.get('[aria-label="已发送引用"]')
+  expect(references.text()).toBe('预约报表版本 3')
+  expect(wrapper.text()).not.toContain('internal-revision-3')
+  expect(references.findAll('button, a')).toHaveLength(0)
+  await wrapper.setProps({ message })
+  expect(wrapper.find('[aria-label="已发送引用"]').exists()).toBe(false)
+  expect(wrapper.text()).toBe(message.content)
+  wrapper.unmount()
+})
+
+it('正文、上传附件和已有文件引用分别呈现一次，引用名称作为纯文本显示', () => {
+  const wrapper = shallowMount(SessionMessageContent, {
+    props: {
+      session: 'session-1',
+      message: {
+        ...message,
+        references: [
+          {
+            label: '<b>预约明细.csv</b>',
+            source: {
+              kind: 'artifact_files',
+              files: [{ artifact_id: 'internal-artifact', path: 'reports/appointment.csv' }]
+            }
+          }
+        ],
+        metadata: {
+          attachments: [{ id: 'file-1', name: '补充要求.txt' }],
+          attachment_ids: ['file-1']
+        }
+      }
+    },
+    global: { stubs }
+  })
+  expect(wrapper.get('p').text()).toBe(message.content)
+  expect(wrapper.get('[aria-label="已发送附件"]').text()).toBe('补充要求.txt')
+  const references = wrapper.get('[aria-label="已发送引用"]')
+  expect(references.text()).toBe('<b>预约明细.csv</b>')
+  expect(references.find('b').exists()).toBe(false)
+  expect(wrapper.findAll('span').map((tag) => tag.text())).toEqual([
+    '补充要求.txt',
+    '<b>预约明细.csv</b>'
+  ])
+  expect(wrapper.text()).not.toContain('internal-artifact')
+  expect(wrapper.text()).not.toContain('reports/appointment.csv')
+  wrapper.unmount()
+})
+
 it('显示知识依据锚点并以当前会话和消息身份选择引用', async () => {
   const citedMessage: ChatHistoryMessage = {
     ...message,

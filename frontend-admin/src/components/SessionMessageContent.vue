@@ -48,6 +48,11 @@ function selectCitation(event: MouseEvent) {
       >
     </template>
   </div>
+  <div v-if="message.references?.length" class="toolbar" aria-label="已发送引用">
+    <ElTag v-for="(reference, index) in message.references" :key="index" size="small">{{
+      reference.label
+    }}</ElTag>
+  </div>
   <ol v-if="citations.length" aria-label="知识依据">
     <li
       v-for="citation in citations"

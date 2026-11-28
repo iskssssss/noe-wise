@@ -162,6 +162,31 @@ class AgentRuntimeExecutionGatewayHistoryTest {
         }
     }
 
+    @Test void publicUserReferenceKeepsFrozenLabelAndSelectorWithoutPrivateMaterial() throws Exception {
+        var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
+        var identity = f.store.load(new RunRef(new TenantId("1"), "run:original")).orElseThrow().identity();
+        var json = new ObjectMapper();
+        var source = new com.skillforge.core.chat.contract.ChatInputReference.ArtifactFiles(List.of(
+                new com.skillforge.core.chat.contract.ChatInputReference.ArtifactFile("artifact-1", "report.md")));
+        var sourceJson = json.readTree(json.writerFor(com.skillforge.core.chat.contract.ChatInputReference.class).writeValueAsString(source));
+        var frozen = new TypedPayload("input.v1", json.writeValueAsString(Map.of("extraParameters", Map.of(
+                "input_references", List.of(Map.of("label", "预算报告", "source", sourceJson,
+                        "content", "PRIVATE_REFERENCE_BODY", "artifact_inputs", List.of(Map.of(
+                                "artifact_id", "artifact-1", "path", "report.md", "size", 107, "sha256", "PRIVATE_DIGEST"))))))));
+        ExecutionStore.Event event = ReflectionTestUtils.invokeMethod(f.gateway, "userEvent", identity,
+                new InputId("reference-input"), "", "reference-message", List.of(), Optional.of(frozen));
+        var body = json.readTree(event.data().canonicalJson());
+        var expected = List.of(new com.skillforge.core.chat.contract.ChatReferenceView("预算报告", source));
+        assertEquals(json.valueToTree(expected), body.path("references"));
+        assertEquals("", body.path("text").asText());
+        assertFalse(event.data().canonicalJson().contains("PRIVATE_REFERENCE_BODY"));
+        assertFalse(event.data().canonicalJson().contains("PRIVATE_DIGEST"));
+        assertFalse(event.data().canonicalJson().contains("artifact_inputs"));
+        ExecutionStore.Event rejected = ReflectionTestUtils.invokeMethod(f.gateway, "userEvent", identity,
+                new InputId("reference-input"), "Authorization: Bearer private-request-secret", "reference-message", List.of(), Optional.of(frozen));
+        assertFalse(json.readTree(rejected.data().canonicalJson()).has("references"));
+    }
+
     @Test void rejectedUserPresentationDoesNotRevealAttachmentNamesOrImageSelectors() throws Exception {
         var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
         var identity = f.store.load(new RunRef(new TenantId("1"), "run:original")).orElseThrow().identity();

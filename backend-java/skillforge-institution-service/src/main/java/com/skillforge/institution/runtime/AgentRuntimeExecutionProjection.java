@@ -438,7 +438,8 @@ public final class AgentRuntimeExecutionProjection implements AgentRuntimeEventP
                 data.put("role", "user"); data.put("state", "completed");
                 if (!value.path("text").isTextual()) throw new IllegalArgumentException("execution_public_event_invalid");
                 data.put("content", value.path("text").textValue());
-                data.put("references", List.of());
+                data.put("references", value.has("references") ? json.convertValue(value.get("references"),
+                        json.getTypeFactory().constructCollectionType(List.class, com.skillforge.core.chat.contract.ChatReferenceView.class)) : List.of());
                 sink.sendRuntime("message.delta", data, saved.run().runId());
                 return;
             }

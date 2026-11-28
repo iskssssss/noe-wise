@@ -909,6 +909,14 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
         try {
             if (!rejected && frozenInput.isPresent()) {
                 var extra = json.readTree(frozenInput.orElseThrow().canonicalJson()).path("extraParameters");
+                var visibleReferences = new ArrayList<com.skillforge.core.chat.contract.ChatReferenceView>();
+                for (var reference : extra.path("input_references")) {
+                    String label = reference.path("label").asText();
+                    visibleReferences.add(new com.skillforge.core.chat.contract.ChatReferenceView(
+                            scope.rejects(label) ? "所选材料" : label,
+                            json.treeToValue(reference.path("source"), com.skillforge.core.chat.contract.ChatInputReference.class)));
+                }
+                value.set("references", json.valueToTree(visibleReferences));
                 if (extra.has("attachments")) {
                     List<com.skillforge.institution.attachment.SessionAttachmentService.FrozenMetadata> files = json.convertValue(extra.get("attachments"),
                             json.getTypeFactory().constructCollectionType(List.class, com.skillforge.institution.attachment.SessionAttachmentService.FrozenMetadata.class));

@@ -133,6 +133,9 @@ class AgentRuntimeExecutionHistoryTest {
         var value = new LinkedHashMap<String, Object>(Map.of("inputId", "private-input", "messageId", "public-message",
                 "rootInputId", "root", "traceId", "trace", "spanId", "span", "agentId", "7", "text", "确认"));
         value.put("contentParts", List.of(Map.of("type", "text", "text", "确认")));
+        var references = List.of(new com.skillforge.core.chat.contract.ChatReferenceView("成果版本 3",
+                new com.skillforge.core.chat.contract.ChatInputReference.DeliverableRevision("original-revision", "revision_base")));
+        value.put("references", references);
         var event = new ExecutionStore.Event(new com.skillforge.runtime.api.EventId("user-source"),
                 AgentRuntimeExecutionResponses.USER_MESSAGE_EVENT,
                 new com.skillforge.runtime.api.TypedPayload(AgentRuntimeExecutionResponses.USER_MESSAGE_SCHEMA, json.writeValueAsString(value)));
@@ -146,6 +149,7 @@ class AgentRuntimeExecutionHistoryTest {
         assertEquals(1, outputs.size());
         var output = outputs.getFirst();
         @SuppressWarnings("unchecked") var data = (Map<String,Object>) output.payload().get("data");
+        assertEquals(json.valueToTree(references), json.valueToTree(data.get("references")));
         // 正式Mailbox把source trace保存为Outbox列；EventProjector只信这些列，不信payload同名字段。
         var rebuilt = output(99, output.eventType(), data).toBuilder()
                 .inputId(output.trace().inputId()).rootInputId(output.trace().rootInputId())
@@ -156,6 +160,7 @@ class AgentRuntimeExecutionHistoryTest {
         assertEquals("user", message.role()); assertEquals(originalTime, message.createdAt());
         assertEquals("private-input", message.metadata().get("input_id"));
         assertEquals(value.get("contentParts"), message.metadata().get("content_parts"));
+        assertEquals(references, message.references());
         // 仅图片输入的正文可以为空，公开投影仍保留有序内容选择器。
         value.put("text", "");
         value.put("contentParts", List.of(Map.of("type", "image", "media_id", "media-selector")));

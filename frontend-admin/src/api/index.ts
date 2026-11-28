@@ -1845,8 +1845,8 @@ export const api = {
     diffArtifacts: (request: ArtifactDiffRequest) =>
       post<ArtifactDiffResult>('/chat/artifacts/diff', request),
     /** 只验证下一次新执行可使用的产物输入，不恢复或重放旧执行。 */
-    recoveryInputs: (request: ArtifactRecoveryRequest) =>
-      post<ArtifactRecoveryResult>('/chat/deliverables/recovery-inputs', request).then(
+    recoveryInputs: (request: ArtifactRecoveryRequest, signal?: AbortSignal) =>
+      post<ArtifactRecoveryResult>('/chat/deliverables/recovery-inputs', request, { signal }).then(
         normalizeArtifactRecoveryResult
       ),
     /** 会话列表：终端用户和 agentId 均可选；按最新消息时间倒序。 */
