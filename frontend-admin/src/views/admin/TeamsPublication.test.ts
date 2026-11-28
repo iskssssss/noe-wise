@@ -49,7 +49,7 @@ vi.mock('../../api', () => ({
       saveAndPublish: mocks.saveAndPublish,
       saveAndPublishResult: mocks.saveAndPublishResult
     },
-    agents: { list: mocks.agents }
+    agents: { list: mocks.agents, published: mocks.agents }
   }
 }))
 vi.mock('vue-router', () => ({
@@ -109,8 +109,18 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([{ ...team }])
   mocks.agents.mockResolvedValue({
     items: [
-      { id: 'agent-1', name: '成员甲', status: 'published' },
-      { id: 'agent-2', name: '成员乙', status: 'published' }
+      {
+        id: 'agent-1',
+        name: '成员甲',
+        status: 'published',
+        delegation_config: { enabled: true, target_agent_ids: ['agent-2'] }
+      },
+      {
+        id: 'agent-2',
+        name: '成员乙',
+        status: 'published',
+        delegation_config: { enabled: false, target_agent_ids: [] }
+      }
     ],
     total: 2
   })
@@ -150,6 +160,76 @@ async function click(text: string) {
   await button(text).trigger('click')
   await flushPromises()
 }
+
+describe('团队成员与主智能体的已发布协作范围', () => {
+  it('主智能体未启用协作时说明冲突成员，移除后可保存单成员团队', async () => {
+    mocks.agents.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'agent-1',
+          name: '成员甲',
+          status: 'published',
+          delegation_config: { enabled: false, target_agent_ids: [] }
+        },
+        {
+          id: 'agent-2',
+          name: '成员乙',
+          status: 'published',
+          delegation_config: { enabled: false, target_agent_ids: [] }
+        }
+      ]
+    })
+    await open()
+    await click('编辑')
+    expect(document.body.textContent).toContain(
+      '“成员甲”尚未启用成员协作，目前只能保存单成员团队。'
+    )
+    expect(document.body.textContent).toContain('不在主智能体已发布的协作范围内：成员乙')
+    expect(button('保存').props('disabled')).toBe(true)
+    expect(button('保存并发布').props('disabled')).toBe(true)
+    const select = wrapper.findComponent(ElDrawer).findAllComponents(ElSelect)[0]!
+    select.vm.$emit('update:modelValue', ['agent-1'])
+    await flushPromises()
+    expect(button('保存').props('disabled')).toBe(false)
+    expect(button('保存并发布').props('disabled')).toBe(false)
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('更换主智能体和刷新发布范围时保留已选成员，并更新冲突说明', async () => {
+    await open()
+    await click('编辑')
+    const drawer = wrapper.findComponent(ElDrawer)
+    const [members, primary] = drawer.findAllComponents(ElSelect)
+    expect(button('保存').props('disabled')).toBe(false)
+    primary!.vm.$emit('update:modelValue', 'agent-2')
+    await flushPromises()
+    expect(document.body.textContent).toContain('不在主智能体已发布的协作范围内：成员甲')
+    expect(button('保存').props('disabled')).toBe(true)
+    mocks.agents.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'agent-1',
+          name: '成员甲',
+          status: 'published',
+          delegation_config: { enabled: true, target_agent_ids: ['agent-2'] }
+        },
+        {
+          id: 'agent-2',
+          name: '成员乙',
+          status: 'published',
+          delegation_config: { enabled: true, target_agent_ids: ['agent-1'] }
+        }
+      ]
+    })
+    await click('刷新成员选项')
+    expect(document.body.textContent).toContain('“成员乙”可与以下成员协作：成员甲')
+    expect(button('保存').props('disabled')).toBe(false)
+    expect(members!.props('modelValue')).toEqual(['agent-1', 'agent-2'])
+    expect(primary!.props('modelValue')).toBe('agent-2')
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+})
 
 describe('团队写入登录拒绝后的显式恢复', () => {
   it.each(['保存', '发布新修订', '保存并发布'])(
@@ -469,6 +549,22 @@ describe('团队保存配置后显式发布新修订', () => {
     expect(wrapper.findAllComponents(ElButton).some((value) => value.text() === '试用')).toBe(false)
   })
   it('已发布团队编辑后status仍published，当前保存配置可以显式发布一次', async () => {
+    mocks.agents.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'agent-1',
+          name: '成员甲',
+          status: 'published',
+          delegation_config: { enabled: true, target_agent_ids: ['agent-2'] }
+        },
+        {
+          id: 'agent-2',
+          name: '成员乙',
+          status: 'published',
+          delegation_config: { enabled: true, target_agent_ids: ['agent-1'] }
+        }
+      ]
+    })
     await open()
     await click('编辑')
     const drawer = wrapper.findComponent(ElDrawer)

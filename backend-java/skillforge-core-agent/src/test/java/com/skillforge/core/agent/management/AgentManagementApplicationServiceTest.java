@@ -225,6 +225,36 @@ class AgentManagementApplicationServiceTest {
     }
 
     @Test
+    void teamCandidatesUsePublishedScopeAfterResourceAndTestIsolation() {
+        when(access.resourceFilter("agent", "read")).thenReturn(new FoundationAccess.ResourceFilter(false, List.of("9", "10", "11", "12")));
+        var test = agent("workflow test");
+        var draft = agent("edited draft"); draft.setId(10L);
+        draft.setDelegationConfig(new com.skillforge.core.agent.model.AgentDelegationConfig(true, List.of("99")));
+        var disabled = agent("disabled"); disabled.setId(11L); disabled.setStatus("disabled");
+        var unavailable = agent("publication unavailable"); unavailable.setId(12L);
+        when(agents.list(any(Wrapper.class))).thenReturn(List.of(test, draft, disabled, unavailable));
+        when(tests.ownedAgentIds(7, List.of(9L, 10L, 11L, 12L))).thenReturn(Set.of(9L));
+        var published = agent("published primary"); published.setId(10L);
+        published.setDelegationConfig(new com.skillforge.core.agent.model.AgentDelegationConfig(false, List.of()));
+        when(publications.currentPublishedAll(7, List.of(10L, 12L))).thenReturn(Map.of(10L,
+                new AgentPublicationService.Publication(100L, 3, published,
+                        new CapabilityMountSetResult(7L, 10L, 1, List.of()), Instant.EPOCH)));
+
+        var result = service.publishedList(caller);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().id()).isEqualTo(10L);
+        assertThat(result.getFirst().name()).isEqualTo("published primary");
+        assertThat(result.getFirst().delegationConfig().enabled()).isFalse();
+        assertThat(result.getFirst().delegationConfig().targetAgentIds()).isEmpty();
+        var query = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(agents).list(query.capture());
+        assertThat(query.getValue().getSqlSegment()).contains("tenant_id =", "id IN");
+        verify(publications).currentPublishedAll(7, List.of(10L, 12L));
+        verify(publications, never()).prepareExecution(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
     void restoringHistoryReplacesDraftMountsAndKeepsCurrentPublicationAndStableIdentity() {
         AgentDO stored = prepareRestoration();
 

@@ -36,6 +36,9 @@ public class AgentController {
     @GetMapping
     public ApiResponse<AgentListResponse> listAgents() { return ApiResponses.wrap(agents.listAgents()); }
     @RequirePermission("foundation.agents.read")
+    @GetMapping("/published")
+    public ApiResponse<AgentListResponse> publishedAgents() { return ApiResponses.wrap(agents.publishedAgents()); }
+    @RequirePermission("foundation.agents.read")
     @GetMapping("/detail")
     public ApiResponse<AgentDetailResponse> getAgent(@RequestParam("agentId") String agentId) { return ApiResponses.wrap(agents.getAgent(agentId)); }
     @RequirePermission("foundation.agents.read")

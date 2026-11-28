@@ -44,6 +44,11 @@ public class AgentManagementService {
         return new AgentListResponse(items.size(), items.stream().map(this::agentItem).toList());
     }
 
+    public AgentListResponse publishedAgents() {
+        var items = agents.publishedList(caller());
+        return new AgentListResponse(items.size(), items.stream().map(this::agentItem).toList());
+    }
+
     public AgentItemResponse createAgent(CreateAgentRequest request) {
         return agentItem(agents.create(caller(), new AgentManagementContracts.Create(request.agentKey(), request.name(),
                 request.systemPrompt(), request.modelConfigId(), request.config())));

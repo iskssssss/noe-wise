@@ -1226,6 +1226,10 @@ export const api = {
       const response = await get<{ total: number; items: AgentItemWire[] }>('/agents')
       return { ...response, items: response.items.map(mapAgentItem) }
     },
+    published: async () => {
+      const response = await get<{ total: number; items: AgentItemWire[] }>('/agents/published')
+      return { ...response, items: response.items.map(mapAgentItem) }
+    },
     get: (id: string) =>
       get<AgentDetailWire>(`/agents/detail?agentId=${encodeURIComponent(id)}`).then(mapAgentDetail),
     create: (data: {

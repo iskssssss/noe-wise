@@ -259,10 +259,17 @@
               :value="id"
               :label="(agents.find((a) => a.id === id)?.name || '智能体') + ' · ' + id"
           /></ElSelect>
-          <FieldTip :id="formTipId + '-field-3'"
-            >从已选成员中选择协调任务的主智能体。</FieldTip
-          > </ElFormItem
-        ><ElFormItem label="当前状态">
+          <FieldTip :id="formTipId + '-field-3'">从已选成员中选择协调任务的主智能体。</FieldTip>
+        </ElFormItem>
+        <p class="admin-field-help" role="status">{{ collaborationHint }}</p>
+        <p v-if="incompatibleMembers.length" class="admin-field-help" role="alert">
+          不在主智能体已发布的协作范围内：{{
+            incompatibleMembers
+              .map((id) => agents.find((agent) => agent.id === id)?.name || id)
+              .join('、')
+          }}。请移除这些成员或更换主智能体；如需调整协作范围，请在智能体管理中配置并发布后刷新成员选项。
+        </p>
+        <ElFormItem label="当前状态">
           <ElTag>{{ statusLabel(editing?.status ?? 'draft') }}</ElTag>
           <FieldTip v-if="editing?.status === 'published'" :id="formTipId + '-field-4'">
             保存只更新配置，团队继续使用原发布版本；保存并发布后，新受理的执行使用新版本。
@@ -296,7 +303,12 @@
           v-permission="[editing ? 'foundation.teams.update' : 'foundation.teams.create']"
           type="primary"
           :loading="busy"
-          :disabled="writeLocked || !members.length || !form.primary_agent_id"
+          :disabled="
+            writeLocked ||
+            !members.length ||
+            !form.primary_agent_id ||
+            (!stoppingTeam && !!incompatibleMembers.length)
+          "
           @click="save"
           >{{ stoppingTeam ? '保存并停用' : '保存' }}</ElButton
         ><span
@@ -311,7 +323,13 @@
           v-if="canSaveAndPublish"
           type="primary"
           :loading="busy"
-          :disabled="writeLocked || !members.length || !form.primary_agent_id || stoppingTeam"
+          :disabled="
+            writeLocked ||
+            !members.length ||
+            !form.primary_agent_id ||
+            stoppingTeam ||
+            !!incompatibleMembers.length
+          "
           @click="saveAndPublish"
           >{{ publicationActionLabel }}</ElButton
         ></template
@@ -522,7 +540,9 @@ const {
     epoch === editorEpoch &&
     open.value
   try {
-    const result = (await api.agents.list()).items.filter((agent) => agent.status === 'published')
+    const result = (await api.agents.published()).items.filter(
+      (agent) => agent.status === 'published'
+    )
     if (!current()) throw Error('成员选项读取已失效')
     return result
   } catch (reason) {
@@ -548,6 +568,31 @@ const agents = computed(() => {
   return [...options.values()]
 })
 const memberSearch = ref('')
+const primaryAgent = computed(() =>
+  agentDirectory.value?.find((agent) => agent.id === form.primary_agent_id)
+)
+const incompatibleMembers = computed(() => {
+  const config = primaryAgent.value?.delegation_config
+  if (!config) return []
+  return members.value.filter(
+    (id) =>
+      id !== form.primary_agent_id && (!config.enabled || !config.target_agent_ids.includes(id))
+  )
+})
+const collaborationHint = computed(() => {
+  const primary = primaryAgent.value
+  if (!form.primary_agent_id) return '选择主智能体后可查看它已发布的协作范围。'
+  if (!primary || !primary.delegation_config || agentLoadError.value)
+    return '尚未读取到主智能体的最新发布范围，请刷新成员选项；保存时仍会由服务端核对授权。'
+  const config = primary.delegation_config
+  if (!config.enabled) return `“${primary.name}”尚未启用成员协作，目前只能保存单成员团队。`
+  const available = agents.value.filter(
+    (agent) => agent.id !== primary.id && config.target_agent_ids.includes(agent.id)
+  )
+  return available.length
+    ? `“${primary.name}”可与以下成员协作：${available.map((agent) => agent.name).join('、')}。`
+    : `“${primary.name}”已启用成员协作，但当前目录没有它可委派的成员。`
+})
 const memberSelectionTouched = ref(false)
 const autoMember = ref('')
 function markMemberSelection() {
@@ -771,7 +816,7 @@ async function restoreLogin() {
   })
 }
 async function save() {
-  if (writeLocked.value) return
+  if (writeLocked.value || (!stoppingTeam.value && incompatibleMembers.value.length)) return
   const identity = pageIdentity.value,
     subject = owner.value
   await run(async () => {
@@ -1004,7 +1049,13 @@ async function acceptReceipt(
   await refreshAfterWrite()
 }
 async function saveAndPublish() {
-  if (writeLocked.value || !canSaveAndPublish.value || stoppingTeam.value) return
+  if (
+    writeLocked.value ||
+    !canSaveAndPublish.value ||
+    stoppingTeam.value ||
+    incompatibleMembers.value.length
+  )
+    return
   const operationOwner = owner.value
   const identity = pageIdentity.value
   await run(async () => {

@@ -110,6 +110,17 @@ public class AgentManagementApplicationService {
                 ? null : templateNames.get(agent.getTemplateId()), managedAgentIds.contains(agent.getId()))).toList();
     }
 
+    /** 团队候选沿用当前资源读取范围，只提供执行实际采用的发布配置。 */
+    @Transactional(readOnly = true)
+    public List<AgentManagementContracts.Agent> publishedList(AgentManagementContracts.Caller caller) {
+        var readable = list(caller).stream().filter(agent -> agent.status() == AgentStatus.PUBLISHED).toList();
+        var published = publications.currentPublishedAll(caller.tenantId(), readable.stream()
+                .map(AgentManagementContracts.Agent::id).toList());
+        return readable.stream().filter(agent -> published.containsKey(agent.id()))
+                .map(agent -> view(published.get(agent.id()).agent(), agent.templateName(), agent.definitionManaged()))
+                .toList();
+    }
+
     /** 直接创建独立草稿；套餐检查和资源登记与 Agent 写入处于同一事务。 */
     public AgentManagementContracts.Agent create(AgentManagementContracts.Caller caller, AgentManagementContracts.Create request) {
         requireOperation(caller, "foundation.agents.create");
