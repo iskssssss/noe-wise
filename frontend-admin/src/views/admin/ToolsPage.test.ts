@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { reactive } from 'vue'
 import { ElButton, ElInput, ElTable } from 'element-plus'
 import ToolsPage from './ToolsPage.vue'
 import ToolOnboarding from '../../components/ToolOnboarding.vue'
@@ -18,9 +19,11 @@ const calls = vi.hoisted(() => ({
   getVersion: vi.fn(),
   createDeploymentWithReceipt: vi.fn(),
   deploymentCreateReceipt: vi.fn(),
+  getSessionId: vi.fn(),
   routeConnector: 'server'
 }))
 vi.mock('../../api', () => ({
+  getSessionId: calls.getSessionId,
   api: {
     connectors: { instances: calls.connectors, mcpTools: calls.discover },
     capabilities: {
@@ -35,21 +38,21 @@ vi.mock('../../api', () => ({
 vi.mock('../../api/tools', () => ({
   toolsApi: { available: calls.available, onboard: calls.onboard, onboarding: calls.onboarding }
 }))
-vi.mock('../../stores/auth', () => ({
-  useAuthStore: () => ({
-    user: {
-      tenant_id: 'tenant-1',
-      sub: 'member-1',
-      permissions: [
-        'foundation.connectors.read',
-        'foundation.connectors.update',
-        'foundation.capabilities.read',
-        'foundation.capabilities.create',
-        'foundation.capabilities.publish'
-      ]
-    }
-  })
-}))
+const auth = reactive({
+  identityVersion: 1,
+  user: {
+    tenant_id: 'tenant-1',
+    sub: 'member-1',
+    permissions: [
+      'foundation.connectors.read',
+      'foundation.connectors.update',
+      'foundation.capabilities.read',
+      'foundation.capabilities.create',
+      'foundation.capabilities.publish'
+    ]
+  }
+})
+vi.mock('../../stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { connectorId: calls.routeConnector } }),
   onBeforeRouteLeave: vi.fn(),
@@ -82,6 +85,17 @@ function toolRows(table: VueWrapper) {
 beforeEach(() => {
   sessionStorage.clear()
   vi.resetAllMocks()
+  auth.identityVersion = 1
+  auth.user.tenant_id = 'tenant-1'
+  auth.user.sub = 'member-1'
+  auth.user.permissions = [
+    'foundation.connectors.read',
+    'foundation.connectors.update',
+    'foundation.capabilities.read',
+    'foundation.capabilities.create',
+    'foundation.capabilities.publish'
+  ]
+  calls.getSessionId.mockReturnValue('session-1')
   calls.routeConnector = 'server'
   calls.available.mockResolvedValue({ items: [] })
   calls.connectors.mockResolvedValue({
@@ -759,12 +773,12 @@ it('lists platform tools with readable risk and enables one only after explicit 
   calls.platformTools.mockResolvedValue([platformTime])
   calls.definitions.mockResolvedValue([platformTimeDefinition])
   calls.getVersion.mockResolvedValue({ id: '11', descriptor: { tool_name: 'get_current_time' } })
-  calls.createDeploymentWithReceipt.mockResolvedValue({
-    request_id: 'request-1',
+  calls.createDeploymentWithReceipt.mockImplementation(async (request_id: string) => ({
+    request_id,
     status: 'SUCCEEDED',
     deployment_id: '20',
     deployment_key: 'platform-get_current_time'
-  })
+  }))
   wrapper = mount(ToolsPage, { attachTo: document.body })
   await flushPromises()
   expect(wrapper.text()).toContain('平台工具')
@@ -812,4 +826,273 @@ it('keeps platform enable pending when the write result is unknown and resolves 
   expect(calls.deploymentCreateReceipt).toHaveBeenCalledWith(requestId)
   expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
   expect(wrapper.text()).not.toContain('结果尚未确定')
+})
+
+it('刷新后仅显式继续平台工具原操作，并使用原请求和完整发布版本命令', async () => {
+  calls.platformTools.mockResolvedValue([platformTime])
+  calls.definitions.mockResolvedValue([platformTimeDefinition])
+  calls.getVersion.mockResolvedValue({ id: '11', descriptor: { tool_name: 'get_current_time' } })
+  calls.createDeploymentWithReceipt.mockRejectedValueOnce(new Error('连接中断'))
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  await button('启用').trigger('click')
+  await flushPromises()
+  const [requestId, input] = calls.createDeploymentWithReceipt.mock.calls[0]!
+  const key = 'skillforge.platform-tool-enable.["tenant-1","member-1"]'
+  expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual({
+    get_current_time: { requestId, input }
+  })
+  wrapper.unmount()
+  calls.definitions.mockResolvedValue([{ ...platformTimeDefinition, defaultVersionId: '12' }])
+  calls.getVersion.mockResolvedValue({ id: '12', descriptor: { tool_name: 'get_current_time' } })
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+  expect(button('启用')).toBeUndefined()
+  expect(wrapper.text()).toContain('结果尚未确定')
+  expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
+  await button('核对结果').trigger('click')
+  await flushPromises()
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledWith(requestId)
+  expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
+  calls.createDeploymentWithReceipt.mockResolvedValueOnce({
+    request_id: requestId,
+    status: 'SUCCEEDED',
+    deployment_id: '20',
+    deployment_key: input.deploymentKey
+  })
+  await button('继续原操作').trigger('click')
+  await flushPromises()
+  expect(calls.getVersion).toHaveBeenCalledTimes(1)
+  expect(calls.createDeploymentWithReceipt).toHaveBeenNthCalledWith(2, requestId, input)
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(button('继续原操作')).toBeUndefined()
+  expect(document.body.textContent).toContain('已启用，智能体可以选择该工具')
+})
+
+const platformPendingKey = 'skillforge.platform-tool-enable.["tenant-1","member-1"]'
+const platformOperation = {
+  requestId: 'bc22bf6e-9b30-4eab-adac-a37616b3f3d4',
+  input: {
+    deploymentKey: 'platform-get_current_time',
+    toolVersionId: '11',
+    providerType: 'PLATFORM',
+    providerRef: 'get_current_time',
+    environment: 'PRODUCTION',
+    status: 'ACTIVE'
+  }
+}
+async function restorePlatformOperation(operation: unknown = platformOperation) {
+  calls.platformTools.mockResolvedValue([platformTime])
+  calls.definitions.mockResolvedValue([platformTimeDefinition])
+  sessionStorage.setItem(platformPendingKey, JSON.stringify({ get_current_time: operation }))
+  wrapper = mount(ToolsPage, { attachTo: document.body })
+  await flushPromises()
+}
+
+it.each([
+  platformOperation.requestId,
+  { requestId: platformOperation.requestId },
+  { ...platformOperation, input: { ...platformOperation.input, toolVersionId: undefined } },
+  { ...platformOperation, input: { ...platformOperation.input, providerRef: 'other' } }
+])('缺少完整可信原命令的平台记录仅能查询，不从当前目录重建命令 %#', async (operation) => {
+  await restorePlatformOperation(operation)
+  expect(button('启用')).toBeUndefined()
+  expect(button('继续原操作')).toBeUndefined()
+  expect(wrapper!.text()).toContain('缺少完整原命令，仅可核对结果')
+  await button('核对结果').trigger('click')
+  await flushPromises()
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledExactlyOnceWith(platformOperation.requestId)
+  expect(calls.createDeploymentWithReceipt).not.toHaveBeenCalled()
+  expect(calls.getVersion).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(platformPendingKey)).not.toBeNull()
+})
+
+it.each(['核对结果', '继续原操作'])('%s收到不匹配或不完整回执时保留原UNKNOWN', async (action) => {
+  await restorePlatformOperation()
+  const raw = sessionStorage.getItem(platformPendingKey)
+  const receipt = {
+    request_id: platformOperation.requestId,
+    status: 'SUCCEEDED',
+    deployment_id: '20',
+    deployment_key: platformOperation.input.deploymentKey
+  }
+  const call =
+    action === '核对结果' ? calls.deploymentCreateReceipt : calls.createDeploymentWithReceipt
+  for (const changed of [
+    { request_id: 'different-request' },
+    { deployment_key: 'different-deployment' },
+    { status: 'PROCESSING' },
+    { deployment_id: null },
+    { status: 'REJECTED', error_code: 'unconfirmed_error' }
+  ]) {
+    call.mockResolvedValueOnce({ ...receipt, ...changed })
+    await button(action).trigger('click')
+    await flushPromises()
+    expect(sessionStorage.getItem(platformPendingKey)).toBe(raw)
+    expect(wrapper!.text()).toContain('结果尚未确定')
+  }
+  expect(calls.available).toHaveBeenCalledTimes(1)
+  expect(document.body.textContent).not.toContain('已启用，智能体可以选择该工具')
+  if (action === '核对结果') expect(calls.createDeploymentWithReceipt).not.toHaveBeenCalled()
+  else
+    expect(
+      calls.createDeploymentWithReceipt.mock.calls.every(
+        ([id, input]) =>
+          id === platformOperation.requestId &&
+          JSON.stringify(input) === JSON.stringify(platformOperation.input)
+      )
+    ).toBe(true)
+})
+
+it('继续原操作网络失败保留UNKNOWN，明确匹配的拒绝回执才解除', async () => {
+  await restorePlatformOperation()
+  const raw = sessionStorage.getItem(platformPendingKey)
+  calls.createDeploymentWithReceipt.mockRejectedValueOnce(
+    new HttpClientError({ userMessage: '冲突', status: 409 })
+  )
+  await button('继续原操作').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(platformPendingKey)).toBe(raw)
+  calls.createDeploymentWithReceipt.mockResolvedValueOnce({
+    request_id: platformOperation.requestId,
+    deployment_key: platformOperation.input.deploymentKey,
+    status: 'REJECTED',
+    error_code: 'TOOL_DEPLOYMENT_CREATE_REJECTED',
+    message: '工具部署创建被拒绝'
+  })
+  await button('继续原操作').trigger('click')
+  await flushPromises()
+  expect(sessionStorage.getItem(platformPendingKey)).toBeNull()
+  expect(wrapper!.text()).toContain('工具部署创建被拒绝')
+  expect(button('继续原操作')).toBeUndefined()
+  expect(calls.available).toHaveBeenCalledTimes(1)
+})
+
+it('恢复原操作仍要求当前创建权限，查询权不授予继续资格', async () => {
+  auth.user.permissions = ['foundation.capabilities.read']
+  await restorePlatformOperation()
+  expect(button('继续原操作').props('disabled')).toBe(true)
+  await button('继续原操作').trigger('click')
+  await button('核对结果').trigger('click')
+  await flushPromises()
+  expect(calls.createDeploymentWithReceipt).not.toHaveBeenCalled()
+  expect(calls.deploymentCreateReceipt).toHaveBeenCalledExactlyOnceWith(platformOperation.requestId)
+})
+
+it.each(['机构', '授权版本', '会话'])(
+  '启用前版本查询期间%s变化时不派发原身份写入',
+  async (changed) => {
+    calls.platformTools.mockResolvedValue([platformTime])
+    calls.definitions.mockResolvedValue([platformTimeDefinition])
+    let resolveVersion!: (value: unknown) => void
+    calls.getVersion.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveVersion = resolve
+        })
+    )
+    wrapper = mount(ToolsPage, { attachTo: document.body })
+    await flushPromises()
+    await button('启用').trigger('click')
+    if (changed === '机构') auth.user.tenant_id = 'tenant-2'
+    else if (changed === '授权版本') auth.identityVersion++
+    else calls.getSessionId.mockReturnValue('session-2')
+    resolveVersion({ id: '11', descriptor: { tool_name: 'get_current_time' } })
+    await flushPromises()
+    expect(calls.createDeploymentWithReceipt).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(platformPendingKey)).toBeNull()
+    expect(button('启用').props('disabled')).toBe(false)
+    calls.getVersion.mockResolvedValueOnce({
+      id: '11',
+      descriptor: { tool_name: 'get_current_time' }
+    })
+    calls.createDeploymentWithReceipt.mockImplementation(async (request_id: string) => ({
+      request_id,
+      status: 'SUCCEEDED',
+      deployment_id: '20',
+      deployment_key: platformOperation.input.deploymentKey
+    }))
+    await button('启用').trigger('click')
+    await flushPromises()
+    expect(calls.createDeploymentWithReceipt).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('已启用，智能体可以选择该工具')
+  }
+)
+
+it.each(['核对结果', '继续原操作'])(
+  '%s期间同机构授权变化后释放本次忙碌，仍不采纳旧回执',
+  async (action) => {
+    await restorePlatformOperation()
+    const raw = sessionStorage.getItem(platformPendingKey)
+    const receipt = {
+      request_id: platformOperation.requestId,
+      status: 'SUCCEEDED',
+      deployment_id: '20',
+      deployment_key: platformOperation.input.deploymentKey
+    }
+    let finish!: (value: unknown) => void
+    const call =
+      action === '核对结果' ? calls.deploymentCreateReceipt : calls.createDeploymentWithReceipt
+    call.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await button(action).trigger('click')
+    auth.identityVersion++
+    finish(receipt)
+    await flushPromises()
+    expect(sessionStorage.getItem(platformPendingKey)).toBe(raw)
+    expect(document.body.textContent).not.toContain('已启用，智能体可以选择该工具')
+    expect(button(action).props('disabled')).toBe(false)
+    call.mockResolvedValueOnce(receipt)
+    await button(action).trigger('click')
+    await flushPromises()
+    expect(call).toHaveBeenCalledTimes(2)
+    expect(sessionStorage.getItem(platformPendingKey)).toBeNull()
+  }
+)
+
+it('继续原操作后切换机构忽略迟到成功并保留原机构UNKNOWN', async () => {
+  await restorePlatformOperation()
+  const raw = sessionStorage.getItem(platformPendingKey)
+  let finish!: (value: unknown) => void
+  calls.createDeploymentWithReceipt.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  await button('继续原操作').trigger('click')
+  const finishOriginal = finish
+  auth.user.tenant_id = 'tenant-2'
+  await flushPromises()
+  calls.getVersion.mockResolvedValueOnce({
+    id: '11',
+    descriptor: { tool_name: 'get_current_time' }
+  })
+  await button('启用').trigger('click')
+  await flushPromises()
+  const nextRequestId = calls.createDeploymentWithReceipt.mock.calls[1]![0]
+  finishOriginal({
+    request_id: platformOperation.requestId,
+    status: 'SUCCEEDED',
+    deployment_id: '20',
+    deployment_key: platformOperation.input.deploymentKey
+  })
+  await flushPromises()
+  expect(sessionStorage.getItem(platformPendingKey)).toBe(raw)
+  expect(calls.available).toHaveBeenCalledTimes(1)
+  expect(document.body.textContent).not.toContain('已启用，智能体可以选择该工具')
+  expect(button('继续原操作').props('disabled')).toBe(true)
+  finish({
+    request_id: nextRequestId,
+    status: 'SUCCEEDED',
+    deployment_id: '21',
+    deployment_key: platformOperation.input.deploymentKey
+  })
+  await flushPromises()
+  expect(button('启用').props('disabled')).toBe(false)
+  expect(sessionStorage.getItem(platformPendingKey)).toBe(raw)
 })

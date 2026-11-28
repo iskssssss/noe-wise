@@ -228,6 +228,129 @@ async function prepareCreate() {
   await flushPromises()
 }
 
+it('创建未到达且刷新后仍无回执时，显式继续使用已保存的原请求和完整配置', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  calls.createDeployment.mockRejectedValueOnce(new Error('请求未到达'))
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const original = calls.createDeployment.mock.calls[0]!
+  const key = `skillforge.tool-deployment-create:["7","8"]:${original[0]}`
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({
+    requestId: original[0],
+    payload: original[1]
+  })
+  wrapper!.unmount()
+  browser.session = 'renewed-session'
+  calls.definitions.mockResolvedValue([{ defaultVersionId: '9' }])
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  expect(calls.createDeployment).toHaveBeenCalledTimes(1)
+  expect(action('新增部署')!.props('disabled')).toBe(true)
+  let finish!: (value: unknown) => void
+  calls.createDeployment.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  await action('继续原创建操作')!.trigger('click')
+  await flushPromises()
+  expect(calls.createDeployment).toHaveBeenCalledTimes(2)
+  expect(calls.createDeployment.mock.calls[1]).toEqual(original)
+  expect(action('继续原创建操作')!.props('disabled')).toBe(true)
+  finish({
+    status: 'SUCCEEDED',
+    request_id: original[0],
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  })
+  await flushPromises()
+  expect(localStorage.getItem(key)).toBeNull()
+  expect(wrapper!.text()).toContain('工具部署已创建：new-one')
+})
+
+it('继续创建的拒绝或不匹配回执保留UNKNOWN，撤销创建权限后不能继续', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  calls.createDeployment.mockRejectedValueOnce(new Error('响应未知'))
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const original = calls.createDeployment.mock.calls[0]!
+  const key = `skillforge.tool-deployment-create:["7","8"]:${original[0]}`
+  calls.createDeployment.mockRejectedValueOnce(
+    new HttpClientError({ status: 403, userMessage: '当前不能创建' })
+  )
+  await action('继续原创建操作')!.trigger('click')
+  await flushPromises()
+  expect(localStorage.getItem(key)).not.toBeNull()
+  calls.createDeployment.mockResolvedValueOnce({
+    status: 'SUCCEEDED',
+    request_id: 'other',
+    deployment_id: '123',
+    deployment_key: 'other'
+  })
+  await action('继续原创建操作')!.trigger('click')
+  await flushPromises()
+  expect(localStorage.getItem(key)).not.toBeNull()
+  expect(action('新增部署')!.props('disabled')).toBe(true)
+  authState.user.permissions = ['foundation.capabilities.read']
+  await flushPromises()
+  expect(action('继续原创建操作')).toBeUndefined()
+  expect(calls.createDeployment).toHaveBeenCalledTimes(3)
+  expect(calls.createDeployment.mock.calls[2]).toEqual(original)
+})
+
+it('继续创建期间切换主体，迟到结果不清除原主体请求或影响新页面', async () => {
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  await prepareCreate()
+  calls.createDeployment.mockRejectedValueOnce(new Error('响应未知'))
+  await action('创建')!.trigger('click')
+  await flushPromises()
+  const [requestId] = calls.createDeployment.mock.calls[0]!
+  let finish!: (value: unknown) => void
+  calls.createDeployment.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  await action('继续原创建操作')!.trigger('click')
+  await flushPromises()
+  authState.user = { tenant_id: '7', sub: '9', permissions: ['foundation.capabilities.read'] }
+  authState.identityVersion++
+  finish({
+    status: 'SUCCEEDED',
+    request_id: requestId,
+    deployment_id: '123',
+    deployment_key: 'new-one'
+  })
+  await flushPromises()
+  expect(
+    localStorage.getItem(`skillforge.tool-deployment-create:["7","8"]:${requestId}`)
+  ).not.toBeNull()
+  expect(wrapper!.text()).not.toContain('工具部署已创建：new-one')
+  expect(calls.success).not.toHaveBeenCalled()
+})
+
+it('损坏的原配置不能用于继续创建或另建请求', async () => {
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  localStorage.setItem(
+    `skillforge.tool-deployment-create:["7","8"]:${requestId}`,
+    JSON.stringify({
+      requestId,
+      payload: { toolVersionId: '2', providerType: 'PLATFORM', environment: 'TEST' }
+    })
+  )
+  mountWithPermissions(['foundation.capabilities.create'])
+  await flushPromises()
+  expect(wrapper!.text()).toContain('无法读取原创建记录')
+  expect(action('继续原创建操作')).toBeUndefined()
+  expect(action('新增部署')!.props('disabled')).toBe(true)
+  expect(calls.createDeployment).not.toHaveBeenCalled()
+})
+
 it('断连后关闭页面并以新会话重开，只读原回执且不重复创建', async () => {
   mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
@@ -347,13 +470,14 @@ it('旧待核对记录仍可按原标识只读查看部署', async () => {
     JSON.stringify({ requestId, deploymentKey: 'old-key' })
   )
   calls.getDeployment.mockResolvedValue(deployment('old-key', '2'))
-  mountWithPermissions([])
+  mountWithPermissions(['foundation.capabilities.create'])
   await flushPromises()
   await action('查看当前部署')!.trigger('click')
   await flushPromises()
   expect(calls.getDeployment).toHaveBeenCalledExactlyOnceWith('old-key', { silent: true })
   expect(wrapper!.text()).toContain('当前部署：old-key')
   expect(action('新增部署')!.props('disabled')).toBe(true)
+  expect(action('继续原创建操作')).toBeUndefined()
 })
 
 it('切换主体后清除旧目录且丢弃迟到的名称与部署读取', async () => {

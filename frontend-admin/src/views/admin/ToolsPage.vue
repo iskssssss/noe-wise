@@ -5,7 +5,12 @@ import { AdminPage, useResource, useTask, useUnsavedChanges } from '@skillforge/
 import { message } from '@skillforge/shared/feedback'
 import FeedbackNotice from '@skillforge/shared/feedback/FeedbackNotice.vue'
 import ToolOnboarding from '../../components/ToolOnboarding.vue'
-import { api, type McpToolItem } from '../../api'
+import {
+  api,
+  getSessionId,
+  type CreateCapabilityDeploymentInput,
+  type McpToolItem
+} from '../../api'
 import { toolsApi, type ToolOnboardingReceipt } from '../../api/tools'
 import { useAuthStore } from '../../stores/auth'
 
@@ -95,8 +100,10 @@ function availableToolLabel(tool: { name: string; tool_name: string; title?: str
 }
 const canEnablePlatformTools = computed(() => allowed('foundation.capabilities.create'))
 const platformBusy = ref('')
+let platformBusyGeneration = 0
 const platformErrors = ref<Record<string, string>>({})
-const platformPending = ref<Record<string, string>>({})
+type PlatformEnableOperation = { requestId: string; input?: CreateCapabilityDeploymentInput }
+const platformPending = ref<Record<string, PlatformEnableOperation>>({})
 const platformStorageError = ref('')
 const platformStorageKey = (subject: string) => `skillforge.platform-tool-enable.${subject}`
 const platformEffectLabels: Record<string, string> = {
@@ -203,6 +210,9 @@ watch(
   owner,
   (subject) => {
     platformPending.value = {}
+    platformErrors.value = {}
+    platformBusy.value = ''
+    platformBusyGeneration++
     platformStorageError.value = ''
     if (!subject) return
     try {
@@ -210,14 +220,43 @@ watch(
       if (!raw) return
       const value = JSON.parse(raw)
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('invalid')
-      platformPending.value = Object.fromEntries(
-        Object.entries(value).filter(
-          ([name, requestId]) =>
-            !!name &&
-            typeof requestId === 'string' &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)
+      const pending: Record<string, PlatformEnableOperation> = {}
+      for (const [name, stored] of Object.entries(value)) {
+        const operation = typeof stored === 'string' ? { requestId: stored } : stored
+        if (
+          !name ||
+          !operation ||
+          typeof operation !== 'object' ||
+          !('requestId' in operation) ||
+          typeof operation.requestId !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            operation.requestId
+          )
         )
-      ) as Record<string, string>
+          throw Error('invalid')
+        const input = 'input' in operation ? operation.input : undefined
+        pending[name] = { requestId: operation.requestId }
+        if (
+          input &&
+          typeof input === 'object' &&
+          Object.keys(input).length === 6 &&
+          'deploymentKey' in input &&
+          input.deploymentKey === `platform-${name}` &&
+          'toolVersionId' in input &&
+          typeof input.toolVersionId === 'string' &&
+          /^[1-9]\d*$/.test(input.toolVersionId) &&
+          'providerType' in input &&
+          input.providerType === 'PLATFORM' &&
+          'providerRef' in input &&
+          input.providerRef === name &&
+          'environment' in input &&
+          input.environment === 'PRODUCTION' &&
+          'status' in input &&
+          input.status === 'ACTIVE'
+        )
+          pending[name].input = input as CreateCapabilityDeploymentInput
+      }
+      platformPending.value = pending
     } catch {
       platformStorageError.value = '无法读取原平台工具启用记录，请恢复浏览器存储后重试。'
     }
@@ -353,99 +392,158 @@ async function refreshAvailable() {
 async function refreshPageTools() {
   await Promise.all([refreshAvailable(), loadPlatformCatalog()])
 }
-function savePlatformPending(subject: string) {
+function savePlatformPending(subject: string, pending: Record<string, PlatformEnableOperation>) {
   try {
-    if (Object.keys(platformPending.value).length)
-      sessionStorage.setItem(platformStorageKey(subject), JSON.stringify(platformPending.value))
+    if (Object.keys(pending).length)
+      sessionStorage.setItem(platformStorageKey(subject), JSON.stringify(pending))
     else sessionStorage.removeItem(platformStorageKey(subject))
+    platformPending.value = pending
     platformStorageError.value = ''
+    return true
   } catch {
     platformStorageError.value = '无法保存平台工具启用记录，请恢复浏览器存储后重试。'
+    return false
   }
 }
-async function enablePlatformTool(tool: {
-  name: string
-  title: string
-  definition?: { defaultVersionId?: string | null }
-}) {
+async function acceptPlatformReceipt(
+  receipt: Awaited<ReturnType<typeof api.capabilities.deploymentCreateReceipt>>,
+  operation: PlatformEnableOperation,
+  tool: { name: string; title: string },
+  subject: string,
+  current: () => boolean
+) {
+  if (
+    !receipt ||
+    receipt.request_id !== operation.requestId ||
+    receipt.deployment_key !== (operation.input?.deploymentKey ?? `platform-${tool.name}`) ||
+    !['SUCCEEDED', 'REJECTED'].includes(receipt.status) ||
+    (receipt.status === 'SUCCEEDED' &&
+      (typeof receipt.deployment_id !== 'string' || !receipt.deployment_id)) ||
+    (receipt.status === 'REJECTED' && receipt.error_code !== 'TOOL_DEPLOYMENT_CREATE_REJECTED')
+  )
+    return false
+  if (!current()) return false
+  if (
+    !savePlatformPending(
+      subject,
+      Object.fromEntries(
+        Object.entries(platformPending.value).filter(([name]) => name !== tool.name)
+      )
+    )
+  )
+    return false
+  if (receipt.status === 'SUCCEEDED') {
+    platformErrors.value = { ...platformErrors.value, [tool.name]: '' }
+    await refreshAvailable()
+    if (current()) message.success(`${tool.title || tool.name}已启用，智能体可以选择该工具`)
+  } else {
+    platformErrors.value = {
+      ...platformErrors.value,
+      [tool.name]: receipt.message || '平台工具启用被拒绝'
+    }
+  }
+  return true
+}
+async function enablePlatformTool(
+  tool: {
+    name: string
+    title: string
+    definition?: { defaultVersionId?: string | null }
+  },
+  continueOriginal = false
+) {
   const subject = owner.value
-  if (!subject || !canEnablePlatformTools.value || platformBusy.value) return
-  if (!tool.definition?.defaultVersionId) {
+  let operation = platformPending.value[tool.name]
+  if (!subject || !canEnablePlatformTools.value || platformBusy.value || platformStorageError.value)
+    return
+  if (continueOriginal ? !operation?.input : !!operation) return
+  if (!continueOriginal && !tool.definition?.defaultVersionId) {
     message.warning('该平台工具当前没有可用发布版本，请刷新后重试')
     return
   }
   platformBusy.value = tool.name
+  const busyGeneration = ++platformBusyGeneration
   platformErrors.value = { ...platformErrors.value, [tool.name]: '' }
+  const identity = auth.identityVersion,
+    session = getSessionId()
+  const current = () =>
+    active &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
   try {
-    const version = await api.capabilities.getVersion(tool.definition.defaultVersionId)
-    if (String(version.descriptor.tool_name ?? '') !== tool.name)
-      throw Error('平台工具发布版本与目录不一致，请刷新后重试')
-    const requestId = crypto.randomUUID()
-    platformPending.value = { ...platformPending.value, [tool.name]: requestId }
-    savePlatformPending(subject)
-    if (platformStorageError.value) return
-    const receipt = await api.capabilities.createDeploymentWithReceipt(requestId, {
-      deploymentKey: `platform-${tool.name}`,
-      toolVersionId: version.id,
-      providerType: 'PLATFORM',
-      providerRef: tool.name,
-      environment: 'PRODUCTION',
-      status: 'ACTIVE'
-    })
-    platformPending.value = Object.fromEntries(
-      Object.entries(platformPending.value).filter(([name]) => name !== tool.name)
+    if (!continueOriginal) {
+      const version = await api.capabilities.getVersion(tool.definition!.defaultVersionId!)
+      if (!current() || !canEnablePlatformTools.value) return
+      if (
+        version.id !== tool.definition!.defaultVersionId ||
+        String(version.descriptor.tool_name ?? '') !== tool.name
+      )
+        throw Error('平台工具发布版本与目录不一致，请刷新后重试')
+      operation = {
+        requestId: crypto.randomUUID(),
+        input: {
+          deploymentKey: `platform-${tool.name}`,
+          toolVersionId: version.id,
+          providerType: 'PLATFORM',
+          providerRef: tool.name,
+          environment: 'PRODUCTION',
+          status: 'ACTIVE'
+        }
+      }
+      if (!savePlatformPending(subject, { ...platformPending.value, [tool.name]: operation }))
+        return
+    }
+    const receipt = await api.capabilities.createDeploymentWithReceipt(
+      operation!.requestId,
+      operation!.input!
     )
-    savePlatformPending(subject)
-    if (receipt.status === 'SUCCEEDED') {
-      platformErrors.value = { ...platformErrors.value, [tool.name]: '' }
-      await refreshAvailable()
-      message.success(`${tool.title || tool.name}已启用，智能体可以选择该工具`)
-      return
-    }
-    platformErrors.value = {
-      ...platformErrors.value,
-      [tool.name]: receipt.message || '平台工具启用被拒绝'
-    }
+    if (!current()) return
+    if (!(await acceptPlatformReceipt(receipt, operation!, tool, subject, current)) && current())
+      message.warning('未收到匹配的确定回执，结果尚未确定；请核对结果或继续原操作')
   } catch {
+    if (!current()) return
     platformErrors.value = {
       ...platformErrors.value,
       [tool.name]: platformPending.value[tool.name]
-        ? '未收到确认，结果尚未确定；请点击“核对结果”确认是否已启用。'
+        ? '未收到确认，结果尚未确定；可核对结果或继续原操作。'
         : '启用前检查失败，请刷新后重试。'
     }
   } finally {
-    platformBusy.value = ''
+    if (platformBusyGeneration === busyGeneration) platformBusy.value = ''
   }
 }
 async function inspectPlatformTool(tool: { name: string; title: string }) {
   const subject = owner.value
-  const requestId = platformPending.value[tool.name]
-  if (!subject || !requestId || platformBusy.value) return
+  const operation = platformPending.value[tool.name]
+  if (!subject || !operation || platformBusy.value || !allowed('foundation.capabilities.read'))
+    return
   platformBusy.value = tool.name
+  const busyGeneration = ++platformBusyGeneration
+  const identity = auth.identityVersion,
+    session = getSessionId()
+  const current = () =>
+    active &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session
   try {
-    const receipt = await api.capabilities.deploymentCreateReceipt(requestId)
+    const receipt = await api.capabilities.deploymentCreateReceipt(operation.requestId)
+    if (!current()) return
     if (!receipt) {
-      message.warning('尚未查到回执，原操作可能仍在处理中，请稍后再次核对')
+      message.warning(
+        operation.input
+          ? '尚未查到回执，可稍后核对或显式继续原操作'
+          : '尚未查到回执，原操作可能仍在处理中，请稍后再次核对'
+      )
       return
     }
-    platformPending.value = Object.fromEntries(
-      Object.entries(platformPending.value).filter(([name]) => name !== tool.name)
-    )
-    savePlatformPending(subject)
-    if (receipt.status === 'SUCCEEDED') {
-      platformErrors.value = { ...platformErrors.value, [tool.name]: '' }
-      await refreshAvailable()
-      message.success(`${tool.title || tool.name}已启用，智能体可以选择该工具`)
-      return
-    }
-    platformErrors.value = {
-      ...platformErrors.value,
-      [tool.name]: receipt.message || '平台工具启用被拒绝'
-    }
+    if (!(await acceptPlatformReceipt(receipt, operation, tool, subject, current)) && current())
+      message.warning('未收到匹配的确定回执，结果尚未确定，请稍后再次核对')
   } catch {
-    message.warning('回执查询失败，结果仍未确定，请稍后再次核对')
+    if (current()) message.warning('回执查询失败，结果仍未确定，请稍后再次核对')
   } finally {
-    platformBusy.value = ''
+    if (platformBusyGeneration === busyGeneration) platformBusy.value = ''
   }
 }
 async function acceptConfirmed(receipt: ToolOnboardingReceipt) {
@@ -669,12 +767,27 @@ async function inspect(automatic = false) {
         </ElTableColumn>
         <ElTableColumn label="状态" width="88">
           <template #default="{ row }">
-            <ElTag :type="enabledToolNames.has(row.name) ? 'success' : 'info'" size="small">
-              {{ enabledToolNames.has(row.name) ? '已启用' : '未启用' }}
+            <ElTag
+              :type="
+                platformPending[row.name]
+                  ? 'warning'
+                  : enabledToolNames.has(row.name)
+                    ? 'success'
+                    : 'info'
+              "
+              size="small"
+            >
+              {{
+                platformPending[row.name]
+                  ? '待确认'
+                  : enabledToolNames.has(row.name)
+                    ? '已启用'
+                    : '未启用'
+              }}
             </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="130">
+        <ElTableColumn label="操作" min-width="160">
           <template #default="{ row }">
             <span
               v-if="enabledToolNames.has(row.name) && !platformPending[row.name]"
@@ -682,13 +795,22 @@ async function inspect(automatic = false) {
               >—</span
             >
             <ElButton
-              v-else
+              v-else-if="!platformPending[row.name]"
               link
               type="primary"
               :loading="platformBusy === row.name"
-              :disabled="!canEnablePlatformTools || !!platformBusy"
+              :disabled="!canEnablePlatformTools || !!platformBusy || !!platformStorageError"
               @click="enablePlatformTool(row as PlatformToolRow)"
               >启用</ElButton
+            >
+            <ElButton
+              v-if="platformPending[row.name]?.input"
+              link
+              type="primary"
+              :loading="platformBusy === row.name"
+              :disabled="!canEnablePlatformTools || !!platformBusy || !!platformStorageError"
+              @click="enablePlatformTool(row as PlatformToolRow, true)"
+              >继续原操作</ElButton
             >
             <ElButton
               v-if="platformPending[row.name]"
@@ -698,6 +820,12 @@ async function inspect(automatic = false) {
               @click="inspectPlatformTool(row as PlatformToolRow)"
               >核对结果</ElButton
             >
+            <div v-if="platformPending[row.name]" class="admin-field-help" role="status">
+              结果尚未确定；请求 ID：{{ platformPending[row.name]?.requestId }}
+              <template v-if="!platformPending[row.name]?.input"
+                >；缺少完整原命令，仅可核对结果。</template
+              >
+            </div>
             <div v-if="platformErrors[row.name]" class="admin-field-help" role="status">
               {{ platformErrors[row.name] }}
             </div>

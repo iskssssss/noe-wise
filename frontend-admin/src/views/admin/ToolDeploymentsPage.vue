@@ -17,9 +17,20 @@
       {{
         operation.deploymentKey ? `部署“${operation.deploymentKey}”` : '工具部署'
       }}的创建结果尚未确认，请求号：{{ operation.requestId }}。
-      查不到原回执时结果仍未确认，请勿重复创建。
+      {{ busy ? '正在处理，请等待当前操作完成。' : '查不到原回执时结果仍未确认，请勿另建请求。' }}
+      <p v-if="operation.payload">
+        原配置：工具版本 {{ operation.payload.toolVersionId }} ·
+        {{ statusLabel(operation.payload.providerType) }} / {{ operation.payload.providerRef }} ·
+        {{ statusLabel(operation.payload.environment) }}
+      </p>
       <ElButton :disabled="busy || !canRead" @click="checkCreation(false, operation)"
         >核对原创建结果</ElButton
+      >
+      <ElButton
+        v-if="operation.payload && canCreate"
+        :disabled="busy || !!creationStorageError"
+        @click="continueCreation(operation)"
+        >继续原创建操作</ElButton
       >
       <ElButton
         v-if="operation.deploymentKey"
@@ -549,7 +560,11 @@ async function continueState(operation: StateOperation) {
     await acceptStateReceipt(receipt, operation, subject, current)
   })
 }
-type CreationOperation = { requestId: string; deploymentKey?: string }
+type CreationOperation = {
+  requestId: string
+  deploymentKey?: string
+  payload?: CreateCapabilityDeploymentInput
+}
 const creationOperations = ref<CreationOperation[]>([])
 const creationUnknown = computed(() => creationOperations.value[0])
 const creationInputRequestId = ref('')
@@ -591,7 +606,22 @@ function syncOperations(subject: string, preserveExisting = false) {
         key !== storageKey(subject, record.requestId)
       )
         throw Error('invalid')
-      operations.push({ requestId: record.requestId, deploymentKey: record.deploymentKey })
+      const payload = record.payload
+      if (
+        payload !== undefined &&
+        (!payload ||
+          typeof payload.toolVersionId !== 'string' ||
+          !/^[1-9]\d*$/.test(payload.toolVersionId) ||
+          !['PLATFORM', 'CONNECTOR', 'MCP', 'TEST_MOCK'].includes(payload.providerType) ||
+          typeof payload.providerRef !== 'string' ||
+          !payload.providerRef.trim() ||
+          !['DEVELOPMENT', 'TEST', 'PRODUCTION'].includes(payload.environment) ||
+          (payload.deploymentKey !== undefined &&
+            (typeof payload.deploymentKey !== 'string' || !payload.deploymentKey.trim())) ||
+          (payload.status !== undefined && !['ACTIVE', 'DISABLED'].includes(payload.status)))
+      )
+        throw Error('invalid')
+      operations.push({ requestId: record.requestId, deploymentKey: record.deploymentKey, payload })
     }
   } catch {
     creationStorageError.value = '无法读取原创建记录，请恢复浏览器存储后重新进入。'
@@ -755,7 +785,8 @@ async function create() {
     syncOperations(subject, true)
     if (creationUnknown.value || creationStorageError.value) return
     const operation: CreationOperation = {
-      requestId: crypto.randomUUID()
+      requestId: crypto.randomUUID(),
+      payload: { ...form }
     }
     try {
       localStorage.setItem(storageKey(subject, operation.requestId), JSON.stringify(operation))
@@ -777,7 +808,10 @@ async function create() {
       )
     let receipt: Awaited<ReturnType<typeof api.capabilities.createDeploymentWithReceipt>>
     try {
-      receipt = await api.capabilities.createDeploymentWithReceipt(operation.requestId, { ...form })
+      receipt = await api.capabilities.createDeploymentWithReceipt(
+        operation.requestId,
+        operation.payload!
+      )
     } catch (cause) {
       if (cause instanceof HttpClientError) cause.claimFeedback()
       if (current()) {
@@ -797,6 +831,40 @@ async function create() {
     )
     if (operation) await checkCreation(true, operation)
   }
+}
+async function continueCreation(operation: CreationOperation) {
+  if (
+    busy.value ||
+    creationStorageError.value ||
+    !canCreate.value ||
+    !operation.payload ||
+    !creationOperations.value.includes(operation)
+  )
+    return
+  const subject = owner.value,
+    identity = auth.identityVersion,
+    session = getSessionId(),
+    payload = { ...operation.payload }
+  if (!subject || !session) return
+  const current = () =>
+    !disposed &&
+    owner.value === subject &&
+    auth.identityVersion === identity &&
+    getSessionId() === session &&
+    canCreate.value &&
+    creationOperations.value.includes(operation)
+  await run(async () => {
+    let receipt: Awaited<ReturnType<typeof api.capabilities.createDeploymentWithReceipt>>
+    try {
+      receipt = await api.capabilities.createDeploymentWithReceipt(operation.requestId, payload)
+    } catch (cause) {
+      if (cause instanceof HttpClientError) cause.claimFeedback()
+      if (current()) message.warning('原创建结果仍未确认，请核对原请求，或稍后继续原操作。')
+      return
+    }
+    if (current() && !(await acceptCreation(receipt, operation, subject, current)))
+      message.warning('创建回执不匹配，原创建结果仍未确认，请核对原请求。')
+  })
 }
 async function acceptCreation(
   receipt: Awaited<ReturnType<typeof api.capabilities.deploymentCreateReceipt>>,
@@ -831,7 +899,8 @@ async function acceptCreation(
       const saved = JSON.parse(raw) as CreationOperation
       if (
         saved.requestId !== operation.requestId ||
-        saved.deploymentKey !== operation.deploymentKey
+        saved.deploymentKey !== operation.deploymentKey ||
+        JSON.stringify(saved.payload) !== JSON.stringify(operation.payload)
       )
         throw Error('invalid')
       localStorage.removeItem(key)

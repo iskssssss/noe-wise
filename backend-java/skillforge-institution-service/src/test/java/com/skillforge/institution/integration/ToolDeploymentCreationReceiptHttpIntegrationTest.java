@@ -62,7 +62,8 @@ class ToolDeploymentCreationReceiptHttpIntegrationTest extends ChatExecutionChai
         var duplicateReceipt = successData(duplicateResponse);
         assertEquals("REJECTED", duplicateReceipt.path("status").asText());
         assertEquals(key, duplicateReceipt.path("deployment_key").asText());
-        assertTrue(duplicateReceipt.path("message").asText().contains("部署标识"));
+        assertEquals("TOOL_DEPLOYMENT_CREATE_REJECTED", duplicateReceipt.path("error_code").asText());
+        assertEquals("工具部署创建被拒绝，请检查工具与提供方配置。", duplicateReceipt.path("message").asText());
         assertEquals(duplicateReceipt, successData(get(PATH + "/result?request_id=" + duplicateId)));
 
         String prefix = "/api/v1/tenant/foundation/access";
@@ -80,6 +81,27 @@ class ToolDeploymentCreationReceiptHttpIntegrationTest extends ChatExecutionChai
         assertEquals(204, send(PATH + "/result?request_id=" + id, "GET", null, other).statusCode());
         assertEquals(409, send(PATH, "POST", command, other).statusCode());
         assertEquals(1, countRuntime("SELECT count(*) FROM nw_tool_deployments WHERE tenant_id=CAST(? AS bigint) AND deployment_key=?", tenantId, key));
+
+        String revokedId = UUID.randomUUID().toString(), revokedKey = key + "-revoked";
+        var revokedCommand = Map.of("request_id", revokedId, "payload", Map.of("deployment_key", revokedKey,
+                "tool_version_id", version, "provider_type", "PLATFORM", "provider_ref", "get_current_time", "environment", "PRODUCTION"));
+        var beforeRevocation = send(PATH, "POST", revokedCommand, other);
+        assertEquals(200, beforeRevocation.statusCode(), beforeRevocation.body());
+        var originalReceipt = successData(beforeRevocation);
+        assertEquals("SUCCEEDED", originalReceipt.path("status").asText());
+        var revokeCreate = send(prefix + "/role", "PUT", Map.of("id", successData(role).path("id").asText(),
+                "name", "仅查询回执", "data_scope", "all", "permissions", List.of("foundation.capabilities.read"),
+                "department_ids", List.of(), "enabled", true, "lock_version", successData(role).path("lock_version").asLong()), accessToken);
+        assertEquals(200, revokeCreate.statusCode(), revokeCreate.body());
+        assertEquals(401, send(PATH, "POST", revokedCommand, other).statusCode());
+        var relogged = send("/api/v1/auth/login", "POST", Map.of("tenant_slug", fixtureTenantSlug(),
+                "username", "receipt-other", "password", PASSWORD), null);
+        assertEquals(200, relogged.statusCode(), relogged.body());
+        other = successData(relogged).path("access_token").asText();
+        assertEquals(403, send(PATH, "POST", revokedCommand, other).statusCode());
+        assertEquals(originalReceipt, successData(send(PATH + "/result?request_id=" + revokedId, "GET", null, other)));
+        assertEquals(1, countRuntime("SELECT count(*) FROM nw_tool_deployments WHERE tenant_id=CAST(? AS bigint) AND deployment_key=?", tenantId, revokedKey));
+        assertEquals(1, countRuntime("SELECT count(*) FROM nw_tool_deployment_create_receipts WHERE tenant_id=CAST(? AS bigint) AND request_id=CAST(? AS uuid) AND outcome='SUCCEEDED'", tenantId, revokedId));
 
         var createOnlyRole = send(prefix + "/role", "POST", Map.of("code", "create_" + SnowflakeIds.nextId(),
                 "name", "仅创建", "data_scope", "all", "permissions",
