@@ -785,6 +785,7 @@
     :identity-version="auth.identityVersion"
     :save-draft="saveForTest"
     @save="saveForTest"
+    @refresh-draft="refreshDraft"
   />
 </template>
 <script setup lang="ts">

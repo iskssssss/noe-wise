@@ -107,7 +107,7 @@ vi.mock('../../components/builder/WorkflowTestPanel.vue', () => ({
   default: {
     name: 'WorkflowTestPanel',
     props: ['modelValue', 'workflowId', 'draftRevision', 'dirty', 'disabled', 'publications'],
-    emits: ['update:modelValue', 'save'],
+    emits: ['update:modelValue', 'save', 'refresh-draft'],
     template: '<section v-if="modelValue" aria-label="工作流测试" />'
   }
 }))
@@ -253,6 +253,40 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 describe('工作流布局保存与恢复', () => {
+  it('测试面板读取最新草稿复用未保存确认，取消保留修改，确认后只读新修订', async () => {
+    wrapper = mount(WorkflowDetailPage, { attachTo: document.body })
+    await flushPromises()
+    const panel = wrapper.findComponent({ name: 'WorkflowTestPanel' })
+    const meta = (wrapper.vm as unknown as { meta: { displayName: string } }).meta
+    meta.displayName = '本地未保存内容'
+    await flushPromises()
+    const reads = mocks.get.mock.calls.length
+    mocks.confirm.mockResolvedValueOnce(false)
+    panel.vm.$emit('refresh-draft')
+    await flushPromises()
+    expect(mocks.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: '重新读取会放弃当前未保存的修改。'
+      })
+    )
+    expect(mocks.get).toHaveBeenCalledTimes(reads)
+    expect(meta.displayName).toBe('本地未保存内容')
+    expect(panel.props('draftRevision')).toBe(1)
+    mocks.get.mockResolvedValueOnce({ ...value, revision: 2 })
+    mocks.snapshotGet.mockResolvedValueOnce({
+      workflowId: 'flow',
+      draftRevision: 2,
+      layout: {},
+      viewport: {}
+    })
+    panel.vm.$emit('refresh-draft')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledTimes(reads + 1)
+    expect(panel.props('draftRevision')).toBe(2)
+    expect(panel.props('dirty')).toBe(false)
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.snapshotSave).not.toHaveBeenCalled()
+  })
   it('查看并收起节点配置及调整视角不产生编辑，也不启用再次发布', async () => {
     mocks.get.mockResolvedValue({ ...value, status: 'published' })
     wrapper = mount(WorkflowDetailPage, { attachTo: document.body })

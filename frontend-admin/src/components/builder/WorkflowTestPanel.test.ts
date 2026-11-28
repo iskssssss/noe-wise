@@ -1211,6 +1211,69 @@ describe('真实Workflow测试面板边界', () => {
     })
     expect(mocks.submit).toHaveBeenCalledOnce()
   })
+  it('读取选项发现源草稿过时后引导读取最新草稿，不重复请求旧修订', async () => {
+    mocks.options.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'workflow_test_source_conflict',
+        userMessage: '当前状态不允许此操作'
+      })
+    )
+    const wrapper = render()
+    await flushPromises()
+    expect(dom().text()).toContain('源草稿已更新，请读取最新草稿后再测试。测试消息与参数会保留。')
+    expect(dom().text()).not.toContain('重新读取测试选项')
+    await button(wrapper, '读取最新草稿').trigger('click')
+    expect(wrapper.emitted('refresh-draft')).toHaveLength(1)
+    expect(mocks.options).toHaveBeenCalledOnce()
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('创建时源草稿过时后保留测试输入，读取新修订不会自动创建或发送', async () => {
+    mocks.create.mockRejectedValueOnce(
+      new HttpClientError({
+        status: 409,
+        code: 'workflow_test_source_conflict',
+        userMessage: '当前状态不允许此操作'
+      })
+    )
+    const wrapper = render()
+    await flushPromises()
+    await dom().get('textarea[aria-label="测试消息"]').setValue('保留此测试任务')
+    await dom().get('input[aria-label="客户名称"]').setValue('保留此参数')
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(
+      sessionStorage.getItem('noewise:workflow-test:' + JSON.stringify(['actor', 'flow']))
+    ).toBeNull()
+    expect(dom().text()).not.toContain('创建并测试')
+    await button(wrapper, '读取最新草稿').trigger('click')
+    expect(wrapper.emitted('refresh-draft')).toHaveLength(1)
+    await wrapper.setProps({ draftRevision: 8 })
+    await flushPromises()
+    expect(mocks.options.mock.calls.at(-1)![1]).toEqual({ kind: 'draft', draftRevision: 8 })
+    expect(dom().get<HTMLTextAreaElement>('textarea[aria-label="测试消息"]').element.value).toBe(
+      '保留此测试任务'
+    )
+    expect(dom().get<HTMLInputElement>('input[aria-label="客户名称"]').element.value).toBe(
+      '保留此参数'
+    )
+    expect(dom().text()).not.toContain('读取最新草稿')
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.submit).not.toHaveBeenCalled()
+    mocks.create.mockResolvedValueOnce(
+      receipt({ source: options({ kind: 'draft', draftRevision: 8 }).source })
+    )
+    await dom().get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.create.mock.calls[1]![0]).toMatchObject({
+      source: { kind: 'draft', draftRevision: 8 },
+      userInput: '保留此测试任务',
+      parameters: { customer: '保留此参数' }
+    })
+    expect(mocks.submit).toHaveBeenCalledOnce()
+  })
   it('保存后测试选项变化时保留消息并要求重新核对', async () => {
     const saveDraft = vi.fn(async () => {
       await wrapper.setProps({ draftRevision: 8, dirty: false })

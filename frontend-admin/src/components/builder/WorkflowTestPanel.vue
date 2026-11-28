@@ -47,7 +47,11 @@ const props = defineProps<{
   saveDraft?: () => Promise<number | undefined>
   publications: Array<{ id: string; label: string }>
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; save: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  save: []
+  'refresh-draft': []
+}>()
 const rangeId = useId()
 const open = computed({
   get: () => props.modelValue,
@@ -58,6 +62,7 @@ const sourceChoice = ref('draft'),
   receipt = ref<WorkflowTestReceipt>()
 const loading = ref(false),
   busy = ref(false),
+  sourceConflict = ref(false),
   error = ref(''),
   readError = ref('')
 const userInput = ref(''),
@@ -334,6 +339,8 @@ function restoreRecovery() {
 function errorText(reason: unknown, fallback: string) {
   if (reason instanceof HttpClientError) {
     reason.claimFeedback()
+    if (reason.code === 'workflow_test_source_conflict')
+      return '源草稿已更新，请读取最新草稿后再测试。测试消息与参数会保留。'
     return reason.message
   }
   return reason instanceof Error &&
@@ -589,6 +596,7 @@ async function readOptions() {
     target = source.value
   controller = new AbortController()
   loading.value = true
+  sourceConflict.value = false
   error.value = ''
   try {
     const value = await api.workflowTests.options(workflow, target, {
@@ -661,6 +669,8 @@ async function readOptions() {
     claim(reason)
     if (!disposed && version === epoch) {
       options.value = undefined
+      sourceConflict.value =
+        reason instanceof HttpClientError && reason.code === 'workflow_test_source_conflict'
       error.value = errorText(reason, '无法读取测试选项，请重试')
     }
   } finally {
@@ -1109,6 +1119,10 @@ async function createAndTest() {
       } catch {
         error.value = '测试创建已明确拒绝，但无法清除本地记录，请恢复浏览器存储后核对。'
         return
+      }
+      if (reason instanceof HttpClientError && reason.code === 'workflow_test_source_conflict') {
+        sourceConflict.value = true
+        options.value = undefined
       }
       if (
         reason instanceof HttpClientError &&
@@ -1579,6 +1593,7 @@ watch(
   () => {
     stopReads()
     loading.value = false
+    sourceConflict.value = false
     const owner = JSON.stringify([props.identityVersion, localStorage.getItem(authSessionKey)])
     const scope = JSON.stringify([owner, props.workflowId])
     if (scope !== recoveryScope) {
@@ -1739,7 +1754,7 @@ onBeforeUnmount(() => {
           <ElFormItem label="测试目标">
             <ElSelect v-model="sourceChoice" :options="sourceOptions" aria-label="测试目标" />
           </ElFormItem>
-          <p v-if="needsSave" class="test-warning" role="status">
+          <p v-if="needsSave && !sourceConflict" class="test-warning" role="status">
             {{
               draftRevision === undefined
                 ? '请先保存工作流草稿，再配置测试。'
@@ -1747,7 +1762,7 @@ onBeforeUnmount(() => {
             }}
           </p>
           <ElButton
-            v-if="needsSave"
+            v-if="needsSave && !sourceConflict"
             v-permission="
               draftRevision === undefined
                 ? ['foundation.workflows.create']
@@ -1757,7 +1772,7 @@ onBeforeUnmount(() => {
             @click="emit('save')"
             >先保存草稿</ElButton
           >
-          <p v-else-if="dirty" class="admin-field-help">
+          <p v-else-if="dirty && source?.kind === 'publication'" class="admin-field-help">
             本次测试所选发布版本，不包含未保存的草稿修改。
           </p>
           <ElAlert
@@ -1770,7 +1785,13 @@ onBeforeUnmount(() => {
             仅测试已保存的确定版本。本阶段不支持脚本、异步任务、并行、子工作流及 Agentic 节点。
           </p>
           <ElSkeleton v-if="loading && !options" :rows="4" animated />
-          <ElButton v-if="!options && source && !loading" @click="loadOptions"
+          <ElButton
+            v-if="sourceConflict"
+            :disabled="disabled || busy || loading"
+            @click="emit('refresh-draft')"
+            >读取最新草稿</ElButton
+          >
+          <ElButton v-else-if="!options && source && !loading" @click="loadOptions"
             >重新读取测试选项</ElButton
           >
           <template v-if="options">
