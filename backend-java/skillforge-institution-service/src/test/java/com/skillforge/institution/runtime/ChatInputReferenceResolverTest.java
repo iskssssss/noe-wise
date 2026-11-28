@@ -183,6 +183,33 @@ class ChatInputReferenceResolverTest {
                 Map.of("status","complete","text","伪造正文"))),List.of()));
     }
 
+    @Test void historicalAttachmentsKeepFrozenReadingsWithoutOldControlsOrAnotherBodyRead() throws Exception {
+        for (var readings : List.of(List.of(new SessionAttachmentService.TextReading("attachment-1", "complete", false,
+                "订单 A：12.50；订单 B：6.50", null)), List.of(new SessionAttachmentService.TextReading("attachment-1",
+                "not_read", false, null, "file_byte_limit")))) {
+            var metadata = new SessionAttachmentService.FrozenMetadata("attachment-1", "订单.csv",
+                    "attachments/attachment-1/input.csv", 104, "frozen-sha", "2026-12-01T00:00:00Z");
+            var extra = Map.of("attachment_ids", List.of(metadata.id()), "attachments", List.of(metadata),
+                    "attachment_readings", readings, "input_id", "old-input", "delegation_requester_id", "old-requester");
+            var original = new TypedPayload("input.v1", json.writeValueAsString(Map.of("extraParameters", extra)));
+            var restored = json.readTree(resolver.historyAttachments(session, original));
+            assertEquals(json.valueToTree(readings), restored.path("attachment_readings"));
+            assertEquals(List.of(metadata), json.convertValue(restored.path("attachments"), new com.fasterxml.jackson.core.type.TypeReference<List<SessionAttachmentService.FrozenMetadata>>() {}));
+            assertEquals(json.valueToTree(List.of(metadata.id())), restored.path("attachment_ids"));
+            assertEquals(3, restored.size());
+        }
+        verify(attachments, times(2)).inputContext("1", "session-1", Map.of("attachment_ids", List.of("attachment-1")));
+        verifyNoMoreInteractions(attachments);
+    }
+
+    @Test void historicalTextObjectiveDoesNotInventReadingsAndCurrentDenialIsPreserved() throws Exception {
+        var original = new TypedPayload("input.v1", "{\"extraParameters\":{\"attachment_ids\":[\"attachment-1\"]}}");
+        assertFalse(json.readTree(resolver.historyAttachments(session, original)).has("attachment_readings"));
+        var denied = new ApiException(org.springframework.http.HttpStatus.FORBIDDEN, "当前附件已不可用");
+        when(attachments.inputContext(eq("1"), eq("session-1"), any())).thenThrow(denied);
+        assertSame(denied, assertThrows(ApiException.class, () -> resolver.historyAttachments(session, original)));
+    }
+
     @Test void artifactSelectorsUseCurrentSessionAuthorizationAndImmutableProvenance() throws Exception {
         String artifactId="8c3a68f0-51d9-4c57-a63b-10ea83b3d8dd";
         String sha256="a".repeat(64);

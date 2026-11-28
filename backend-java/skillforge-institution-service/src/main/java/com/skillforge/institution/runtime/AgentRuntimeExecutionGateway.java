@@ -962,8 +962,27 @@ public final class AgentRuntimeExecutionGateway implements ChatRuntimeGateway, A
         return ordered;
     }
 
-    /** 历史图片从原选择器重新核验当前会话媒体归属，不把UI元数据直接当成可信MediaRef。 */
+    /** 私有附件正文取原输入；公开历史只定位来源，不承担正文存储或授予访问权。 */
     private List<ModelContent> historyContent(SessionView session, ChatMessageRecord message) {
+        var result = new ArrayList<>(historyContentParts(session, message));
+        if ("user".equals(message.role()) && message.metadata() != null
+                && message.metadata().get("attachment_ids") instanceof List<?> ids && !ids.isEmpty()) {
+            var owner = com.skillforge.institution.team.TeamWorkService.owner(session);
+            if (!(message.metadata().get("run_id") instanceof String runId)
+                    || !(message.metadata().get("input_id") instanceof String inputId))
+                throw new IllegalStateException("execution_history_attachment_source_missing");
+            var run = store.load(new RunRef(owner.sessionRef().tenantId(), runId)).orElseThrow();
+            if (!run.identity().owner().equals(owner) || !run.identity().causationInputId().value().equals(inputId))
+                throw new SecurityException("execution_history_attachment_owner_mismatch");
+            var original = store.originalInput(run.identity().runRef()).orElseThrow();
+            result.add(new ModelContent.Text("\n历史附件上下文：\n"
+                    + references.historyAttachments(session, codec.frozenInput(original.content()))));
+        }
+        return List.copyOf(result);
+    }
+
+    /** 历史图片从原选择器重新核验当前会话媒体归属，不把UI元数据直接当成可信MediaRef。 */
+    private List<ModelContent> historyContentParts(SessionView session, ChatMessageRecord message) {
         if (message.metadata() == null || !message.metadata().containsKey("content_parts"))
             return List.of(new ModelContent.Text(message.content() == null ? "" : message.content()));
         final List<ChatContent> content;

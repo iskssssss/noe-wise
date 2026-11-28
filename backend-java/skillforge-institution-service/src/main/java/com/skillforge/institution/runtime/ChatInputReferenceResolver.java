@@ -148,6 +148,24 @@ public final class ChatInputReferenceResolver {
         }catch(java.io.IOException error){throw new IllegalStateException(SNAPSHOT_ERROR,error);}
     }
 
+    /** 历史只恢复原附件材料；当前权限与有效期照常复验，不再读正文或继承旧控制上下文。 */
+    public String historyAttachments(SessionView session, TypedPayload original) {
+        try {
+            var frozen = json.treeToValue(json.readTree(original.canonicalJson()).path("extraParameters"), AttachmentHistory.class);
+            attachments.inputContext(session.getTenantId().toString(), session.getSessionId(),
+                    Map.of("attachment_ids", frozen.ids()));
+            return json.writeValueAsString(frozen);
+        } catch (java.io.IOException invalid) {
+            throw new IllegalStateException(SNAPSHOT_ERROR, invalid);
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record AttachmentHistory(@JsonProperty("attachment_ids") List<String> ids,
+            @JsonProperty("attachments") List<SessionAttachmentService.FrozenMetadata> attachments,
+            @JsonProperty("attachment_readings") List<SessionAttachmentService.TextReading> readings) { }
+
     private FrozenMaterial material(SessionView session,ChatInputReference reference)throws Exception {
         String tenant=session.getTenantId().toString();String productSession=session.getSessionId();
         if(reference instanceof ChatInputReference.ArtifactFiles files) {

@@ -23,6 +23,47 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class AgentRuntimeExecutionGatewayHistoryTest {
+    @Test void attachmentHistoryRestoresPrivateInputAfterOrderedTextAndImages() {
+        var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
+        var run = new RunRef(new TenantId("1"), "run:original");
+        var frozen = new TypedPayload("input.v1", "{\"extraParameters\":{\"attachment_ids\":[\"file-1\"]}}");
+        when(f.store.originalInput(run)).thenReturn(Optional.of(new ExecutionStore.Material(new ResultRef("original-material"),
+                f.codec.encodeInput(List.of(new ModelPort.ModelMessage("input:original", ModelPort.ModelRole.USER, "")), frozen))));
+        when(f.references.historyAttachments(f.session, frozen)).thenReturn("原附件完整正文");
+        var media = (com.skillforge.institution.media.SessionMediaService) ReflectionTestUtils.getField(f.gateway, "media");
+        var image = new com.skillforge.institution.media.SessionMediaService.ImageContent("image", "HIGH",
+                new com.skillforge.institution.media.SessionMediaService.MediaValue(
+                        new com.skillforge.institution.media.SessionMediaService.MediaOwner("1", "session"),
+                        "b07853ea-a384-4eb6-a62f-a7aef8a84d00", "a".repeat(64), "image/png", 12, 2, 2));
+        when(media.resolveContent(eq("session"), anyList())).thenReturn(List.of(
+                new com.skillforge.institution.media.SessionMediaService.TextContent("text", "原文字"), image));
+        var parts = List.of(Map.of("type", "text", "text", "原文字"), Map.of("type", "image", "media_id", "b07853ea-a384-4eb6-a62f-a7aef8a84d00"));
+        for (boolean mixed : List.of(false, true)) {
+            var metadata = new HashMap<String, Object>(Map.of("run_id", run.runId(), "input_id", "original",
+                    "attachment_ids", List.of("file-1"), "attachment_readings", List.of(Map.of("text", "公开伪造正文"))));
+            if (mixed) metadata.put("content_parts", parts);
+            var message = new ChatMessageRecord("message", "user", "", Instant.EPOCH, metadata);
+            List<com.skillforge.runtime.api.media.ModelContent> content = ReflectionTestUtils.invokeMethod(f.gateway, "historyContent", f.session, message);
+            assertEquals(mixed ? 3 : 2, content.size());
+            assertEquals(mixed ? "原文字" : "", ((com.skillforge.runtime.api.media.ModelContent.Text) content.getFirst()).text());
+            if (mixed) assertInstanceOf(com.skillforge.runtime.api.media.ModelContent.Image.class, content.get(1));
+            assertEquals("\n历史附件上下文：\n原附件完整正文", ((com.skillforge.runtime.api.media.ModelContent.Text) content.getLast()).text());
+        }
+    }
+
+    @Test void attachmentHistoryRejectsDifferentOwnerOrInputBeforeReadingPrivateMaterial() {
+        for (boolean changedOwner : List.of(false, true)) {
+            var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
+            var session = changedOwner ? com.skillforge.core.chat.session.SessionView.builder()
+                    .tenantId(1L).sessionId("session").agentId(8L).endUserId(9L).build() : f.session;
+            var message = new ChatMessageRecord("message", "user", "", Instant.EPOCH,
+                    Map.of("run_id", "run:original", "input_id", changedOwner ? "original" : "different-input", "attachment_ids", List.of("file-1")));
+            assertThrows(SecurityException.class, () -> ReflectionTestUtils.invokeMethod(f.gateway, "historyContent", session, message));
+            verify(f.store, never()).originalInput(any());
+            verifyNoInteractions(f.references);
+        }
+    }
+
     @Test void openPlatformHistoryReturnsAuthorizedSessionClosedFactWithoutAnotherSessionLookup() {
         for (boolean closed : List.of(false, true)) {
             var f = new AgentRuntimeExecutionGatewayGoalTest.Fixture(false);
@@ -154,8 +195,15 @@ class AgentRuntimeExecutionGatewayHistoryTest {
             var catalog = (AgentRuntimeExecutionCatalog) ReflectionTestUtils.getField(f.gateway, "catalog");
             var material = new ExecutionStore.Material(new ResultRef("catalog"), new TypedPayload("catalog.v1", "{}"));
             when(catalog.freeze(any(), any(), any(), any())).thenReturn(material);
+            var goalTools = List.of("get_goal", "update_goal").stream().map(name -> {
+                var entry = mock(com.skillforge.runtime.session.spi.SessionToolDirectory.Entry.class, RETURNS_DEEP_STUBS);
+                when(entry.binding()).thenReturn(new ToolPortal.ToolBinding(ToolPortal.ToolBinding.ProviderType.PLATFORM, name, name));
+                when(entry.target().modelInvocable()).thenReturn(true);
+                when(entry.target().handle().value()).thenReturn(name);
+                return entry;
+            }).toList();
             when(catalog.read(eq(material), any())).thenAnswer(call -> new AgentRuntimeExecutionCatalog.FrozenCatalog(
-                    call.getArgument(1), List.of(), Map.of(), List.of(), List.of(), Set.of(), List.of(),
+                    call.getArgument(1), goalTools, Map.of("get_goal", "get_goal", "update_goal", "update_goal"), List.of(), List.of(), Set.of(), List.of(),
                     PlanPort.State.absent(), com.skillforge.runtime.session.SessionCollaboration.Selection.inactive(), Optional.empty()));
             var provisioner = (AgentRuntimeHostProvisioner) ReflectionTestUtils.getField(f.gateway, "provisioner");
             var budget = mock(ExecutionBudgetPort.Registration.class);
