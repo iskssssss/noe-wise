@@ -25,12 +25,15 @@ const props = defineProps<{
   locked: boolean
   now: number
   live: boolean
+  lastRecorded: boolean
   targetName?: string
 }>()
 const emit = defineEmits<{ reference: [value: Reference] }>()
 const detailsOpen = ref(false)
 const detailId = `process-detail-${useId()}`
-const elapsed = computed(() => processElapsed(props.item, props.now, props.live))
+const elapsed = computed(() =>
+  processElapsed(props.item, props.now, props.live && !props.lastRecorded)
+)
 const icons = {
   commentary: MessageSquare,
   reasoning: Sparkles,
@@ -91,7 +94,11 @@ function reference() {
     :data-process-state="item.status"
   >
     <div class="step-heading">
-      <span v-if="item.status === 'running' && live" class="activity-spinner" aria-hidden="true" />
+      <span
+        v-if="item.status === 'running' && live && !lastRecorded"
+        class="activity-spinner"
+        aria-hidden="true"
+      />
       <CircleAlert
         v-else-if="['failed', 'outcome_unknown'].includes(item.status)"
         class="step-symbol"
@@ -108,9 +115,9 @@ function reference() {
       <div class="step-heading-content">
         <div class="step-title">
           <strong>{{ item.presentation.title }}</strong>
-          <span class="step-state" v-if="item.type !== 'commentary'">{{
-            statuses[item.status] || item.status
-          }}</span>
+          <span class="step-state" v-if="item.type !== 'commentary'"
+            >{{ lastRecorded ? '最后记录：' : '' }}{{ statuses[item.status] || item.status }}</span
+          >
           <span
             v-if="item.actor_name && item.actor_name !== '助手' && item.actor_name !== targetName"
             class="step-actor"

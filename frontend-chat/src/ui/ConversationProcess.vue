@@ -9,6 +9,7 @@ import {
   needsAttention,
   operationCount,
   processElapsed,
+  processHasLastRecordedState,
   processIsLive,
   processProgress,
   processStages,
@@ -142,6 +143,7 @@ watch(
     (props.continuation ? props.turn.processes : overview.value.processes).some(
       (process) =>
         ['running', 'waiting'].includes(process.status) &&
+        !processHasLastRecordedState(process, props.runStates) &&
         !process.finished_at &&
         processElapsed(process, Date.now())
     ),
@@ -210,7 +212,9 @@ function stageSummary(group: ProcessStageGroup) {
 }
 /** 仅汇总明确步骤状态，未识别状态不能推断为成功。 */
 function stageState(group: ProcessStageGroup) {
-  const states = group.processes.map((process) => process.status)
+  const states = group.processes
+    .filter((process) => !processHasLastRecordedState(process, props.runStates))
+    .map((process) => process.status)
   if (states.includes('outcome_unknown')) return '结果待核实'
   if (states.includes('failed')) return '有步骤失败'
   if (states.some((state) => ['waiting_hitl', 'waiting_input'].includes(state)))
@@ -225,6 +229,7 @@ function stageState(group: ProcessStageGroup) {
   if (states.includes('running')) return '进行中'
   if (states.includes('cancelled')) return '有步骤已停止'
   if (states.includes('queued')) return '排队中'
+  if (states.length < group.processes.length) return '有步骤仅有最后记录'
   return states.every((state) => ['succeeded', 'completed'].includes(state))
     ? '已完成'
     : '状态待同步'
@@ -289,6 +294,12 @@ function stageState(group: ProcessStageGroup) {
       </div>
     </div>
     <div :id="`${id}-content`" :hidden="!expanded" class="process-content">
+      <p
+        v-if="turn.processes.some((process) => processHasLastRecordedState(process, runStates))"
+        class="process-connection-notice"
+      >
+        标注“最后记录”的步骤所属运行已结束，但步骤没有最终结果记录，不能据此判断外部操作是否已停止或成功。
+      </p>
       <template v-if="expanded">
         <ol v-if="groups.length" class="process-stages">
           <li
@@ -327,6 +338,7 @@ function stageState(group: ProcessStageGroup) {
                   :locked="locked"
                   :now="now"
                   :live="live"
+                  :last-recorded="processHasLastRecordedState(item, runStates)"
                   :target-name="targetName"
                   @reference="emit('reference', $event)"
                 />

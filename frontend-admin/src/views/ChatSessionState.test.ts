@@ -1116,6 +1116,44 @@ describe('结果未知后的原运行核对', () => {
   const stop = () => wrapper.findAll('button').find((button) => button.text() === '停止运行')!
   const inspect = () =>
     wrapper.findAll('button').find((button) => button.text() === '核对运行结果')!
+  it.each(['cancelled', 'failed', 'completed', 'terminated', 'running', 'outcome_unknown'])(
+    '公开过程根据自身运行%s区分最后记录，父状态不覆盖子过程或已知结果',
+    async (status) => {
+      mocks.history.mockResolvedValueOnce({
+        ...snapshot([
+          {
+            ...process('run:A', 7, 'running'),
+            presentation: { title: '在途模型', summary: '已登记' }
+          },
+          { ...process('child', 8, 'waiting'), root_run_id: 'run:A' },
+          { ...process('finished', 9, 'succeeded'), run_id: 'run:A', root_run_id: 'run:A' }
+        ]),
+        activities: [
+          { node_id: 'child', node_type: 'agent_runtime', status: 'running' },
+          { node_id: 'run:A', node_type: 'agent_runtime', status }
+        ]
+      })
+      await setup()
+      const selector = wrapper
+        .findAllComponents(ElSelect)
+        .find((field) => field.props('placeholder') === '选择运行')!
+      selector.vm.$emit('update:modelValue', 'run:A')
+      await wrapper
+        .findAll('[role="tab"]')
+        .find((tab) => tab.text() === '运行过程')!
+        .trigger('click')
+      await flushPromises()
+      const rows = wrapper.findAll('.el-table__body tr')
+      const own = rows.find((row) => row.text().includes('在途模型'))!
+      const ended = ['cancelled', 'failed', 'completed', 'terminated'].includes(status)
+      expect(own.text().includes('最后记录：运行中')).toBe(ended)
+      expect(rows.some((row) => row.text().includes('最后记录：等待中'))).toBe(false)
+      expect(rows.some((row) => row.text().includes('最后记录：已完成'))).toBe(false)
+      expect(wrapper.text().includes('不能据此判断外部操作是否已停止或成功')).toBe(ended)
+      expect(mocks.submit).not.toHaveBeenCalled()
+      expect(mocks.cancelRun).not.toHaveBeenCalled()
+    }
+  )
   it.each(['outcome_unknown', 'running', 'suspended'])(
     '历史结果未知时查询原Run，按权威%s决定运行展示',
     async (status) => {

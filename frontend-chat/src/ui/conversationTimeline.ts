@@ -237,6 +237,25 @@ export function processProgress(
   return { label: '执行记录', tone: 'muted', active: undefined }
 }
 
+/** 所属运行结束只限定记录的时效，不推断步骤结果或借用父运行状态。 */
+export function processHasLastRecordedState(
+  process: Process,
+  runStates: Record<string, string>
+): boolean {
+  return (
+    [
+      'running',
+      'queued',
+      'waiting',
+      'waiting_hitl',
+      'waiting_input',
+      'suspended',
+      'cancelling'
+    ].includes(process.status) &&
+    ['completed', 'failed', 'cancelled', 'terminated'].includes(runStates[process.run_id] ?? '')
+  )
+}
+
 /** 只解析有明确时区的公开绝对时刻，缺失或反向时间不显示虚构耗时。 */
 export function processElapsed(process: Process | undefined, now: number, live = true): string {
   const parse = (value?: string) =>

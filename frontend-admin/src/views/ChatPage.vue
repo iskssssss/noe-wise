@@ -533,6 +533,12 @@
           <ChatRunBudgetView v-if="budget" :budget="budget" />
         </details>
         <h3>公开运行过程</h3>
+        <p
+          v-if="selectedRunProcesses.some((process) => process.lastRecorded)"
+          class="admin-field-help"
+        >
+          标注“最后记录”的步骤所属运行已结束，但步骤没有最终结果记录，不能据此判断外部操作是否已停止或成功。
+        </p>
         <ElTable
           table-layout="auto"
           :data="selectedRunProcesses"
@@ -550,13 +556,16 @@
             show-overflow-tooltip
             prop="presentation.title"
             label="步骤" /><ElTableColumn
-            width="128"
+            min-width="180"
             show-overflow-tooltip
             prop="status"
             label="状态"
-            ><template #default="{ row }">{{
-              chatProcessZhCN.processStatus[row.status as ChatProcessItem['status']] ?? row.status
-            }}</template></ElTableColumn
+            ><template #default="{ row }"
+              >{{ row.lastRecorded ? '最后记录：' : ''
+              }}{{
+                chatProcessZhCN.processStatus[row.status as ChatProcessItem['status']] ?? row.status
+              }}</template
+            ></ElTableColumn
           ><ElTableColumn
             min-width="280"
             show-overflow-tooltip
@@ -1221,9 +1230,23 @@ const budgetRuns = computed(() => {
   return Array.from(runs, ([value, label]) => ({ value, label }))
 })
 const selectedRunProcesses = computed(() =>
-  processes.value.filter(
-    (process) => process.run_id === budgetRunId.value || process.root_run_id === budgetRunId.value
-  )
+  processes.value
+    .filter(
+      (process) => process.run_id === budgetRunId.value || process.root_run_id === budgetRunId.value
+    )
+    .map((process) => {
+      const status =
+        runOutcomeChecks.value[process.run_id]?.status ??
+        history.value?.activities?.find(
+          (item) => item.node_type === 'agent_runtime' && item.node_id === process.run_id
+        )?.status
+      return {
+        ...process,
+        lastRecorded:
+          ['running', 'waiting'].includes(process.status) &&
+          ['completed', 'failed', 'cancelled', 'terminated'].includes(status ?? '')
+      }
+    })
 )
 const budgetStopReason = computed(() => {
   const reason = history.value?.activities?.find((item) => item.node_id === budgetRunId.value)

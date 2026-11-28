@@ -41,6 +41,53 @@ function render(processes: Process[]) {
 }
 
 describe('执行阶段交互', () => {
+  it.each(['cancelled', 'failed', 'completed', 'terminated'])(
+    '所属运行%s后标明步骤仅有最后记录，保留原状态与引用身份',
+    async (status) => {
+      const item = step('在途工具', 'running')
+      const wrapper = render([item])
+      await wrapper.setProps({ runStates: { r: status } })
+      expect(wrapper.get('.stage-toggle').text()).toContain('有步骤仅有最后记录')
+      const row = wrapper.get('[data-process-id="在途工具"]')
+      expect(row.get('.step-state').text()).toBe('最后记录：进行中')
+      expect(row.attributes('data-process-state')).toBe('running')
+      expect(row.find('.activity-spinner').exists()).toBe(false)
+      expect(row.find('.step-elapsed').exists()).toBe(false)
+      expect(wrapper.text()).toContain('不能据此判断外部操作是否已停止或成功')
+      await row.get('.process-reference').trigger('click')
+      expect(wrapper.emitted('reference')?.[0]?.[0]).toMatchObject({
+        source: { process_id: item.process_id, updated_sequence: item.updated_sequence }
+      })
+      expect(item.status).toBe('running')
+    }
+  )
+  it('父运行结束不改写子步骤，已知结果保留；子运行结束后才标记其最后记录', async () => {
+    const wrapper = render([
+      step('已完成工具'),
+      step('失败工具', 'failed'),
+      step('待核实工具', 'outcome_unknown'),
+      { ...step('子任务等待', 'waiting'), run_id: 'child' }
+    ])
+    await wrapper.setProps({ runStates: { r: 'cancelled', child: 'running' } })
+    expect(wrapper.text()).not.toContain('最后记录')
+    expect(wrapper.get('[data-process-id="子任务等待"] .step-state').text()).toBe('等待结果')
+    expect(wrapper.get('[data-process-id="已完成工具"] .step-state').text()).toBe('已完成')
+    expect(wrapper.get('[data-process-id="失败工具"] .step-state').text()).toBe('失败')
+    expect(wrapper.get('[data-process-id="待核实工具"] .step-state').text()).toBe('待核实')
+    await wrapper.setProps({ runStates: { r: 'running', child: 'cancelled' } })
+    expect(wrapper.get('[data-process-id="子任务等待"] .step-state').text()).toBe(
+      '最后记录：等待结果'
+    )
+  })
+  it.each(['running', 'waiting_hitl', 'suspended', 'outcome_unknown', undefined])(
+    '运行%s不构成已结束依据',
+    async (status) => {
+      const wrapper = render([step('在途工具', 'running')])
+      await wrapper.setProps({ runStates: status ? { r: status } : {} })
+      expect(wrapper.text()).not.toContain('最后记录')
+      expect(wrapper.get('.step-state').text()).toBe('进行中')
+    }
+  )
   it('普通等待保持中性，不作为需要用户处理的警告', () => {
     const wrapper = render([step('等待成员结果', 'waiting')])
     expect(wrapper.get('.process-progress-label').text()).toBe('等待执行结果')
