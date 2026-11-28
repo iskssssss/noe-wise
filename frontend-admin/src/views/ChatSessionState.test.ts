@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   close: vi.fn(),
   cancelRun: vi.fn(),
+  runStatus: vi.fn(),
   sessions: vi.fn(),
   history: vi.fn(),
   observe: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('../api', () => ({
       sessionDetail: mocks.detail,
       closeSession: mocks.close,
       cancelRun: mocks.cancelRun,
+      runStatus: mocks.runStatus,
       history: mocks.history,
       observeSession: mocks.observe,
       submit: mocks.submit,
@@ -90,6 +92,7 @@ beforeEach(() => {
     closed: false
   }))
   mocks.close.mockResolvedValue({ session_id: 'A', status: 'closed' })
+  mocks.runStatus.mockResolvedValue({ status: 'outcome_unknown' })
   mocks.history.mockImplementation(async (id: string) => history(id))
   mocks.observe.mockResolvedValue(undefined)
   mocks.confirm.mockResolvedValue(true)
@@ -1084,6 +1087,140 @@ describe('历史会话绑定与关闭', () => {
     expect(mocks.close).toHaveBeenCalledTimes(1)
     expect(mocks.submit).not.toHaveBeenCalled()
   })
+})
+
+describe('结果未知后的原运行核对', () => {
+  const process = (run = 'run:A', sequence = 7, status = 'outcome_unknown') => ({
+    process_id: `model:${run}`,
+    run_id: run,
+    root_run_id: run,
+    input_id: 'input',
+    root_input_id: 'input',
+    type: 'reasoning',
+    status,
+    sequence: 2,
+    ordinal: 0,
+    updated_sequence: sequence,
+    presentation: { title: '模型调用', summary: '模型结果未知', results: [], references: [] }
+  })
+  const snapshot = (items = [process()]) => ({
+    ...history('A'),
+    processes: items,
+    activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'running' }]
+  })
+  const observer = () =>
+    mocks.observe.mock.calls[0]![1] as {
+      onHistory: (session: string, value: ReturnType<typeof snapshot>) => void
+      onEvent: (event: { event: string; data: Record<string, unknown> }) => void
+    }
+  const stop = () => wrapper.findAll('button').find((button) => button.text() === '停止运行')!
+  const inspect = () =>
+    wrapper.findAll('button').find((button) => button.text() === '核对运行结果')!
+  it.each(['outcome_unknown', 'running', 'suspended'])(
+    '历史结果未知时查询原Run，按权威%s决定运行展示',
+    async (status) => {
+      mocks.history.mockResolvedValueOnce(snapshot())
+      mocks.runStatus.mockResolvedValue({ status })
+      await setup()
+      expect(mocks.runStatus).toHaveBeenCalledExactlyOnceWith('A', 'run:A')
+      expect(wrapper.text().includes('此次运行结果待核实')).toBe(status === 'outcome_unknown')
+      expect(stop().attributes('disabled') !== undefined).toBe(status === 'outcome_unknown')
+      const runSelector = wrapper
+        .findAllComponents(ElSelect)
+        .find((field) => field.props('placeholder') === '选择运行')!
+      expect(runSelector.text()).toContain(
+        status === 'outcome_unknown' ? '结果待核实' : status === 'suspended' ? '已挂起' : '运行中'
+      )
+      expect(mocks.submit).not.toHaveBeenCalled()
+      expect(mocks.cancelRun).not.toHaveBeenCalled()
+      observer().onHistory('A', {
+        ...snapshot(),
+        activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'completed' }]
+      })
+      await flushPromises()
+      expect(stop().attributes('disabled')).toBeDefined()
+      expect(wrapper.text()).not.toContain('此次运行结果待核实')
+    }
+  )
+  it('在线未知事件和重复历史只核对一次，显式核对只读且不覆盖草稿', async () => {
+    mocks.history.mockResolvedValue(snapshot([]))
+    const { input } = await setup()
+    mocks.history.mockResolvedValue(snapshot())
+    observer().onEvent({ event: 'process.finished', data: process() })
+    await flushPromises()
+    observer().onHistory('A', snapshot())
+    await flushPromises()
+    expect(mocks.runStatus).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('此次运行结果待核实')
+    await inspect().trigger('click')
+    await flushPromises()
+    expect(mocks.runStatus.mock.calls).toEqual([
+      ['A', 'run:A'],
+      ['A', 'run:A']
+    ])
+    expect(input.props('modelValue')).toBe('未发送草稿')
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('查询失败保留核对入口，手动恢复后只采用确定状态', async () => {
+    mocks.history.mockResolvedValueOnce(snapshot())
+    mocks.runStatus.mockRejectedValueOnce(new Error('状态读取失败'))
+    await setup()
+    expect(wrapper.text()).toContain('原运行状态尚未核实')
+    expect(stop().attributes('disabled')).toBeUndefined()
+    mocks.runStatus.mockResolvedValue({ status: 'outcome_unknown' })
+    await inspect().trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('此次运行结果待核实')
+    expect(stop().attributes('disabled')).toBeDefined()
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('一个未知Run不停止另一个活跃Run，子过程不决定根状态', async () => {
+    mocks.history.mockResolvedValueOnce({
+      ...snapshot([process(), { ...process('child'), root_run_id: 'run:B' }]),
+      activities: [
+        { node_id: 'run:A', node_type: 'agent_runtime', status: 'running' },
+        { node_id: 'run:B', node_type: 'agent_runtime', status: 'running' }
+      ]
+    })
+    await setup()
+    expect(mocks.runStatus).toHaveBeenCalledExactlyOnceWith('A', 'run:A')
+    expect(stop().attributes('disabled')).toBeUndefined()
+    await stop().trigger('click')
+    expect(mocks.cancelRun).toHaveBeenCalledWith('A', 'run:B')
+  })
+  it.each(['session', 'completed', 'newer-process'])(
+    '迟到查询不能覆盖%s后的状态',
+    async (change) => {
+      mocks.history.mockResolvedValueOnce(snapshot())
+      let finish!: (value: { status: string }) => void
+      mocks.runStatus.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      const { sessions } = await setup()
+      if (change === 'session') {
+        sessions.vm.$emit('change', 'B')
+        await flushPromises()
+      } else if (change === 'completed') {
+        mocks.history.mockResolvedValue({
+          ...snapshot(),
+          activities: [{ node_id: 'run:A', node_type: 'agent_runtime', status: 'completed' }]
+        })
+        observer().onEvent({
+          event: 'execution.completed',
+          data: { run_id: 'run:A', status: 'completed' }
+        })
+      } else observer().onEvent({ event: 'process.started', data: process('run:A', 8, 'running') })
+      await flushPromises()
+      finish({ status: 'outcome_unknown' })
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('此次运行结果待核实')
+      expect(wrapper.text()).not.toContain('原运行状态尚未核实')
+      expect(mocks.submit).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('已加载历史分页与最新消息合并', () => {

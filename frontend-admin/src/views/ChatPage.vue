@@ -361,6 +361,22 @@
             >停止此等待任务</ElButton
           >
         </ElCard>
+        <div
+          v-for="check in pendingRunChecks"
+          :key="check.process.run_id"
+          class="admin-card"
+          role="status"
+        >
+          <p v-if="check.busy">正在核对原运行状态，请稍候。</p>
+          <p v-else-if="check.status === 'outcome_unknown'">
+            此次运行结果待核实。请核对原运行，避免重复发送相同任务。
+          </p>
+          <p v-else>原运行状态尚未核实，请重新核对。调用结果未知不代表整个运行已经结束。</p>
+          <ElButton :disabled="check.busy" @click="checkRunOutcome(check.process)"
+            >核对运行结果</ElButton
+          >
+          <ElButton @click="activePanel = '1'">查看运行过程</ElButton>
+        </div>
         <div ref="messageViewport" class="debug-messages" @scroll="trackMessageScroll">
           <ElButton v-if="history?.has_more" :disabled="busy" @click="older">加载较早消息</ElButton
           ><ElCard v-for="message in messages" :key="message.message_id" class="debug-message"
@@ -1178,6 +1194,9 @@ watch(
   },
   { flush: 'sync' }
 )
+const runOutcomeChecks = ref<
+  Record<string, { process: ChatProcessItem; status?: string; busy: boolean }>
+>({})
 const budget = ref<RunBudget>(),
   budgetRunId = ref(''),
   budgetLoading = ref(false),
@@ -1192,9 +1211,10 @@ const budgetRuns = computed(() => {
   }
   for (const activity of history.value?.activities ?? [])
     if (activity.node_type === 'agent_runtime' && typeof activity.node_id === 'string') {
+      const status = runOutcomeChecks.value[activity.node_id]?.status ?? activity.status
       runs.set(
         activity.node_id,
-        `${formatDateTime(activity.started_at)} · ${waitingStatuses[activity.status ?? ''] ?? statusLabel(activity.status?.toUpperCase())}`
+        `${formatDateTime(activity.started_at)} · ${waitingStatuses[status ?? ''] ?? statusLabel(status?.toUpperCase())}`
       )
     }
   if (runId.value && !runs.has(runId.value)) runs.set(runId.value, `${runId.value} · 当前运行`)
@@ -1444,7 +1464,10 @@ function applyHistory(value: ChatHistoryResponse) {
     pendingSelection.value = pendingItems.value[0]?.execution_id ?? ''
   processes.value = value.processes ?? []
   collaboration.value = value.collaboration
-  const running = (value.activities ?? []).filter(
+  updateCurrentRun()
+}
+function updateCurrentRun() {
+  const running = (history.value?.activities ?? []).filter(
     (item) =>
       item.node_type === 'agent_runtime' &&
       item.status &&
@@ -1455,7 +1478,7 @@ function applyHistory(value: ChatHistoryResponse) {
         'outcome_unknown',
         'terminated',
         'waiting_hitl'
-      ].includes(item.status)
+      ].includes(runOutcomeChecks.value[item.node_id]?.status ?? item.status)
   )
   runId.value =
     running.find((item) => item.node_id === runId.value)?.node_id ?? running[0]?.node_id ?? ''
@@ -1502,6 +1525,76 @@ function observe() {
     })
 }
 const workUpdate = ref({ workId: '', sequence: 0 })
+const uncertainProcesses = computed(() => {
+  const roots = new Map<string, ChatProcessItem>()
+  for (const process of processes.value) {
+    if (process.status !== 'outcome_unknown' || process.run_id !== process.root_run_id) continue
+    const activity = history.value?.activities?.find((item) => item.node_id === process.run_id)
+    if (activity && ['completed', 'failed', 'cancelled', 'terminated'].includes(activity.status))
+      continue
+    const previous = roots.get(process.run_id)
+    if (!previous || process.updated_sequence > previous.updated_sequence)
+      roots.set(process.run_id, process)
+  }
+  return [...roots.values()]
+})
+const pendingRunChecks = computed(() =>
+  Object.values(runOutcomeChecks.value).filter(
+    (check) => !check.status || check.status === 'outcome_unknown'
+  )
+)
+watch(
+  [
+    sessionId,
+    () =>
+      uncertainProcesses.value
+        .map((process) => `${process.run_id}:${process.updated_sequence}`)
+        .join('|')
+  ],
+  () => {
+    for (const id of Object.keys(runOutcomeChecks.value))
+      if (!uncertainProcesses.value.some((process) => process.run_id === id))
+        delete runOutcomeChecks.value[id]
+    updateCurrentRun()
+    for (const process of uncertainProcesses.value) {
+      if (
+        runOutcomeChecks.value[process.run_id]?.process.updated_sequence ===
+        process.updated_sequence
+      )
+        continue
+      runOutcomeChecks.value[process.run_id] = { process, busy: false }
+      void checkRunOutcome(process)
+    }
+  }
+)
+async function checkRunOutcome(process: ChatProcessItem) {
+  const check = runOutcomeChecks.value[process.run_id],
+    id = sessionId.value,
+    identity = auth.identityVersion
+  if (!check || check.busy) return
+  const current = () =>
+    !pageDisposed &&
+    sessionId.value === id &&
+    auth.identityVersion === identity &&
+    runOutcomeChecks.value[process.run_id] === check &&
+    uncertainProcesses.value.some(
+      (item) =>
+        item.process_id === process.process_id && item.updated_sequence === process.updated_sequence
+    )
+  check.busy = true
+  try {
+    const value = await api.chat.runStatus(id, process.run_id)
+    if (!current()) return
+    check.status = value.status
+    readError.value = ''
+    updateCurrentRun()
+  } catch (e) {
+    if (e instanceof HttpClientError) e.claimFeedback()
+    if (current()) readError.value = e instanceof Error ? e.message : '读取运行状态失败'
+  } finally {
+    if (current()) check.busy = false
+  }
+}
 function onEvent(event: StreamEvent) {
   const data = event.data
   if (event.event === 'message.delta') {
@@ -1803,6 +1896,7 @@ async function confirmSessionSwitch() {
   )
 }
 function clearSessionView() {
+  runOutcomeChecks.value = {}
   followingMessages.value = true
   citationSelection.value = undefined
   controller?.abort()
