@@ -14,6 +14,7 @@ import com.skillforge.runtime.api.*;
 import com.skillforge.runtime.api.port.*;
 import com.skillforge.runtime.api.port.ModelPort.*;
 import com.skillforge.runtime.json.CodecLimits;
+import com.skillforge.runtime.json.RuntimeJson;
 import com.skillforge.runtime.core.FrozenModelRequest;
 import com.skillforge.runtime.session.AgentExecutionCodec;
 import com.skillforge.runtime.session.AgentExecutionTime;
@@ -31,6 +32,7 @@ import org.apache.ibatis.session.SqlSession;
 public final class WorkflowNodeRequests {
     public static final String SCHEMA = "skillforge.runtime.execution.workflow-node.v1";
     private final ObjectMapper json;
+    private final CodecLimits limits;
     private final AgentRuntimePayloadValidation payloads;
     private final AgentRuntimeModelConfiguration profiles;
     private final JdbcModelBindings models;
@@ -46,6 +48,7 @@ public final class WorkflowNodeRequests {
                 .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
         this.payloads = Objects.requireNonNull(payloads); this.profiles = Objects.requireNonNull(profiles); this.models = Objects.requireNonNull(models);
+        this.limits = Objects.requireNonNull(limits);
         codec = new AgentExecutionCodec(limits);
         this.scripts=Objects.requireNonNull(scripts);this.scriptCodec=Objects.requireNonNull(scriptCodec);
         this.clock=Objects.requireNonNull(clock);this.tokens=Objects.requireNonNull(tokens);
@@ -172,7 +175,11 @@ public final class WorkflowNodeRequests {
         try { return json.readValue(value, Map.class); } catch (java.io.IOException invalid) { throw rejected(); }
     }
     private TypedPayload payload(Object value) {
-        try { return new TypedPayload("application/json",json.writeValueAsString(value)); } catch(java.io.IOException invalid) { throw rejected(); }
+        try {
+            // 内存浮点数与 checkpoint 任意精度数采用同一表示，保持请求重建一致。
+            return new TypedPayload("application/json", RuntimeJson.writeCanonical(
+                    RuntimeJson.parse(json.writeValueAsString(value), limits)));
+        } catch (java.io.IOException | IllegalArgumentException invalid) { throw rejected(); }
     }
     private static int positive(Map<String,Object> values,String key) {
         var value=values.get(key); if (!(value instanceof Number number) || number.doubleValue()!=number.intValue() || number.intValue()<=0) throw rejected(); return number.intValue();
