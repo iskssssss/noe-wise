@@ -47,6 +47,8 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ApplicationContext;
@@ -117,50 +119,7 @@ class RuntimeCallbackHttpIntegrationTest extends AbstractIntegrationTest {
     }
     @Test
     void signedCallbackHttpPersistsReadyAndNormalWorkerResumesExactOriginalWorkflow() throws Exception {
-        JsonNode login = admin("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
-                "username", "callback-admin", "password", PASSWORD), null, 200);
-        token = required(login, "access_token");
-        JsonNode issued = admin("POST", "/api/v1/service-principals", Map.of("integration_id", namespace,
-                "scopes", List.of("sessions.write", "sessions.read", "sessions.events.read", "end_users.write")), null, 201);
-        key = new Key(required(issued, "api_key"), required(issued, "signing_secret"));
-        String workflowId = namespace + "-workflow";
-        JsonNode draft = admin("POST", "/api/v1/builder/workflows", Map.of("workflow_id", workflowId,
-                "definition", definition()), null, 200);
-        assertEquals(workflowId, draft.path("workflow_id").asText());
-        assertTrue(draft.path("revision").asLong() > 0);
-        JsonNode published = admin("POST", "/api/v1/builder/workflows/publish", Map.of("workflow_id", workflowId),
-                draft.path("revision").asText(), 200);
-        JsonNode installed = admin("POST", "/api/v1/builder/workflows/install", Map.of("workflow_id", workflowId,
-                "payload", Map.of("config", Map.of())), null, 200);
-        JsonNode instanceList = admin("GET", "/api/v1/builder/workflows/instances", null, null, 200);
-        var matches = new ArrayList<JsonNode>();
-        for (JsonNode item : instanceList.path("items"))
-            if (required(installed, "instance_id").equals(item.path("instance_id").asText())) matches.add(item);
-        assertEquals(1, matches.size(), "formal HTTP installation must resolve exactly one instance");
-        JsonNode instance = matches.getFirst();
-        assertEquals(published.path("definition_version_id"), instance.path("definition_version_id"));
-        JsonNode version = admin("GET", "/api/v1/capabilities/versions/detail?versionId="
-                + required(published, "capability_version_id"), null, null, 200);
-        JsonNode agent = admin("POST", "/api/v1/agents", Map.of("agent_key", namespace + "-agent", "name", "签名回调HTTP",
-                "system_prompt", "调用已挂载工作流，使用异步结果完成最终回答。", "config", Map.of()), null, 200);
-        agentId = required(agent, "id");
-        JsonNode mounted = admin("POST", "/api/v1/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId,
-                "payload", Map.of("capability_type", "WORKFLOW", "capability_definition_id", required(version, "definition_id"),
-                        "capability_version_id", required(published, "capability_version_id"), "priority", 100,
-                        "workflow_config", Map.of("workflow_instance_id", required(instance, "id"),
-                                "workflow_instance_revision", required(published, "definition_version_id")))), null, 201);
-        var current = admin("GET", "/api/v1/agents/capability-mounts?agentId=" + agentId, null, null, 200);
-        assertEquals(1, current.path("mounts").size());
-        assertEquals(mounted.path("mount_id"), current.path("mounts").get(0).path("mount_id"));
-        admin("POST", "/api/v1/agents/publish", Map.of("agent_id", agentId), null, 200);
-        JsonNode user = service("POST", "/api/v1/open-platform/end-users/ensure",
-                Map.of("external_user_ref", namespace + "-user", "display_name", "签名回调用户"), null, 200);
-        endUserId = Long.parseLong(required(user, "end_user_id"));
-        JsonNode session = service("POST", "/api/v1/open-platform/sessions", Map.of("external_user_ref", namespace + "-user",
-                "external_conversation_ref", namespace + "-room", "agent_id", agentId,
-                "end_user_id", Long.toString(endUserId)), null, 200);
-        sessionId = required(session, "session_id");
-        owner = SessionOwner.user(new SessionRef(new TenantId(tenantId), sessionId), new AgentId(agentId), new EndUserId(endUserId));
+        prepareWorkflow(definition());
         var message = Map.of("session_id", sessionId, "payload", Map.of("content", List.of(Map.of("type", "text",
                 "text", REQUEST_TEXT)), "context", Map.of(), "references", List.of()));
         JsonNode receipt = service("POST", "/api/v1/open-platform/sessions/messages", message, namespace + "-input", 200);
@@ -364,6 +323,148 @@ class RuntimeCallbackHttpIntegrationTest extends AbstractIntegrationTest {
         assertEquals(inputId, required(inputReplay, "input_id")); assertEquals(runId, required(inputReplay, "run_id")); assertTrue(inputReplay.path("replayed").asBoolean());
         assertEquals(List.of("dispatch", "respond"), provider.kinds);
         assertEquals(1, tenantCount("agent_runtime_callback_deliveries"));
+    }
+
+    @ParameterizedTest(name = "{0} / {1}")
+    @CsvSource({"callback,message", "timeout,message", "callback,goto", "timeout,goto", "callback,fail", "timeout,fail"})
+    void explicitAsyncFailureUsesConfiguredPolicyWithoutRunningSuccessNodes(String trigger, String policy) throws Exception {
+        var workflowDefinition = new LinkedHashMap<>(definition());
+        var async = new LinkedHashMap<String, Object>(Map.of("id", "async", "type", "async_task", "name", "等待外部结果",
+                "result_to", "extracted.callback", "timeout_seconds", trigger.equals("timeout") ? 5 : 300));
+        if (!policy.equals("fail")) async.put("on_error", policy.equals("goto") ? "goto:recover" : "message");
+        workflowDefinition.put("nodes", List.of(Map.of("id", "start", "type", "start", "name", "开始"), async,
+                Map.of("id", "done", "type", "output", "name", "正常输出", "message", "must-not-run-success"),
+                Map.of("id", "recover", "type", "output", "name", "恢复输出", "message", "异步失败已进入恢复节点"),
+                Map.of("id", "end", "type", "end", "name", "结束")));
+        workflowDefinition.put("edges", List.of(Map.of("from", "start", "to", "async"), Map.of("from", "async", "to", "done"),
+                Map.of("from", "done", "to", "end"), Map.of("from", "recover", "to", "end")));
+        var target = prepareWorkflow(workflowDefinition);
+        var command = new LinkedHashMap<>(target);
+        command.put("session_id", sessionId); command.put("parameters", Map.of());
+        JsonNode receipt = service("POST", "/api/v1/open-platform/sessions/workflow-invocations", command, namespace + "-explicit", 200);
+        inputId = required(receipt, "input_id"); runId = required(receipt, "run_id");
+        runRef = new RunRef(new TenantId(tenantId), runId);
+        await("explicit Workflow waiting for " + trigger, () -> store.load(runRef)
+                .filter(run -> run.phase() == ExecutionStore.Phase.WAITING && run.waiting().isPresent()).isPresent());
+        var suspended = store.load(runRef).orElseThrow();
+        var waiting = store.waiting(runRef, suspended.waiting().orElseThrow()).orElseThrow();
+        var exact = assertInstanceOf(ExecutionStore.WorkflowWait.class, waiting.internal().orElseThrow());
+        var caller = identities.originalVerification(owner, suspended.identity().causationIdentityRef()).orElseThrow();
+        var original = executions.find(new ExecutionLookup(caller, exact.execution())).orElseThrow();
+        assertEquals(WorkflowExecutionState.WAITING_EXTERNAL, original.state());
+        var originalCheckpoint = mapper.readTree(original.checkpoint().canonicalJson());
+        String reason = trigger.equals("timeout") ? "workflow_async_timed_out" : "callback_business_failed";
+        CallbackRef callback = null;
+        byte[] body = null;
+        String delivery = namespace + "-failed-delivery";
+        if (trigger.equals("callback")) {
+            var registration = service("POST", "/api/v1/open-platform/sessions/workflow-callbacks",
+                    Map.of("session_id", sessionId, "run_id", runId), null, 200);
+            callback = new CallbackRef(new TenantId(tenantId), required(registration, "callback_id"));
+            body = callbackBody(registration, mapper.writeValueAsString(Map.of("status", "failed", "reason_code", reason)));
+            deliver(callback, delivery, Long.toString(Instant.now().getEpochSecond()), body, false, 200);
+        }
+        await("explicit failure policy completion", () -> store.load(runRef)
+                .filter(run -> run.phase() == ExecutionStore.Phase.FINISHED).isPresent());
+        var finalRun = store.load(runRef).orElseThrow();
+        var execution = executions.find(new ExecutionLookup(caller, exact.execution())).orElseThrow();
+        boolean failed = policy.equals("fail");
+        assertEquals(failed ? RunStatus.FAILED : RunStatus.COMPLETED, finalRun.status());
+        assertEquals(failed ? WorkflowExecutionState.FAILED : WorkflowExecutionState.COMPLETED, execution.state());
+        assertEquals(suspended.identity(), finalRun.identity());
+        assertEquals(original.owner(), execution.owner());
+        assertTrue(finalRun.waiting().isEmpty());
+        assertTrue(execution.waiting().isEmpty()); assertTrue(execution.lease().isEmpty());
+        var checkpoint = mapper.readTree(execution.checkpoint().canonicalJson());
+        var engine = checkpoint.path("engine");
+        assertEquals(reason, engine.path("state").path("last_error").path("reason").asText());
+        assertEquals("async", engine.path("state").path("last_error").path("node_id").asText());
+        assertFalse(engine.path("extracted").has("callback"));
+        assertFalse(engine.path("cursor").path("visits").has("done"));
+        assertEquals(policy.equals("goto"), engine.path("cursor").path("visits").has("recover"));
+        assertEquals(originalCheckpoint.path("engine").path("cursor").path("visits").path("async"),
+                engine.path("cursor").path("visits").path("async"));
+        assertEquals(failed ? Optional.of(reason) : Optional.empty(), execution.reasonCode());
+        String expected = policy.equals("message") ? "节点执行失败，请检查输入或查看执行记录。" : "异步失败已进入恢复节点";
+        if (!failed) {
+            assertEquals(1, engine.path("messages").size());
+            assertEquals("assistant", engine.path("messages").get(0).path("role").asText());
+            assertEquals(expected, engine.path("messages").get(0).path("content").asText());
+        }
+        await("public final history", () -> {
+            try { return finalMessages(history()).size() == 1; }
+            catch (Exception failure) { throw new IllegalStateException(failure); }
+        });
+        var finalMessage = finalMessages(history()).getFirst();
+        assertEquals(failed ? "failed" : "completed", finalMessage.path("metadata").path("state").asText());
+        assertFalse(finalMessage.path("content").asText().contains("must-not-run-success"));
+        if (!failed) {
+            assertTrue(finalMessage.path("content").asText().contains(expected));
+            assertFalse(finalMessage.path("content").asText().contains(reason));
+        }
+        assertTrue(provider.kinds.isEmpty(), "explicit async workflow must not call the model");
+        assertEquals(1, store.actions(runRef, 0, 100).stream().filter(action -> action.kind() == ExecutionStore.Kind.WORKFLOW).count());
+        assertEquals(trigger.equals("callback") ? 1 : 0, tenantCount("agent_runtime_callback_deliveries"));
+        if (callback != null) {
+            var savedEvents = events();
+            assertEquals("delivered", required(deliver(callback, delivery, Long.toString(Instant.now().getEpochSecond()), body, false, 200), "status"));
+            assertEquals(execution, executions.find(new ExecutionLookup(caller, exact.execution())).orElseThrow());
+            assertEquals(finalRun, store.load(runRef).orElseThrow());
+            assertEquals(savedEvents, events());
+        }
+        System.out.println("async-policy-evidence " + mapper.writeValueAsString(Map.of("trigger", trigger, "policy", policy,
+                "session", sessionId, "run", runId, "workflow_state", execution.state(), "run_state", finalRun.status(),
+                "last_error", engine.path("state").path("last_error"), "visits", engine.path("cursor").path("visits"),
+                "public_answer", finalMessage.path("content").asText(), "model_calls", provider.kinds.size())));
+    }
+
+    private Map<String, Object> prepareWorkflow(Map<String, Object> workflowDefinition) throws Exception {
+        JsonNode login = admin("POST", "/api/v1/auth/login", Map.of("tenant_slug", slug,
+                "username", "callback-admin", "password", PASSWORD), null, 200);
+        token = required(login, "access_token");
+        JsonNode issued = admin("POST", "/api/v1/service-principals", Map.of("integration_id", namespace,
+                "scopes", List.of("sessions.write", "sessions.read", "sessions.events.read", "end_users.write")), null, 201);
+        key = new Key(required(issued, "api_key"), required(issued, "signing_secret"));
+        String workflowId = namespace + "-workflow";
+        JsonNode draft = admin("POST", "/api/v1/builder/workflows", Map.of("workflow_id", workflowId,
+                "definition", workflowDefinition), null, 200);
+        assertEquals(workflowId, draft.path("workflow_id").asText());
+        assertTrue(draft.path("revision").asLong() > 0);
+        JsonNode published = admin("POST", "/api/v1/builder/workflows/publish", Map.of("workflow_id", workflowId),
+                draft.path("revision").asText(), 200);
+        JsonNode installed = admin("POST", "/api/v1/builder/workflows/install", Map.of("workflow_id", workflowId,
+                "payload", Map.of("config", Map.of())), null, 200);
+        JsonNode instanceList = admin("GET", "/api/v1/builder/workflows/instances", null, null, 200);
+        var matches = new ArrayList<JsonNode>();
+        for (JsonNode item : instanceList.path("items"))
+            if (required(installed, "instance_id").equals(item.path("instance_id").asText())) matches.add(item);
+        assertEquals(1, matches.size(), "formal HTTP installation must resolve exactly one instance");
+        JsonNode instance = matches.getFirst();
+        assertEquals(published.path("definition_version_id"), instance.path("definition_version_id"));
+        JsonNode version = admin("GET", "/api/v1/capabilities/versions/detail?versionId="
+                + required(published, "capability_version_id"), null, null, 200);
+        JsonNode agent = admin("POST", "/api/v1/agents", Map.of("agent_key", namespace + "-agent", "name", "签名回调HTTP",
+                "system_prompt", "调用已挂载工作流，使用异步结果完成最终回答。", "config", Map.of()), null, 200);
+        agentId = required(agent, "id");
+        JsonNode mounted = admin("POST", "/api/v1/agents/capability-mounts", Map.of("request_id", java.util.UUID.randomUUID().toString(), "agent_id", agentId,
+                "payload", Map.of("capability_type", "WORKFLOW", "capability_definition_id", required(version, "definition_id"),
+                        "capability_version_id", required(published, "capability_version_id"), "priority", 100,
+                        "workflow_config", Map.of("workflow_instance_id", required(instance, "id"),
+                                "workflow_instance_revision", required(published, "definition_version_id")))), null, 201);
+        var current = admin("GET", "/api/v1/agents/capability-mounts?agentId=" + agentId, null, null, 200);
+        assertEquals(1, current.path("mounts").size());
+        assertEquals(mounted.path("mount_id"), current.path("mounts").get(0).path("mount_id"));
+        admin("POST", "/api/v1/agents/publish", Map.of("agent_id", agentId), null, 200);
+        JsonNode user = service("POST", "/api/v1/open-platform/end-users/ensure",
+                Map.of("external_user_ref", namespace + "-user", "display_name", "签名回调用户"), null, 200);
+        endUserId = Long.parseLong(required(user, "end_user_id"));
+        JsonNode session = service("POST", "/api/v1/open-platform/sessions", Map.of("external_user_ref", namespace + "-user",
+                "external_conversation_ref", namespace + "-room", "agent_id", agentId,
+                "end_user_id", Long.toString(endUserId)), null, 200);
+        sessionId = required(session, "session_id");
+        owner = SessionOwner.user(new SessionRef(new TenantId(tenantId), sessionId), new AgentId(agentId), new EndUserId(endUserId));
+        return Map.of("mount_id", required(mounted, "mount_id"), "capability_id", required(version, "definition_id"),
+                "version_id", required(published, "capability_version_id"));
     }
 
     private byte[] callbackBody(JsonNode registration, String resultJson) throws Exception {

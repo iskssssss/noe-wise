@@ -62,7 +62,10 @@ final class WorkflowAsyncTasks {
     private static NodeOutcome failure(NodeExecutionContext node,String reason) {
         node.state().put("last_error",Map.of("node_id",node.node().id(),"reason",reason));
         if(node.node().onError()!=null&&node.node().onError().startsWith("goto:"))return NodeOutcome.jump(node.node().onError().substring(5));
-        if("message".equals(node.node().onError()))node.messages().add(Map.of("role","assistant","content",reason,"node_id",node.node().id()));
+        if("message".equals(node.node().onError())) {
+            node.messages().add(Map.of("role","assistant","content","节点执行失败，请检查输入或查看执行记录。","node_id",node.node().id()));
+            return NodeOutcome.completeFlow();
+        }
         throw new WorkflowNodeFailure(reason);
     }
 
